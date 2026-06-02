@@ -48,21 +48,17 @@ const platformStateMock = vi.hoisted(() => ({
 const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 
 const conversationApiMock = vi.hoisted(() => ({
-  applyAffairsTagRecommendationBatch: vi.fn(),
   createAffairsTag: vi.fn(),
-  createAffairsTagRecommendationBatch: vi.fn(),
+  createWorkspaceDirectory: vi.fn(),
   deleteAffairsTag: vi.fn(),
-  discardAffairsTagRecommendationBatch: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getAffairsFolderTagDetails: vi.fn(),
   getAffairsTagDetail: vi.fn(),
-  getAffairsTagRecommendationBatch: vi.fn(),
   getAffairsLibraryConfig: vi.fn(),
   getAffairsLibraryPreview: vi.fn(),
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
   operateAffairsLibraryFile: vi.fn(),
-  listAffairsTagRecommendationBatches: vi.fn(),
   listAffairsTags: vi.fn(),
   listAffairsLibraryDocuments: vi.fn(),
   requestAffairsLibraryRefresh: vi.fn(),
@@ -70,7 +66,6 @@ const conversationApiMock = vi.hoisted(() => ({
   saveAffairsFolderTags: vi.fn(),
   saveAffairsLibraryBinding: vi.fn(),
   saveAffairsLibraryConfig: vi.fn(),
-  saveAffairsTagRules: vi.fn(),
   setAffairsLibraryEnabled: vi.fn(),
   updateAffairsTag: vi.fn(),
   updateAffairsLibraryFavorites: vi.fn()
@@ -80,21 +75,17 @@ vi.mock("../../conversation/api/conversation-api", async () => {
   const actual = await vi.importActual<object>("../../conversation/api/conversation-api");
   return {
     ...actual,
-    applyAffairsTagRecommendationBatch: conversationApiMock.applyAffairsTagRecommendationBatch,
     createAffairsTag: conversationApiMock.createAffairsTag,
-    createAffairsTagRecommendationBatch: conversationApiMock.createAffairsTagRecommendationBatch,
+    createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
-    discardAffairsTagRecommendationBatch: conversationApiMock.discardAffairsTagRecommendationBatch,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getAffairsFolderTagDetails: conversationApiMock.getAffairsFolderTagDetails,
     getAffairsTagDetail: conversationApiMock.getAffairsTagDetail,
-    getAffairsTagRecommendationBatch: conversationApiMock.getAffairsTagRecommendationBatch,
     getAffairsLibraryConfig: conversationApiMock.getAffairsLibraryConfig,
     getAffairsLibraryPreview: conversationApiMock.getAffairsLibraryPreview,
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
     operateAffairsLibraryFile: conversationApiMock.operateAffairsLibraryFile,
-    listAffairsTagRecommendationBatches: conversationApiMock.listAffairsTagRecommendationBatches,
     listAffairsTags: conversationApiMock.listAffairsTags,
     listAffairsLibraryDocuments: conversationApiMock.listAffairsLibraryDocuments,
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
@@ -102,7 +93,6 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     saveAffairsFolderTags: conversationApiMock.saveAffairsFolderTags,
     saveAffairsLibraryBinding: conversationApiMock.saveAffairsLibraryBinding,
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
-    saveAffairsTagRules: conversationApiMock.saveAffairsTagRules,
     setAffairsLibraryEnabled: conversationApiMock.setAffairsLibraryEnabled,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
     updateAffairsLibraryFavorites: conversationApiMock.updateAffairsLibraryFavorites
@@ -407,20 +397,15 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.operateAffairsLibraryFile.mockReset();
     conversationApiMock.getAffairsLibraryConfig.mockReset();
     conversationApiMock.listAffairsTags.mockReset();
-    conversationApiMock.listAffairsTagRecommendationBatches.mockReset();
     conversationApiMock.getAffairsTagDetail.mockReset();
-    conversationApiMock.getAffairsTagRecommendationBatch.mockReset();
-    conversationApiMock.applyAffairsTagRecommendationBatch.mockReset();
     conversationApiMock.deleteAffairsTag.mockReset();
-    conversationApiMock.discardAffairsTagRecommendationBatch.mockReset();
     conversationApiMock.createAffairsTag.mockReset();
+    conversationApiMock.createWorkspaceDirectory.mockReset();
     conversationApiMock.updateAffairsTag.mockReset();
-    conversationApiMock.saveAffairsTagRules.mockReset();
     conversationApiMock.getAffairsDocumentTagDetails.mockReset();
     conversationApiMock.getAffairsFolderTagDetails.mockReset();
     conversationApiMock.saveAffairsDocumentTags.mockReset();
     conversationApiMock.saveAffairsFolderTags.mockReset();
-    conversationApiMock.createAffairsTagRecommendationBatch.mockReset();
     conversationApiMock.requestAffairsLibraryRefresh.mockReset();
     conversationApiMock.saveAffairsLibraryBinding.mockReset();
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
@@ -443,31 +428,18 @@ describe("AffairsWorkbenchView", () => {
 
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot());
     conversationApiMock.listAffairsTags.mockResolvedValue({ items: [] });
-    conversationApiMock.listAffairsTagRecommendationBatches.mockResolvedValue({ items: [] });
     conversationApiMock.getAffairsTagDetail.mockResolvedValue(null);
-    conversationApiMock.getAffairsTagRecommendationBatch.mockResolvedValue({ items: [] });
-    conversationApiMock.applyAffairsTagRecommendationBatch.mockResolvedValue({
-      batch: { id: "batch-1", status: "applied", summary: null, generatedAt: "2026-06-01T08:00:00.000Z", updatedAt: "2026-06-01T08:00:00.000Z", evidenceSnapshot: null, items: [] },
-      createdTags: [],
-      exportRefreshTask: { taskId: "task-export-1", deduped: false, status: "queued" }
-    });
     conversationApiMock.deleteAffairsTag.mockResolvedValue({
       deletedTagIds: ["tag-1"],
       deletedPaths: ["客户/合同"],
       exportRefreshTask: { taskId: "task-export-1", deduped: false, status: "queued" }
     });
-    conversationApiMock.discardAffairsTagRecommendationBatch.mockResolvedValue({
-      id: "batch-1",
-      status: "discarded",
-      summary: null,
-      generatedAt: "2026-06-01T08:00:00.000Z",
-      updatedAt: "2026-06-01T08:00:00.000Z",
-      evidenceSnapshot: null,
-      items: []
-    });
     conversationApiMock.createAffairsTag.mockResolvedValue(null);
+    conversationApiMock.createWorkspaceDirectory.mockResolvedValue({
+      path: "/Users/jackson/WorkFile/临时文件/新建目录",
+      name: "新建目录"
+    });
     conversationApiMock.updateAffairsTag.mockResolvedValue(null);
-    conversationApiMock.saveAffairsTagRules.mockResolvedValue({ tag: null });
     conversationApiMock.getAffairsDocumentTagDetails.mockResolvedValue({
       documentId: "doc-1",
       path: "Exchange 分层通讯簿.txt",
@@ -475,7 +447,7 @@ describe("AffairsWorkbenchView", () => {
       manualTagIds: [],
       effectiveFolderBindings: [],
       resolvedTags: [
-        { path: "类型/文本/Markdown", sourceType: "rule_match", sourceRef: "extension_rule", evidence: "扩展名命中：.md", confidence: 1, priority: 20 },
+        { path: "类型/文本/Markdown", sourceType: "system_derived", sourceRef: "extension_rule", evidence: "扩展名命中：.md", confidence: 1, priority: 20 },
         { path: "时间/最近30天", sourceType: "system_derived", sourceRef: null, evidence: "最近30天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近3天", sourceType: "system_derived", sourceRef: null, evidence: "最近3天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近7天", sourceType: "system_derived", sourceRef: null, evidence: "最近7天有修改", confidence: 1, priority: 10 }
@@ -489,7 +461,6 @@ describe("AffairsWorkbenchView", () => {
     });
     conversationApiMock.saveAffairsDocumentTags.mockResolvedValue(undefined);
     conversationApiMock.saveAffairsFolderTags.mockResolvedValue(undefined);
-    conversationApiMock.createAffairsTagRecommendationBatch.mockResolvedValue(null);
 
     conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
       workspaceId: "workspace-1",
@@ -646,6 +617,30 @@ describe("AffairsWorkbenchView", () => {
     ]));
   });
 
+  it("桌面端空白处右键菜单会包含新建、刷新、粘贴和属性", async () => {
+    renderWorkbench();
+
+    const grid = await waitFor(() => {
+      const element = document.querySelector(".affairs-doc-grid-viewport");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+
+    fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: t("shell.affairsLibraryContextNew") }),
+      expect.objectContaining({ label: t("shell.affairsLibraryContextRefresh") }),
+      expect.objectContaining({ label: t("shell.affairsLibraryContextPaste") }),
+      expect.objectContaining({ label: t("shell.affairsLibraryContextProperties") })
+    ]));
+  });
+
   it("文档库文件右键菜单支持预览、复制路径、下载和删除", async () => {
     platformBridgeMock.supported = false;
     renderWorkbench();
@@ -661,7 +656,7 @@ describe("AffairsWorkbenchView", () => {
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextDelete") })).toBeInTheDocument();
 
     await userEvent.hover(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextCopy") }));
-    await userEvent.click(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextCopyRelativePath") }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: t("shell.affairsLibraryContextCopyRelativePath") }));
     expect(platformBridgeMock.writeClipboardText).toHaveBeenCalledWith("Exchange 分层通讯簿.txt");
 
     fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
@@ -682,8 +677,27 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("H5 环境下右键下载仍然可用", async () => {
+    platformBridgeMock.supported = false;
+    platformStateMock.isDesktop = false;
+    platformStateMock.isWeb = true;
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+
+    const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextDownload") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.downloadAffairsLibraryFile).toHaveBeenCalledWith("workspace-1", "Exchange 分层通讯簿.txt");
+    });
+  });
+
   it("文档库空白处右键菜单只保留可粘贴操作", async () => {
     platformBridgeMock.supported = false;
+    platformStateMock.isDesktop = false;
+    platformStateMock.isWeb = true;
     renderWorkbench();
 
     const grid = await waitFor(() => {
@@ -695,8 +709,43 @@ describe("AffairsWorkbenchView", () => {
     fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextPaste") })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextNew") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextRefresh") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextProperties") })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: t("shell.affairsLibraryContextPreview") })).not.toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: t("shell.affairsLibraryContextDelete") })).not.toBeInTheDocument();
+  });
+
+  it("H5 空白处右键可以新建目录并刷新列表", async () => {
+    platformBridgeMock.supported = false;
+    platformStateMock.isDesktop = false;
+    platformStateMock.isWeb = true;
+    renderWorkbench();
+
+    const grid = await waitFor(() => {
+      const element = document.querySelector(".affairs-doc-grid-viewport");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+
+    fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
+    const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
+    await userEvent.hover(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextNew") }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: t("shell.affairsLibraryContextNewDirectory") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsLibraryCreateModalTitle") });
+    const input = within(dialog).getByLabelText(t("shell.affairsLibraryCreateNameLabel"));
+    await userEvent.clear(input);
+    await userEvent.type(input, "资料目录");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsLibraryCreateConfirmAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.operateAffairsLibraryFile).toHaveBeenCalledWith("workspace-1", {
+        opType: "create_directory",
+        dstPath: "资料目录"
+      });
+    });
+    expect(conversationApiMock.requestAffairsLibraryRefresh).toHaveBeenCalled();
   });
 
   it("点击设置按钮后会在独立模态框里显示文档库设置", async () => {
@@ -1857,7 +1906,8 @@ describe("AffairsWorkbenchView", () => {
     await waitFor(() => {
       expect(conversationApiMock.saveAffairsLibraryConfig).toHaveBeenCalledWith("workspace-1", {
         mirrorRoot: "/Users/jackson/SynologyDrive",
-        allowedExtensions: []
+        allowedExtensions: [],
+        includedHiddenPaths: []
       });
     });
   });
@@ -1892,7 +1942,7 @@ describe("AffairsWorkbenchView", () => {
     expect(bridge.fs.openFile).toHaveBeenCalledWith("/Users/jackson/SynologyDrive/Exchange 分层通讯簿.txt");
   });
 
-  it("可以按树状结构管理标签并导入推荐标签", async () => {
+  it("可以按树状结构管理标签", async () => {
     conversationApiMock.listAffairsTags.mockResolvedValue({
       items: [
         {
@@ -1904,8 +1954,7 @@ describe("AffairsWorkbenchView", () => {
           parentPath: null,
           description: "客户主分类",
           status: "active",
-          ruleEnabled: false,
-          documentCount: 3,
+                    documentCount: 3,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
@@ -1919,24 +1968,12 @@ describe("AffairsWorkbenchView", () => {
           parentPath: "客户",
           description: null,
           status: "active",
-          ruleEnabled: true,
-          documentCount: 1,
+                    documentCount: 1,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
         }
-      ],
-      summary: {
-        totalActiveTags: 2,
-        totalDisabledTags: 0,
-        totalRuleEnabledTags: 1,
-        totalBoundDocuments: 1
-      },
-      status: {
-        recomputeState: "idle",
-        lastRecomputedAt: null,
-        lastError: null
-      }
+      ]
     });
     conversationApiMock.getAffairsTagDetail.mockResolvedValue({
       id: "tag-1",
@@ -1947,24 +1984,10 @@ describe("AffairsWorkbenchView", () => {
       parentPath: "客户",
       description: null,
       status: "active",
-      ruleEnabled: true,
-      documentCount: 1,
+            documentCount: 1,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
-      rules: [
-        {
-          id: "rule-1",
-          enabled: true,
-          ruleType: "keyword",
-          scope: ["path", "title", "summary", "body"],
-          matcher: { keywords: ["合同"] },
-          minScore: 0.55,
-          priority: 0,
-          source: "user",
-          updatedAt: "2026-06-01T08:00:00.000Z"
-        }
-      ]
     });
     conversationApiMock.createAffairsTag.mockResolvedValue({
       id: "tag-new",
@@ -1975,12 +1998,10 @@ describe("AffairsWorkbenchView", () => {
       parentPath: null,
       description: null,
       status: "active",
-      ruleEnabled: false,
-      documentCount: 0,
+            documentCount: 0,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
-      rules: []
     });
     conversationApiMock.updateAffairsTag.mockResolvedValue({
       id: "tag-1",
@@ -1991,77 +2012,10 @@ describe("AffairsWorkbenchView", () => {
       parentPath: "客户",
       description: null,
       status: "active",
-      ruleEnabled: true,
-      documentCount: 1,
+            documentCount: 1,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
-      rules: []
-    });
-    conversationApiMock.saveAffairsTagRules.mockResolvedValue({
-      tag: {
-        id: "tag-1",
-        path: "客户/项目合同",
-        name: "项目合同",
-        rootType: "客户",
-        parentId: "tag-root",
-        parentPath: "客户",
-        description: null,
-        status: "active",
-        ruleEnabled: true,
-        documentCount: 1,
-        createdAt: "2026-06-01T08:00:00.000Z",
-        updatedAt: "2026-06-01T08:00:00.000Z",
-        disabledAt: null,
-        rules: []
-      },
-      rules: [],
-      recomputeTask: {
-        taskId: "task-recompute-1",
-        deduped: false,
-        status: "queued",
-        affectedTagPaths: ["客户/项目合同"]
-      }
-    });
-    conversationApiMock.listAffairsTagRecommendationBatches.mockResolvedValue({
-      items: [
-        {
-          id: "batch-1",
-          status: "draft",
-          summary: "基于 客户、文档类型 这 2 个根主题生成了 1 组候选标签。",
-          generatedAt: "2026-06-01T08:00:00.000Z",
-          updatedAt: "2026-06-01T08:00:00.000Z",
-          evidenceSnapshot: null
-        }
-      ]
-    });
-    conversationApiMock.getAffairsTagRecommendationBatch.mockResolvedValue({
-      id: "batch-1",
-      status: "draft",
-      summary: "基于 客户、文档类型 这 2 个根主题生成了 1 组候选标签。",
-      generatedAt: "2026-06-01T08:00:00.000Z",
-      updatedAt: "2026-06-01T08:00:00.000Z",
-      evidenceSnapshot: null,
-      items: [
-        {
-          id: "item-1",
-          proposedPath: "客户/客户A",
-          proposedName: "客户A",
-          proposedParentPath: "客户",
-          documentCount: 2,
-          evidence: {
-            candidateLabel: "客户A",
-            sourceType: "path_entity",
-            sampleTitles: ["客户A 合同"],
-            availableThemes: [
-              { rootName: "客户", sourceType: "path_entity", proposedPath: "客户/客户A" },
-              { rootName: "文档类型", sourceType: "mixed", proposedPath: "文档类型/客户A" },
-            ],
-          },
-          selectedByDefault: true,
-          status: "draft"
-        }
-      ]
     });
 
     renderWorkbench();
@@ -2097,9 +2051,6 @@ describe("AffairsWorkbenchView", () => {
     const nameInput = screen.getByPlaceholderText(t("shell.affairsTagNamePlaceholder"));
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, "项目合同");
-    const keywordsInput = screen.getByPlaceholderText(t("shell.affairsTagRuleKeywordsPlaceholder"));
-    await userEvent.clear(keywordsInput);
-    await userEvent.type(keywordsInput, "项目,合同");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
 
     await waitFor(() => {
@@ -2109,66 +2060,12 @@ describe("AffairsWorkbenchView", () => {
         parentId: "tag-root",
         status: "active"
       }));
-      expect(conversationApiMock.saveAffairsTagRules).toHaveBeenCalledWith("workspace-1", "tag-1", {
-        rules: [
-          expect.objectContaining({
-            id: "rule-1",
-            enabled: true,
-            matcher: { keywords: ["项目", "合同"], pathIncludes: [] }
-          })
-        ]
-      });
     });
 
     vi.stubGlobal("confirm", vi.fn(() => true));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagDeleteAction") }));
     await waitFor(() => {
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1");
-    });
-
-    const themeInputs = screen.getAllByPlaceholderText(t("shell.affairsTagRecommendationThemePlaceholder"));
-    await userEvent.type(themeInputs[0]!, "客户");
-    const themeSourceSelects = screen.getAllByRole("combobox");
-    await userEvent.selectOptions(themeSourceSelects[themeSourceSelects.length - 1]!, "path_entity");
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagRecommendationThemeAddAction") }));
-    const updatedThemeInputs = screen.getAllByPlaceholderText(t("shell.affairsTagRecommendationThemePlaceholder"));
-    await userEvent.type(updatedThemeInputs[1]!, "文档类型");
-    const sourceSelects = screen.getAllByRole("combobox");
-    await userEvent.selectOptions(sourceSelects[sourceSelects.length - 1]!, "title_phrase");
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagRecommendationGenerateAction") }));
-
-    await waitFor(() => {
-      expect(conversationApiMock.createAffairsTagRecommendationBatch).toHaveBeenCalledWith("workspace-1", {
-        themes: [
-          { rootName: "客户", sourceType: "path_entity" },
-          { rootName: "文档类型", sourceType: "title_phrase" },
-        ],
-      });
-    });
-
-    await userEvent.click(await screen.findByRole("button", { name: /基于 客户、文档类型 这 2 个根主题/ }));
-    const workbenchDialog = await screen.findByRole("dialog", { name: t("shell.affairsTagRecommendationWorkbenchTitle") });
-
-    expect(await within(workbenchDialog).findByDisplayValue("客户/客户A")).toBeInTheDocument();
-    expect(await within(workbenchDialog).findByDisplayValue("客户A")).toBeInTheDocument();
-    await userEvent.selectOptions(within(workbenchDialog).getByLabelText(t("shell.affairsTagRecommendationThemeAssignLabel")), "文档类型");
-    await userEvent.clear(within(workbenchDialog).getByLabelText(t("shell.affairsTagRecommendationNameLabel")));
-    await userEvent.type(within(workbenchDialog).getByLabelText(t("shell.affairsTagRecommendationNameLabel")), "重点客户");
-
-    await userEvent.click(within(workbenchDialog).getByRole("button", { name: t("shell.affairsTagRecommendationApplySelected") }));
-
-    await waitFor(() => {
-      expect(conversationApiMock.applyAffairsTagRecommendationBatch).toHaveBeenCalledWith("workspace-1", "batch-1", {
-        items: [
-          {
-            itemId: "item-1",
-            proposedPath: "文档类型/重点客户",
-            proposedName: "重点客户",
-            proposedParentPath: "文档类型",
-            selected: true
-          }
-        ]
-      });
     });
   });
 
@@ -2184,8 +2081,7 @@ describe("AffairsWorkbenchView", () => {
           parentPath: null,
           description: null,
           status: "active",
-          ruleEnabled: false,
-          documentCount: 0,
+                    documentCount: 0,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
@@ -2199,8 +2095,7 @@ describe("AffairsWorkbenchView", () => {
           parentPath: null,
           description: null,
           status: "active",
-          ruleEnabled: false,
-          documentCount: 0,
+                    documentCount: 0,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
@@ -2214,8 +2109,7 @@ describe("AffairsWorkbenchView", () => {
           parentPath: null,
           description: null,
           status: "active",
-          ruleEnabled: false,
-          documentCount: 0,
+                    documentCount: 0,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
@@ -2229,7 +2123,7 @@ describe("AffairsWorkbenchView", () => {
       manualTagIds: [],
       effectiveFolderBindings: [],
       resolvedTags: [
-        { path: "类型/文本/Markdown", sourceType: "rule_match", sourceRef: "extension_rule", evidence: "扩展名命中：.md", confidence: 1, priority: 20 },
+        { path: "类型/文本/Markdown", sourceType: "system_derived", sourceRef: "extension_rule", evidence: "扩展名命中：.md", confidence: 1, priority: 20 },
         { path: "时间/最近30天", sourceType: "system_derived", sourceRef: null, evidence: "最近30天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近3天", sourceType: "system_derived", sourceRef: null, evidence: "最近3天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近7天", sourceType: "system_derived", sourceRef: null, evidence: "最近7天有修改", confidence: 1, priority: 10 }
@@ -2284,8 +2178,7 @@ describe("AffairsWorkbenchView", () => {
           parentPath: null,
           description: null,
           status: "active",
-          ruleEnabled: false,
-          documentCount: 0,
+                    documentCount: 0,
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-06-01T08:00:00.000Z",
           disabledAt: null
@@ -2325,7 +2218,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.clear(mirrorRootInput);
     await userEvent.type(mirrorRootInput, "/Users/jackson/SynologyDrive/Mirror");
     await userEvent.type(
-      screen.getByPlaceholderText(t("shell.affairsLibraryIncludedHiddenPathsPlaceholder")),
+      screen.getByLabelText(t("shell.affairsLibraryIncludedHiddenPathsLabel")),
       ".obsidian\nnotes/.draft.md"
     );
     await userEvent.click(screen.getByRole("button", { name: ".docx" }));
