@@ -105,6 +105,7 @@ export interface ButlerProfileDto {
     summaryDebounceSeconds: number;
     [key: string]: unknown;
   };
+  setupCompleted: boolean;
   initializedAt: string;
   updatedAt: string;
 }

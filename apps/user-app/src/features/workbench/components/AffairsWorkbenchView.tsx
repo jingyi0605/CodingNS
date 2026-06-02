@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
+import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -25,6 +26,7 @@ import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
+  ButlerProfilePayload,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto
 } from "../../butler/api/butler-api";
@@ -35,10 +37,17 @@ import {
   listRecentAssistantAutomationRuns
 } from "../../butler/api/butler-api";
 import { ButlerAnchoredPopover } from "../../butler/components/ButlerAnchoredPopover";
+import {
+  ButlerInitForm,
+  type ButlerInitFormState,
+  type ButlerReportPriorityPresetId,
+  DEFAULT_BUTLER_INIT_FORM_STATE
+} from "../../butler/components/ButlerInitForm";
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type {
   AffairsDocumentTagDetailsDto,
   AffairsFolderTagDetailsDto,
+  HistoryMessageDto,
   AffairsLibraryBindingDto,
   AffairsLibraryConfigDto,
   AffairsLibraryDocumentListDto,
@@ -49,18 +58,25 @@ import type {
   AffairsLibrarySnapshotDto,
   AffairsTaskSnapshotDto,
   AffairsLibraryTagNodeDto,
+  AffairsTagRecoveryStatusDto,
   AffairsTagDetailWithRulesDto,
   AffairsTagNodeDto,
   AffairsTagRuleDto,
+  ProviderCapabilitiesDto,
+  ProviderId,
+  SessionSummaryDto,
 } from "../../conversation/api/conversation-api";
 import {
   createAffairsTag,
   createWorkspaceDirectory,
   deleteAffairsTag,
   getAffairsDocumentTagDetails,
+  getAffairsTagRecoveryStatus,
   getAffairsFolderTagTask,
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
+  getAffairsLibraryBinding,
+  getProviderCapabilities,
   listAffairsTags,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
@@ -69,6 +85,7 @@ import {
   listAffairsLibraryDocuments,
   operateAffairsLibraryFile,
   requestAffairsLibraryRefresh,
+  requestAffairsTagRecoveryRecompute,
   saveAffairsDocumentTags,
   saveAffairsDocumentTagsWithCreate,
   saveAffairsFolderTags,
@@ -76,6 +93,7 @@ import {
   saveAffairsLibraryBinding,
   saveAffairsLibraryConfig,
   setAffairsLibraryEnabled,
+  startLiveSession,
   updateAffairsTag,
   updateAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
@@ -83,9 +101,24 @@ import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileViewerPanel } from "../../conversation/components/FileViewerModal";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
+import { SessionProviderPicker } from "../../conversation/components/SessionProviderPicker";
+import { SessionHeader } from "../../conversation/components/SessionHeader";
+import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
+import {
+  createDraftCapabilities,
+  getDraftTitle,
+  getProviderDisplayName,
+  isDraftProviderSupported
+} from "../../conversation/capability/provider-ui";
 import { getPathLeafName } from "../../conversation/components/file-entry-visibility";
 import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
+import {
+  createPendingMessage,
+  markPendingAsFailed,
+  type SessionMessageViewModel
+} from "../../conversation/runtime/session-runtime-machine";
+import { useLiveSessionController } from "../../conversation/runtime/use-live-session-controller";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   showDesktopContextMenu,
@@ -133,6 +166,12 @@ interface FolderTagApplyTaskMonitorState {
   folderPath: string;
   taskId: string;
   snapshot: AffairsTaskSnapshotDto | null;
+  operation: "attach" | "remove" | "update";
+}
+
+interface FullTagRecomputeTaskMonitorState {
+  taskId: string;
+  snapshot: AffairsTaskSnapshotDto | null;
 }
 
 const LIBRARY_STAGE_PAGE_SIZE = 120;
@@ -149,6 +188,8 @@ const AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS = 12_000;
 const AFFAIRS_FOLDER_TAG_TASK_POLL_RUNNING_MS = 1_200;
 const AFFAIRS_FOLDER_TAG_TASK_POLL_TERMINAL_HIDE_MS = 8_000;
+const AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_RUNNING_MS = 1_200;
+const AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_TERMINAL_HIDE_MS = 8_000;
 const AFFAIRS_TAG_SAVE_SNAPSHOT_POLL_MS = 600;
 const AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS = 8_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -353,12 +394,33 @@ type AutomationRecord = {
 };
 
 type AffairsConversationKind = "lightweight" | "agent";
-type AffairsConversationProvider = "codex" | "claude-code";
 
-type AffairsConversationDraftOption = {
-  id: string;
+type AffairsConversationDraftSelection = {
   kind: AffairsConversationKind;
-  provider: AffairsConversationProvider;
+  provider: ProviderId;
+};
+
+type AffairsConversationSessionSelection = {
+  kind: AffairsConversationKind;
+  sessionId: string;
+};
+
+type AffairsConversationRuntimeSeed = {
+  kind: AffairsConversationKind;
+  session: SessionSummaryDto;
+  bootstrapMessages: HistoryMessageDto[];
+} | null;
+
+type AffairsInitGuardSnapshot = {
+  loading: boolean;
+  initialized: boolean;
+  unavailable: boolean;
+  errorMessage: string | null;
+  profile: {
+    displayName: string;
+    providerId: "codex" | "claude-code";
+    personaTone: "direct" | "steady" | "friendly";
+  } | null;
 };
 
 type AffairsSelectedObject =
@@ -384,6 +446,7 @@ interface AffairsWorkbenchContextValue {
   workspaceName: string | null;
   state: AffairsViewState;
   activeSection: AffairsPrimarySection;
+  initGuard: AffairsInitGuardSnapshot;
   loading: boolean;
   error: string | null;
   libraryLoading: boolean;
@@ -413,8 +476,11 @@ interface AffairsWorkbenchContextValue {
   auxiliaryTab: AffairsAuxiliaryTab;
   toolbarExpanded: boolean;
   detailViewerCollapsed: boolean;
+  initializeButlerProfile: (payload: ButlerProfilePayload) => Promise<void>;
+  reloadButlerProfile: () => Promise<void>;
   openLibraryViewer: (record: DocumentRecord) => void;
   selectSection: (section: AffairsPrimarySection) => void;
+  openInitializedSection: (section: AffairsPrimarySection) => void;
   selectSidebarNode: (nodeId: string) => void;
   selectObject: (objectId: string | null) => void;
   selectAuxiliaryTab: (tab: AffairsAuxiliaryTab) => void;
@@ -442,6 +508,8 @@ interface AffairsWorkbenchContextValue {
   documentTagDetails: AffairsDocumentTagDetailsDto | null;
   folderTagDetails: AffairsFolderTagDetailsDto | null;
   folderTagTaskMonitor: FolderTagApplyTaskMonitorState | null;
+  fullTagRecomputeTaskMonitor: FullTagRecomputeTaskMonitorState | null;
+  tagRecoveryStatus: AffairsTagRecoveryStatusDto | null;
   reloadTagManagement: () => Promise<void>;
   selectManagedTag: (tagId: string | null) => Promise<void>;
   saveManagedTag: (input: {
@@ -453,16 +521,25 @@ interface AffairsWorkbenchContextValue {
     smartRules?: AffairsTagRuleDto[];
   }) => Promise<AffairsTagDetailWithRulesDto>;
   deleteManagedTag: (tagId: string) => Promise<{ deletedTagIds: string[]; deletedPaths: string[] }>;
+  requestFullTagRecompute: () => Promise<{ taskId: string; deduped: boolean; status: "queued"; scope: "full" }>;
   saveDocumentTagSelection: (documentId: string, tagIds: string[], createTagPaths?: string[]) => Promise<void>;
-  saveFolderTagSelection: (folderPath: string, tagIds: string[], createTagPaths?: string[]) => Promise<void>;
+  saveFolderTagSelection: (folderPath: string, tagIds: string[], createTagPaths?: string[], previousTagIds?: string[]) => Promise<void>;
+  conversationCreateModalOpen: boolean;
+  openConversationCreateModal: () => void;
+  closeConversationCreateModal: () => void;
+  selectedConversationDraft: AffairsConversationDraftSelection | null;
+  selectConversationDraft: (draft: AffairsConversationDraftSelection) => void;
+  selectedConversationSession: AffairsConversationSessionSelection | null;
+  conversationRuntimeSeed: AffairsConversationRuntimeSeed;
+  activateConversationSession: (input: {
+    kind: AffairsConversationKind;
+    session: SessionSummaryDto;
+    bootstrapMessages: HistoryMessageDto[];
+  }) => void;
 }
 
-const AFFAIRS_CONVERSATION_DRAFT_OPTIONS: AffairsConversationDraftOption[] = [
-  { id: "lightweight:codex", kind: "lightweight", provider: "codex" },
-  { id: "lightweight:claude-code", kind: "lightweight", provider: "claude-code" },
-  { id: "agent:codex", kind: "agent", provider: "codex" },
-  { id: "agent:claude-code", kind: "agent", provider: "claude-code" }
-];
+const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["gemini", "kimi"];
+const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code", "opencode", "legna-code"];
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
 
@@ -495,6 +572,10 @@ export function AffairsWorkbenchProvider({
     () => Object.fromEntries(workspaceSessions.map((session) => [session.sessionId, session.title?.trim() || session.sessionId])),
     [workspaceSessions]
   );
+  const [conversationCreateModalOpen, setConversationCreateModalOpen] = useState(false);
+  const [selectedConversationDraft, setSelectedConversationDraft] = useState<AffairsConversationDraftSelection | null>(null);
+  const [selectedConversationSession, setSelectedConversationSession] = useState<AffairsConversationSessionSelection | null>(null);
+  const [conversationRuntimeSeed, setConversationRuntimeSeed] = useState<AffairsConversationRuntimeSeed>(null);
   const initialLibrarySnapshot = useMemo(
     () => readCachedLibrarySnapshot(workspaceId),
     [workspaceId]
@@ -525,23 +606,74 @@ export function AffairsWorkbenchProvider({
   const [documentTagDetails, setDocumentTagDetails] = useState<AffairsDocumentTagDetailsDto | null>(null);
   const [folderTagDetails, setFolderTagDetails] = useState<AffairsFolderTagDetailsDto | null>(null);
   const [folderTagTaskMonitor, setFolderTagTaskMonitor] = useState<FolderTagApplyTaskMonitorState | null>(null);
+  const [fullTagRecomputeTaskMonitor, setFullTagRecomputeTaskMonitor] = useState<FullTagRecomputeTaskMonitorState | null>(null);
+  const [tagRecoveryStatus, setTagRecoveryStatus] = useState<AffairsTagRecoveryStatusDto | null>(null);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
+  const [butlerStore] = useState(() => new ButlerRuntimeStore(workspaceId));
+  const butlerInitLoading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
+  const butlerInitialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
+  const butlerBootstrapErrorCode = useButlerRuntimeStore(
+    butlerStore,
+    (value) => value.bootstrapErrorCode
+  );
+  const butlerInitError = useButlerRuntimeStore(butlerStore, (value) => value.error);
+  const butlerProfile = useButlerRuntimeStore(butlerStore, (value) => value.profile);
   const { showToast } = useToast();
   const binding = librarySnapshot?.binding ?? null;
   const indexStatus = librarySnapshot?.status ?? null;
   const currentDirectoryStatus = libraryDocumentPage?.directoryStatus ?? null;
-  const activeSection = normalizeSection(state.primarySection);
+  const initGuard = useMemo<AffairsInitGuardSnapshot>(() => ({
+    loading: butlerInitLoading,
+    initialized: butlerInitialized,
+    unavailable: !butlerInitLoading && butlerBootstrapErrorCode === "NETWORK_ERROR",
+    errorMessage: butlerInitError,
+    profile: butlerProfile
+      ? {
+          displayName: butlerProfile.displayName,
+          providerId: butlerProfile.providerId,
+          personaTone: butlerProfile.persona.tone
+        }
+      : null
+  }), [butlerBootstrapErrorCode, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
+  const affairsUnavailable = initGuard.unavailable;
+  const affairsInitGuardActive = initGuard.loading || (!initGuard.initialized && !affairsUnavailable);
+  const activeSection =
+    affairsUnavailable || affairsInitGuardActive ? "conversation" : normalizeSection(state.primarySection);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
   const directoryHintKeyRef = useRef<string | null>(null);
   const directoryHintBootstrappedRef = useRef(false);
 
   useEffect(() => {
+    if (typeof butlerStore.initialize === "function") {
+      void butlerStore.initialize();
+    }
+  }, [butlerStore]);
+
+  useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
+
+  useEffect(() => {
+    setSelectedConversationDraft(parseAffairsConversationDraftSelection(state.selectedNodeId));
+    setSelectedConversationSession(parseAffairsConversationSessionSelection(state.selectedNodeId));
+  }, [state.selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedConversationSession) {
+      return;
+    }
+
+    setConversationRuntimeSeed((current) => {
+      if (!current || current.session.sessionId === selectedConversationSession.sessionId) {
+        return current;
+      }
+      return null;
+    });
+  }, [selectedConversationSession]);
 
   useEffect(() => {
     if (!folderTagTaskMonitor) {
@@ -596,6 +728,60 @@ export function AffairsWorkbenchProvider({
   }, [folderTagTaskMonitor?.folderPath, folderTagTaskMonitor?.taskId, workspaceId]);
 
   useEffect(() => {
+    if (!fullTagRecomputeTaskMonitor) {
+      return;
+    }
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const pollTask = async () => {
+      try {
+        const recoveryStatus = await getAffairsTagRecoveryStatus(workspaceId);
+        const snapshot = recoveryStatus.task;
+        if (disposed) {
+          return;
+        }
+        setTagRecoveryStatus((previous) => areAffairsTagRecoveryStatusEqual(previous, recoveryStatus) ? previous : recoveryStatus);
+        setFullTagRecomputeTaskMonitor((previous) => {
+          if (!previous || previous.taskId !== fullTagRecomputeTaskMonitor.taskId) {
+            return previous;
+          }
+          if (areAffairsTaskSnapshotsEqual(previous.snapshot, snapshot)) {
+            return previous;
+          }
+          return {
+            ...previous,
+            snapshot,
+          };
+        });
+        if (snapshot && isTerminalAffairsTaskStatus(snapshot.status)) {
+          return;
+        }
+      } catch {
+        if (disposed) {
+          return;
+        }
+      }
+
+      if (!disposed) {
+        timer = setTimeout(() => {
+          void pollTask();
+        }, AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_RUNNING_MS);
+      }
+    };
+
+    void pollTask();
+
+    return () => {
+      disposed = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [fullTagRecomputeTaskMonitor?.taskId, workspaceId]);
+
+  useEffect(() => {
     if (!folderTagTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(folderTagTaskMonitor.snapshot.status)) {
       return;
     }
@@ -607,6 +793,44 @@ export function AffairsWorkbenchProvider({
       clearTimeout(timer);
     };
   }, [folderTagTaskMonitor?.snapshot?.status, folderTagTaskMonitor?.taskId]);
+
+  useEffect(() => {
+    if (!tagManagementOpen) {
+      return;
+    }
+    let disposed = false;
+    void getAffairsTagRecoveryStatus(workspaceId)
+      .then((recoveryStatus) => {
+        if (disposed) {
+          return;
+        }
+        setTagRecoveryStatus((previous) => areAffairsTagRecoveryStatusEqual(previous, recoveryStatus) ? previous : recoveryStatus);
+        if (!recoveryStatus.task || fullTagRecomputeTaskMonitor) {
+          return;
+        }
+        setFullTagRecomputeTaskMonitor({
+          taskId: recoveryStatus.task.taskId,
+          snapshot: recoveryStatus.task,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [fullTagRecomputeTaskMonitor, tagManagementOpen, workspaceId]);
+
+  useEffect(() => {
+    if (!fullTagRecomputeTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(fullTagRecomputeTaskMonitor.snapshot.status)) {
+      return;
+    }
+    const currentTaskId = fullTagRecomputeTaskMonitor.taskId;
+    const timer = setTimeout(() => {
+      setFullTagRecomputeTaskMonitor((previous) => previous?.taskId === currentTaskId ? null : previous);
+    }, AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_TERMINAL_HIDE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [fullTagRecomputeTaskMonitor?.snapshot?.status, fullTagRecomputeTaskMonitor?.taskId]);
 
   const reloadTagManagement = async () => {
     if (!binding?.enabled) {
@@ -1148,6 +1372,27 @@ export function AffairsWorkbenchProvider({
     () => buildAutomationRecords(automations, sessionTitleById),
     [automations, sessionTitleById]
   );
+  const affairsRouteBlocked = affairsInitGuardActive || affairsUnavailable;
+
+  useEffect(() => {
+    if (!affairsRouteBlocked) {
+      return;
+    }
+    const nextSelectedNodeId = state.selectedNodeId?.startsWith("conversation:")
+      ? state.selectedNodeId
+      : resolveDefaultNodeId("conversation", automationRecords, binding);
+    const nextState: AffairsViewState = {
+      ...state,
+      primarySection: "conversation",
+      selectedNodeId: nextSelectedNodeId,
+      selectedObjectId: null,
+      selectedDocumentId: null
+    };
+    if (JSON.stringify(nextState) === JSON.stringify(state)) {
+      return;
+    }
+    onStateChange(nextState);
+  }, [affairsRouteBlocked, automationRecords, binding, onStateChange, state]);
   const loading =
     activeSection === "library"
       ? libraryLoading
@@ -1198,6 +1443,10 @@ export function AffairsWorkbenchProvider({
   }, [activeSection, automationRecords, filteredDocuments, filteredTodoRecords, state.selectedDocumentId, state.selectedObjectId]);
 
   useEffect(() => {
+    if (!binding?.enabled) {
+      setDocumentTagDetails(null);
+      return;
+    }
     if (selectedObject.section === "library" && selectedObject.record?.id) {
       void getAffairsDocumentTagDetails(workspaceId, selectedObject.record.id)
         .then(setDocumentTagDetails)
@@ -1205,9 +1454,13 @@ export function AffairsWorkbenchProvider({
       return;
     }
     setDocumentTagDetails(null);
-  }, [selectedObject, workspaceId]);
+  }, [binding?.enabled, selectedObject, workspaceId]);
 
   useEffect(() => {
+    if (!binding?.enabled) {
+      setFolderTagDetails(null);
+      return;
+    }
     if (selectedObject.section === "library" && !selectedObject.record) {
       const folderPath = state.selectedFolderPath?.trim() ?? ".";
       void getAffairsFolderTagDetails(workspaceId, folderPath)
@@ -1216,7 +1469,7 @@ export function AffairsWorkbenchProvider({
       return;
     }
     setFolderTagDetails(null);
-  }, [selectedObject, state.selectedFolderPath, workspaceId]);
+  }, [binding?.enabled, selectedObject, state.selectedFolderPath, workspaceId]);
 
   useEffect(() => {
     const selectedId = selectedObject.record?.id ?? null;
@@ -1289,12 +1542,7 @@ export function AffairsWorkbenchProvider({
     }
 
     if (activeSection === "conversation") {
-      return AFFAIRS_CONVERSATION_DRAFT_OPTIONS.map((item) => ({
-        id: `conversation:draft:${item.id}`,
-        label: buildAffairsConversationOptionLabel(item),
-        summary: buildAffairsConversationOptionSummary(item),
-        tone: item.kind === "agent" ? "automation" : "source"
-      }));
+      return [];
     }
 
     if (activeSection === "todo") {
@@ -1336,6 +1584,7 @@ export function AffairsWorkbenchProvider({
     workspaceName,
     state,
     activeSection,
+    initGuard,
     loading,
     error,
     libraryLoading,
@@ -1366,6 +1615,25 @@ export function AffairsWorkbenchProvider({
     toolbarExpanded: state.toolbarExpanded,
     detailViewerCollapsed: state.detailViewerCollapsed,
     selectSection: (section) => {
+      if (affairsInitGuardActive) {
+        onStateChange({
+          ...state,
+          primarySection: "conversation",
+          selectedNodeId: resolveDefaultNodeId("conversation", automationRecords, binding),
+          selectedObjectId: null,
+          selectedDocumentId: null
+        });
+        return;
+      }
+      onStateChange({
+        ...state,
+        primarySection: section,
+        selectedNodeId: resolveDefaultNodeId(section, automationRecords, binding),
+        selectedObjectId: null,
+        selectedDocumentId: section === "library" ? null : state.selectedDocumentId
+      });
+    },
+    openInitializedSection: (section) => {
       onStateChange({
         ...state,
         primarySection: section,
@@ -1375,6 +1643,16 @@ export function AffairsWorkbenchProvider({
       });
     },
     selectSidebarNode: (nodeId) => {
+      if (affairsInitGuardActive) {
+        onStateChange({
+          ...state,
+          primarySection: "conversation",
+          selectedNodeId: resolveDefaultNodeId("conversation", automationRecords, binding),
+          selectedObjectId: null,
+          selectedDocumentId: null
+        });
+        return;
+      }
       if (activeSection === "library") {
         if (nodeId.startsWith("library:folder:")) {
           onStateChange({
@@ -1512,6 +1790,12 @@ export function AffairsWorkbenchProvider({
         toolbarExpanded: !state.toolbarExpanded
       });
     },
+    initializeButlerProfile: async (payload) => {
+      await butlerStore.initializeProfile(payload);
+    },
+    reloadButlerProfile: async () => {
+      await butlerStore.initialize();
+    },
     openLibraryViewer: (record) => {
       setViewerState({
         filePath: record.filePath,
@@ -1582,6 +1866,8 @@ export function AffairsWorkbenchProvider({
     documentTagDetails,
     folderTagDetails,
     folderTagTaskMonitor,
+    fullTagRecomputeTaskMonitor,
+    tagRecoveryStatus,
     reloadTagManagement,
     selectManagedTag: async (tagId) => {
       if (!tagId) {
@@ -1599,7 +1885,7 @@ export function AffairsWorkbenchProvider({
         : await createAffairsTag(workspaceId, input);
       setSelectedManagedTag(saved);
       await reloadTagManagement();
-      await syncLibrarySnapshotAfterManagedTagSave(previousPath, saved.path);
+      void syncLibrarySnapshotAfterManagedTagSave(previousPath, saved.path);
       return saved;
     },
     deleteManagedTag: async (tagId) => {
@@ -1611,6 +1897,14 @@ export function AffairsWorkbenchProvider({
         deletedTagIds: result.deletedTagIds,
         deletedPaths: result.deletedPaths,
       };
+    },
+    requestFullTagRecompute: async () => {
+      const result = await requestAffairsTagRecoveryRecompute(workspaceId);
+      setFullTagRecomputeTaskMonitor({
+        taskId: result.taskId,
+        snapshot: null,
+      });
+      return result;
     },
     saveDocumentTagSelection: async (documentId, tagIds, createTagPaths = []) => {
       if (createTagPaths.length > 0) {
@@ -1624,7 +1918,14 @@ export function AffairsWorkbenchProvider({
       setDocumentTagDetails(await getAffairsDocumentTagDetails(workspaceId, documentId));
       await refreshLibraryNow();
     },
-    saveFolderTagSelection: async (folderPath, tagIds, createTagPaths = []) => {
+    saveFolderTagSelection: async (folderPath, tagIds, createTagPaths = [], previousTagIds = []) => {
+      const operation = resolveFolderTagTaskOperation(previousTagIds, tagIds);
+      setFolderTagTaskMonitor({
+        folderPath,
+        taskId: `pending:${folderPath}:${Date.now()}`,
+        snapshot: createOptimisticFolderTagTaskSnapshot(folderPath, operation),
+        operation,
+      });
       const result = createTagPaths.length > 0
         ? await saveAffairsFolderTagsWithCreate(workspaceId, { folderPath, tagIds, createTagPaths })
         : await saveAffairsFolderTags(workspaceId, { folderPath, tagIds });
@@ -1633,6 +1934,7 @@ export function AffairsWorkbenchProvider({
           folderPath: result.target.folderPath,
           taskId: result.refreshTask.taskId,
           snapshot: null,
+          operation,
         });
       }
       if (createTagPaths.length > 0) {
@@ -1640,8 +1942,44 @@ export function AffairsWorkbenchProvider({
       }
       setFolderTagDetails(await getAffairsFolderTagDetails(workspaceId, folderPath));
       await refreshLibraryNow();
+    },
+    conversationCreateModalOpen,
+    openConversationCreateModal: () => setConversationCreateModalOpen(true),
+    closeConversationCreateModal: () => setConversationCreateModalOpen(false),
+    selectedConversationDraft,
+    selectConversationDraft: (draft) => {
+      setConversationRuntimeSeed(null);
+      setSelectedConversationDraft(draft);
+      onStateChange({
+        ...state,
+        primarySection: "conversation",
+        selectedNodeId: buildAffairsConversationDraftNodeId(draft),
+        selectedObjectId: null,
+        selectedDocumentId: null
+      });
+    },
+    selectedConversationSession,
+    conversationRuntimeSeed,
+    activateConversationSession: (input) => {
+      setConversationRuntimeSeed({
+        kind: input.kind,
+        session: input.session,
+        bootstrapMessages: input.bootstrapMessages
+      });
+      setSelectedConversationSession({
+        kind: input.kind,
+        sessionId: input.session.sessionId
+      });
+      onStateChange({
+        ...state,
+        primarySection: "conversation",
+        selectedNodeId: buildAffairsConversationSessionNodeId(input.kind, input.session.sessionId),
+        selectedObjectId: null,
+        selectedDocumentId: null
+      });
     }
   }), [
+    affairsInitGuardActive,
     activeSection,
     assistantContext,
     automationRecords,
@@ -1656,7 +1994,9 @@ export function AffairsWorkbenchProvider({
     filteredDocuments,
     filteredTodoRecords,
     folderRecords,
+    conversationCreateModalOpen,
     indexStatus,
+    onStateChange,
     currentDirectoryStatus,
     libraryDocumentPage,
     libraryDocumentsLoading,
@@ -1666,8 +2006,12 @@ export function AffairsWorkbenchProvider({
     loadMoreLibraryDocuments,
     loading,
     managedTags,
+    initGuard,
     onStateChange,
     selectedManagedTag,
+    selectedConversationDraft,
+    selectedConversationSession,
+    conversationRuntimeSeed,
     selectedObject,
     sidebarNodes,
     selectedTagPaths,
@@ -1678,6 +2022,8 @@ export function AffairsWorkbenchProvider({
     documentTagDetails,
     folderTagDetails,
     folderTagTaskMonitor,
+    fullTagRecomputeTaskMonitor,
+    tagRecoveryStatus,
     refreshLibraryNow,
     viewerState,
     showToast,
@@ -1688,6 +2034,7 @@ export function AffairsWorkbenchProvider({
   return (
     <AffairsWorkbenchContext.Provider value={contextValue}>
       {children}
+      <AffairsConversationCreateModal />
       <AffairsLibraryFileViewerModal
         workspaceId={workspaceId}
         viewerState={viewerState}
@@ -1698,7 +2045,8 @@ export function AffairsWorkbenchProvider({
 }
 
 export function AffairsSectionMenu() {
-  const { activeSection, selectSection } = useAffairsWorkbenchInternal();
+  const { activeSection, initGuard, selectSection } = useAffairsWorkbenchInternal();
+  const guardActive = initGuard.loading || initGuard.unavailable || !initGuard.initialized;
 
   return (
     <div className="workbench-nav-code-entries" role="tablist" aria-label={t("shell.affairsSidebarMenuLabel")}>
@@ -1707,6 +2055,8 @@ export function AffairsSectionMenu() {
         className={activeSection === "library" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "library"}
+        aria-disabled={guardActive}
+        disabled={guardActive}
         onClick={() => selectSection("library")}
       >
         <AffairsLibraryIcon />
@@ -1727,6 +2077,8 @@ export function AffairsSectionMenu() {
         className={activeSection === "todo" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "todo"}
+        aria-disabled={guardActive}
+        disabled={guardActive}
         onClick={() => selectSection("todo")}
       >
         <AffairsTodoIcon />
@@ -1737,6 +2089,8 @@ export function AffairsSectionMenu() {
         className={activeSection === "automation" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "automation"}
+        aria-disabled={guardActive}
+        disabled={guardActive}
         onClick={() => selectSection("automation")}
       >
         <AffairsAutomationIcon />
@@ -1750,6 +2104,8 @@ export function AffairsSidebarPanel() {
   const {
     activeSection,
     binding,
+    initGuard,
+    openConversationCreateModal,
     openTagManagement,
     documentRecords,
     favoriteEntries,
@@ -1768,6 +2124,72 @@ export function AffairsSidebarPanel() {
     error,
     libraryDocumentTotal
   } = useAffairsWorkbenchInternal();
+  if (initGuard.loading) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
+            <p>{t("shell.affairsConnectionCheckingDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-sidebar-empty">{t("shell.affairsConnectionCheckingSidebarEmpty")}</div>
+      </section>
+    );
+  }
+
+  if (initGuard.unavailable) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
+            <p>{t("shell.affairsHostUnavailableDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-sidebar-empty">{t("shell.affairsHostUnavailableSidebarEmpty")}</div>
+      </section>
+    );
+  }
+
+  if (!initGuard.initialized) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
+            <p>{t("shell.affairsInitRouteGuardHint")}</p>
+          </div>
+        </div>
+        <div className="affairs-sidebar-empty">{t("shell.affairsInitRouteGuardSidebarEmpty")}</div>
+      </section>
+    );
+  }
+
+  if (activeSection === "conversation") {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
+            <p>{t("shell.affairsConversationSidebarDescription")}</p>
+          </div>
+          <AffairsConversationCreateButton compact onClick={openConversationCreateModal} />
+        </div>
+        <div className="affairs-sidebar-groups" role="list">
+          <section className="affairs-sidebar-group affairs-sidebar-group-plain">
+            <header className="affairs-sidebar-group-header">
+              <span>{t("shell.affairsConversationSelectedDraftSectionTitle")}</span>
+            </header>
+            <AffairsConversationDraftPreview compact />
+          </section>
+          <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
+            {t("shell.affairsConversationCreateHint")}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   if (activeSection !== "library") {
     const groupedSidebarNodes = groupSidebarNodes(activeSection, sidebarNodes);
@@ -1828,6 +2250,26 @@ export function AffairsSidebarPanel() {
     );
   }
 
+  return <AffairsLibrarySidebarContent />;
+}
+
+function AffairsLibrarySidebarContent() {
+  const {
+    binding,
+    documentRecords,
+    favoriteEntries,
+    folderRecords,
+    indexStatus,
+    libraryTagFacetCounts,
+    loading,
+    error,
+    openTagManagement,
+    selectSidebarNode,
+    selectedTagPaths,
+    state,
+    tagRecords,
+    toggleFavorite
+  } = useAffairsWorkbenchInternal();
   const favoriteFolderItems = favoriteEntries.filter((item) => item.kind === "folder");
   const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag" && isVisibleTagPath(item.path));
   const [tagTreeState, setTagTreeState] = useState<StoredAffairsTagTreeState>(() => readStoredAffairsTagTreeState(state.workspaceId));
@@ -1854,10 +2296,7 @@ export function AffairsSidebarPanel() {
   }, [state.workspaceId]);
 
   useEffect(() => {
-    if (state.browseMode !== "tag") {
-      return;
-    }
-    if (selectedTagPaths.length === 0) {
+    if (state.browseMode !== "tag" || selectedTagPaths.length === 0) {
       return;
     }
     setTagTreeState((previous) => {
@@ -1880,7 +2319,7 @@ export function AffairsSidebarPanel() {
       }
       return { ...previous, expandedPaths: nextPaths, expandedOverflowPaths: nextOverflowPaths };
     });
-  }, [selectedTagPaths, state.browseMode, tagTree, visibleTagTree]);
+  }, [selectedTagPaths, state.browseMode, visibleTagTree]);
 
   useEffect(() => {
     if (state.browseMode !== "tag" || selectedTagPaths.length === 0) {
@@ -2060,9 +2499,9 @@ export function AffairsSidebarPanel() {
                       {expandedOverflowPaths.includes(TAG_TREE_ROOT_OVERFLOW_KEY) ? "▴" : "▾"}
                     </span>
                     <span className="affairs-tag-tree-more-label">
-                    {expandedOverflowPaths.includes(TAG_TREE_ROOT_OVERFLOW_KEY)
-                      ? t("shell.affairsLibraryTagTreeShowLess")
-                      : t("shell.affairsLibraryTagTreeShowMore")}
+                      {expandedOverflowPaths.includes(TAG_TREE_ROOT_OVERFLOW_KEY)
+                        ? t("shell.affairsLibraryTagTreeShowLess")
+                        : t("shell.affairsLibraryTagTreeShowMore")}
                     </span>
                   </button>
                 ) : null}
@@ -2078,46 +2517,672 @@ export function AffairsSidebarPanel() {
   );
 }
 
+function AffairsConversationCreateButton({
+  compact = false,
+  onClick
+}: {
+  compact?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={compact
+        ? "secondary-button affairs-conversation-create-trigger icon-only"
+        : "secondary-button affairs-conversation-create-trigger"}
+      aria-label={t("shell.affairsConversationCreateAction")}
+      title={t("shell.affairsConversationCreateAction")}
+      onClick={onClick}
+    >
+      <AffairsConversationPlusIcon />
+      {compact ? null : <span>{t("shell.affairsConversationCreateAction")}</span>}
+    </button>
+  );
+}
+
+function AffairsConversationPlusIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M10 4.25V15.75M4.25 10H15.75"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AffairsConversationDraftPreview({ compact = false }: { compact?: boolean }) {
+  const { selectedConversationDraft } = useAffairsWorkbenchInternal();
+
+  if (!selectedConversationDraft) {
+    return (
+      <div className={compact ? "affairs-conversation-draft-preview compact" : "affairs-conversation-draft-preview"}>
+        <strong>{t("shell.affairsConversationNoDraftTitle")}</strong>
+        <p>{t("shell.affairsConversationNoDraftDescription")}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={compact ? "affairs-conversation-draft-preview compact" : "affairs-conversation-draft-preview"}>
+      <div className="affairs-conversation-option-topline">
+        <span className="affairs-inline-pill subtle">
+          {resolveAffairsConversationKindLabel(selectedConversationDraft.kind)}
+        </span>
+        <span className="affairs-inline-pill">
+          {resolveAffairsConversationProviderLabel(selectedConversationDraft.provider)}
+        </span>
+      </div>
+      <strong>{t("shell.affairsConversationSelectedDraftTitle")}</strong>
+      <p>{buildAffairsConversationDraftSummary(selectedConversationDraft)}</p>
+    </div>
+  );
+}
+
+function AffairsConversationCreateProviderSection({
+  kind,
+  title,
+  description,
+  providers
+}: {
+  kind: AffairsConversationKind;
+  title: string;
+  description: string;
+  providers: ProviderId[];
+}) {
+  const { workspaceId, closeConversationCreateModal, selectConversationDraft } = useAffairsWorkbenchInternal();
+
+  return (
+    <section className="create-session-modal-section affairs-conversation-create-modal-section">
+      <div className="create-session-modal-section-header">
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
+      <SessionProviderPicker
+        workspaceId={workspaceId}
+        providers={providers}
+        onSelect={(provider) => {
+          selectConversationDraft({ kind, provider });
+          closeConversationCreateModal();
+        }}
+      />
+    </section>
+  );
+}
+
+function AffairsConversationCreateModal() {
+  const {
+    conversationCreateModalOpen,
+    closeConversationCreateModal,
+    workspaceName
+  } = useAffairsWorkbenchInternal();
+
+  return (
+    <WorkbenchModal
+      open={conversationCreateModalOpen}
+      title={t("shell.createSessionModalTitle")}
+      description={workspaceName?.trim()
+        ? t("shell.affairsConversationCreateModalDescriptionWithWorkspace", { workspace: workspaceName.trim() })
+        : t("shell.affairsConversationCreateModalDescription")}
+      className="workbench-create-session-modal affairs-conversation-create-modal"
+      onClose={closeConversationCreateModal}
+    >
+      <AffairsConversationCreateProviderSection
+        kind="lightweight"
+        title={t("shell.affairsConversationLightweightTitle")}
+        description={t("shell.affairsConversationLightweightDescription")}
+        providers={AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS}
+      />
+      <AffairsConversationCreateProviderSection
+        kind="agent"
+        title={t("shell.affairsConversationAssistantTitle")}
+        description={t("shell.affairsConversationAssistantDescription")}
+        providers={AFFAIRS_ASSISTANT_PROVIDER_IDS}
+      />
+    </WorkbenchModal>
+  );
+}
+
 function AffairsConversationEmptyState() {
+  const { openConversationCreateModal, selectedConversationDraft } = useAffairsWorkbenchInternal();
+  const guideItems = [
+    {
+      title: t("shell.affairsConversationEmptyCreateTitle"),
+      body: t("shell.affairsConversationEmptyCreateBody")
+    },
+    selectedConversationDraft
+      ? {
+          title: t("shell.affairsConversationEmptySelectedTitle"),
+          body: buildAffairsConversationDraftSummary(selectedConversationDraft)
+        }
+      : {
+          title: t("shell.affairsConversationEmptyModeTitle"),
+          body: t("shell.affairsConversationEmptyModeBody")
+        },
+    {
+      title: t("shell.affairsConversationEmptyCompanionTitle"),
+      body: t("shell.affairsConversationEmptyCompanionBody")
+    }
+  ] as const;
+
+  return (
+    <div className="affairs-conversation-empty-state">
+      <section className="workbench-empty-guide surface-card affairs-conversation-empty-guide">
+        <p className="workbench-empty-eyebrow">{t("shell.affairsConversationEmptyEyebrow")}</p>
+        <div className="workbench-empty-main affairs-conversation-empty-main">
+          <div className="workbench-empty-copy affairs-conversation-empty-copy">
+            <h1>{t("shell.affairsConversationStageTitle")}</h1>
+            <p className="workbench-empty-body">{t("shell.affairsConversationEmptyBody")}</p>
+            <div className="affairs-conversation-empty-actions">
+              <AffairsConversationCreateButton onClick={openConversationCreateModal} />
+            </div>
+          </div>
+        </div>
+        <ol className="workbench-empty-steps affairs-conversation-empty-steps">
+          {guideItems.map((item, index) => (
+            <li key={item.title} className="workbench-empty-step">
+              <span className="workbench-empty-step-index">{index + 1}</span>
+              <div className="workbench-empty-step-copy">
+                <h2>{item.title}</h2>
+                <p>{item.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <p className="workbench-empty-tip">{t("shell.affairsConversationEmptyTip")}</p>
+      </section>
+    </div>
+  );
+}
+
+function AffairsConnectionCheckingState() {
   return (
     <div className="affairs-conversation-empty-state">
       <header className="affairs-conversation-empty-header">
-        <span className="affairs-inline-pill">{t("shell.affairsConversationEntryBadge")}</span>
-        <h2>{t("shell.affairsConversationStageTitle")}</h2>
-        <p>{t("shell.affairsConversationEmptyDescription")}</p>
+        <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+        <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
+        <p>{t("shell.affairsConnectionCheckingDescription")}</p>
+      </header>
+    </div>
+  );
+}
+
+function AffairsLightweightConversationDraftState(input: {
+  workspaceId: string;
+  draft: AffairsConversationDraftSelection;
+}) {
+  const { activateConversationSession } = useAffairsWorkbenchInternal();
+  const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
+  const [sending, setSending] = useState(false);
+  const fallbackCapabilities = useMemo(
+    () => createDraftCapabilities(input.draft.provider),
+    [input.draft.provider]
+  );
+  const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
+  const session = useMemo(
+    () => createAffairsConversationDraftSessionSummary(input.workspaceId, input.draft),
+    [input.draft, input.workspaceId]
+  );
+
+  useEffect(() => {
+    setCapabilities(fallbackCapabilities);
+    let disposed = false;
+
+    void getProviderCapabilities(input.draft.provider, input.workspaceId)
+      .then((resolvedCapabilities) => {
+        if (!disposed) {
+          setCapabilities(resolvedCapabilities);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+    };
+  }, [fallbackCapabilities, input.draft.provider, input.workspaceId]);
+
+  return (
+    <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
+      <div className="conversation-main affairs-conversation-main">
+        <SessionHeader session={session} />
+        <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
+          <div className="message-list affairs-conversation-message-list">
+            <MessageTimeline
+              sessionId={session.sessionId}
+              sessionSummary={session}
+              workspaceId={session.workspaceId}
+              workspacePath={null}
+              items={buildConversationTimelineSourceItems({ messages: draftMessages })}
+              historyState="ready"
+              provider={input.draft.provider}
+              onRetryMessage={() => {}}
+            />
+          </div>
+        </div>
+        <ComposerPanel
+          capabilities={capabilities}
+          draftStorageId={buildAffairsConversationDraftNodeId(input.draft)}
+          workspaceId={input.workspaceId}
+          contextUsage={null}
+          taskProvider={input.draft.provider}
+          taskMessages={draftMessages}
+          isSubmitting={sending}
+          isRunning={false}
+          onSend={async (content, options) => {
+            const clientRequestId = createAffairsConversationClientRequestId();
+            setDraftMessages((current) => [
+              ...current,
+              createPendingMessage(
+                session.sessionId,
+                content,
+                clientRequestId,
+                options?.attachmentMeta ?? [],
+                options?.attachments ?? []
+              )
+            ]);
+            setSending(true);
+
+            try {
+              const created = await startLiveSession({
+                workspaceId: input.workspaceId,
+                provider: input.draft.provider,
+                content,
+                clientRequestId,
+                sessionVisibility: "affairs_lightweight",
+                model: options?.model ?? null,
+                reasoningLevel: options?.reasoningLevel ?? null,
+                permissionMode: getDefaultSessionPermissionMode(),
+                attachments: options?.attachments ?? [],
+                providerConfigMode: options?.providerConfigMode ?? "global-default",
+                providerPresetId: options?.providerPresetId ?? null
+              });
+
+              const liveSession = createAffairsConversationStartedSessionSummary(
+                created,
+                input.workspaceId,
+                input.draft.provider
+              );
+              activateConversationSession({
+                kind: "lightweight",
+                session: liveSession,
+                bootstrapMessages: [
+                  createAffairsConversationBootstrapMessage({
+                    created,
+                    provider: input.draft.provider,
+                    content,
+                    clientRequestId,
+                    attachments: options?.attachmentMeta ?? []
+                  })
+                ]
+              });
+            } catch (error) {
+              setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
+              throw error;
+            } finally {
+              setSending(false);
+            }
+          }}
+        />
+      </div>
+    </main>
+  );
+}
+
+function AffairsLightweightConversationLiveState(input: {
+  sessionId: string;
+  runtimeSeed: AffairsConversationRuntimeSeed;
+}) {
+  const runtime = useLiveSessionController({
+    sessionId: input.sessionId,
+    externalSession:
+      input.runtimeSeed?.session.sessionId === input.sessionId
+        ? input.runtimeSeed.session
+        : null,
+    bootstrapMessages:
+      input.runtimeSeed?.session.sessionId === input.sessionId
+        ? input.runtimeSeed.bootstrapMessages
+        : []
+  });
+  const session = runtime.session;
+
+  return (
+    <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
+      <div className="conversation-main affairs-conversation-main">
+        <SessionHeader session={session} />
+        <PermissionRequestList
+          requests={runtime.permissionRequests}
+          replyingRequestId={runtime.replyingPermissionRequestId}
+          onReply={runtime.replyPermissionRequest}
+        />
+        <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
+          <div className="message-list affairs-conversation-message-list">
+            <MessageTimeline
+              sessionId={input.sessionId}
+              sessionSummary={session}
+              workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
+              workspacePath={null}
+              items={runtime.timelineItems}
+              historyState={runtime.historyState}
+              loadingOlderMessages={runtime.loadingOlderMessages}
+              hasOlderMessages={runtime.hasOlderMessages}
+              provider={session?.provider ?? input.runtimeSeed?.session.provider ?? null}
+              interruptedSource={runtime.runtimeInterruptSource}
+              onLoadOlderMessages={runtime.loadOlderMessages}
+              onRetryMessage={runtime.retryMessage}
+            />
+          </div>
+        </div>
+        <ComposerPanel
+          capabilities={runtime.capabilities}
+          draftStorageId={input.sessionId}
+          workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
+          initialProviderConfigMode={
+            session?.providerConfigMode
+            ?? input.runtimeSeed?.session.providerConfigMode
+            ?? "global-default"
+          }
+          initialProviderPresetId={
+            session?.providerPresetId
+            ?? input.runtimeSeed?.session.providerPresetId
+            ?? null
+          }
+          hasActiveRun={runtime.composerHasActiveRun}
+          canInterrupt={runtime.composerCanInterrupt}
+          contextUsage={runtime.contextUsage}
+          taskProvider={session?.provider ?? input.runtimeSeed?.session.provider ?? null}
+          taskMessages={runtime.messages}
+          hasPendingQueuedMessages={runtime.hasPendingQueuedMessages}
+          isSubmitting={runtime.sending}
+          isRunning={runtime.composerIsRunning}
+          onInterrupt={runtime.interrupt}
+          onSend={runtime.send}
+          onQueueSend={runtime.queue}
+        />
+      </div>
+    </main>
+  );
+}
+
+function AffairsHostUnavailableState({
+  errorMessage,
+  retrying,
+  onRetry
+}: {
+  errorMessage: string | null;
+  retrying: boolean;
+  onRetry: () => Promise<void>;
+}) {
+  return (
+    <div className="affairs-conversation-empty-state">
+      <header className="affairs-conversation-empty-header">
+        <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+        <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
+        <p>{t("shell.affairsHostUnavailableDescription")}</p>
       </header>
 
-      <section className="affairs-conversation-empty-section">
-        <div className="affairs-conversation-empty-section-header">
-          <strong>{t("shell.affairsConversationModePickerTitle")}</strong>
-          <p>{t("shell.affairsConversationModePickerDescription")}</p>
-        </div>
-        <div className="affairs-conversation-option-grid" role="list" aria-label={t("shell.affairsConversationModePickerTitle")}>
-          {AFFAIRS_CONVERSATION_DRAFT_OPTIONS.map((option) => (
-            <article key={option.id} className="affairs-conversation-option-card" role="listitem">
-              <div className="affairs-conversation-option-topline">
-                <span className="affairs-inline-pill subtle">{resolveAffairsConversationKindLabel(option.kind)}</span>
-                <span className="affairs-inline-pill">{resolveAffairsConversationProviderLabel(option.provider)}</span>
-              </div>
-              <strong>{buildAffairsConversationOptionLabel(option)}</strong>
-              <p>{buildAffairsConversationOptionSummary(option)}</p>
-            </article>
-          ))}
-        </div>
+      <section className="affairs-conversation-empty-section affairs-conversation-create-section">
+        <button
+          type="button"
+          className="secondary-button affairs-conversation-create-trigger"
+          onClick={() => {
+            void onRetry();
+          }}
+          disabled={retrying}
+        >
+          <span>{retrying ? t("common.loading") : t("shell.affairsHostUnavailableRetryAction")}</span>
+        </button>
+        <p>{t("shell.affairsHostUnavailableRetryHint")}</p>
       </section>
 
-      <section className="affairs-conversation-empty-section">
-        <div className="affairs-conversation-empty-section-header">
-          <strong>{t("shell.affairsConversationBoundaryTitle")}</strong>
-          <p>{t("shell.affairsConversationBoundaryDescription")}</p>
-        </div>
-        <ul className="affairs-conversation-boundary-list">
-          <li>{t("shell.affairsConversationBoundaryLightweight")}</li>
-          <li>{t("shell.affairsConversationBoundaryAgent")}</li>
-          <li>{t("shell.affairsConversationBoundaryProvider")}</li>
-        </ul>
-      </section>
+      {errorMessage?.trim() ? (
+        <section className="affairs-conversation-empty-section">
+          <div className="affairs-conversation-empty-section-header">
+            <strong>{t("shell.affairsHostUnavailableErrorTitle")}</strong>
+            <p>{errorMessage.trim()}</p>
+          </div>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function resolveAffairsInitAvatar(input: {
+  displayName: string;
+  providerId: "codex" | "claude-code";
+  tone: "direct" | "steady" | "friendly";
+}): string {
+  const pool =
+    input.tone === "friendly"
+      ? ["🐼", "🦊", "🐶", "🌼"]
+      : input.tone === "steady"
+        ? ["🐢", "🪨", "🌲", "🧭"]
+        : input.providerId === "claude-code"
+          ? ["🦉", "📚", "🔍", "🧪"]
+          : ["🧠", "🤖", "🛠️", "⚡"];
+  const seed = `${input.displayName.trim()}:${input.providerId}:${input.tone}`;
+  if (!seed) {
+    return pool[0]!;
+  }
+  const total = Array.from(seed).reduce((sum, char) => sum + (char.codePointAt(0) ?? 0), 0);
+  return pool[total % pool.length]!;
+}
+
+const AFFAIRS_INIT_REPORT_PRIORITY_VALUES: Record<ButlerReportPriorityPresetId, string[]> = {
+  "risk-first": ["risk", "blocker", "verification"],
+  "blocker-first": ["blocker", "risk", "verification"],
+  "verification-first": ["verification", "risk", "blocker"],
+  "progress-first": ["progress", "risk", "blocker"]
+};
+
+function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) {
+  const {
+    initGuard,
+    initializeButlerProfile,
+    openInitializedSection,
+    reloadButlerProfile,
+    selectedConversationDraft,
+    selectedConversationSession,
+    conversationRuntimeSeed
+  } = useAffairsWorkbenchInternal();
+  const initialized = initGuard.initialized;
+  const loading = initGuard.loading;
+  const unavailable = initGuard.unavailable;
+  const profile = initGuard.profile;
+  const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_BUTLER_INIT_FORM_STATE);
+  const [initializing, setInitializing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [pendingOpenLibrary, setPendingOpenLibrary] = useState(false);
+  const [libraryInit, setLibraryInit] = useState({
+    enabled: true,
+    rootDir: ""
+  });
+  const { showToast } = useToast();
+  const butlerDisplayName =
+    profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
+  const butlerAvatar = useMemo(
+    () =>
+      resolveAffairsInitAvatar({
+        displayName: butlerDisplayName,
+        providerId: profile?.providerId ?? initForm.providerId,
+        tone: profile?.personaTone ?? initForm.personaTone
+      }),
+    [
+      butlerDisplayName,
+      initForm.personaTone,
+      initForm.providerId,
+      profile?.personaTone,
+      profile?.providerId
+    ]
+  );
+  useEffect(() => {
+    if (initialized) {
+      return;
+    }
+    void getAffairsLibraryBinding(workspaceId)
+      .then((binding) => {
+        setLibraryInit({
+          enabled: binding?.enabled ?? true,
+          rootDir: binding?.rootDir ?? ""
+        });
+      })
+      .catch(() => undefined);
+  }, [initialized, workspaceId]);
+
+  useEffect(() => {
+    if (!initialized || !pendingOpenLibrary) {
+      return;
+    }
+
+    openInitializedSection("library");
+    setPendingOpenLibrary(false);
+  }, [initialized, openInitializedSection, pendingOpenLibrary]);
+
+  if (initialized) {
+    if (selectedConversationSession?.kind === "lightweight") {
+      return (
+        <AffairsLightweightConversationLiveState
+          sessionId={selectedConversationSession.sessionId}
+          runtimeSeed={
+            conversationRuntimeSeed?.kind === "lightweight"
+            && conversationRuntimeSeed.session.sessionId === selectedConversationSession.sessionId
+              ? conversationRuntimeSeed
+              : null
+          }
+        />
+      );
+    }
+
+    if (selectedConversationDraft?.kind === "lightweight") {
+      return (
+        <AffairsLightweightConversationDraftState
+          workspaceId={workspaceId}
+          draft={selectedConversationDraft}
+        />
+      );
+    }
+
+    return <AffairsConversationEmptyState />;
+  }
+
+  if (loading) {
+    return (
+      <main className="workbench-page butler-page-shell butler-init-shell affairs-conversation-page-shell">
+        <AffairsConnectionCheckingState />
+      </main>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <main className="workbench-page butler-page-shell butler-init-shell affairs-conversation-page-shell">
+        <AffairsHostUnavailableState
+          errorMessage={initGuard.errorMessage}
+          retrying={retrying}
+          onRetry={async () => {
+            setRetrying(true);
+            try {
+              await reloadButlerProfile();
+            } finally {
+              setRetrying(false);
+            }
+          }}
+        />
+      </main>
+    );
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const displayName = initForm.displayName.trim();
+
+    if (!displayName) {
+      showToast({
+        title: t("shell.butlerInitNameRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
+    if (libraryInit.enabled && !libraryInit.rootDir.trim()) {
+      showToast({
+        title: t("shell.affairsInitLibraryPathRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
+    const payload: ButlerProfilePayload = {
+      displayName,
+      providerId: initForm.providerId,
+      agentsMode: initForm.agentsMode,
+      persona: {
+        tone: initForm.personaTone,
+        language: initForm.personaLanguage,
+        summaryStyle: initForm.personaSummaryStyle
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: initForm.focusRiskPreference,
+        reportPriority: AFFAIRS_INIT_REPORT_PRIORITY_VALUES[initForm.reportPriorityPreset],
+        summaryDebounceSeconds: 300
+      }
+    };
+
+    setInitializing(true);
+
+    try {
+      await initializeButlerProfile(payload);
+      if (libraryInit.rootDir.trim()) {
+        await saveAffairsLibraryBinding(workspaceId, { rootDir: libraryInit.rootDir.trim() });
+        await setAffairsLibraryEnabled(workspaceId, { enabled: libraryInit.enabled });
+      }
+      setPendingOpenLibrary(true);
+      showToast({
+        title: t("shell.affairsInitSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: t("shell.affairsInitFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setInitializing(false);
+    }
+  }
+
+  return (
+    <main className="workbench-page butler-page-shell butler-init-shell affairs-conversation-page-shell">
+      <section className="affairs-init-panel">
+        <header className="affairs-init-panel-header">
+          <div>
+            <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+            <h2>{t("shell.butlerInitTitle")}</h2>
+            <p>{t("shell.affairsInitRouteGuardHint")}</p>
+          </div>
+        </header>
+        <ButlerInitForm
+          form={initForm}
+          onChange={setInitForm}
+          submitting={loading || initializing}
+          submitLabel={
+            loading || initializing ? t("shell.butlerInitSubmitting") : t("shell.affairsInitSubmit")
+          }
+          previewName={butlerDisplayName}
+          previewAvatar={butlerAvatar}
+          previewRuleLabel={t("shell.affairsInitPreviewRuleLabel")}
+          affairsLibrary={{
+            value: libraryInit,
+            onChange: setLibraryInit
+          }}
+          onSubmit={handleSubmit}
+        />
+      </section>
+    </main>
   );
 }
 
@@ -2899,23 +3964,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   };
 
   if (activeSection === "conversation") {
-    return (
-      <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
-        <div className="conversation-main affairs-conversation-main">
-          <header className="conversation-header affairs-conversation-header">
-            <div className="conversation-header-main">
-              <h1>{t("shell.affairsConversationStageTitle")}</h1>
-              <p>{t("shell.affairsConversationSummary")}</p>
-            </div>
-          </header>
-          <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
-            <div className="message-list affairs-conversation-message-list">
-              <AffairsConversationEmptyState />
-            </div>
-          </div>
-        </div>
-      </main>
-    );
+    return <AffairsConversationInitState workspaceId={workspaceId} />;
   }
 
   return (
@@ -3336,7 +4385,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 emptyText={t("shell.affairsFolderTagsEmpty")}
                 inputLabel={t("shell.affairsFolderTagAddLabel")}
                 suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(pendingTagAssignmentTarget.folderPath, nextTagIds, createTagPaths)}
+                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(
+                  pendingTagAssignmentTarget.folderPath,
+                  nextTagIds,
+                  createTagPaths,
+                  pendingTagAssignmentTarget.existingTagIds,
+                )}
                 onSaved={() => setPendingTagAssignmentTarget(null)}
               />
             )}
@@ -3375,7 +4429,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 emptyText={t("shell.affairsFolderTagsEmpty")}
                 inputLabel={t("shell.affairsFolderTagAddLabel")}
                 suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(pendingTagAssignmentTarget.folderPath, nextTagIds, createTagPaths)}
+                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(
+                  pendingTagAssignmentTarget.folderPath,
+                  nextTagIds,
+                  createTagPaths,
+                  pendingTagAssignmentTarget.existingTagIds,
+                )}
                 onSaved={() => setPendingTagAssignmentTarget(null)}
               />
             )}
@@ -3398,6 +4457,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     filteredDocuments,
     filteredTodoRecords,
     folderRecords,
+    initGuard,
     indexStatus,
     libraryConfig,
     selectAuxiliaryTab,
@@ -3408,6 +4468,33 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     selectedTagPaths
   } = useAffairsWorkbenchInternal();
   const [viewerReady, setViewerReady] = useState(false);
+  if (initGuard.loading) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
+            <p>{t("shell.affairsConnectionCheckingDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-stage-empty">{t("shell.affairsConnectionCheckingAuxiliaryEmpty")}</div>
+      </section>
+    );
+  }
+  if (initGuard.unavailable) {
+    return (
+      <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
+        <div className="affairs-sidebar-block-header">
+          <div>
+            <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
+            <p>{t("shell.affairsHostUnavailableDescription")}</p>
+          </div>
+        </div>
+        <div className="affairs-stage-empty">{t("shell.affairsHostUnavailableAuxiliaryEmpty")}</div>
+      </section>
+    );
+  }
+  const guardActive = !initGuard.initialized;
 
   const selectedAutomationRuns = useMemo(() => {
     if (selectedObject.section !== "automation" || !selectedObject.record) {
@@ -3489,7 +4576,11 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
       </div>
 
       <div className="workbench-auxiliary-body" data-scrollbar-autohide="true">
-        {auxiliaryTab === "detail" ? (
+        {guardActive ? (
+          auxiliaryTab === "assistant"
+            ? <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
+            : <div className="affairs-stage-empty">{t("shell.affairsInitRouteGuardAuxiliaryEmpty")}</div>
+        ) : auxiliaryTab === "detail" ? (
           selectedObject.section === "library" ? (
             !binding ? (
               <div className="affairs-stage-empty">{t("shell.affairsAssistantBindingRequired")}</div>
@@ -3805,7 +4896,12 @@ function AffairsFolderDetailPanel({ detail }: { detail: FolderDetailState }) {
           emptyText={t("shell.affairsFolderTagsEmpty")}
           inputLabel={t("shell.affairsFolderTagAddLabel")}
           suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
-          onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(folderTagDetails?.folderPath ?? detail.path, nextTagIds, createTagPaths)}
+          onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(
+            folderTagDetails?.folderPath ?? detail.path,
+            nextTagIds,
+            createTagPaths,
+            folderTagDetails?.bindingTagIds ?? [],
+          )}
         />
       </div>
     </section>
@@ -4511,6 +5607,7 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
   const progressSummary = progress && typeof progress.current === "number" && typeof progress.total === "number"
     ? t("shell.affairsFolderTagTaskProgressCount", { current: progress.current, total: progress.total })
     : t("shell.affairsFolderTagTaskPreparing");
+  const operationLabel = resolveFolderTagTaskOperationLabel(task.operation);
 
   return (
     <>
@@ -4519,6 +5616,7 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
         type="button"
         className="affairs-folder-tag-task-trigger"
         aria-label={t("shell.affairsFolderTagTaskButtonLabel", {
+          operation: operationLabel,
           folder: folderLabel,
           status: statusLabel,
           percent: normalizedPercent,
@@ -4528,7 +5626,7 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
       >
         <span className={`affairs-folder-tag-task-dot state-${status}`} aria-hidden="true" />
         <span className="affairs-folder-tag-task-text">
-          {t("shell.affairsFolderTagTaskShortTitle")}
+          {t("shell.affairsFolderTagTaskShortTitle", { operation: operationLabel })}
         </span>
         <span className="affairs-folder-tag-task-badge">
           {status === "running" ? `${normalizedPercent}%` : statusLabel}
@@ -4546,7 +5644,7 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
       >
         <div className="affairs-folder-tag-task-popover-card">
           <div className="affairs-folder-tag-task-popover-header">
-            <strong id="affairs-folder-tag-task-popover-title">{t("shell.affairsFolderTagTaskTitle")}</strong>
+            <strong id="affairs-folder-tag-task-popover-title">{t("shell.affairsFolderTagTaskTitle", { operation: operationLabel })}</strong>
             <span>{statusLabel}</span>
           </div>
           <div className="affairs-folder-tag-task-popover-grid">
@@ -5055,6 +6153,10 @@ function normalizeSmartTagRuleMatcher(rule: EditableSmartTagRule): Record<string
         end: matcher.end?.trim() || null,
       };
     }
+    case "document_path_in_folder":
+      return {
+        folderPath: String((rule.matcher as { folderPath?: string | null }).folderPath ?? "").trim() || ".",
+      };
     default:
       return {};
   }
@@ -5069,6 +6171,8 @@ function buildDefaultMatcherForRuleType(ruleType: AffairsTagRuleDto["ruleType"])
       return { extensions: [] };
     case "modified_time_between":
       return { start: "", end: "" };
+    case "document_path_in_folder":
+      return { folderPath: "." };
     default:
       return {};
   }
@@ -5097,6 +6201,8 @@ function resolveSmartRuleTypeLabel(ruleType: AffairsTagRuleDto["ruleType"]): str
       return t("shell.affairsTagSmartRuleTypeFileExtensionIn");
     case "modified_time_between":
       return t("shell.affairsTagSmartRuleTypeModifiedTimeBetween");
+    case "document_path_in_folder":
+      return t("shell.affairsTagSmartRuleTypeDocumentPathInFolder");
     default:
       return ruleType;
   }
@@ -5132,6 +6238,9 @@ function AffairsTagManagementModal() {
     selectManagedTag,
     saveManagedTag,
     deleteManagedTag,
+    requestFullTagRecompute,
+    fullTagRecomputeTaskMonitor,
+    tagRecoveryStatus,
     reloadTagManagement,
   } = useAffairsWorkbenchInternal();
   const platform = usePlatform();
@@ -5143,6 +6252,7 @@ function AffairsTagManagementModal() {
   const [selectedBatchTagIds, setSelectedBatchTagIds] = useState<string[]>([]);
   const [batchParentId, setBatchParentId] = useState<string>("__unchanged__");
   const [batchStatus, setBatchStatus] = useState<"unchanged" | "active" | "disabled">("unchanged");
+  const [recomputeSubmitting, setRecomputeSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleManagedTags = useMemo(
@@ -5170,6 +6280,23 @@ function AffairsTagManagementModal() {
     [selectedBatchTags],
   );
   const hasBatchSelection = selectedBatchTags.length > 0;
+  const fullRecomputeSnapshot = fullTagRecomputeTaskMonitor?.snapshot ?? null;
+  const fullRecomputeStatusLabel = fullRecomputeSnapshot
+    ? resolveAffairsTaskStatusLabel(fullRecomputeSnapshot.status)
+    : t("shell.affairsTagRecoveryStatusIdle");
+  const fullRecomputeProgress = fullRecomputeSnapshot?.progress ?? null;
+  const fullRecomputePercent = Math.max(0, Math.min(100, Number(fullRecomputeProgress?.percent ?? 0)));
+  const fullRecomputeProgressCount = fullRecomputeProgress?.current !== undefined && fullRecomputeProgress?.current !== null
+    && fullRecomputeProgress?.total !== undefined && fullRecomputeProgress?.total !== null
+    ? t("shell.affairsFolderTagTaskProgressCount", { current: fullRecomputeProgress.current, total: fullRecomputeProgress.total })
+    : t("shell.affairsTagRecoveryProgressIdle");
+  const fullRecomputeTaskRunning = fullRecomputeSnapshot ? !isTerminalAffairsTaskStatus(fullRecomputeSnapshot.status) : false;
+  const recoveryBindingStats = tagRecoveryStatus?.bindingStats ?? {
+    identityBindingCount: 0,
+    legacyBindingCount: 0,
+    legacyFallbackBindingCount: 0,
+    legacyFallbackDocumentCount: 0,
+  };
 
   const resetEditor = (nextMode: TagManagementEditorMode, parentTag?: AffairsTagDetailWithRulesDto | AffairsTagNodeDto | null) => {
     setEditorMode(nextMode);
@@ -5330,6 +6457,25 @@ function AffairsTagManagementModal() {
     }
   };
 
+  const requestRecoveryRecompute = async () => {
+    setRecomputeSubmitting(true);
+    setError(null);
+    try {
+      const result = await requestFullTagRecompute();
+      showToast({
+        title: t("shell.affairsTagRecoveryAction"),
+        description: result.deduped
+          ? t("shell.affairsTagRecoveryQueuedDescription")
+          : t("shell.affairsTagRecoveryStartedDescription"),
+        tone: "success",
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagRecoveryFailed"));
+    } finally {
+      setRecomputeSubmitting(false);
+    }
+  };
+
   const content = (
     <div className="affairs-library-settings-form affairs-tag-management-shell">
       <div className="affairs-tag-management-layout">
@@ -5472,6 +6618,67 @@ function AffairsTagManagementModal() {
 
           <ModalSection
             className="affairs-tag-management-editor"
+            heading={t("shell.affairsTagRecoverySectionTitle")}
+            description={t("shell.affairsTagRecoverySectionDescription")}
+          >
+            <div className="affairs-tag-recovery-binding-grid">
+              <div className="affairs-tag-recovery-binding-card">
+                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryIdentityBindingLabel")}</span>
+                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.identityBindingCount}</strong>
+              </div>
+              <div className="affairs-tag-recovery-binding-card">
+                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryLegacyBindingLabel")}</span>
+                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.legacyBindingCount}</strong>
+              </div>
+              <div className="affairs-tag-recovery-binding-card">
+                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryLegacyFallbackLabel")}</span>
+                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.legacyFallbackBindingCount}</strong>
+              </div>
+            </div>
+            <span className="affairs-binding-hint">
+              {t("shell.affairsTagRecoveryCompatibilityHint", {
+                count: recoveryBindingStats.legacyFallbackBindingCount,
+                documents: recoveryBindingStats.legacyFallbackDocumentCount,
+              })}
+            </span>
+            <div className="affairs-tag-recovery-status">
+              <div className="affairs-tag-recovery-status-grid">
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsTagRecoveryStatusLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">{fullRecomputeStatusLabel}</span>
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">
+                  {fullRecomputeProgress?.label ?? t("shell.affairsTagRecoveryPhaseIdle")}
+                </span>
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">{fullRecomputeProgressCount}</span>
+              </div>
+              <div className="affairs-folder-tag-task-progress-track affairs-tag-recovery-progress-track" aria-hidden="true">
+                <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${fullRecomputePercent}%` }} />
+              </div>
+              <span className="affairs-binding-hint">
+                {fullRecomputeProgress?.detail?.trim()
+                  || (fullRecomputeTaskRunning
+                    ? t("shell.affairsTagRecoveryRunningHint")
+                    : t("shell.affairsTagRecoveryHint"))}
+              </span>
+            </div>
+            <div className="affairs-tag-management-batch-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={submitting || recomputeSubmitting || fullRecomputeTaskRunning}
+                onClick={() => void requestRecoveryRecompute()}
+              >
+                {recomputeSubmitting || fullRecomputeTaskRunning ? t("shell.affairsTagRecoveryRunningAction") : t("shell.affairsTagRecoveryAction")}
+              </button>
+            </div>
+            {fullRecomputeSnapshot?.errorMessage ? (
+              <span className="affairs-binding-error">{fullRecomputeSnapshot.errorMessage}</span>
+            ) : null}
+          </ModalSection>
+
+          <ModalSection
+            className="affairs-tag-management-editor"
             heading={editorTitle}
             description={editorDescription}
           >
@@ -5533,7 +6740,7 @@ function AffairsTagManagementModal() {
                               : item));
                           }}
                         >
-                          {(["file_name_contains", "file_content_contains", "file_extension_in", "modified_time_between"] as const).map((ruleType) => (
+                          {(["file_name_contains", "file_content_contains", "file_extension_in", "modified_time_between", "document_path_in_folder"] as const).map((ruleType) => (
                             <option key={ruleType} value={ruleType}>{resolveSmartRuleTypeLabel(ruleType)}</option>
                           ))}
                         </select>
@@ -5604,6 +6811,21 @@ function AffairsTagManagementModal() {
                             />
                           </ModalField>
                         </>
+                      ) : null}
+                      {rule.ruleType === "document_path_in_folder" ? (
+                        <ModalField label={t("shell.affairsTagSmartRuleFolderPathLabel")}>
+                          <input
+                            value={String((rule.matcher as { folderPath?: string | null }).folderPath ?? ".")}
+                            disabled={submitting}
+                            placeholder={t("shell.affairsTagSmartRuleFolderPathPlaceholder")}
+                            onChange={(event) => {
+                              const nextFolderPath = event.target.value;
+                              setSmartRules((current) => current.map((item) => item.id === rule.id
+                                ? { ...item, matcher: { folderPath: nextFolderPath } }
+                                : item));
+                            }}
+                          />
+                        </ModalField>
                       ) : null}
                     </div>
                     <div className="affairs-tag-smart-rule-actions">
@@ -6853,11 +8075,93 @@ function resolveAffairsTaskPhaseLabel(phase: string | null): string {
   }
 }
 
+function resolveFolderTagTaskOperationLabel(operation: FolderTagApplyTaskMonitorState["operation"]): string {
+  switch (operation) {
+    case "attach":
+      return t("shell.affairsFolderTagTaskOperationAttach");
+    case "remove":
+      return t("shell.affairsFolderTagTaskOperationRemove");
+    default:
+      return t("shell.affairsFolderTagTaskOperationUpdate");
+  }
+}
+
+function resolveFolderTagTaskOperation(
+  currentTagIds: string[],
+  nextTagIds: string[],
+): FolderTagApplyTaskMonitorState["operation"] {
+  const currentSet = new Set(currentTagIds);
+  const nextSet = new Set(nextTagIds);
+  let added = 0;
+  let removed = 0;
+  nextSet.forEach((tagId) => {
+    if (!currentSet.has(tagId)) {
+      added += 1;
+    }
+  });
+  currentSet.forEach((tagId) => {
+    if (!nextSet.has(tagId)) {
+      removed += 1;
+    }
+  });
+  if (added > 0 && removed === 0) {
+    return "attach";
+  }
+  if (removed > 0 && added === 0) {
+    return "remove";
+  }
+  return "update";
+}
+
+function createOptimisticFolderTagTaskSnapshot(
+  folderPath: string,
+  operation: FolderTagApplyTaskMonitorState["operation"],
+): AffairsTaskSnapshotDto {
+  const now = Date.now();
+  return {
+    taskId: `pending-folder-tag-${now}`,
+    taskType: "affairs.library_tag_apply_bindings",
+    key: `pending:${folderPath}`,
+    executionLane: "helper_process",
+    status: "queued",
+    source: "affairs_tag.save_folder_bindings",
+    attempt: 0,
+    enqueuedAt: now,
+    startedAt: null,
+    finishedAt: null,
+    timeoutMs: null,
+    progress: {
+      phase: "prepare",
+      label: t("shell.affairsFolderTagTaskSubmitting", {
+        operation: resolveFolderTagTaskOperationLabel(operation),
+      }),
+      detail: t("shell.affairsFolderTagTaskSubmittingDetail"),
+      current: 0,
+      total: 1,
+      percent: 1,
+      updatedAt: now,
+    },
+  };
+}
+
 function isTerminalAffairsTaskStatus(status: AffairsTaskSnapshotDto["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timeout";
 }
 
 function areAffairsTaskSnapshotsEqual(left: AffairsTaskSnapshotDto | null, right: AffairsTaskSnapshotDto | null): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areAffairsTagRecoveryStatusEqual(
+  left: AffairsTagRecoveryStatusDto | null,
+  right: AffairsTagRecoveryStatusDto | null,
+): boolean {
   if (left === right) {
     return true;
   }
@@ -8167,29 +9471,219 @@ function resolveAffairsConversationKindLabel(kind: AffairsConversationKind) {
     : t("shell.affairsConversationKindLightweight");
 }
 
-function resolveAffairsConversationProviderLabel(provider: AffairsConversationProvider) {
-  return provider === "claude-code"
-    ? t("shell.providerClaudeCode")
-    : t("conversation.providerCodex");
+function resolveAffairsConversationProviderLabel(provider: ProviderId) {
+  return getProviderDisplayName(provider, "full");
 }
 
-function buildAffairsConversationOptionLabel(option: AffairsConversationDraftOption) {
-  return t("shell.affairsConversationOptionLabel", {
-    kind: resolveAffairsConversationKindLabel(option.kind),
-    provider: resolveAffairsConversationProviderLabel(option.provider)
-  });
+function buildAffairsConversationDraftNodeId(draft: AffairsConversationDraftSelection): string {
+  return `conversation:draft:${draft.kind}:${draft.provider}`;
 }
 
-function buildAffairsConversationOptionSummary(option: AffairsConversationDraftOption) {
-  if (option.kind === "agent") {
+function buildAffairsConversationSessionNodeId(
+  kind: AffairsConversationKind,
+  sessionId: string
+): string {
+  return `conversation:${kind}:session:${sessionId}`;
+}
+
+function parseAffairsConversationDraftSelection(nodeId: string | null | undefined): AffairsConversationDraftSelection | null {
+  const normalizedNodeId = nodeId?.trim() ?? "";
+  if (!normalizedNodeId.startsWith("conversation:draft:")) {
+    return null;
+  }
+
+  const segments = normalizedNodeId.split(":");
+  if (segments.length < 4) {
+    return null;
+  }
+
+  const kind = segments[2];
+  const provider = segments.slice(3).join(":");
+  if ((kind !== "lightweight" && kind !== "agent") || !isDraftProviderSupported(provider)) {
+    return null;
+  }
+
+  return {
+    kind,
+    provider
+  };
+}
+
+function parseAffairsConversationSessionSelection(
+  nodeId: string | null | undefined
+): AffairsConversationSessionSelection | null {
+  const normalizedNodeId = nodeId?.trim() ?? "";
+
+  if (!normalizedNodeId.startsWith("conversation:")) {
+    return null;
+  }
+
+  const segments = normalizedNodeId.split(":");
+  if (segments.length !== 4 || segments[2] !== "session") {
+    return null;
+  }
+
+  const kind = segments[1];
+  const sessionId = segments[3]?.trim() ?? "";
+  if ((kind !== "lightweight" && kind !== "agent") || !sessionId) {
+    return null;
+  }
+
+  return {
+    kind,
+    sessionId
+  };
+}
+
+function buildAffairsConversationDraftSummary(draft: AffairsConversationDraftSelection) {
+  if (draft.kind === "agent") {
     return t("shell.affairsConversationOptionSummaryAgent", {
-      provider: resolveAffairsConversationProviderLabel(option.provider)
+      provider: resolveAffairsConversationProviderLabel(draft.provider)
     });
   }
 
   return t("shell.affairsConversationOptionSummaryLightweight", {
-    provider: resolveAffairsConversationProviderLabel(option.provider)
+    provider: resolveAffairsConversationProviderLabel(draft.provider)
   });
+}
+
+function createAffairsConversationDraftSessionSummary(
+  workspaceId: string,
+  draft: AffairsConversationDraftSelection
+): SessionSummaryDto {
+  const timestamp = new Date().toISOString();
+
+  return {
+    sessionId: buildAffairsConversationDraftNodeId(draft),
+    workspaceId,
+    provider: draft.provider,
+    providerSessionId: `draft://${draft.provider}/${workspaceId}`,
+    rawStoreRef: `draft://${draft.provider}/${workspaceId}`,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    isFavorite: false,
+    title: getDraftTitle(draft.provider),
+    messageCount: 0,
+    lastMessageAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "idle",
+    activitySource: "none",
+    lastEventAt: null,
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "idle"
+  };
+}
+
+function createAffairsConversationStartedSessionSummary(
+  created: {
+    sessionId: string;
+    provider: ProviderId;
+    providerSessionId: string;
+    acceptedAt: string;
+    session?: SessionSummaryDto;
+  },
+  workspaceId: string,
+  provider: ProviderId
+): SessionSummaryDto {
+  if (created.session) {
+    return created.session;
+  }
+
+  const timestamp = created.acceptedAt?.trim() || new Date().toISOString();
+
+  return {
+    sessionId: created.sessionId,
+    workspaceId,
+    provider,
+    providerSessionId: created.providerSessionId,
+    rawStoreRef: `synthetic://${provider}/${created.sessionId}`,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    isFavorite: false,
+    title: getDraftTitle(provider),
+    messageCount: 1,
+    lastMessageAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "starting",
+    activitySource: "runtime",
+    lastEventAt: timestamp,
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "running"
+  };
+}
+
+function createAffairsConversationBootstrapMessage(input: {
+  created: {
+    sessionId: string;
+    provider: ProviderId;
+    providerSessionId: string;
+    acceptedAt: string;
+    message?: HistoryMessageDto;
+  };
+  provider: ProviderId;
+  content: string;
+  clientRequestId: string;
+  attachments: NonNullable<HistoryMessageDto["attachments"]>;
+}): HistoryMessageDto {
+  const providerSessionId =
+    input.created.message?.providerSessionId?.trim()
+    || input.created.providerSessionId.trim()
+    || `draft-bootstrap-${input.created.sessionId}`;
+  const messageId = `synthetic-user-${input.clientRequestId}`;
+  const normalizedSequence = Number.isFinite(input.created.message?.sequence)
+    ? Math.max(1, input.created.message?.sequence ?? 1)
+    : 1;
+  const timestamp =
+    input.created.message?.timestamp?.trim()
+    || input.created.acceptedAt.trim()
+    || new Date().toISOString();
+
+  return {
+    messageId,
+    provider: input.provider,
+    providerSessionId,
+    role: "user",
+    kind: "text",
+    content: input.content,
+    attachments: input.attachments,
+    timestamp,
+    sequence: normalizedSequence,
+    rawRef: `synthetic://${input.provider}/${input.created.sessionId}/${input.clientRequestId}`
+  };
+}
+
+function createAffairsConversationClientRequestId(): string {
+  const nativeCrypto = globalThis.crypto;
+
+  if (nativeCrypto && typeof nativeCrypto.randomUUID === "function") {
+    return nativeCrypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function resolveDefaultNodeId(
@@ -8199,7 +9693,7 @@ function resolveDefaultNodeId(
 ) {
   switch (section) {
     case "conversation":
-      return "conversation:draft:lightweight:codex";
+      return "conversation:home";
     case "todo":
       return "todo:all";
     case "automation":

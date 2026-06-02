@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../shared/i18n";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { clearProviderCatalogStore } from "../../conversation/capability/provider-catalog-store";
+import { clearSessionProviderPickerCapabilityCache } from "../../conversation/components/SessionProviderPicker";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
@@ -15,6 +17,7 @@ import {
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
 } from "./AffairsWorkbenchView";
+import { useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type { AffairsViewState } from "../types/workbench-mode";
 import { resolveAffairsDocumentVisual } from "../utils/affairs-document-visual";
 
@@ -48,11 +51,90 @@ const platformStateMock = vi.hoisted(() => ({
 
 const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 
+const liveSessionControllerMock = vi.hoisted(() => ({
+  useLiveSessionController: vi.fn()
+}));
+
+const butlerRuntimeStateMock = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  let state = {
+    initialized: true,
+    loading: false,
+    profile: null as null | {
+      displayName: string;
+      providerId: string;
+      persona: {
+        tone: string;
+      };
+    },
+    activeProvider: null,
+    controlSession: null,
+    capabilities: null,
+    messages: [],
+    historyState: "idle",
+    loadingOlderMessages: false,
+    hasOlderMessages: false,
+    runtimeHasActiveRun: false,
+    runtimeCanInterrupt: false,
+    contextUsage: null,
+    permissionRequests: [],
+    sending: false,
+    bootstrapErrorCode: null as string | null,
+    error: null as string | null
+  };
+
+  return {
+    getState: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    emit: () => {
+      listeners.forEach((listener) => listener());
+    },
+    reset: () => {
+      listeners.clear();
+      state = {
+        initialized: true,
+        loading: false,
+        profile: null,
+        activeProvider: null,
+        controlSession: null,
+        capabilities: null,
+        messages: [],
+        historyState: "idle",
+        loadingOlderMessages: false,
+        hasOlderMessages: false,
+        runtimeHasActiveRun: false,
+        runtimeCanInterrupt: false,
+        contextUsage: null,
+        permissionRequests: [],
+        sending: false,
+        bootstrapErrorCode: null,
+        error: null
+      };
+    },
+    setState: (nextState: Partial<typeof state>) => {
+      state = {
+        ...state,
+        ...nextState
+      };
+      listeners.forEach((listener) => listener());
+    }
+  };
+});
+
 const conversationApiMock = vi.hoisted(() => ({
   createAffairsTag: vi.fn(),
   createWorkspaceDirectory: vi.fn(),
   deleteAffairsTag: vi.fn(),
+  getAffairsLibraryBinding: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
+  getProviderCapabilities: vi.fn(),
+  getAffairsTagRecomputeTask: vi.fn(),
+  getAffairsTagRecoveryStatus: vi.fn(),
   getAffairsFolderTagTask: vi.fn(),
   getAffairsFolderTagDetails: vi.fn(),
   getAffairsTagDetail: vi.fn(),
@@ -61,9 +143,13 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
   operateAffairsLibraryFile: vi.fn(),
+  listProviderCatalog: vi.fn(),
+  listProviderCapabilities: vi.fn(),
   listAffairsTags: vi.fn(),
   listAffairsLibraryDocuments: vi.fn(),
   requestAffairsLibraryRefresh: vi.fn(),
+  requestAffairsTagFullRecompute: vi.fn(),
+  requestAffairsTagRecoveryRecompute: vi.fn(),
   saveAffairsDocumentTags: vi.fn(),
   saveAffairsDocumentTagsWithCreate: vi.fn(),
   saveAffairsFolderTags: vi.fn(),
@@ -71,6 +157,7 @@ const conversationApiMock = vi.hoisted(() => ({
   saveAffairsLibraryBinding: vi.fn(),
   saveAffairsLibraryConfig: vi.fn(),
   setAffairsLibraryEnabled: vi.fn(),
+  startLiveSession: vi.fn(),
   updateAffairsTag: vi.fn(),
   updateAffairsLibraryFavorites: vi.fn()
 }));
@@ -82,7 +169,11 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     createAffairsTag: conversationApiMock.createAffairsTag,
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
+    getAffairsLibraryBinding: conversationApiMock.getAffairsLibraryBinding,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
+    getProviderCapabilities: conversationApiMock.getProviderCapabilities,
+    getAffairsTagRecomputeTask: conversationApiMock.getAffairsTagRecomputeTask,
+    getAffairsTagRecoveryStatus: conversationApiMock.getAffairsTagRecoveryStatus,
     getAffairsFolderTagTask: conversationApiMock.getAffairsFolderTagTask,
     getAffairsFolderTagDetails: conversationApiMock.getAffairsFolderTagDetails,
     getAffairsTagDetail: conversationApiMock.getAffairsTagDetail,
@@ -91,9 +182,13 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
     operateAffairsLibraryFile: conversationApiMock.operateAffairsLibraryFile,
+    listProviderCatalog: conversationApiMock.listProviderCatalog,
+    listProviderCapabilities: conversationApiMock.listProviderCapabilities,
     listAffairsTags: conversationApiMock.listAffairsTags,
     listAffairsLibraryDocuments: conversationApiMock.listAffairsLibraryDocuments,
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
+    requestAffairsTagFullRecompute: conversationApiMock.requestAffairsTagFullRecompute,
+    requestAffairsTagRecoveryRecompute: conversationApiMock.requestAffairsTagRecoveryRecompute,
     saveAffairsDocumentTags: conversationApiMock.saveAffairsDocumentTags,
     saveAffairsDocumentTagsWithCreate: conversationApiMock.saveAffairsDocumentTagsWithCreate,
     saveAffairsFolderTags: conversationApiMock.saveAffairsFolderTags,
@@ -101,6 +196,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     saveAffairsLibraryBinding: conversationApiMock.saveAffairsLibraryBinding,
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
     setAffairsLibraryEnabled: conversationApiMock.setAffairsLibraryEnabled,
+    startLiveSession: conversationApiMock.startLiveSession,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
     updateAffairsLibraryFavorites: conversationApiMock.updateAffairsLibraryFavorites
   };
@@ -116,32 +212,67 @@ vi.mock("../../butler/api/butler-api", () => ({
 vi.mock("../../butler/runtime/butler-runtime-store", () => ({
   ButlerRuntimeStore: class {
     constructor(_workspaceId: string) {}
+
+    getState() {
+      return butlerRuntimeStateMock.getState();
+    }
+
+    subscribe(listener: () => void) {
+      return butlerRuntimeStateMock.subscribe(listener);
+    }
+
+    async initialize() {
+      butlerRuntimeStateMock.emit();
+    }
+
+    async initializeProfile(payload: {
+      displayName?: string;
+      providerId?: string;
+      persona?: {
+        tone?: string;
+      };
+    }) {
+      butlerRuntimeStateMock.setState({
+        initialized: true,
+        loading: false,
+        bootstrapErrorCode: null,
+        error: null,
+        profile: {
+          displayName: payload.displayName ?? "事务助手",
+          providerId: payload.providerId ?? "codex",
+          persona: {
+            tone: payload.persona?.tone ?? "direct"
+          }
+        }
+      });
+    }
   },
-  useButlerRuntimeStore: vi.fn((_store, selector) => selector({
-    initialized: true,
-    loading: false,
-    profile: null,
-    activeProvider: null,
-    controlSession: null,
-    capabilities: null,
-    messages: [],
-    historyState: "idle",
-    loadingOlderMessages: false,
-    hasOlderMessages: false,
-    runtimeHasActiveRun: false,
-    runtimeCanInterrupt: false,
-    contextUsage: null,
-    permissionRequests: [],
-    sending: false
-  }))
+  useButlerRuntimeStore: vi.fn((store, selector) => selector(store.getState()))
 }));
 
+const useButlerRuntimeStoreMock = vi.mocked(useButlerRuntimeStore);
+
 vi.mock("../../conversation/components/ComposerPanel", () => ({
-  ComposerPanel: () => <div data-testid="affairs-composer" />
+  ComposerPanel: ({ onSend, isSubmitting }: { onSend?: (content: string) => Promise<void>; isSubmitting?: boolean }) => (
+    <button
+      type="button"
+      data-testid="affairs-composer-send"
+      disabled={Boolean(isSubmitting)}
+      onClick={() => {
+        if (onSend) {
+          void onSend("请帮我查一下今天的事务重点");
+        }
+      }}
+    >
+      发送
+    </button>
+  )
 }));
 
 vi.mock("../../conversation/components/MessageTimeline", () => ({
-  MessageTimeline: () => <div data-testid="affairs-timeline" />
+  MessageTimeline: ({ sessionId, items }: { sessionId?: string; items?: Array<unknown> }) => (
+    <div data-testid="affairs-timeline">{`${sessionId ?? "draft"}:${items?.length ?? 0}`}</div>
+  )
 }));
 
 vi.mock("../../conversation/components/PermissionRequestList", () => ({
@@ -150,6 +281,10 @@ vi.mock("../../conversation/components/PermissionRequestList", () => ({
 
 vi.mock("../../conversation/components/WorkspaceImportBrowserModal", () => ({
   WorkspaceImportBrowserModal: () => null
+}));
+
+vi.mock("../../conversation/runtime/use-live-session-controller", () => ({
+  useLiveSessionController: liveSessionControllerMock.useLiveSessionController
 }));
 
 vi.mock("../../../platform/desktop/codingns-desktop-bridge", () => ({
@@ -208,6 +343,14 @@ function createState(): AffairsViewState {
     selectedTagPaths: [],
     selectedDocumentId: null,
     selectedFavoriteId: null
+  };
+}
+
+function createConversationState(): AffairsViewState {
+  return {
+    ...createState(),
+    primarySection: "conversation",
+    selectedNodeId: "conversation:draft:lightweight:codex"
   };
 }
 
@@ -395,6 +538,31 @@ function renderWorkbenchWithSectionMenu() {
   return render(<TestHarness />);
 }
 
+function renderWorkbenchWithState(initialState: AffairsViewState) {
+  function TestHarness(): ReactElement {
+    const [state, setState] = useState(initialState);
+
+    return (
+      <AffairsWorkbenchProvider
+        workspaceId="workspace-1"
+        workspaceName="事务工作区"
+        navigationGroups={navigationGroups}
+        state={state}
+        onStateChange={setState}
+      >
+        <div style={{ display: "flex", gap: 12 }}>
+          <AffairsSectionMenu />
+          <AffairsSidebarPanel />
+          <AffairsWorkbenchView workspaceId="workspace-1" />
+          <AffairsAuxiliaryPanel workspaceId="workspace-1" />
+        </div>
+      </AffairsWorkbenchProvider>
+    );
+  }
+
+  return render(<TestHarness />);
+}
+
 function findTagTreeNode(label: string) {
   const tree = screen.getByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
   const labelNode = within(tree).queryAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
@@ -409,6 +577,7 @@ describe("AffairsWorkbenchView", () => {
   });
 
   beforeEach(() => {
+    butlerRuntimeStateMock.reset();
     userPreferenceStore.hydrate({
       ...initialPreferenceState,
       profile: {
@@ -421,12 +590,18 @@ describe("AffairsWorkbenchView", () => {
     clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
     window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
     window.sessionStorage.clear();
+    clearProviderCatalogStore();
+    clearSessionProviderPickerCapabilityCache();
 
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibraryBinding.mockReset();
+    conversationApiMock.getProviderCapabilities.mockReset();
     conversationApiMock.listAffairsLibraryDocuments.mockReset();
     conversationApiMock.getAffairsLibraryPreview.mockReset();
     conversationApiMock.downloadAffairsLibraryFile.mockReset();
     conversationApiMock.operateAffairsLibraryFile.mockReset();
+    conversationApiMock.listProviderCatalog.mockReset();
+    conversationApiMock.listProviderCapabilities.mockReset();
     conversationApiMock.getAffairsLibraryConfig.mockReset();
     conversationApiMock.listAffairsTags.mockReset();
     conversationApiMock.getAffairsTagDetail.mockReset();
@@ -435,7 +610,11 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.createWorkspaceDirectory.mockReset();
     conversationApiMock.updateAffairsTag.mockReset();
     conversationApiMock.getAffairsDocumentTagDetails.mockReset();
+    conversationApiMock.getAffairsTagRecomputeTask.mockReset();
+    conversationApiMock.getAffairsTagRecoveryStatus.mockReset();
     conversationApiMock.getAffairsFolderTagDetails.mockReset();
+    conversationApiMock.requestAffairsTagFullRecompute.mockReset();
+    conversationApiMock.requestAffairsTagRecoveryRecompute.mockReset();
     conversationApiMock.saveAffairsDocumentTags.mockReset();
     conversationApiMock.saveAffairsDocumentTagsWithCreate.mockReset();
     conversationApiMock.saveAffairsFolderTags.mockReset();
@@ -444,7 +623,9 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.saveAffairsLibraryBinding.mockReset();
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
     conversationApiMock.setAffairsLibraryEnabled.mockReset();
+    conversationApiMock.startLiveSession.mockReset();
     conversationApiMock.updateAffairsLibraryFavorites.mockReset();
+    liveSessionControllerMock.useLiveSessionController.mockReset();
 
     desktopBridgeMock.fs.openFile.mockClear();
     desktopBridgeMock.fs.revealInFileManager.mockClear();
@@ -459,8 +640,25 @@ describe("AffairsWorkbenchView", () => {
     platformStateMock.ui.osFamily = "macos";
     showDesktopContextMenuMock.mockReset();
     platformBridgeMock.writeClipboardText.mockResolvedValue({ ok: true, value: undefined });
+    useButlerRuntimeStoreMock.mockImplementation((store, selector) => selector(store.getState()));
 
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot());
+    conversationApiMock.getAffairsLibraryBinding.mockResolvedValue(baseLibrarySnapshot().binding);
+    conversationApiMock.getProviderCapabilities.mockResolvedValue({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
     conversationApiMock.listAffairsTags.mockResolvedValue({ items: [] });
     conversationApiMock.getAffairsTagDetail.mockResolvedValue(null);
     conversationApiMock.deleteAffairsTag.mockResolvedValue({
@@ -493,7 +691,29 @@ describe("AffairsWorkbenchView", () => {
       bindingTagIds: [],
       bindings: []
     });
+    conversationApiMock.getAffairsTagRecomputeTask.mockResolvedValue(null);
+    conversationApiMock.getAffairsTagRecoveryStatus.mockResolvedValue({
+      task: null,
+      bindingStats: {
+        identityBindingCount: 0,
+        legacyBindingCount: 0,
+        legacyFallbackBindingCount: 0,
+        legacyFallbackDocumentCount: 0,
+      },
+    });
     conversationApiMock.getAffairsFolderTagTask.mockResolvedValue(null);
+    conversationApiMock.requestAffairsTagFullRecompute.mockResolvedValue({
+      taskId: "task-recompute-1",
+      deduped: false,
+      status: "queued",
+      scope: "full",
+    });
+    conversationApiMock.requestAffairsTagRecoveryRecompute.mockResolvedValue({
+      taskId: "task-recompute-1",
+      deduped: false,
+      status: "queued",
+      scope: "full",
+    });
     conversationApiMock.saveAffairsDocumentTags.mockResolvedValue(undefined);
     conversationApiMock.saveAffairsDocumentTagsWithCreate.mockResolvedValue(undefined);
     conversationApiMock.saveAffairsFolderTags.mockResolvedValue({
@@ -573,6 +793,119 @@ describe("AffairsWorkbenchView", () => {
         canPaginate: false
       }
     });
+    conversationApiMock.listProviderCatalog.mockResolvedValue([
+      { provider: "gemini", enabled: true },
+      { provider: "kimi", enabled: true },
+      { provider: "codex", enabled: true },
+      { provider: "claude-code", enabled: true },
+      { provider: "opencode", enabled: true },
+      { provider: "legna-code", enabled: true }
+    ]);
+    conversationApiMock.listProviderCapabilities.mockResolvedValue({});
+    conversationApiMock.startLiveSession.mockResolvedValue({
+      sessionId: "session-live-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-1",
+      acceptedAt: "2026-06-02T10:00:00.000Z",
+      clientRequestId: "client-request-1",
+      message: {
+        messageId: "message-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        role: "user",
+        kind: "text",
+        content: "请帮我查一下今天的事务重点",
+        attachments: [],
+        timestamp: "2026-06-02T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "synthetic://gemini/session-live-1/client-request-1"
+      },
+      session: {
+        sessionId: "session-live-1",
+        workspaceId: "workspace-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        rawStoreRef: "synthetic://gemini/session-live-1",
+        title: "Gemini 草稿",
+        messageCount: 1,
+        lastMessageAt: "2026-06-02T10:00:00.000Z",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        updatedAt: "2026-06-02T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "starting",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-02T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+    liveSessionControllerMock.useLiveSessionController.mockImplementation((input: { sessionId: string; externalSession?: Record<string, unknown> | null }) => ({
+      session: input.externalSession ?? {
+        sessionId: input.sessionId,
+        workspaceId: "workspace-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        rawStoreRef: "synthetic://gemini/session-live-1",
+        title: "Gemini 草稿",
+        messageCount: 1,
+        lastMessageAt: "2026-06-02T10:00:00.000Z",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        updatedAt: "2026-06-02T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "starting",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-02T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      },
+      capabilities: null,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      messages: [],
+      timelineItems: [],
+      permissionRequests: [],
+      queuedMessages: [],
+      contextUsage: null,
+      historyState: "ready",
+      runtimeErrorCode: null,
+      runtimeErrorDetail: null,
+      runtimeInterruptSource: null,
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      connectionState: "connected",
+      sending: false,
+      replyingPermissionRequestId: null,
+      deletingQueueItemId: null,
+      steeringQueueItemId: null,
+      forkDraft: null,
+      setForkDraft: vi.fn(),
+      composerHasActiveRun: false,
+      composerCanInterrupt: false,
+      composerIsRunning: false,
+      canSteerQueuedMessage: false,
+      hasPendingQueuedMessages: false,
+      reconnect: vi.fn(),
+      loadOlderMessages: vi.fn(),
+      retryMessage: vi.fn(),
+      send: vi.fn(),
+      queue: vi.fn(),
+      interrupt: vi.fn(),
+      replyPermissionRequest: vi.fn(),
+      deleteQueuedMessage: vi.fn(),
+      steerQueuedMessage: vi.fn()
+    }));
 
     conversationApiMock.saveAffairsLibraryConfig.mockResolvedValue({
       binding: {
@@ -840,12 +1173,225 @@ describe("AffairsWorkbenchView", () => {
 
     await user.click(conversationTab);
 
-    expect((await screen.findAllByRole("heading", { name: "事务对话" })).length).toBeGreaterThan(0);
-    expect(screen.getByText("先选会话模式，再选 provider")).toBeInTheDocument();
-    expect(screen.getByText("轻量会话 · Codex")).toBeInTheDocument();
-    expect(screen.getByText("轻量会话 · Claude Code")).toBeInTheDocument();
-    expect(screen.getByText("Agent 会话 · Codex")).toBeInTheDocument();
-    expect(screen.getByText("Agent 会话 · Claude Code")).toBeInTheDocument();
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    const conversationScope = within(conversationShell as HTMLElement);
+    expect(conversationScope.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    expect(conversationScope.queryByText("轻量会话 · Codex")).not.toBeInTheDocument();
+
+    await user.click(conversationScope.getByRole("button", { name: "新建对话" }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const dialogScope = within(dialog);
+    expect(dialogScope.getByText("轻量模式")).toBeInTheDocument();
+    expect(dialogScope.getByText("助手模式")).toBeInTheDocument();
+    expect(dialogScope.getByRole("button", { name: "Gemini" })).toBeInTheDocument();
+    expect(dialogScope.getByRole("button", { name: "Kimi" })).toBeInTheDocument();
+    expect(dialogScope.getByRole("button", { name: "Codex" })).toBeInTheDocument();
+    expect(dialogScope.getByRole("button", { name: "Claude Code" })).toBeInTheDocument();
+  });
+
+  it("事务轻量草稿发送首条消息后会创建隐藏 live session 并切到 runtime 页面", async () => {
+    const user = userEvent.setup();
+    renderWorkbenchWithSectionMenu();
+
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    await user.click(await screen.findByRole("button", { name: "Gemini" }));
+
+    expect(await screen.findByTestId("affairs-composer-send")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("affairs-composer-send"));
+
+    await waitFor(() => {
+      expect(conversationApiMock.startLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          provider: "gemini",
+          content: "请帮我查一下今天的事务重点",
+          sessionVisibility: "affairs_lightweight"
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-live-1:0");
+    });
+  });
+
+  it("事务模式未初始化时会强制回到初始化页，并禁用其他事务分区", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: false,
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+    renderWorkbenchWithState({
+      ...createState(),
+      primarySection: "automation",
+      selectedNodeId: "automation:all"
+    });
+
+    expect(await screen.findAllByText("设置助手")).not.toHaveLength(0);
+    expect(screen.getAllByText(t("shell.affairsInitRouteGuardHint")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("shell.affairsInitRouteGuardSidebarEmpty"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsInitRouteGuardAuxiliaryEmpty"))).toBeInTheDocument();
+
+    expect(screen.getByRole("tab", { name: "文档库" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "待办" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "自动化" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "对话" })).not.toBeDisabled();
+  });
+
+  it("事务模式未初始化时即使旧状态停在文档库，也会改为初始化页", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: false,
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+
+    renderWorkbenchWithState(createState());
+
+    expect(await screen.findAllByText("设置助手")).not.toHaveLength(0);
+    expect(screen.queryByText("Exchange 分层通讯簿.txt")).not.toBeInTheDocument();
+  });
+
+  it("事务服务连不上时会显示单独的不可用页面，不会误导成初始化页", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: false,
+      bootstrapErrorCode: "NETWORK_ERROR",
+      error: "请求 http://127.0.0.1:4174/api/butler/profile 失败：fetch failed",
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+
+    renderWorkbenchWithState(createState());
+
+    expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(t("shell.affairsHostUnavailableDescription")).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: t("shell.affairsHostUnavailableRetryAction") }).length).toBeGreaterThan(0);
+    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+  });
+
+  it("事务服务连接检查中时会显示单独的检查页面，不会先误导成初始化页", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: true,
+      bootstrapErrorCode: null,
+      error: null,
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+
+    renderWorkbenchWithState(createState());
+
+    expect((await screen.findAllByText(t("shell.affairsConnectionCheckingTitle"))).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(t("shell.affairsConnectionCheckingDescription")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+  });
+
+  it("事务模式初始化完成后会自动切到文档库", async () => {
+    const user = userEvent.setup();
+    butlerRuntimeStateMock.setState({
+      initialized: false,
+      profile: null,
+      activeProvider: "codex"
+    });
+
+    function TestHarness(): ReactElement {
+      const [state, setState] = useState(createConversationState());
+
+      return (
+        <AffairsWorkbenchProvider
+          workspaceId="workspace-1"
+          workspaceName="事务工作区"
+          navigationGroups={navigationGroups}
+          state={state}
+          onStateChange={setState}
+        >
+          <div style={{ display: "flex", gap: 12 }}>
+            <AffairsSectionMenu />
+            <AffairsSidebarPanel />
+            <AffairsWorkbenchView workspaceId="workspace-1" />
+            <AffairsAuxiliaryPanel workspaceId="workspace-1" />
+          </div>
+        </AffairsWorkbenchProvider>
+      );
+    }
+
+    const view = render(<TestHarness />);
+
+    const submitButton = await screen.findByRole("button", { name: t("shell.affairsInitSubmit") });
+    await user.type(screen.getByPlaceholderText(t("shell.butlerDisplayNamePlaceholder")), "哆哆");
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(conversationApiMock.saveAffairsLibraryBinding).toHaveBeenCalledWith("workspace-1", {
+        rootDir: "/Users/jackson/WorkFile"
+      });
+    });
+    await waitFor(() => {
+      expect(conversationApiMock.setAffairsLibraryEnabled).toHaveBeenCalledWith("workspace-1", {
+        enabled: true
+      });
+    });
+
+    view.rerender(<TestHarness />);
+
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "文档库" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("没有收藏内容时会自动隐藏收藏夹分组", async () => {
@@ -870,6 +1416,29 @@ describe("AffairsWorkbenchView", () => {
         enabled: false
       });
     });
+  });
+
+  it("文档库未启用时不会请求文档和文件夹标签详情", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      binding: {
+        ...baseLibrarySnapshot().binding,
+        enabled: false,
+      },
+      status: {
+        ...baseLibrarySnapshot().status,
+        state: "idle",
+      },
+      tags: [],
+      folders: [],
+      documentCount: 0,
+    }));
+
+    renderWorkbench();
+
+    await screen.findAllByText(t("shell.affairsLibraryEmpty"));
+
+    expect(conversationApiMock.getAffairsDocumentTagDetails).not.toHaveBeenCalled();
+    expect(conversationApiMock.getAffairsFolderTagDetails).not.toHaveBeenCalled();
   });
 
 
@@ -2131,9 +2700,9 @@ describe("AffairsWorkbenchView", () => {
     expect(within(dialog).getByRole("tree", { name: t("shell.affairsTagTreeSectionTitle") })).toBeInTheDocument();
     expect((await screen.findAllByText("客户/合同")).length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagCreateRootAction") }));
-    await userEvent.type(screen.getByPlaceholderText(t("shell.affairsTagNamePlaceholder")), "项目");
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagCreateSubmitAction") }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagCreateRootAction") }));
+    await userEvent.type(within(dialog).getByPlaceholderText(t("shell.affairsTagNamePlaceholder")), "项目");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagCreateSubmitAction") }));
 
     await waitFor(() => {
       expect(conversationApiMock.createAffairsTag).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
@@ -2143,18 +2712,41 @@ describe("AffairsWorkbenchView", () => {
       }));
     });
 
-    const tagTreeButton = screen.getByRole("button", { name: /合同.*客户\/合同/s });
+    const tagTreeButton = within(dialog).getByRole("button", { name: /合同.*客户\/合同/s });
     await userEvent.click(tagTreeButton);
-    expect(await screen.findByText(t("shell.affairsTagEditorEditTitle"))).toBeInTheDocument();
+    expect(await within(dialog).findByText(t("shell.affairsTagEditorEditTitle"))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagCreateChildAction") }));
-    expect(await screen.findByText(t("shell.affairsTagEditorCreateChildTitle"))).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagCreateChildAction") }));
+    await waitFor(() => {
+      expect((within(dialog).getByPlaceholderText(t("shell.affairsTagNamePlaceholder")) as HTMLInputElement).value).toBe("");
+      expect(within(dialog).getByText("这个新标签会放到“客户/合同”下面。")).toBeInTheDocument();
+    });
 
     await userEvent.click(tagTreeButton);
-    const nameInput = screen.getByPlaceholderText(t("shell.affairsTagNamePlaceholder"));
+    const nameInput = within(dialog).getByPlaceholderText(t("shell.affairsTagNamePlaceholder"));
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, "项目合同");
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      tags: [
+        {
+          path: "客户",
+          name: "客户",
+          parentPath: null,
+          depth: 0,
+          rootType: "客户",
+          documentCount: 3
+        },
+        {
+          path: "客户/项目合同",
+          name: "项目合同",
+          parentPath: "客户",
+          depth: 1,
+          rootType: "客户",
+          documentCount: 1
+        }
+      ]
+    }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
 
     await waitFor(() => {
       expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1", expect.objectContaining({
@@ -2166,7 +2758,7 @@ describe("AffairsWorkbenchView", () => {
     });
 
     vi.stubGlobal("confirm", vi.fn(() => true));
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagDeleteAction") }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagDeleteAction") }));
     await waitFor(() => {
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1");
     });
@@ -2400,6 +2992,98 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("标签管理模态框支持配置按文件夹子树命中的智能规则", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-1",
+          path: "客户/售前",
+          name: "售前",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+    conversationApiMock.getAffairsTagDetail.mockResolvedValue({
+      id: "tag-1",
+      path: "客户/售前",
+      name: "售前",
+      rootType: "客户",
+      parentId: null,
+      parentPath: null,
+      description: null,
+      status: "active",
+      documentCount: 1,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
+    });
+    conversationApiMock.updateAffairsTag.mockResolvedValue({
+      id: "tag-1",
+      path: "客户/售前",
+      name: "售前",
+      rootType: "客户",
+      parentId: null,
+      parentPath: null,
+      description: null,
+      status: "active",
+      documentCount: 1,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [
+        {
+          id: "rule-folder-1",
+          relation: "and",
+          ruleType: "document_path_in_folder",
+          matcher: { folderPath: "售前/方案" },
+          enabled: true,
+          priority: 0
+        }
+      ],
+      smartRuleEnabled: true,
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsTagManagerTitle") });
+    await userEvent.click(await screen.findByRole("button", { name: /售前.*客户\/售前/s }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagSmartRuleAddAction") }));
+    const comboboxes = within(dialog).getAllByRole("combobox");
+    await userEvent.selectOptions(
+      comboboxes[comboboxes.length - 1]!,
+      "document_path_in_folder",
+    );
+    await userEvent.clear(within(dialog).getByPlaceholderText(t("shell.affairsTagSmartRuleFolderPathPlaceholder")));
+    await userEvent.type(within(dialog).getByPlaceholderText(t("shell.affairsTagSmartRuleFolderPathPlaceholder")), "售前/方案");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1", expect.objectContaining({
+        name: "售前",
+        smartRules: [
+          expect.objectContaining({
+            relation: "and",
+            ruleType: "document_path_in_folder",
+            matcher: { folderPath: "售前/方案" },
+            enabled: true,
+            priority: 0
+          })
+        ]
+      }));
+    });
+  });
+
   it("标签管理模态框支持批量修改标签上级和状态", async () => {
     conversationApiMock.listAffairsTags.mockResolvedValue({
       items: [
@@ -2568,6 +3252,68 @@ describe("AffairsWorkbenchView", () => {
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledTimes(1);
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-root");
     });
+  });
+
+  it("标签管理模态框可以发起全量标签重算恢复任务", async () => {
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsTagManagerTitle") });
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagRecoveryAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.requestAffairsTagRecoveryRecompute).toHaveBeenCalledWith("workspace-1");
+    });
+  });
+
+  it("标签管理模态框会显示全量标签重算的当前进度", async () => {
+    conversationApiMock.getAffairsTagRecoveryStatus.mockResolvedValue({
+      task: {
+        taskId: "task-recompute-1",
+        taskType: "affairs.library_tag_recompute",
+        key: "workspace-1:full",
+        executionLane: "helper_process",
+        status: "running",
+        source: "affairs_tag.request_full_recompute",
+        attempt: 1,
+        enqueuedAt: Date.now(),
+        startedAt: Date.now(),
+        finishedAt: null,
+        timeoutMs: 30000,
+        progress: {
+          phase: "recompute",
+          label: "正在重算标签",
+          detail: "125 / 6000",
+          current: 125,
+          total: 6000,
+          percent: 18,
+          updatedAt: Date.now(),
+        },
+      },
+      bindingStats: {
+        identityBindingCount: 120,
+        legacyBindingCount: 30,
+        legacyFallbackBindingCount: 8,
+        legacyFallbackDocumentCount: 3,
+      },
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsTagManagerTitle") });
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsTagRecoveryStatus).toHaveBeenCalledWith("workspace-1");
+    });
+
+    expect(within(dialog).getByText(t("shell.affairsTagRecoveryStatusLabel"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("shell.affairsFolderTagTaskStatusRunning"))).toBeInTheDocument();
+    expect(within(dialog).getAllByText("125 / 6000").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("120")).toBeInTheDocument();
+    expect(within(dialog).getByText("30")).toBeInTheDocument();
+    expect(within(dialog).getByText("8")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.affairsTagRecoveryRunningAction") })).toBeInTheDocument();
   });
 
   it("文档详情通过输入匹配添加标签，并且不把时间和类型标签当普通标签", async () => {
@@ -2762,11 +3508,73 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByRole("button", {
       name: t("shell.affairsFolderTagTaskButtonLabel", {
+        operation: t("shell.affairsFolderTagTaskOperationAttach"),
         folder: t("shell.affairsLibraryDirectoryStatusRootPath"),
         status: t("shell.affairsFolderTagTaskStatusRunning"),
         percent: 29,
       })
     })).toBeInTheDocument();
+  });
+
+  it("文件夹标签请求提交后会立刻显示右上角进度入口", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-1",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 4,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+    conversationApiMock.getAffairsFolderTagDetails.mockResolvedValue({
+      folderPath: ".",
+      exists: true,
+      bindingTagIds: [],
+      bindings: []
+    });
+    let resolveSave: ((value: {
+      target: { type: "folder"; folderPath: string };
+      items: [];
+      refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
+    }) => void) | null = null;
+    conversationApiMock.saveAffairsFolderTags.mockImplementation(() => new Promise((resolve) => {
+      resolveSave = resolve;
+    }));
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
+    const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
+    await userEvent.type(tagInput, "合同");
+    await userEvent.click(await screen.findByRole("button", { name: "客户/合同" }));
+
+    expect(await screen.findByRole("button", {
+      name: t("shell.affairsFolderTagTaskButtonLabel", {
+        operation: t("shell.affairsFolderTagTaskOperationAttach"),
+        folder: t("shell.affairsLibraryDirectoryStatusRootPath"),
+        status: t("shell.affairsFolderTagTaskStatusQueued"),
+        percent: 1,
+      })
+    })).toBeInTheDocument();
+
+    resolveSave?.({
+      target: { type: "folder", folderPath: "." },
+      items: [],
+      refreshTask: {
+        taskId: "task-folder-1",
+        deduped: false,
+        affectedPaths: ["."]
+      }
+    });
   });
 
   it("文件夹详情输入不存在的标签时会直接创建并绑定", async () => {

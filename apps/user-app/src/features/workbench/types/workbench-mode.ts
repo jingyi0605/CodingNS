@@ -1,6 +1,6 @@
 export type WorkbenchMode = "code" | "affairs";
 
-export type AffairsPrimarySection = "library" | "todo" | "automation";
+export type AffairsPrimarySection = "library" | "conversation" | "todo" | "automation";
 
 export type AffairsAuxiliaryTab = "detail" | "assistant";
 

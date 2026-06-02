@@ -223,7 +223,8 @@ export type AffairsTagRuleTypeDto =
   | "file_name_contains"
   | "file_content_contains"
   | "file_extension_in"
-  | "modified_time_between";
+  | "modified_time_between"
+  | "document_path_in_folder";
 
 export interface AffairsTagRuleDto {
   id: string;
@@ -1127,6 +1128,7 @@ export interface StartLivePayload {
   provider: ProviderId;
   content: string;
   clientRequestId?: string | null;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
@@ -1630,6 +1632,40 @@ export function deleteAffairsTag(workspaceId: string, tagId: string) {
   );
 }
 
+export function requestAffairsTagFullRecompute(workspaceId: string) {
+  return httpClient.request<{
+    taskId: string;
+    deduped: boolean;
+    status: "queued";
+    scope: "full";
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recompute`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function getAffairsTagRecomputeTask(workspaceId: string) {
+  return httpClient.request<AffairsTaskSnapshotDto | null>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recompute-task`
+  );
+}
+
+export function requestAffairsTagRecoveryRecompute(workspaceId: string) {
+  return httpClient.request<{
+    taskId: string;
+    deduped: boolean;
+    status: "queued";
+    scope: "full";
+  }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recovery/recompute`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export function getAffairsDocumentTagDetails(workspaceId: string, documentId: string) {
   return httpClient.request<AffairsDocumentTagDetailsDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tag-details`
@@ -1672,6 +1708,56 @@ export function getAffairsFolderTagDetails(workspaceId: string, folderPath: stri
   const search = new URLSearchParams({ folderPath });
   return httpClient.request<AffairsFolderTagDetailsDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tag-details?${search.toString()}`
+  );
+}
+
+export interface AffairsTaskProgressSnapshotDto {
+  phase: string;
+  label?: string | null;
+  detail?: string | null;
+  current?: number | null;
+  total?: number | null;
+  percent?: number | null;
+  updatedAt: number;
+}
+
+export interface AffairsTaskSnapshotDto<TResult = unknown> {
+  taskId: string;
+  taskType: string;
+  key: string;
+  executionLane: "request_main_thread" | "host_background" | "helper_process" | "external_process";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timeout";
+  source: string | null;
+  attempt: number;
+  enqueuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  timeoutMs: number | null;
+  progress?: AffairsTaskProgressSnapshotDto | null;
+  result?: TResult;
+  errorMessage?: string;
+}
+
+export interface AffairsTagRecoveryStatusDto {
+  task: AffairsTaskSnapshotDto | null;
+  bindingStats: {
+    identityBindingCount: number;
+    legacyBindingCount: number;
+    legacyFallbackBindingCount: number;
+    legacyFallbackDocumentCount: number;
+  };
+}
+
+export function getAffairsTagRecoveryStatus(workspaceId: string) {
+  return httpClient.request<AffairsTagRecoveryStatusDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recovery/status`
+  );
+}
+
+export function getAffairsFolderTagTask(workspaceId: string, folderPath: string) {
+  const search = new URLSearchParams({ folderPath });
+  return httpClient.request<AffairsTaskSnapshotDto | null>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tag-task?${search.toString()}`
   );
 }
 

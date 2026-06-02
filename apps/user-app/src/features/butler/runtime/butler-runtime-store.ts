@@ -13,6 +13,7 @@ import { RealtimeClient } from "../../../network/realtime-client";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
+import { ApiError, isNetworkApiError } from "../../../shared/network/api-error";
 import type {
   ContextUsageDto,
   ProviderCapabilitiesDto,
@@ -74,6 +75,7 @@ export interface ButlerRuntimeState {
   contextUsage: ContextUsageDto | null;
   permissionRequests: SessionPermissionRequestDto[];
   error: string | null;
+  bootstrapErrorCode: string | null;
 }
 
 const BUTLER_MESSAGE_PAGE_SIZE = 60;
@@ -117,7 +119,8 @@ export class ButlerRuntimeStore {
       runtimeCanInterrupt: null,
       contextUsage: null,
       permissionRequests: [],
-      error: null
+      error: null,
+      bootstrapErrorCode: null
     };
   }
 
@@ -133,7 +136,8 @@ export class ButlerRuntimeStore {
   async initialize(): Promise<void> {
     this.patch({
       loading: true,
-      error: null
+      error: null,
+      bootstrapErrorCode: null
     });
 
     try {
@@ -158,7 +162,8 @@ export class ButlerRuntimeStore {
           runtimeHasActiveRun: null,
           runtimeCanInterrupt: null,
           contextUsage: null,
-          permissionRequests: []
+          permissionRequests: [],
+          bootstrapErrorCode: null
         });
         return;
       }
@@ -168,7 +173,8 @@ export class ButlerRuntimeStore {
         initialized: true,
         profile,
         activeProvider: profile.providerId,
-        capabilities: createButlerFallbackCapabilities(profile.providerId)
+        capabilities: createButlerFallbackCapabilities(profile.providerId),
+        bootstrapErrorCode: null
       });
       await this.reloadForProvider(profile.providerId);
       this.patch({
@@ -177,7 +183,8 @@ export class ButlerRuntimeStore {
     } catch (error) {
       this.patch({
         loading: false,
-        error: toErrorMessage(error)
+        error: toErrorMessage(error),
+        bootstrapErrorCode: resolveBootstrapErrorCode(error)
       });
     }
   }
@@ -185,7 +192,8 @@ export class ButlerRuntimeStore {
   async initializeProfile(payload: ButlerProfilePayload): Promise<void> {
     this.patch({
       loading: true,
-      error: null
+      error: null,
+      bootstrapErrorCode: null
     });
 
     try {
@@ -199,12 +207,14 @@ export class ButlerRuntimeStore {
         initialized: true,
         profile: response.profile,
         activeProvider: response.profile.providerId,
-        capabilities: createButlerFallbackCapabilities(response.profile.providerId)
+        capabilities: createButlerFallbackCapabilities(response.profile.providerId),
+        bootstrapErrorCode: null
       });
       await this.reloadForProvider(response.profile.providerId);
     } catch (error) {
       this.patch({
-        error: toErrorMessage(error)
+        error: toErrorMessage(error),
+        bootstrapErrorCode: resolveBootstrapErrorCode(error)
       });
       throw error;
     } finally {
@@ -1625,6 +1635,18 @@ function toErrorMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+function resolveBootstrapErrorCode(error: unknown): string | null {
+  if (isNetworkApiError(error)) {
+    return error.errorCode;
+  }
+
+  if (error instanceof ApiError) {
+    return error.errorCode;
+  }
+
+  return null;
 }
 
 function deriveButlerControlSessionStatus(

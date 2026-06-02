@@ -75,6 +75,12 @@ import {
   startButlerInboxItemSession,
   updateAssistantAutomation
 } from "../api/butler-api";
+import {
+  ButlerInitForm,
+  type ButlerInitFormState,
+  type ButlerReportPriorityPresetId,
+  DEFAULT_BUTLER_INIT_FORM_STATE
+} from "../components/ButlerInitForm";
 import { ButlerAnchoredPopover } from "../components/ButlerAnchoredPopover";
 import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
@@ -82,17 +88,6 @@ import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events"
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../runtime/butler-runtime-store";
 
 import "./ButlerPage.css";
-
-interface ButlerInitFormState {
-  displayName: string;
-  providerId: ButlerProviderId;
-  agentsMode: "inline" | "file";
-  personaTone: ButlerToneId;
-  personaLanguage: ButlerLanguageId;
-  personaSummaryStyle: ButlerSummaryStyleId;
-  focusRiskPreference: ButlerRiskPreferenceId;
-  reportPriorityPreset: ButlerReportPriorityPresetId;
-}
 
 interface ButlerSettingsFormState {
   displayName: string;
@@ -124,12 +119,6 @@ interface AutomationEditorState {
   maxChecks: string;
 }
 
-type ButlerReportPriorityPresetId =
-  | "risk-first"
-  | "blocker-first"
-  | "verification-first"
-  | "progress-first";
-
 const REPORT_PRIORITY_PRESET_VALUES: Record<ButlerReportPriorityPresetId, string[]> = {
   "risk-first": ["risk", "blocker", "verification"],
   "blocker-first": ["blocker", "risk", "verification"],
@@ -142,16 +131,6 @@ const BUTLER_RUNTIME_ACTIVE_HIDE_DELAY_MS = 1_500;
 const ACTIVE_CONTROL_SESSION_WINDOW_MS = 8 * 60 * 60 * 1_000;
 const BUTLER_PROVIDER_IDS: ButlerProviderId[] = ["codex", "claude-code"];
 
-const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
-  displayName: "",
-  providerId: "codex",
-  agentsMode: "inline",
-  personaTone: "direct",
-  personaLanguage: "zh-CN",
-  personaSummaryStyle: "brief",
-  focusRiskPreference: "conservative",
-  reportPriorityPreset: "risk-first"
-};
 const DEFAULT_SETTINGS_FORM_STATE: ButlerSettingsFormState = {
   displayName: "",
   agentsMode: "inline",
@@ -231,7 +210,7 @@ export function ButlerPage() {
   const { navigationGroups, requestNavigationRefresh, setAuxiliaryPanel } = useWorkbenchShell();
   const storeRef = useRef<ButlerRuntimeStore | null>(null);
   const currentWorkspaceIdRef = useRef<string | null>(null);
-  const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_INIT_FORM_STATE);
+  const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_BUTLER_INIT_FORM_STATE);
   const [initializingProfile, setInitializingProfile] = useState(false);
   const [settingsForm, setSettingsForm] = useState<ButlerSettingsFormState>(
     DEFAULT_SETTINGS_FORM_STATE
@@ -1509,32 +1488,6 @@ export function ButlerPage() {
     []
   );
   // 初始化阶段把当前选择整理成可读标签，左侧预览直接复用，别再维护第二份状态。
-  const initSelectedProviderLabel = resolveOptionLabel(providerOptions, initForm.providerId);
-  const initSelectedAgentsModeLabel = resolveOptionLabel(agentsModeOptions, initForm.agentsMode);
-  const initSelectedToneLabel = resolveOptionLabel(toneOptions, initForm.personaTone);
-  const initSelectedLanguageLabel = resolveOptionLabel(languageOptions, initForm.personaLanguage);
-  const initSelectedSummaryStyleLabel = resolveOptionLabel(
-    summaryStyleOptions,
-    initForm.personaSummaryStyle
-  );
-  const initSelectedRiskPreferenceLabel = resolveOptionLabel(
-    riskPreferenceOptions,
-    initForm.focusRiskPreference
-  );
-  const initSelectedReportPriorityLabel = resolveOptionLabel(
-    reportPriorityPresetOptions,
-    initForm.reportPriorityPreset
-  );
-  const initSelectedAgentsModeDescription =
-    initForm.agentsMode === "inline"
-      ? t("shell.butlerAgentsModeInlineDescription")
-      : t("shell.butlerAgentsModeFileDescription");
-  const initPreviewTags = [
-    initSelectedAgentsModeLabel,
-    initSelectedLanguageLabel,
-    initSelectedRiskPreferenceLabel
-  ];
-
   const sidePanel = useMemo(
     () => (
       <ButlerAuxiliaryPanel
@@ -1728,269 +1681,19 @@ export function ButlerPage() {
   if (!initialized) {
     return (
       <main className="workbench-page butler-page-shell butler-init-shell">
-        <div className="butler-init-backdrop" aria-hidden="true">
-          <span className="butler-init-glow butler-init-glow-primary" />
-          <span className="butler-init-glow butler-init-glow-secondary" />
-        </div>
-
-        <div className="butler-init-layout">
-            <aside className="butler-init-sidebar">
-              <section className="butler-init-hero-card">
-                <div className="butler-init-hero-copy">
-                  <h1>{t("shell.butlerInitTitle")}</h1>
-                  <p>{t("shell.butlerInitDescription")}</p>
-                </div>
-              </section>
-
-              <section className="butler-init-preview-card">
-                <header className="butler-init-section-header">
-                  <div>
-                    <h2>{t("shell.butlerInitPreviewTitle")}</h2>
-                  </div>
-                </header>
-
-                <div className="butler-init-preview-identity">
-                  <div className="butler-init-preview-nameplate">
-                    <div className="butler-chat-avatar butler-init-preview-avatar">
-                      <span>{butlerAvatar}</span>
-                    </div>
-                    <strong>{butlerDisplayName}</strong>
-                  </div>
-                  <span className="butler-init-preview-provider">{initSelectedProviderLabel}</span>
-                </div>
-
-                <div className="butler-init-chip-list">
-                  {initPreviewTags.map((tag) => (
-                    <span key={tag} className="butler-init-chip">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="butler-init-preview-rows">
-                  <div className="butler-init-preview-row">
-                    <span>{t("shell.butlerPersonaToneLabel")}</span>
-                    <strong>{initSelectedToneLabel}</strong>
-                  </div>
-                  <div className="butler-init-preview-row">
-                    <span>{t("shell.butlerInitPreviewRuleLabel")}</span>
-                    <strong>{initSelectedAgentsModeLabel}</strong>
-                  </div>
-                  <div className="butler-init-preview-row">
-                    <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
-                    <strong>{initSelectedSummaryStyleLabel}</strong>
-                  </div>
-                  <div className="butler-init-preview-row">
-                    <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
-                    <strong>{initSelectedReportPriorityLabel}</strong>
-                  </div>
-                </div>
-
-              </section>
-            </aside>
-
-            <form className="butler-init-form" onSubmit={handleProfileInitSubmit}>
-              <section className="butler-init-form-section">
-                <header className="butler-init-section-header">
-                  <div>
-                    <h2>{t("shell.butlerInitBasicsTitle")}</h2>
-                  </div>
-                </header>
-
-                <div className="butler-init-basic-grid">
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerDisplayNameLabel")}</span>
-                    <input
-                      className="butler-form-control"
-                      value={initForm.displayName}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          displayName: event.target.value
-                        }))
-                      }
-                      placeholder={t("shell.butlerDisplayNamePlaceholder")}
-                    />
-                    <small>{t("shell.butlerDisplayNameHint")}</small>
-                  </label>
-
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerProviderLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.providerId}
-                      disabled={enabledProviderOptions.length <= 1}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          providerId: event.target.value as ButlerProviderId
-                        }))
-                      }
-                    >
-                      {providerOptions.map((option) => (
-                        <option key={option.value} value={option.value} disabled={!option.enabled}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="butler-form-field butler-form-field-wide">
-                    <span>{t("shell.butlerAgentsModeLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.agentsMode}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          agentsMode: event.target.value as "inline" | "file"
-                        }))
-                      }
-                    >
-                      {agentsModeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <small>{initSelectedAgentsModeDescription}</small>
-                  </label>
-                </div>
-              </section>
-
-              <section className="butler-init-form-section">
-                <header className="butler-init-section-header">
-                  <div>
-                    <h2>{t("shell.butlerInitPersonaTitle")}</h2>
-                  </div>
-                </header>
-
-                <div className="butler-init-persona-grid">
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerPersonaToneLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.personaTone}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          personaTone: event.target.value as ButlerToneId
-                        }))
-                      }
-                    >
-                      {toneOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerPersonaLanguageLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.personaLanguage}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          personaLanguage: event.target.value as ButlerLanguageId
-                        }))
-                      }
-                    >
-                      {languageOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.personaSummaryStyle}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          personaSummaryStyle: event.target.value as ButlerSummaryStyleId
-                        }))
-                      }
-                    >
-                      {summaryStyleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </section>
-
-              <section className="butler-init-form-section">
-                <header className="butler-init-section-header">
-                  <div>
-                    <h2>{t("shell.butlerInitPreferenceTitle")}</h2>
-                  </div>
-                </header>
-
-                <div className="butler-init-preferences-grid">
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerFocusRiskPreferenceLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.focusRiskPreference}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          focusRiskPreference: event.target.value as ButlerRiskPreferenceId
-                        }))
-                      }
-                    >
-                      {riskPreferenceOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="butler-form-field">
-                    <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
-                    <select
-                      className="butler-form-control"
-                      value={initForm.reportPriorityPreset}
-                      onChange={(event) =>
-                        setInitForm((current) => ({
-                          ...current,
-                          reportPriorityPreset: event.target.value as ButlerReportPriorityPresetId
-                        }))
-                      }
-                    >
-                      {reportPriorityPresetOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </section>
-
-              <div className="butler-init-actions">
-                <button
-                  className="butler-init-submit"
-                  type="submit"
-                  disabled={loading || initializingProfile || enabledProviderOptions.length === 0}
-                >
-                  {loading || initializingProfile
-                    ? t("shell.butlerInitSubmitting")
-                    : t("shell.butlerInitSubmit")}
-                </button>
-              </div>
-            </form>
-        </div>
+        <ButlerInitForm
+          form={initForm}
+          onChange={setInitForm}
+          submitting={loading || initializingProfile}
+          submitLabel={
+            loading || initializingProfile
+              ? t("shell.butlerInitSubmitting")
+              : t("shell.butlerInitSubmit")
+          }
+          previewName={butlerDisplayName}
+          previewAvatar={butlerAvatar}
+          onSubmit={handleProfileInitSubmit}
+        />
       </main>
     );
   }

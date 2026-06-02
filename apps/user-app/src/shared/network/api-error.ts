@@ -25,3 +25,7 @@ export class ApiError extends Error {
 export function isProviderDisabledApiError(error: unknown): error is ApiError {
   return error instanceof ApiError && error.errorCode === "PROVIDER_DISABLED";
 }
+
+export function isNetworkApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.errorCode === "NETWORK_ERROR";
+}
