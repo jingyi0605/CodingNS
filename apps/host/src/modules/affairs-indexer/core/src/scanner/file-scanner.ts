@@ -64,23 +64,85 @@ function normalizeRelativePath(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
 }
 
+function normalizeHiddenPathCandidate(input: string): string | null {
+  const normalized = input.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized) {
+    return null;
+  }
+
+  const segments = normalized
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+
+  const resolved = path.posix.normalize(segments.join("/")).replace(/^\/+|\/+$/g, "");
+  if (!resolved || resolved === "." || resolved === ".." || resolved.startsWith("../")) {
+    return null;
+  }
+  return resolved;
+}
+
+export function hasHiddenPathSegment(relativePath: string): boolean {
+  return normalizeHiddenPathCandidate(relativePath)
+    ?.split("/")
+    .some((segment) => segment.startsWith(".")) ?? false;
+}
+
+export function normalizeIncludedHiddenPaths(input: readonly string[]): string[] {
+  const values = new Set<string>();
+  for (const item of input) {
+    const normalized = normalizeHiddenPathCandidate(String(item ?? ""));
+    if (!normalized) {
+      continue;
+    }
+    if (!hasHiddenPathSegment(normalized)) {
+      continue;
+    }
+    if (normalized === ".ai-index" || normalized.startsWith(".ai-index/")) {
+      continue;
+    }
+    values.add(normalized);
+  }
+  return [...values].sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+}
+
+export function isIncludedHiddenPath(relativePath: string, includedHiddenPaths: readonly string[]): boolean {
+  const normalizedRelativePath = normalizeHiddenPathCandidate(relativePath);
+  if (!normalizedRelativePath || !hasHiddenPathSegment(normalizedRelativePath)) {
+    return false;
+  }
+
+  const normalizedIncludedPaths = normalizeIncludedHiddenPaths(includedHiddenPaths);
+  return normalizedIncludedPaths.some(
+    (includedPath) =>
+      normalizedRelativePath === includedPath
+      || normalizedRelativePath.startsWith(`${includedPath}/`)
+  );
+}
+
 /**
  * 文件扫描器。
  * 第二阶段改成显式迭代器遍历，避免大目录下先把整棵树一次性塞进内存。
  */
 export class FileScanner {
   private readonly allowedExtensions: Set<string> | null;
+  private readonly includedHiddenPaths: string[];
 
   constructor(
     private readonly rootDir: string,
     options: {
       allowedExtensions?: string[];
+      includedHiddenPaths?: string[];
     } = {},
   ) {
     const normalizedExtensions = (options.allowedExtensions ?? [])
       .map(item => item.trim().toLowerCase())
       .filter(Boolean);
     this.allowedExtensions = normalizedExtensions.length > 0 ? new Set(normalizedExtensions) : null;
+    this.includedHiddenPaths = normalizeIncludedHiddenPaths(options.includedHiddenPaths ?? []);
   }
 
   private isIndexableExtension(extension: string): boolean {
@@ -128,10 +190,11 @@ export class FileScanner {
           if (IGNORED_DIRECTORY_NAMES.has(entry.name)) {
             return false;
           }
-          if (entry.isDirectory()) {
-            return !entry.name.startsWith(".");
+          const relativeEntryPath = normalizeRelativePath(path.relative(this.rootDir, path.join(currentPath, entry.name)));
+          if (!entry.name.startsWith(".")) {
+            return true;
           }
-          return !entry.name.startsWith(".");
+          return isIncludedHiddenPath(relativeEntryPath, this.includedHiddenPaths);
         })
         .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 
@@ -157,6 +220,9 @@ export class FileScanner {
     }
 
     const relativePath = normalizeRelativePath(path.relative(this.rootDir, filePath));
+    if (hasHiddenPathSegment(relativePath) && !isIncludedHiddenPath(relativePath, this.includedHiddenPaths)) {
+      return null;
+    }
     return {
       relativePath,
       fullPath: filePath,

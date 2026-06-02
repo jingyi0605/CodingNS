@@ -182,6 +182,8 @@ import { getAffairsLibraryDebugLogPath } from "../modules/workspace/affairs-libr
 import { AffairsLibraryDirtyWatchService } from "../modules/workspace/affairs-library-dirty-watch-service.js";
 import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
 import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
+import { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
+import { AffairsTagService } from "../modules/workspace/affairs-tag-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
@@ -1386,10 +1388,6 @@ export function createServer(config: HostConfig) {
         affairsLibraryService.scheduleAutoApplyConfig(workspaceId, event.reason);
         return;
       }
-      if (event.kind === "tag-rules") {
-        affairsLibraryService.scheduleAutoRecomputeTags(workspaceId, event.reason);
-        return;
-      }
       affairsLibraryService.scheduleAutoRefresh(workspaceId, event.reason, event.targetPath);
     },
     app.log
@@ -1427,6 +1425,13 @@ export function createServer(config: HostConfig) {
       workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
     }
   );
+  const affairsTagService = new AffairsTagService(
+    workspaceService,
+    repositories.workspaceNavigationStateRepository,
+    affairsLibraryService,
+    taskManager
+  );
+  const affairsTagController = new AffairsTagController(affairsTagService);
   const worktreeController = new WorktreeController(
     worktreeManager,
     worktreeSyncService,
@@ -1716,7 +1721,7 @@ export function createServer(config: HostConfig) {
   void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
   void registerOpsRuntimeRoutes(app, opsRuntimeController);
-  void registerWorkspaceRoutes(app, workspaceController, affairsLibraryController);
+  void registerWorkspaceRoutes(app, workspaceController, affairsLibraryController, affairsTagController);
   void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);

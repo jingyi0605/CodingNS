@@ -22,7 +22,6 @@ function createRootDir() {
     parserTimeoutMs: 30000,
     disabledParserExtensions: [],
     allowedExtensions: [".md"],
-    tagRulesPath: path.join(rootDir, ".ai-index", "tag-rules.json"),
     writeBatchSize: 100,
     logLevel: "silent",
   });
@@ -101,7 +100,6 @@ describe("AffairsTagService", () => {
 
     const detail = service.getTagDetail("workspace-1", "user-1", tag.id);
     expect(detail.id).toBe(tag.id);
-    expect(detail.rules).toEqual([]);
 
     const child = service.saveTagDefinition("workspace-1", "user-1", {
       name: "正式合同",
@@ -111,52 +109,7 @@ describe("AffairsTagService", () => {
     expect(child.parentId).toBe(tag.id);
   });
 
-  it("可以导入推荐批次并创建标签树", () => {
-    addIndexedDocument("客户A/合同.md", "客户A 合同");
-    addIndexedDocument("客户A/验收.md", "客户A 验收");
-    addIndexedDocument("客户B/合同.md", "客户B 合同");
-    const service = createService();
-
-    const created = service.createRecommendationBatch("workspace-1", "user-1");
-    expect(created.batch.status).toBe("draft");
-    expect(created.batch.items?.length).toBeGreaterThanOrEqual(2);
-
-    const customerAItem = created.batch.items?.find((item) => item.proposedPath === "推荐/客户A");
-    expect(customerAItem).toBeTruthy();
-
-    const result = service.applyRecommendationBatch("workspace-1", "user-1", created.batch.id, {
-      items: created.batch.items?.map((item) => ({
-        itemId: item.id,
-        selected: item.id === customerAItem?.id,
-      })) ?? [],
-    });
-
-    expect(result.batch.status).toBe("applied");
-    expect(result.batch.items?.find((item) => item.id === customerAItem?.id)?.status).toBe("accepted");
-    expect(result.createdTags.map((item) => item.path)).toEqual(expect.arrayContaining(["推荐", "推荐/客户A"]));
-    expect(enqueue).toHaveBeenCalledWith(
-      HOST_TASK_TYPES.affairsLibraryTagExportRefresh,
-      expect.objectContaining({
-        source: "affairs_tag.apply_recommendation_batch",
-      }),
-    );
-    expect(() => service.applyRecommendationBatch("workspace-1", "user-1", created.batch.id)).toThrow(/只有草稿批次可以导入/);
-  });
-
-  it("可以放弃推荐批次并拒绝全部推荐项", () => {
-    addIndexedDocument("客户A/合同.md", "客户A 合同");
-    const service = createService();
-
-    const created = service.createRecommendationBatch("workspace-1", "user-1");
-    const discarded = service.discardRecommendationBatch("workspace-1", "user-1", created.batch.id);
-
-    expect(discarded.status).toBe("discarded");
-    expect(discarded.items?.length).toBeGreaterThan(0);
-    expect(discarded.items?.every((item) => item.status === "rejected")).toBe(true);
-    expect(() => service.discardRecommendationBatch("workspace-1", "user-1", created.batch.id)).toThrow(/只有草稿批次可以放弃/);
-  });
-
-  it("标签重算会合并手动标签、文件夹标签和数据库规则标签", () => {
+  it("标签重算会合并手动标签、文件夹标签和系统派生标签", () => {
     const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
     const service = createService();
     const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
@@ -165,24 +118,8 @@ describe("AffairsTagService", () => {
     const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
       name: "目录继承",
     });
-    const ruleTag = service.saveTagDefinition("workspace-1", "user-1", {
-      name: "规则命中",
-    });
-
     service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
     service.saveFolderTagBindings("workspace-1", "user-1", ".", [folderTag.id]);
-    service.saveTagRules("workspace-1", "user-1", ruleTag.id, [
-      {
-        enabled: true,
-        ruleType: "keyword",
-        scope: ["path", "title", "summary", "body"],
-        matcher: { keywords: ["客户A"], pathIncludes: [] },
-        minScore: 0.2,
-        priority: 0,
-        source: "user",
-      },
-    ]);
-
     new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
       scope: { kind: "document", documentId: document.documentId },
     });
@@ -193,7 +130,6 @@ describe("AffairsTagService", () => {
     expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
       "人工确认:manual_document",
       "目录继承:folder_binding",
-      "规则命中:rule_match",
     ]));
   });
 
@@ -267,18 +203,6 @@ describe("AffairsTagService", () => {
 
     service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [childTag.id]);
     service.saveFolderTagBindings("workspace-1", "user-1", ".", [rootTag.id]);
-    service.saveTagRules("workspace-1", "user-1", childTag.id, [
-      {
-        enabled: true,
-        ruleType: "keyword",
-        scope: ["path", "title"],
-        matcher: { keywords: ["合同"] },
-        minScore: 0.2,
-        priority: 0,
-        source: "user",
-      },
-    ]);
-
     new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
       scope: { kind: "document", documentId: document.documentId },
     });

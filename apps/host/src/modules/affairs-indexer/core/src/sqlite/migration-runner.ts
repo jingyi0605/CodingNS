@@ -8,6 +8,11 @@ export interface CatalogMigration {
   version: number;
   name: string;
   sql: string;
+  columns?: Array<{
+    table: string;
+    name: string;
+    definition: string;
+  }>;
 }
 
 export interface MigrationRunResult {
@@ -181,11 +186,142 @@ CREATE INDEX IF NOT EXISTS idx_derived_document_tags_document ON derived_documen
 CREATE UNIQUE INDEX IF NOT EXISTS idx_derived_document_tags_pair ON derived_document_tags(document_id, tag_id);
     `,
   },
+  {
+    version: 4,
+    name: "affairs_tag_management_v4",
+    columns: [
+      { table: "tags", name: "updated_at", definition: "TEXT" },
+      { table: "tags", name: "disabled_at", definition: "TEXT" },
+      { table: "tag_aliases", name: "updated_at", definition: "TEXT" },
+      { table: "document_tags", name: "source_ref", definition: "TEXT" },
+      { table: "derived_document_tags", name: "source", definition: "TEXT" },
+      { table: "derived_document_tags", name: "source_ref", definition: "TEXT" },
+      { table: "derived_document_tags", name: "evidence", definition: "TEXT" },
+      { table: "derived_document_tags", name: "updated_at", definition: "TEXT" },
+    ],
+    sql: `
+UPDATE tags
+SET updated_at = COALESCE(updated_at, created_at);
+
+UPDATE tag_aliases
+SET updated_at = COALESCE(updated_at, (
+  SELECT tags.created_at
+  FROM tags
+  WHERE tags.id = tag_aliases.tag_id
+), CURRENT_TIMESTAMP);
+
+UPDATE derived_document_tags
+SET source = COALESCE(source, 'system_derived'),
+    source_ref = COALESCE(source_ref, NULL),
+    evidence = COALESCE(evidence, NULL),
+    updated_at = COALESCE(updated_at, computed_at);
+
+CREATE TABLE IF NOT EXISTS tag_rules (
+  id TEXT PRIMARY KEY,
+  tag_id TEXT NOT NULL,
+  enabled INTEGER NOT NULL,
+  rule_type TEXT NOT NULL,
+  scope_json TEXT NOT NULL,
+  matcher_json TEXT NOT NULL,
+  min_score REAL,
+  priority INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(tag_id) REFERENCES tags(id)
+);
+
+CREATE TABLE IF NOT EXISTS manual_document_tag_bindings (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(document_id, tag_id),
+  FOREIGN KEY(document_id) REFERENCES documents(id),
+  FOREIGN KEY(tag_id) REFERENCES tags(id)
+);
+
+INSERT OR IGNORE INTO manual_document_tag_bindings(
+  id,
+  document_id,
+  tag_id,
+  source,
+  created_at,
+  updated_at
+)
+SELECT
+  'manual_binding_' || document_id || '_' || tag_id,
+  document_id,
+  tag_id,
+  'manual_document',
+  updated_at,
+  updated_at
+FROM document_tags
+WHERE manual_override = 1;
+
+CREATE TABLE IF NOT EXISTS folder_tag_bindings (
+  id TEXT PRIMARY KEY,
+  folder_path TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  apply_mode TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(folder_path, tag_id, apply_mode),
+  FOREIGN KEY(tag_id) REFERENCES tags(id)
+);
+
+CREATE TABLE IF NOT EXISTS tag_recommendation_batches (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  summary TEXT,
+  evidence_snapshot_json TEXT,
+  generated_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tag_recommendation_items (
+  id TEXT PRIMARY KEY,
+  batch_id TEXT NOT NULL,
+  proposed_path TEXT NOT NULL,
+  proposed_name TEXT NOT NULL,
+  proposed_parent_path TEXT,
+  document_count INTEGER NOT NULL,
+  evidence_json TEXT NOT NULL,
+  selected_by_default INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(batch_id) REFERENCES tag_recommendation_batches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_tags_source ON document_tags(document_id, source);
+CREATE INDEX IF NOT EXISTS idx_tag_rules_tag ON tag_rules(tag_id, enabled, priority);
+CREATE INDEX IF NOT EXISTS idx_manual_document_tag_bindings_document ON manual_document_tag_bindings(document_id);
+CREATE INDEX IF NOT EXISTS idx_folder_tag_bindings_folder ON folder_tag_bindings(folder_path);
+CREATE INDEX IF NOT EXISTS idx_tag_recommendation_items_batch ON tag_recommendation_items(batch_id, status);
+    `,
+  },
 ];
 
 function hasTable(db: ReturnType<typeof openDatabase>, tableName: string): boolean {
   const row = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`).get(tableName) as { name?: string } | undefined;
   return row?.name === tableName;
+}
+
+function hasColumn(db: ReturnType<typeof openDatabase>, tableName: string, columnName: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function ensureMigrationColumns(db: ReturnType<typeof openDatabase>, migration: CatalogMigration): void {
+  for (const column of migration.columns ?? []) {
+    if (hasColumn(db, column.table, column.name)) {
+      continue;
+    }
+    db.exec(`ALTER TABLE ${column.table} ADD COLUMN ${column.name} ${column.definition}`);
+  }
 }
 
 function readCurrentSchemaVersion(db: ReturnType<typeof openDatabase>): number {
@@ -221,6 +357,7 @@ export function runCatalogMigrations(config: RuntimeConfig): MigrationRunResult 
         continue;
       }
 
+      ensureMigrationColumns(db, migration);
       db.exec(migration.sql);
 
       const checksum = crypto.createHash("sha1").update(migration.sql).digest("hex");

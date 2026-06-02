@@ -29,4 +29,3 @@ export * from "./services/search/offline-search-service.js";
 export * from "./services/search/search-index-builder.js";
 export * from "./services/watch/watch-service.js";
 export * from "./tagging/simple-tag-inference.js";
-export * from "./tagging/tag-rules-config.js";

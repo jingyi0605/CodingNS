@@ -43,10 +43,6 @@ interface TaskHelperProcessHandlerMap {
     input: { rootDir: string; targetPath?: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
-  "affairs.library_recompute_tags": (
-    input: { rootDir: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
-    signal?: AbortSignal
-  ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
   "affairs.library_export": (
     input: { rootDir: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
@@ -75,15 +71,6 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
       targetPath ? ("watch-touch" satisfies AffairsIndexerCommandName) : ("index" satisfies AffairsIndexerCommandName),
       {
         targetPath,
-        reason,
-        taskMeta: __taskMeta
-      }
-    ),
-  "affairs.library_recompute_tags": ({ rootDir, reason, __taskMeta }) =>
-    runAffairsIndexerCommand(
-      rootDir,
-      "recompute-tags" satisfies AffairsIndexerCommandName,
-      {
         reason,
         taskMeta: __taskMeta
       }

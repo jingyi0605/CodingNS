@@ -62,9 +62,120 @@ export interface TagRecomputeDocumentRow {
   path: string;
   title: string;
   summary: string;
+  contentText: string;
   mtime: string;
   ctime: string;
   extension: string;
+}
+
+export type TagResolvedSourceType =
+  | "manual_document"
+  | "folder_binding"
+  | "smart_rule"
+  | "system_derived";
+
+export type TagRuleRelation = "and" | "or" | "not";
+
+export type TagRuleType =
+  | "file_name_contains"
+  | "file_content_contains"
+  | "file_extension_in"
+  | "modified_time_between";
+
+export interface TagRuleMatcherFileNameContains {
+  keyword: string;
+}
+
+export interface TagRuleMatcherFileContentContains {
+  keyword: string;
+}
+
+export interface TagRuleMatcherFileExtensionIn {
+  extensions: string[];
+}
+
+export interface TagRuleMatcherModifiedTimeBetween {
+  start?: string | null;
+  end?: string | null;
+}
+
+export type TagRuleMatcher =
+  | TagRuleMatcherFileNameContains
+  | TagRuleMatcherFileContentContains
+  | TagRuleMatcherFileExtensionIn
+  | TagRuleMatcherModifiedTimeBetween;
+
+export interface TagRuleRow {
+  id: string;
+  tagId: string;
+  tagPath: string;
+  enabled: boolean;
+  relation: TagRuleRelation;
+  ruleType: TagRuleType;
+  matcher: TagRuleMatcher;
+  minScore: number | null;
+  priority: number;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ManualDocumentTagBindingRow {
+  id: string;
+  documentId: string;
+  tagId: string;
+  tagPath: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FolderTagBindingRow {
+  id: string;
+  folderPath: string;
+  tagId: string;
+  tagPath: string;
+  applyMode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EffectiveFolderTagBindingRow extends FolderTagBindingRow {
+  documentPath: string;
+  documentId: string;
+}
+
+export interface TagDefinitionRow {
+  id: string;
+  rootType: string;
+  path: string;
+  name: string;
+  parentId: string | null;
+  canonicalName: string;
+  description: string | null;
+  status: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  disabledAt: string | null;
+}
+
+export interface ResolvedDocumentTagRow {
+  documentId: string;
+  path: string;
+  tagId: string;
+  sourceType: TagResolvedSourceType;
+  sourceRef: string | null;
+  evidence: string | null;
+  confidence: number;
+  updatedAt: string;
+}
+
+export interface RecomputeScope {
+  kind: "full" | "document" | "folder" | "tag";
+  documentId?: string;
+  folderPath?: string;
+  tagId?: string;
 }
 
 export interface ExportTagPostingRow {
@@ -170,6 +281,400 @@ function fetchDocumentTagsForIds(
  */
 export class CatalogRepository {
   constructor(private readonly dbPath: string) {}
+
+  listTagDefinitions(includeDisabled = false): TagDefinitionRow[] {
+    const db = openDatabase(this.dbPath);
+    try {
+      const rows = db.prepare(`
+        SELECT
+          id,
+          root_type,
+          path,
+          name,
+          parent_id,
+          canonical_name,
+          description,
+          status,
+          created_by,
+          created_at,
+          updated_at,
+          disabled_at
+        FROM tags
+        ${includeDisabled ? "" : "WHERE status <> 'disabled'"}
+        ORDER BY path
+      `).all() as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        rootType: String(row.root_type),
+        path: String(row.path),
+        name: String(row.name),
+        parentId: row.parent_id ? String(row.parent_id) : null,
+        canonicalName: String(row.canonical_name),
+        description: typeof row.description === "string" ? row.description : null,
+        status: String(row.status),
+        createdBy: String(row.created_by),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at ?? row.created_at),
+        disabledAt: typeof row.disabled_at === "string" ? row.disabled_at : null,
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  getTagDefinitionById(tagId: string): TagDefinitionRow | null {
+    const db = openDatabase(this.dbPath);
+    try {
+      const row = db.prepare(`
+        SELECT
+          id,
+          root_type,
+          path,
+          name,
+          parent_id,
+          canonical_name,
+          description,
+          status,
+          created_by,
+          created_at,
+          updated_at,
+          disabled_at
+        FROM tags
+        WHERE id = ?
+      `).get(tagId) as Record<string, unknown> | undefined;
+      if (!row) {
+        return null;
+      }
+      return {
+        id: String(row.id),
+        rootType: String(row.root_type),
+        path: String(row.path),
+        name: String(row.name),
+        parentId: row.parent_id ? String(row.parent_id) : null,
+        canonicalName: String(row.canonical_name),
+        description: typeof row.description === "string" ? row.description : null,
+        status: String(row.status),
+        createdBy: String(row.created_by),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at ?? row.created_at),
+        disabledAt: typeof row.disabled_at === "string" ? row.disabled_at : null,
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  listTagRulesByTagIds(tagIds: string[]): TagRuleRow[] {
+    const normalizedIds = [...new Set(tagIds.map(item => item.trim()).filter(Boolean))];
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+
+    const db = openDatabase(this.dbPath);
+    try {
+      const placeholders = normalizedIds.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT
+          r.id,
+          r.tag_id,
+          t.path AS tag_path,
+          r.enabled,
+          r.rule_type,
+          r.scope_json,
+          r.matcher_json,
+          r.min_score,
+          r.priority,
+          r.source,
+          r.created_at,
+          r.updated_at
+        FROM tag_rules r
+        JOIN tags t ON t.id = r.tag_id
+        WHERE r.tag_id IN (${placeholders})
+        ORDER BY t.path, r.priority, r.created_at
+      `).all(...normalizedIds) as Array<Record<string, unknown>>;
+
+      return rows.map(mapTagRuleRow);
+    } finally {
+      db.close();
+    }
+  }
+
+  listAllEnabledTagRules(): TagRuleRow[] {
+    const db = openDatabase(this.dbPath);
+    try {
+      const rows = db.prepare(`
+        SELECT
+          r.id,
+          r.tag_id,
+          t.path AS tag_path,
+          r.enabled,
+          r.rule_type,
+          r.scope_json,
+          r.matcher_json,
+          r.min_score,
+          r.priority,
+          r.source,
+          r.created_at,
+          r.updated_at
+        FROM tag_rules r
+        JOIN tags t ON t.id = r.tag_id
+        WHERE r.enabled = 1
+          AND t.status = 'active'
+        ORDER BY t.path, r.priority, r.created_at
+      `).all() as Array<Record<string, unknown>>;
+
+      return rows.map(mapTagRuleRow);
+    } finally {
+      db.close();
+    }
+  }
+
+  listManualDocumentTagBindingsByDocumentIds(documentIds: string[]): ManualDocumentTagBindingRow[] {
+    const normalizedIds = [...new Set(documentIds.map(item => item.trim()).filter(Boolean))];
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+
+    const db = openDatabase(this.dbPath);
+    try {
+      const placeholders = normalizedIds.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT
+          b.id,
+          b.document_id,
+          b.tag_id,
+          t.path AS tag_path,
+          b.source,
+          b.created_at,
+          b.updated_at
+        FROM manual_document_tag_bindings b
+        JOIN tags t ON t.id = b.tag_id
+        WHERE b.document_id IN (${placeholders})
+        ORDER BY b.document_id, t.path
+      `).all(...normalizedIds) as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        documentId: String(row.document_id),
+        tagId: String(row.tag_id),
+        tagPath: String(row.tag_path),
+        source: String(row.source),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  listFolderTagBindingsByPaths(paths: string[]): FolderTagBindingRow[] {
+    const normalizedPaths = [...new Set(paths.map(normalizeFolderBindingPath))];
+    if (normalizedPaths.length === 0) {
+      return [];
+    }
+
+    const db = openDatabase(this.dbPath);
+    try {
+      const placeholders = normalizedPaths.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT
+          b.id,
+          b.folder_path,
+          b.tag_id,
+          t.path AS tag_path,
+          b.apply_mode,
+          b.created_at,
+          b.updated_at
+        FROM folder_tag_bindings b
+        JOIN tags t ON t.id = b.tag_id
+        WHERE b.folder_path IN (${placeholders})
+        ORDER BY b.folder_path, t.path
+      `).all(...normalizedPaths) as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        folderPath: String(row.folder_path),
+        tagId: String(row.tag_id),
+        tagPath: String(row.tag_path),
+        applyMode: String(row.apply_mode),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  listEffectiveFolderTagBindingsForDocumentPaths(paths: string[]): EffectiveFolderTagBindingRow[] {
+    const normalizedPaths = [...new Set(paths.map(item => item.trim().replace(/^\.\/+/, "")).filter(Boolean))];
+    if (normalizedPaths.length === 0) {
+      return [];
+    }
+
+    const db = openDatabase(this.dbPath);
+    try {
+      const conditions = normalizedPaths.map(() => `(f.path = ? OR f.path LIKE ?)` ).join(" OR ");
+      const params = normalizedPaths.flatMap(item => [item, `${item}/%`]);
+      const rows = db.prepare(`
+        SELECT
+          b.id,
+          b.folder_path,
+          b.tag_id,
+          t.path AS tag_path,
+          b.apply_mode,
+          b.created_at,
+          b.updated_at,
+          f.path AS document_path,
+          d.id AS document_id
+        FROM folder_tag_bindings b
+        JOIN tags t ON t.id = b.tag_id
+        JOIN files f ON (
+          b.folder_path = '.'
+          OR f.path = b.folder_path
+          OR f.path LIKE b.folder_path || '/%'
+        )
+        JOIN documents d ON d.file_id = f.id
+        WHERE f.status = 'active'
+          AND d.index_status = 'indexed'
+          AND (${conditions})
+        ORDER BY f.path, b.folder_path, t.path
+      `).all(...params) as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        folderPath: String(row.folder_path),
+        tagId: String(row.tag_id),
+        tagPath: String(row.tag_path),
+        applyMode: String(row.apply_mode),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        documentPath: String(row.document_path),
+        documentId: String(row.document_id),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  listResolvedDocumentTagsByDocumentIds(documentIds: string[]): ResolvedDocumentTagRow[] {
+    const normalizedIds = [...new Set(documentIds.map(item => item.trim()).filter(Boolean))];
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+    const db = openDatabase(this.dbPath);
+    try {
+      const placeholders = normalizedIds.map(() => "?").join(", ");
+      const directRows = db.prepare(`
+        SELECT
+          dt.document_id,
+          t.path,
+          dt.tag_id,
+          dt.source AS source_type,
+          dt.source_ref,
+          dt.evidence,
+          dt.confidence,
+          dt.updated_at
+        FROM document_tags dt
+        JOIN tags t ON t.id = dt.tag_id
+        WHERE dt.document_id IN (${placeholders})
+      `).all(...normalizedIds) as Array<Record<string, unknown>>;
+      const derivedRows = db.prepare(`
+        SELECT
+          ddt.document_id,
+          t.path,
+          ddt.tag_id,
+          ddt.source AS source_type,
+          ddt.source_ref,
+          ddt.evidence,
+          1 AS confidence,
+          ddt.updated_at
+        FROM derived_document_tags ddt
+        JOIN tags t ON t.id = ddt.tag_id
+        WHERE ddt.document_id IN (${placeholders})
+      `).all(...normalizedIds) as Array<Record<string, unknown>>;
+
+      return [...directRows, ...derivedRows]
+        .map(row => ({
+          documentId: String(row.document_id),
+          path: String(row.path),
+          tagId: String(row.tag_id),
+          sourceType: String(row.source_type) as TagResolvedSourceType,
+          sourceRef: typeof row.source_ref === "string" ? row.source_ref : null,
+          evidence: typeof row.evidence === "string" ? row.evidence : null,
+          confidence: Number(row.confidence ?? 0),
+          updatedAt: String(row.updated_at),
+        }))
+        .sort((left, right) => left.path.localeCompare(right.path, "zh-Hans-CN"));
+    } finally {
+      db.close();
+    }
+  }
+
+  listRecomputeCandidateDocuments(scope: RecomputeScope): TagRecomputeDocumentRow[] {
+    const db = openDatabase(this.dbPath);
+    try {
+      if (scope.kind === "document" && scope.documentId) {
+        const rows = db.prepare(`
+          SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
+                 COALESCE(d.summary, '') AS summary,
+                 COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+                 f.mtime, f.ctime, f.extension
+          FROM documents d
+          JOIN files f ON f.id = d.file_id
+          LEFT JOIN chunks c ON c.document_id = d.id
+          WHERE d.id = ?
+            AND f.status = 'active'
+            AND d.index_status = 'indexed'
+          GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
+        `).all(scope.documentId) as Array<Record<string, unknown>>;
+        return rows.map(mapTagRecomputeRow);
+      }
+
+      if (scope.kind === "folder" && scope.folderPath) {
+        const normalizedPath = scope.folderPath.trim().replace(/^\.\/+/, "").replace(/\/+$/g, "");
+        const rows = db.prepare(`
+          SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
+                 COALESCE(d.summary, '') AS summary,
+                 COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+                 f.mtime, f.ctime, f.extension
+          FROM documents d
+          JOIN files f ON f.id = d.file_id
+          LEFT JOIN chunks c ON c.document_id = d.id
+          WHERE f.status = 'active'
+            AND d.index_status = 'indexed'
+            AND (f.path = ? OR f.path LIKE ?)
+          GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
+          ORDER BY f.path
+        `).all(normalizedPath, `${normalizedPath}/%`) as Array<Record<string, unknown>>;
+        return rows.map(mapTagRecomputeRow);
+      }
+
+      if (scope.kind === "tag" && scope.tagId) {
+        const rows = db.prepare(`
+          SELECT DISTINCT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
+                 COALESCE(d.summary, '') AS summary,
+                 COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+                 f.mtime, f.ctime, f.extension
+          FROM tag_rules r
+          JOIN tags t ON t.id = r.tag_id
+          JOIN documents d
+          LEFT JOIN chunks c ON c.document_id = d.id
+          JOIN files f ON f.id = d.file_id
+          WHERE r.tag_id = ?
+            AND f.status = 'active'
+            AND d.index_status = 'indexed'
+          GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
+          ORDER BY f.path
+        `).all(scope.tagId) as Array<Record<string, unknown>>;
+        return rows.map(mapTagRecomputeRow);
+      }
+
+      return this.listAllRecomputeCandidateDocuments(db);
+    } finally {
+      db.close();
+    }
+  }
 
   getDocumentContext(documentId?: string, filePath?: string): DocumentContextResult | null {
     if (!documentId && !filePath) {
@@ -812,12 +1317,16 @@ export class CatalogRepository {
       while (true) {
         const rows = db.prepare(`
           SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
-                 COALESCE(d.summary, '') AS summary, f.mtime, f.ctime, f.extension
+                 COALESCE(d.summary, '') AS summary,
+                 COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+                 f.mtime, f.ctime, f.extension
           FROM documents d
           JOIN files f ON f.id = d.file_id
+          LEFT JOIN chunks c ON c.document_id = d.id
           WHERE f.status = 'active'
             AND d.index_status = 'indexed'
             AND f.path > ?
+          GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
           ORDER BY f.path
           LIMIT ?
         `).all(lastPath, batchSize) as Array<Record<string, unknown>>;
@@ -831,6 +1340,7 @@ export class CatalogRepository {
           path: String(row.path),
           title: String(row.title),
           summary: String(row.summary ?? ""),
+          contentText: String(row.content_text ?? ""),
           mtime: String(row.mtime),
           ctime: String(row.ctime),
           extension: String(row.extension),
@@ -841,4 +1351,76 @@ export class CatalogRepository {
       db.close();
     }
   }
+
+  private listAllRecomputeCandidateDocuments(db: ReturnType<typeof openDatabase>): TagRecomputeDocumentRow[] {
+    const rows = db.prepare(`
+      SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
+             COALESCE(d.summary, '') AS summary,
+             COALESCE(group_concat(c.content, char(10)), '') AS content_text,
+             f.mtime, f.ctime, f.extension
+      FROM documents d
+      JOIN files f ON f.id = d.file_id
+      LEFT JOIN chunks c ON c.document_id = d.id
+      WHERE f.status = 'active'
+        AND d.index_status = 'indexed'
+      GROUP BY d.id, f.path, d.title, f.name, d.summary, f.mtime, f.ctime, f.extension
+      ORDER BY f.path
+    `).all() as Array<Record<string, unknown>>;
+    return rows.map(mapTagRecomputeRow);
+  }
+}
+
+function mapTagRecomputeRow(row: Record<string, unknown>): TagRecomputeDocumentRow {
+  return {
+    documentId: String(row.document_id),
+    path: String(row.path),
+    title: String(row.title),
+    summary: String(row.summary ?? ""),
+    contentText: String(row.content_text ?? ""),
+    mtime: String(row.mtime),
+    ctime: String(row.ctime),
+    extension: String(row.extension),
+  };
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+function mapTagRuleRow(row: Record<string, unknown>): TagRuleRow {
+  const scope = parseJsonRecord(row.scope_json);
+  const matcher = parseJsonRecord(row.matcher_json) as TagRuleMatcher;
+  const relationValue = typeof scope.relation === "string" ? scope.relation.toLowerCase() : "and";
+  const relation: TagRuleRelation =
+    relationValue === "or" || relationValue === "not" ? relationValue : "and";
+  return {
+    id: String(row.id),
+    tagId: String(row.tag_id),
+    tagPath: String(row.tag_path),
+    enabled: Number(row.enabled ?? 0) === 1,
+    relation,
+    ruleType: String(row.rule_type) as TagRuleType,
+    matcher,
+    minScore: row.min_score === null || row.min_score === undefined ? null : Number(row.min_score),
+    priority: Number(row.priority ?? 0),
+    source: String(row.source ?? "smart_rule"),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function normalizeFolderBindingPath(value: string): string {
+  const normalized = value.trim().replace(/^\.\/+/, "").replace(/\/+$/g, "");
+  return normalized || ".";
 }

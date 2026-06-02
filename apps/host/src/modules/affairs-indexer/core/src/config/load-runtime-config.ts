@@ -23,7 +23,7 @@ interface RuntimeConfigFilePayload {
   parserTimeoutMs?: number;
   disabledParserExtensions?: string[];
   allowedExtensions?: string[];
-  tagRulesPath?: string;
+  includedHiddenPaths?: string[];
   writeBatchSize?: number;
   logLevel?: LogLevel;
 }
@@ -68,6 +68,28 @@ function normalizeExtensionToken(value: string): string | null {
     return null;
   }
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
+}
+
+function readStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ));
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return Array.from(new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ));
+  }
+
+  return undefined;
 }
 
 function readExtensionList(value: unknown): string[] | undefined {
@@ -233,13 +255,13 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
       ?? [],
   ) ?? [];
 
-  const tagRulesPath = resolveMaybeRelative(
-    rootDir,
-    readString(args, "tagRulesPath", "tag-rules-path")
-      ?? env.DOC_SEMANTIC_INDEX_TAG_RULES_PATH
-      ?? configFile.tagRulesPath
-      ?? path.join(path.relative(rootDir, indexDir) || ".ai-index", "tag-rules.json"),
-  );
+  const includedHiddenPaths = readStringList(
+    args.includedHiddenPaths
+      ?? args["included-hidden-paths"]
+      ?? env.DOC_SEMANTIC_INDEX_INCLUDED_HIDDEN_PATHS
+      ?? configFile.includedHiddenPaths
+      ?? [],
+  ) ?? [];
 
   const writeBatchSize = readPositiveNumber(
     args.writeBatchSize
@@ -275,7 +297,7 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
     parserTimeoutMs,
     disabledParserExtensions,
     allowedExtensions,
-    tagRulesPath,
+    includedHiddenPaths,
     writeBatchSize,
     logLevel,
   };

@@ -5,6 +5,13 @@ import { openDatabase } from "../sqlite/open-database.js";
 import type { FileScanResult } from "../scanner/file-scanner.js";
 import type { ParsedDocument } from "../parser/plain-text-parser.js";
 import type { TagAssignment } from "../tagging/simple-tag-inference.js";
+import type {
+  RecomputeScope,
+  TagResolvedSourceType,
+  TagRuleMatcher,
+  TagRuleRelation,
+  TagRuleType,
+} from "./catalog-repository.js";
 
 function makeStableId(prefix: string, value: string): string {
   const digest = crypto.createHash("sha1").update(value).digest("hex");
@@ -19,9 +26,22 @@ export interface ReconcileScope {
 interface PreparedStatements {
   upsertFile: ReturnType<DatabaseSync["prepare"]>;
   upsertDocument: ReturnType<DatabaseSync["prepare"]>;
+  insertChunk: ReturnType<DatabaseSync["prepare"]>;
   insertTag: ReturnType<DatabaseSync["prepare"]>;
+  updateTagDefinition: ReturnType<DatabaseSync["prepare"]>;
+  selectTagById: ReturnType<DatabaseSync["prepare"]>;
+  selectTagByPath: ReturnType<DatabaseSync["prepare"]>;
+  selectTagChildrenByParentId: ReturnType<DatabaseSync["prepare"]>;
+  deleteManualDocumentBindingsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
+  insertManualDocumentBinding: ReturnType<DatabaseSync["prepare"]>;
+  deleteFolderBindingsByFolderPath: ReturnType<DatabaseSync["prepare"]>;
+  insertFolderBinding: ReturnType<DatabaseSync["prepare"]>;
+  deleteTagRulesByTagId: ReturnType<DatabaseSync["prepare"]>;
+  insertTagRule: ReturnType<DatabaseSync["prepare"]>;
   deleteDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
   deleteDerivedDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
+  deleteDocumentTagByDocumentAndSource: ReturnType<DatabaseSync["prepare"]>;
+  deleteDerivedDocumentTagByDocumentAndSource: ReturnType<DatabaseSync["prepare"]>;
   insertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
   insertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
   upsertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
@@ -51,6 +71,7 @@ export interface SkippedDocumentEntry {
 export interface IndexedDocumentWritePayload {
   title: string;
   summary: string;
+  text: string;
 }
 
 export interface IndexedDocumentBatchEntry {
@@ -58,6 +79,35 @@ export interface IndexedDocumentBatchEntry {
   document: IndexedDocumentWritePayload;
   tags: TagAssignment[];
   derivedTags: TagAssignment[];
+}
+
+export interface RecomputedResolvedTagEntry {
+  documentId: string;
+  tagPath: string;
+  sourceType: TagResolvedSourceType;
+  confidence: number;
+  sourceRef?: string | null;
+  evidence?: string | null;
+}
+
+export interface SaveTagDefinitionInput {
+  id?: string;
+  path: string;
+  name: string;
+  rootType: string;
+  parentId?: string | null;
+  canonicalName?: string;
+  description?: string | null;
+  status: "active" | "disabled";
+  createdBy: string;
+}
+
+export interface SaveTagRuleInput {
+  relation: TagRuleRelation;
+  ruleType: TagRuleType;
+  matcher: TagRuleMatcher;
+  enabled: boolean;
+  priority: number;
 }
 
 /**
@@ -181,7 +231,7 @@ export class CatalogWriteRepository {
       `),
       upsertDocument: db.prepare(`
         INSERT INTO documents(id, file_id, title, summary, language, parse_status, parse_error, index_status, chunk_count, last_indexed_at)
-        VALUES(?, ?, ?, ?, 'zh', ?, ?, ?, 0, ?)
+        VALUES(?, ?, ?, ?, 'zh', ?, ?, ?, ?, ?)
         ON CONFLICT(file_id) DO UPDATE SET
           id = excluded.id,
           title = excluded.title,
@@ -192,36 +242,90 @@ export class CatalogWriteRepository {
           chunk_count = excluded.chunk_count,
           last_indexed_at = excluded.last_indexed_at
       `),
+      insertChunk: db.prepare(`
+        INSERT INTO chunks(id, document_id, chunk_index, content, content_hash, page_no, sheet_name, heading_path, token_count, vector_point_id)
+        VALUES(?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)
+      `),
       insertTag: db.prepare(`
-        INSERT OR IGNORE INTO tags(id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at)
-        VALUES(?, ?, ?, ?, ?, ?, '', 'active', ?, ?)
+        INSERT OR IGNORE INTO tags(id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at, updated_at, disabled_at)
+        VALUES(?, ?, ?, ?, ?, ?, '', 'active', ?, ?, ?, NULL)
+      `),
+      updateTagDefinition: db.prepare(`
+        UPDATE tags
+        SET root_type = ?,
+            path = ?,
+            name = ?,
+            parent_id = ?,
+            canonical_name = ?,
+            description = ?,
+            status = ?,
+            updated_at = ?,
+            disabled_at = ?
+        WHERE id = ?
+      `),
+      selectTagById: db.prepare(`
+        SELECT id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at, updated_at, disabled_at
+        FROM tags
+        WHERE id = ?
+      `),
+      selectTagByPath: db.prepare(`
+        SELECT id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at, updated_at, disabled_at
+        FROM tags
+        WHERE path = ?
+      `),
+      selectTagChildrenByParentId: db.prepare(`
+        SELECT id
+        FROM tags
+        WHERE parent_id = ?
+      `),
+      deleteManualDocumentBindingsByDocumentId: db.prepare(`DELETE FROM manual_document_tag_bindings WHERE document_id = ?`),
+      insertManualDocumentBinding: db.prepare(`
+        INSERT INTO manual_document_tag_bindings(id, document_id, tag_id, source, created_at, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+      `),
+      deleteFolderBindingsByFolderPath: db.prepare(`DELETE FROM folder_tag_bindings WHERE folder_path = ?`),
+      insertFolderBinding: db.prepare(`
+        INSERT INTO folder_tag_bindings(id, folder_path, tag_id, apply_mode, created_at, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+      `),
+      deleteTagRulesByTagId: db.prepare(`DELETE FROM tag_rules WHERE tag_id = ?`),
+      insertTagRule: db.prepare(`
+        INSERT INTO tag_rules(id, tag_id, enabled, rule_type, scope_json, matcher_json, min_score, priority, source, created_at, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       deleteDocumentTagByPair: db.prepare(`DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?`),
       deleteDerivedDocumentTagByPair: db.prepare(`DELETE FROM derived_document_tags WHERE document_id = ? AND tag_id = ?`),
+      deleteDocumentTagByDocumentAndSource: db.prepare(`DELETE FROM document_tags WHERE document_id = ? AND source = ?`),
+      deleteDerivedDocumentTagByDocumentAndSource: db.prepare(`DELETE FROM derived_document_tags WHERE document_id = ? AND source = ?`),
       insertDocumentTag: db.prepare(`
-        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, evidence, manual_override, updated_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, source_ref, evidence, manual_override, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       insertDerivedTag: db.prepare(`
-        INSERT INTO derived_document_tags(id, document_id, tag_id, rule_name, computed_at, expires_at)
-        VALUES(?, ?, ?, ?, ?, NULL)
+        INSERT INTO derived_document_tags(id, document_id, tag_id, source, source_ref, rule_name, evidence, computed_at, updated_at, expires_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
       `),
       upsertDocumentTag: db.prepare(`
-        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, evidence, manual_override, updated_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO document_tags(id, document_id, tag_id, confidence, source, source_ref, evidence, manual_override, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(document_id, tag_id) DO UPDATE SET
           confidence = excluded.confidence,
           source = excluded.source,
+          source_ref = excluded.source_ref,
           evidence = excluded.evidence,
           manual_override = excluded.manual_override,
           updated_at = excluded.updated_at
       `),
       upsertDerivedTag: db.prepare(`
-        INSERT INTO derived_document_tags(id, document_id, tag_id, rule_name, computed_at, expires_at)
-        VALUES(?, ?, ?, ?, ?, NULL)
+        INSERT INTO derived_document_tags(id, document_id, tag_id, source, source_ref, rule_name, evidence, computed_at, updated_at, expires_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(document_id, tag_id) DO UPDATE SET
+          source = excluded.source,
+          source_ref = excluded.source_ref,
           rule_name = excluded.rule_name,
+          evidence = excluded.evidence,
           computed_at = excluded.computed_at,
+          updated_at = excluded.updated_at,
           expires_at = excluded.expires_at
       `),
       selectFileByPath: db.prepare(`SELECT id FROM files WHERE path = ?`),
@@ -278,6 +382,7 @@ export class CatalogWriteRepository {
       parentId,
       name,
       createdBy,
+      new Date().toISOString(),
       new Date().toISOString(),
     );
 
@@ -373,8 +478,19 @@ export class CatalogWriteRepository {
       "parsed",
       null,
       "indexed",
+      document.text.trim() ? 1 : 0,
       observedAt,
     );
+
+    statements.deleteChunksByDocumentId.run(documentId);
+    if (document.text.trim()) {
+      statements.insertChunk.run(
+        makeStableId("chunk", `${documentId}:0`),
+        documentId,
+        0,
+        document.text,
+      );
+    }
 
     if (this.activeBootstrapSession) {
       for (const tag of tags) {
@@ -385,6 +501,7 @@ export class CatalogWriteRepository {
           tagId,
           tag.confidence,
           tag.source,
+          null,
           tag.evidence,
           tag.manualOverride ? 1 : 0,
           observedAt,
@@ -397,7 +514,11 @@ export class CatalogWriteRepository {
           makeStableId("derived_tag", `${documentId}:${tagId}`),
           documentId,
           tagId,
+          "system_derived",
+          null,
           tag.source,
+          tag.evidence,
+          observedAt,
           observedAt,
         );
       }
@@ -418,6 +539,7 @@ export class CatalogWriteRepository {
         tagId,
         tag.confidence,
         tag.source,
+        null,
         tag.evidence,
         tag.manualOverride ? 1 : 0,
         observedAt,
@@ -441,7 +563,11 @@ export class CatalogWriteRepository {
         makeStableId("derived_tag", `${documentId}:${tagId}`),
         documentId,
         tagId,
+        "system_derived",
+        null,
         tag.source,
+        tag.evidence,
+        observedAt,
         observedAt,
       );
     }
@@ -486,9 +612,11 @@ export class CatalogWriteRepository {
       "failed",
       error.message,
       "failed",
+      0,
       observedAt,
     );
 
+    statements.deleteChunksByDocumentId.run(documentId);
     statements.deleteDocumentTags.run(documentId);
     statements.deleteDerivedDocumentTags.run(documentId);
     return { fileId, documentId };
@@ -525,9 +653,11 @@ export class CatalogWriteRepository {
       "skipped",
       `${reasonCode}: ${adapter}${message ? ` - ${message}` : ""}`,
       "skipped",
+      0,
       observedAt,
     );
 
+    statements.deleteChunksByDocumentId.run(documentId);
     statements.deleteDocumentTags.run(documentId);
     statements.deleteDerivedDocumentTags.run(documentId);
     statements.deleteChunksByDocumentId.run(documentId);
@@ -770,6 +900,7 @@ export class CatalogWriteRepository {
               tagId,
               tag.confidence,
               tag.source,
+              null,
               tag.evidence,
               tag.manualOverride ? 1 : 0,
               observedAt,
@@ -782,7 +913,11 @@ export class CatalogWriteRepository {
               makeStableId("derived_tag", `${entry.documentId}:${tagId}`),
               entry.documentId,
               tagId,
+              "system_derived",
+              null,
               tag.source,
+              tag.evidence,
+              observedAt,
               observedAt,
             );
           }
@@ -791,6 +926,270 @@ export class CatalogWriteRepository {
         this.cleanupOrphanTagsInConnection(db);
         db.exec("COMMIT");
         return { updatedCount: entries.length };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  saveTagDefinition(input: SaveTagDefinitionInput, observedAt = new Date().toISOString()): { id: string } {
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const tagId = input.id?.trim() || makeStableId("tag", input.path);
+        const disabledAt = input.status === "disabled" ? observedAt : null;
+        const existing = statements.selectTagById.get(tagId) as { id?: string; created_at?: string } | undefined;
+        if (existing?.id) {
+          statements.updateTagDefinition.run(
+            input.rootType,
+            input.path,
+            input.name,
+            input.parentId ?? null,
+            input.canonicalName ?? input.name,
+            input.description ?? null,
+            input.status,
+            observedAt,
+            disabledAt,
+            tagId,
+          );
+        } else {
+          db.prepare(`
+            INSERT INTO tags(id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at, updated_at, disabled_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            tagId,
+            input.rootType,
+            input.path,
+            input.name,
+            input.parentId ?? null,
+            input.canonicalName ?? input.name,
+            input.description ?? null,
+            input.status,
+            input.createdBy,
+            observedAt,
+            observedAt,
+            disabledAt,
+          );
+        }
+        db.exec("COMMIT");
+        return { id: tagId };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  replaceTagRules(tagId: string, rules: SaveTagRuleInput[], observedAt = new Date().toISOString()): void {
+    const normalizedTagId = tagId.trim();
+    if (!normalizedTagId) {
+      return;
+    }
+    this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        statements.deleteTagRulesByTagId.run(normalizedTagId);
+        rules
+          .filter(rule => Number.isFinite(rule.priority))
+          .sort((left, right) => left.priority - right.priority)
+          .forEach((rule, index) => {
+            const priority = Number.isFinite(rule.priority) ? rule.priority : index;
+            const relation = rule.relation === "or" || rule.relation === "not" ? rule.relation : "and";
+            const scopeJson = JSON.stringify({ relation });
+            const matcherJson = JSON.stringify(rule.matcher ?? {});
+            const ruleId = makeStableId("tag_rule", `${normalizedTagId}:${priority}:${rule.ruleType}:${matcherJson}:${relation}`);
+            statements.insertTagRule.run(
+              ruleId,
+              normalizedTagId,
+              rule.enabled ? 1 : 0,
+              rule.ruleType,
+              scopeJson,
+              matcherJson,
+              null,
+              priority,
+              "smart_rule",
+              observedAt,
+              observedAt,
+            );
+          });
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  replaceManualDocumentTagBindings(documentId: string, tagIds: string[], observedAt = new Date().toISOString()): void {
+    const normalizedTagIds = [...new Set(tagIds.map(item => item.trim()).filter(Boolean))];
+    this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        statements.deleteManualDocumentBindingsByDocumentId.run(documentId);
+        normalizedTagIds.forEach(tagId => {
+          statements.insertManualDocumentBinding.run(
+            makeStableId("manual_binding", `${documentId}:${tagId}`),
+            documentId,
+            tagId,
+            "manual_document",
+            observedAt,
+            observedAt,
+          );
+        });
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  replaceFolderTagBindings(folderPath: string, tagIds: string[], observedAt = new Date().toISOString()): void {
+    const normalizedFolderPath = this.normalizeRelativePath(folderPath).replace(/^\.\/+/, "").replace(/\/+$/g, "") || ".";
+    const normalizedTagIds = [...new Set(tagIds.map(item => item.trim()).filter(Boolean))];
+    this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        statements.deleteFolderBindingsByFolderPath.run(normalizedFolderPath);
+        normalizedTagIds.forEach(tagId => {
+          statements.insertFolderBinding.run(
+            makeStableId("folder_binding", `${normalizedFolderPath}:${tagId}:descendant_files`),
+            normalizedFolderPath,
+            tagId,
+            "descendant_files",
+            observedAt,
+            observedAt,
+          );
+        });
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  deleteTagDefinitions(tagIds: string[]): void {
+    const normalizedTagIds = [...new Set(tagIds.map(item => item.trim()).filter(Boolean))];
+    if (normalizedTagIds.length === 0) {
+      return;
+    }
+    this.withConnection((db) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const deleteManualBindings = db.prepare(`DELETE FROM manual_document_tag_bindings WHERE tag_id = ?`);
+        const deleteFolderBindings = db.prepare(`DELETE FROM folder_tag_bindings WHERE tag_id = ?`);
+        const deleteRules = db.prepare(`DELETE FROM tag_rules WHERE tag_id = ?`);
+        const deleteDocumentTags = db.prepare(`DELETE FROM document_tags WHERE tag_id = ?`);
+        const deleteDerivedTags = db.prepare(`DELETE FROM derived_document_tags WHERE tag_id = ?`);
+        const deleteTag = db.prepare(`DELETE FROM tags WHERE id = ?`);
+        normalizedTagIds.forEach((tagId) => {
+          deleteManualBindings.run(tagId);
+          deleteFolderBindings.run(tagId);
+          deleteRules.run(tagId);
+          deleteDocumentTags.run(tagId);
+          deleteDerivedTags.run(tagId);
+          deleteTag.run(tagId);
+        });
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  deleteResolvedTagsBySource(documentId: string, sourceTypes: TagResolvedSourceType[]): void {
+    const normalizedTypes = [...new Set(sourceTypes)];
+    if (normalizedTypes.length === 0) {
+      return;
+    }
+    this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        normalizedTypes.forEach(sourceType => {
+          if (sourceType === "system_derived") {
+            statements.deleteDerivedDocumentTagByDocumentAndSource.run(documentId, sourceType);
+          } else {
+            statements.deleteDocumentTagByDocumentAndSource.run(documentId, sourceType);
+          }
+        });
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  recomputeResolvedTags(
+    entries: RecomputedResolvedTagEntry[],
+    observedAt = new Date().toISOString(),
+    documentIds: string[] = [],
+  ): { updatedCount: number } {
+    const normalizedDocumentIds = [...new Set([
+      ...documentIds,
+      ...entries.map(item => item.documentId),
+    ].map(item => item.trim()).filter(Boolean))];
+    if (normalizedDocumentIds.length === 0) {
+      return { updatedCount: 0 };
+    }
+
+    return this.withConnection((db, statements) => {
+      const tagCache = new Map(this.tagIdCache);
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const groupedByDocument = new Map<string, RecomputedResolvedTagEntry[]>();
+        entries.forEach(entry => {
+          const current = groupedByDocument.get(entry.documentId) ?? [];
+          current.push(entry);
+          groupedByDocument.set(entry.documentId, current);
+        });
+
+        for (const documentId of normalizedDocumentIds) {
+          const documentEntries = groupedByDocument.get(documentId) ?? [];
+          statements.deleteDocumentTags.run(documentId);
+          statements.deleteDerivedDocumentTags.run(documentId);
+
+          for (const entry of documentEntries) {
+            const tagId = this.ensureTagInConnection(
+              db,
+              statements,
+              tagCache,
+              entry.tagPath,
+              entry.sourceType,
+            );
+            if (entry.sourceType === "system_derived") {
+              statements.upsertDerivedTag.run(
+                makeStableId("derived_tag", `${documentId}:${tagId}`),
+                documentId,
+                tagId,
+                entry.sourceType,
+                entry.sourceRef ?? null,
+                entry.sourceRef ?? "system_derived",
+                entry.evidence ?? null,
+                observedAt,
+                observedAt,
+              );
+            } else {
+              statements.upsertDocumentTag.run(
+                makeStableId("doc_tag", `${documentId}:${tagId}`),
+                documentId,
+                tagId,
+                entry.confidence,
+                entry.sourceType,
+                entry.sourceRef ?? null,
+                entry.evidence ?? null,
+                entry.sourceType === "manual_document" ? 1 : 0,
+                observedAt,
+              );
+            }
+          }
+        }
+
+        db.exec("COMMIT");
+        return { updatedCount: normalizedDocumentIds.length };
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;

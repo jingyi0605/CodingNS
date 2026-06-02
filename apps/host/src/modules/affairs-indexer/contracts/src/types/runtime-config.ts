@@ -10,7 +10,7 @@ export interface RuntimeConfig {
   parserTimeoutMs: number;
   disabledParserExtensions: string[];
   allowedExtensions: string[];
-  tagRulesPath: string;
+  includedHiddenPaths: string[];
   writeBatchSize: number;
   logLevel: LogLevel;
 }

@@ -6,7 +6,6 @@ import { CatalogWriteRepository } from "../../repositories/catalog-write-reposit
 import { ExportBuilder } from "../export/export-builder.js";
 import { AllowedExtensionsDiffService, type AllowedExtensionsDiffApplyResult } from "../indexer/allowed-extensions-diff-service.js";
 import { TextIndexer, type TextIndexResult } from "../indexer/text-indexer.js";
-import { TagRecomputeService, type TagRecomputeResult } from "../tagging/tag-recompute-service.js";
 
 const WATCHER_READY_META_KEY = "watcher.ready_after_initial_export";
 
@@ -30,10 +29,9 @@ export interface WatchServiceOptions {
 
 export interface WatchCycleResult {
   scopePath?: string;
-  kind: "index" | "config" | "tag-rules";
+  kind: "index" | "config";
   index: TextIndexResult | null;
   configApply: AllowedExtensionsDiffApplyResult | null;
-  tagRecompute: TagRecomputeResult | null;
   export: {
     metaShardCount: number;
     detailShardCount: number;
@@ -73,18 +71,11 @@ function isConfigPath(relativePath: string | null): boolean {
     || relativePath === ".doc-semantic-index/config.json";
 }
 
-function isTagRulesPath(relativePath: string | null): boolean {
-  return relativePath === ".ai-index/tag-rules.json" || relativePath === "tag-rules.json";
-}
-
 function isIgnoredWatchPath(relativePath: string | null): boolean {
   if (!relativePath) {
     return false;
   }
   if (isConfigPath(relativePath)) {
-    return false;
-  }
-  if (isTagRulesPath(relativePath)) {
     return false;
   }
   return relativePath === ".ai-index" || relativePath.startsWith(".ai-index/");
@@ -107,7 +98,6 @@ export class WatchService {
       kind: "index",
       index: indexResult,
       configApply: null,
-      tagRecompute: null,
       export: {
         metaShardCount: exportResult.metaShardCount,
         detailShardCount: exportResult.detailShardCount,
@@ -130,19 +120,6 @@ export class WatchService {
       kind: "config",
       index: result.indexResult,
       configApply: result,
-      tagRecompute: null,
-      export: result.exportResult,
-    };
-  }
-
-  private runTagRulesCycle(): WatchCycleResult {
-    const result = new TagRecomputeService(this.config).run();
-    return {
-      scopePath: ".ai-index/tag-rules.json",
-      kind: "tag-rules",
-      index: null,
-      configApply: null,
-      tagRecompute: result,
       export: result.exportResult,
     };
   }
@@ -246,9 +223,7 @@ export class WatchService {
         try {
           const cycle = pendingScope && isConfigPath(pendingScope)
             ? await this.runConfigCycleAsync()
-            : pendingScope && isTagRulesPath(pendingScope)
-              ? this.runTagRulesCycle()
-              : await this.runCycleAsync(pendingScope ?? options.targetPath);
+            : await this.runCycleAsync(pendingScope ?? options.targetPath);
           cycles.push(cycle);
           cycleCount += 1;
           pendingScope = undefined;
@@ -289,11 +264,6 @@ export class WatchService {
         const rawPath = path.join(watchRoot, filename.toString());
         const relativePath = normalizeRelativePath(path.relative(this.config.rootDir, rawPath));
         if (isConfigPath(relativePath)) {
-          pendingScope = relativePath;
-          scheduleFlush();
-          return;
-        }
-        if (isTagRulesPath(relativePath)) {
           pendingScope = relativePath;
           scheduleFlush();
           return;

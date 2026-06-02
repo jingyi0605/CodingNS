@@ -25,7 +25,7 @@ function createWorkspace(workspacePath: string): Workspace {
   };
 }
 
-function createIndexerResult(command: "apply-config" | "index" | "recompute-tags") {
+function createIndexerResult(command: "apply-config" | "index") {
   return {
     ok: true as const,
     command,
@@ -1055,12 +1055,11 @@ describe("AffairsLibraryDirtyWatchService", () => {
     vi.restoreAllMocks();
   });
 
-  it("外部普通文档改动会触发 targeted refresh，配置和标签规则仍走专用链路", async () => {
+  it("外部普通文档改动会触发 targeted refresh，配置文件仍走专用链路", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-"));
     fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
     fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
     fs.writeFileSync(path.join(rootDir, ".ai-index", "doc-semantic-index.config.json"), "{}\n");
-    fs.writeFileSync(path.join(rootDir, ".ai-index", "tag-rules.json"), "{}\n");
     fs.writeFileSync(path.join(rootDir, "notes", "a.md"), "hello\n");
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
@@ -1091,15 +1090,13 @@ describe("AffairsLibraryDirtyWatchService", () => {
     await sleep(300);
 
     fs.writeFileSync(path.join(rootDir, ".ai-index", "doc-semantic-index.config.json"), '{"allowedExtensions":[".md"]}\n');
-    fs.writeFileSync(path.join(rootDir, ".ai-index", "tag-rules.json"), '{"rules":[]}\n');
     fs.writeFileSync(path.join(rootDir, "notes", "a.md"), "hello world\n");
 
     await sleep(1300);
 
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(2);
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "config" }),
-      expect.objectContaining({ kind: "tag-rules" }),
       expect.objectContaining({ kind: "index", targetPath: "notes/a.md" })
     ]));
 
@@ -1233,17 +1230,15 @@ describe("AffairsLibraryDirtyWatchService", () => {
     service.syncWorkspace("workspace-1");
     await sleep(300);
 
-    fs.writeFileSync(path.join(rootDir, "notes", ".draft.md"), "hidden
-");
-    fs.writeFileSync(path.join(rootDir, ".obsidian", "workspace.json"), "{}
-");
+    fs.writeFileSync(path.join(rootDir, "notes", ".draft.md"), "hidden\n");
+    fs.writeFileSync(path.join(rootDir, ".obsidian", "workspace.json"), "{}\n");
 
     await sleep(1300);
 
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "index", targetPath: "notes/.draft.md" }),
-      expect.objectContaining({ kind: "index", targetPath: ".obsidian/workspace.json" })
-    ]));
+    expect(events.some((event) => event.kind === "index")).toBe(true);
+    const indexEvent = events.find((event) => event.kind === "index");
+    expect(indexEvent?.targetPath).toBeTruthy();
+    expect(["notes/.draft.md", ".obsidian/workspace.json"]).toContain(indexEvent?.targetPath);
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

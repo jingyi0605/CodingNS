@@ -7,7 +7,6 @@ import { AppError as IndexerAppError } from "./contracts/src/index.js";
 import { loadRuntimeConfig } from "./core/src/config/load-runtime-config.js";
 import { AllowedExtensionsDiffService } from "./core/src/services/indexer/allowed-extensions-diff-service.js";
 import { TextIndexer } from "./core/src/services/indexer/text-indexer.js";
-import { TagRecomputeService } from "./core/src/services/tagging/tag-recompute-service.js";
 import { ExportBuilder } from "./core/src/services/export/export-builder.js";
 import { initCatalog } from "./core/src/sqlite/init-catalog.js";
 import { CatalogWriteRepository } from "./core/src/repositories/catalog-write-repository.js";
@@ -15,7 +14,7 @@ import type { DirtyScope } from "./core/src/services/dirty/dirty-scope-resolver.
 import type { RuntimeConfig } from "./contracts/src/index.js";
 import { writeAffairsLibraryDebugLog } from "../workspace/affairs-library-debug-log.js";
 
-export type AffairsIndexerCommandName = "apply-config" | "index" | "recompute-tags" | "export" | "watch-touch";
+export type AffairsIndexerCommandName = "apply-config" | "index" | "export" | "watch-touch";
 export type AffairsIndexerRuntimeStage = "init" | "index" | "export" | "sqlite" | "finished" | "failed";
 
 interface AffairsIndexerTaskMeta {
@@ -133,11 +132,6 @@ export async function runAffairsIndexerCommand(
           exportResult
         };
         message = "文本文件索引和静态导出已完成。";
-        break;
-      }
-      case "recompute-tags": {
-        result = new TagRecomputeService(config).run();
-        message = "标签已基于当前规则重算，未重新解析原始文件。";
         break;
       }
       case "export": {

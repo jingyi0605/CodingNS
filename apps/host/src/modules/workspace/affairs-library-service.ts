@@ -30,7 +30,6 @@ import {
 import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
-const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
 const INDEX_DIR_RELATIVE_PATH = ".ai-index";
 const EXPORT_DIR_RELATIVE_PATH = ".ai-index/exports";
 const EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
@@ -303,7 +302,6 @@ interface AffairsLibraryExportCachePayload {
 interface AffairsLibraryAutoTaskState {
   timer: NodeJS.Timeout | null;
   applyConfigReasons: Set<string>;
-  recomputeTagReasons: Set<string>;
   indexReasons: Set<string>;
   indexTargets: Set<string>;
 }
@@ -1396,11 +1394,6 @@ export class AffairsLibraryService {
       return;
     }
 
-    if (relativePath === TAG_RULES_RELATIVE_PATH) {
-      this.scheduleAutoRecomputeTags(normalizedWorkspaceId, `app_write:${relativePath}`);
-      return;
-    }
-
     if (relativePath === ".ai-index" || relativePath.startsWith(".ai-index/")) {
       return;
     }
@@ -1477,26 +1470,6 @@ export class AffairsLibraryService {
     this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
   }
 
-  scheduleAutoRecomputeTags(workspaceId: string, reason: string): void {
-    const normalizedWorkspaceId = workspaceId.trim();
-    if (!normalizedWorkspaceId) {
-      return;
-    }
-
-    const state = this.getOrCreateAutoTaskState(normalizedWorkspaceId);
-    state.recomputeTagReasons.add(reason.trim() || `watch:${TAG_RULES_RELATIVE_PATH}`);
-    writeAffairsLibraryDebugLog({
-      event: "auto_recompute_tags_marked_dirty",
-      processRole: "host",
-      workspaceId: normalizedWorkspaceId,
-      source: "affairs_library.auto_recompute_tags",
-      reason: reason.trim() || `watch:${TAG_RULES_RELATIVE_PATH}`,
-      details: {
-        pendingReasonCount: state.recomputeTagReasons.size
-      }
-    });
-    this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
-  }
 
   dispose(): void {
     for (const state of this.autoTaskStateByWorkspace.values()) {
@@ -2041,19 +2014,6 @@ export class AffairsLibraryService {
       });
     }
 
-    if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryRecomputeTags)) {
-      this.taskManager.register<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>({
-        taskType: HOST_TASK_TYPES.affairsLibraryRecomputeTags,
-        executionLane: "helper_process",
-        helperProcessHandler: "affairs.library_recompute_tags",
-        timeoutMs: INDEX_TASK_TIMEOUT_MS,
-        run: async (input) =>
-          await this.runInternalCommand(input.rootDir, "recompute-tags", {
-            reason: input.reason
-          })
-      });
-    }
-
     if (!this.taskManager.has(HOST_TASK_TYPES.affairsLibraryExport)) {
       this.taskManager.register<{ workspaceId: string; rootDir: string }, AffairsIndexerCommandResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryExport,
@@ -2067,7 +2027,7 @@ export class AffairsLibraryService {
 
   private async runInternalCommand(
     rootDir: string,
-    commandName: "apply-config" | "index" | "recompute-tags" | "export" | "watch-touch",
+    commandName: "apply-config" | "index" | "export" | "watch-touch",
     options: {
       targetPath?: string;
       reason?: string;
@@ -2244,40 +2204,6 @@ export class AffairsLibraryService {
       return;
     }
 
-    if (state.recomputeTagReasons.size > 0) {
-      const reason = joinAutoTaskReasons(state.recomputeTagReasons, `watch:${TAG_RULES_RELATIVE_PATH}`);
-      writeAffairsLibraryDebugLog({
-        event: "auto_task_flush_recompute_tags",
-        processRole: "host",
-        workspaceId,
-        rootDir,
-        source: "affairs_library.watch_recompute_tags",
-        reason,
-        details: {
-          pendingReasonCount: state.recomputeTagReasons.size
-        }
-      });
-      state.recomputeTagReasons.clear();
-      const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason?: string }, AffairsIndexerCommandResult>(
-        HOST_TASK_TYPES.affairsLibraryRecomputeTags,
-        {
-          key: workspaceId,
-          source: "affairs_library.watch_recompute_tags",
-          input: {
-            workspaceId,
-            rootDir,
-            reason
-          }
-        }
-      );
-      this.attachAutoTaskFollowUp(workspaceId, handle, {
-        rootDir,
-        reason,
-        source: "affairs_library.watch_recompute_tags"
-      });
-      return;
-    }
-
     if (state.indexReasons.size > 0 || state.indexTargets.size > 0) {
       const forceFullRebuild = [...state.indexReasons].some((reason) => shouldForceFullRebuild(reason));
       const targetPath = forceFullRebuild ? undefined : pickNarrowestTargetPath([...state.indexTargets]);
@@ -2343,7 +2269,6 @@ export class AffairsLibraryService {
     const next: AffairsLibraryAutoTaskState = {
       timer: null,
       applyConfigReasons: new Set<string>(),
-      recomputeTagReasons: new Set<string>(),
       indexReasons: new Set<string>(),
       indexTargets: new Set<string>()
     };
@@ -2365,7 +2290,6 @@ export class AffairsLibraryService {
     const taskTypes = [
       HOST_TASK_TYPES.affairsLibraryApplyConfig,
       HOST_TASK_TYPES.affairsLibraryIndex,
-      HOST_TASK_TYPES.affairsLibraryRecomputeTags,
       HOST_TASK_TYPES.affairsLibraryExport
     ];
 
@@ -2383,7 +2307,6 @@ export class AffairsLibraryService {
     const taskTypes = [
       HOST_TASK_TYPES.affairsLibraryApplyConfig,
       HOST_TASK_TYPES.affairsLibraryIndex,
-      HOST_TASK_TYPES.affairsLibraryRecomputeTags,
       HOST_TASK_TYPES.affairsLibraryExport
     ];
     const snapshots = taskTypes
@@ -2808,7 +2731,6 @@ export class AffairsLibraryService {
 
 function hasPendingAutoTasks(state: AffairsLibraryAutoTaskState): boolean {
   return state.applyConfigReasons.size > 0
-    || state.recomputeTagReasons.size > 0
     || state.indexReasons.size > 0
     || state.indexTargets.size > 0;
 }
@@ -3241,8 +3163,6 @@ function resolveAffairsLibraryRunningStage(
   switch (taskSnapshot.taskType) {
     case HOST_TASK_TYPES.affairsLibraryApplyConfig:
       return "apply_config";
-    case HOST_TASK_TYPES.affairsLibraryRecomputeTags:
-      return "recompute_tags";
     case HOST_TASK_TYPES.affairsLibraryExport:
       return "export";
     case HOST_TASK_TYPES.affairsLibraryIndex:

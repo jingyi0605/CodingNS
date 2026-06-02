@@ -1,12 +1,14 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
+import type { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
 import type { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 
 export async function registerWorkspaceRoutes(
   app: FastifyInstance,
   workspaceController: WorkspaceController,
-  affairsLibraryController: AffairsLibraryController
+  affairsLibraryController: AffairsLibraryController,
+  affairsTagController?: AffairsTagController,
 ): Promise<void> {
   app.get("/api/workspaces", workspaceController.list);
   app.get("/api/workspaces/browse", workspaceController.browse);
@@ -27,6 +29,18 @@ export async function registerWorkspaceRoutes(
   app.post("/api/workspaces/:workspaceId/affairs/library-ops", affairsLibraryController.operateFile);
   app.post("/api/workspaces/:workspaceId/affairs/library-refresh", affairsLibraryController.requestRefresh);
   app.put("/api/workspaces/:workspaceId/affairs/library-favorites", affairsLibraryController.updateFavorites);
+  if (affairsTagController) {
+    app.get("/api/workspaces/:workspaceId/affairs/tags", affairsTagController.listTags);
+    app.post("/api/workspaces/:workspaceId/affairs/tags", affairsTagController.createTag);
+    app.post("/api/workspaces/:workspaceId/affairs/tags/ensure", affairsTagController.ensureTag);
+    app.get("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.getTagDetail);
+    app.put("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.updateTag);
+    app.delete("/api/workspaces/:workspaceId/affairs/tags/:tagId", affairsTagController.deleteTag);
+    app.get("/api/workspaces/:workspaceId/affairs/documents/:documentId/tag-details", affairsTagController.getDocumentTagDetails);
+    app.put("/api/workspaces/:workspaceId/affairs/documents/:documentId/tags", affairsTagController.saveDocumentTags);
+    app.get("/api/workspaces/:workspaceId/affairs/folders/tag-details", affairsTagController.getFolderTagDetails);
+    app.put("/api/workspaces/:workspaceId/affairs/folders/tags", affairsTagController.saveFolderTags);
+  }
   app.get("/api/workspaces/:workspaceId/management", workspaceController.getManagementSummary);
   app.delete("/api/workspaces/:workspaceId", workspaceController.remove);
 }

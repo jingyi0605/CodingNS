@@ -9,7 +9,7 @@ import {
 import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 export interface AffairsLibraryWatchDirtyEvent {
-  kind: "index" | "config" | "tag-rules";
+  kind: "index" | "config";
   reason: string;
   targetPath?: string;
 }
@@ -27,14 +27,12 @@ interface WatchEntry {
 
 interface PendingWorkspaceDirtyState {
   configChanged: boolean;
-  tagRulesChanged: boolean;
   indexChanged: boolean;
   reasons: Set<string>;
   indexTargets: Set<string>;
 }
 
 const CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
-const TAG_RULES_RELATIVE_PATH = ".ai-index/tag-rules.json";
 const INDEX_EXPORTS_RELATIVE_PATH = ".ai-index/exports";
 const INDEX_EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
 const INDEX_EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
@@ -73,7 +71,7 @@ const TEMPORARY_FILE_PATTERNS = [
  * 不再跟目录树规模线性增长。
  *
  * 规则：
- * - 配置文件、标签规则：继续走专用链路
+ * - 配置文件：继续走专用链路
  * - 普通文档：走 targeted refresh
  * - 常见临时文件：直接忽略
  * - 再补一层低频周期刷新，给外部 watcher 漏事件兜底
@@ -346,8 +344,6 @@ export class AffairsLibraryDirtyWatchService {
 
     if (effectiveTargetPath === CONFIG_RELATIVE_PATH) {
       dirtyState.configChanged = true;
-    } else if (effectiveTargetPath === TAG_RULES_RELATIVE_PATH) {
-      dirtyState.tagRulesChanged = true;
     } else {
       dirtyState.indexChanged = true;
       dirtyState.indexTargets.add(normalizeTargetPath(effectiveTargetPath));
@@ -371,9 +367,7 @@ export class AffairsLibraryDirtyWatchService {
       source: "affairs_library.watch",
       watchKind: effectiveTargetPath === CONFIG_RELATIVE_PATH
         ? "config"
-        : effectiveTargetPath === TAG_RULES_RELATIVE_PATH
-          ? "tag-rules"
-          : "index",
+        : "index",
       eventType,
       targetPath: effectiveTargetPath,
       status: "captured"
@@ -408,7 +402,6 @@ export class AffairsLibraryDirtyWatchService {
         workspaceId,
         reasonCount: reasons.length,
         configChanged: state.configChanged,
-        tagRulesChanged: state.tagRulesChanged,
         indexChanged: state.indexChanged,
         indexTargets: [...state.indexTargets].sort((a, b) => a.localeCompare(b, "zh-CN")),
         reasons,
@@ -425,7 +418,6 @@ export class AffairsLibraryDirtyWatchService {
       details: {
         reasonCount: reasons.length,
         configChanged: state.configChanged,
-        tagRulesChanged: state.tagRulesChanged,
         indexChanged: state.indexChanged,
         indexTargets: [...state.indexTargets].sort((a, b) => a.localeCompare(b, "zh-CN")),
         reasons
@@ -436,13 +428,6 @@ export class AffairsLibraryDirtyWatchService {
       this.onWorkspaceDirty(workspaceId, {
         kind: "config",
         reason: reasons.find((item) => item.includes(CONFIG_RELATIVE_PATH)) ?? "watch:config_changed"
-      });
-    }
-
-    if (state.tagRulesChanged) {
-      this.onWorkspaceDirty(workspaceId, {
-        kind: "tag-rules",
-        reason: reasons.find((item) => item.includes(TAG_RULES_RELATIVE_PATH)) ?? "watch:tag_rules_changed"
       });
     }
 
@@ -457,7 +442,7 @@ export class AffairsLibraryDirtyWatchService {
   }
 
   private shouldIgnorePath(rootDir: string, relativePath: string): boolean {
-    if (relativePath === CONFIG_RELATIVE_PATH || relativePath === TAG_RULES_RELATIVE_PATH) {
+    if (relativePath === CONFIG_RELATIVE_PATH) {
       return false;
     }
 
@@ -475,7 +460,7 @@ export class AffairsLibraryDirtyWatchService {
   }
 
   private detectMissingIndexArtifactReason(rootDir: string, relativePath: string): string | null {
-    if (relativePath === CONFIG_RELATIVE_PATH || relativePath === TAG_RULES_RELATIVE_PATH) {
+    if (relativePath === CONFIG_RELATIVE_PATH) {
       return null;
     }
     if (relativePath !== INDEX_DIR_NAME && !relativePath.startsWith(`${INDEX_DIR_NAME}/`)) {
@@ -586,7 +571,6 @@ export class AffairsLibraryDirtyWatchService {
 
     const next: PendingWorkspaceDirtyState = {
       configChanged: false,
-      tagRulesChanged: false,
       indexChanged: false,
       reasons: new Set<string>(),
       indexTargets: new Set<string>()
@@ -638,7 +622,7 @@ function pickNarrowestTargetPath(targets: string[]): string | undefined {
 }
 
 function isIndexReason(reason: string): boolean {
-  return !reason.includes(CONFIG_RELATIVE_PATH) && !reason.includes(TAG_RULES_RELATIVE_PATH);
+  return !reason.includes(CONFIG_RELATIVE_PATH);
 }
 
 function scanRecentDirectoryTargets(

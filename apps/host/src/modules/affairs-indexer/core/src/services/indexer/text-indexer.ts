@@ -120,9 +120,10 @@ export class TextIndexer {
     const startedAt = performance.now();
     const scanner = new FileScanner(this.config.rootDir, {
       allowedExtensions: options.allowedExtensionsOverride ?? this.config.allowedExtensions,
+      includedHiddenPaths: this.config.includedHiddenPaths,
     });
     const parser = new DocumentParser({ config: this.config });
-    const tagger = new SimpleTagInferenceEngine({ tagRulesPath: this.config.tagRulesPath });
+    const tagger = new SimpleTagInferenceEngine();
     const writer = new CatalogWriteRepository(this.config.dbPath);
     const repository = new CatalogRepository(this.config.dbPath);
     const skipRepository = new ParserSkipRepository(this.config.dbPath);
@@ -299,6 +300,7 @@ export class TextIndexer {
             document: {
               title: parsed.title,
               summary: parsed.summary,
+              text: parsed.text,
             },
             tags: inferred.tags,
             derivedTags: inferred.derivedTags,
