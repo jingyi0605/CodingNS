@@ -9049,6 +9049,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   font-size: 15px;
   line-height: 1;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  flex: 0 0 22px;
+}
+
+.affairs-favorite-toggle:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .affairs-favorite-toggle.active {
@@ -9075,6 +9087,19 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+
+.affairs-tag-tree-panel .affairs-sidebar-group-header {
+  padding-right: 0;
+}
+
+.affairs-tag-tree-panel .affairs-sidebar-group-header-actions {
+  gap: 6px;
+}
+
+.affairs-tag-tree-panel .affairs-sidebar-group-header-actions > span:first-child {
+  min-width: 22px;
+  text-align: right;
 }
 
 .affairs-sidebar-group-plain .affairs-sidebar-item,
