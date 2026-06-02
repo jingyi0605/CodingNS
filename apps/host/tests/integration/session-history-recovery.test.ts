@@ -502,4 +502,140 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       sessionId: "session-stale-hidden-butler"
     });
   });
+
+  it("syncSessionTitle 会用 provider 原始标题覆盖首条用户消息生成的临时标题", async () => {
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const provisionalTitle = "请帮我修复 Claude 会话标题读取异常";
+    const providerTitle = "修复 Claude Code 会话标题读取异常";
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-title-sync",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "provider-session-title-sync",
+      rawStoreRef: "/tmp/.claude/projects/workspace/provider-session-title-sync.jsonl",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-title-sync",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: provisionalTitle,
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-04-16T08:01:30.000Z",
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:01:30.000Z"
+    });
+
+    const readSessionTitle = vi.fn(async () => providerTitle);
+    const readHistory = vi.fn(async () => ({
+      messages: [
+        {
+          messageId: "msg-1",
+          role: "user",
+          content: provisionalTitle,
+          timestamp: "2026-04-16T08:01:00.000Z",
+          sequence: 1,
+          attachments: []
+        }
+      ],
+      cursor: null,
+      nextCursor: null,
+      total: 1
+    }));
+
+    Object.defineProperty(service, "providerDiscoveryHelperClient", {
+      value: {
+        readSessionTitle
+      },
+      configurable: true
+    });
+    Object.defineProperty(service, "sessionSyncService", {
+      value: {
+        readHistory
+      },
+      configurable: true
+    });
+
+    await service.syncSessionTitle("session-title-sync");
+
+    expect(readHistory).toHaveBeenCalledTimes(1);
+    expect(readSessionTitle).toHaveBeenCalledTimes(1);
+    expect(sessionIndexRepository.findIndexRecordBySessionId("session-title-sync")).toMatchObject({
+      title: providerTitle
+    });
+  });
+
+  it("syncSessionTitle 不会用 provider 标题覆盖手动改过的标题", async () => {
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const manualTitle = "我手动改过的标题";
+    const firstUserMessage = "请把 OpenCode 会话标题修好，不要再显示第一条用户消息";
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-title-manual",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      providerSessionId: "provider-session-title-manual",
+      rawStoreRef: "opencode://session/provider-session-title-manual",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:00:30.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-title-manual",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      title: manualTitle,
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: "2026-04-16T08:01:30.000Z",
+      createdAt: "2026-04-16T08:00:30.000Z",
+      updatedAt: "2026-04-16T08:01:30.000Z"
+    });
+
+    const readSessionTitle = vi.fn(async () => "OpenCode 原始标题");
+    const readHistory = vi.fn(async () => ({
+      messages: [
+        {
+          messageId: "msg-1",
+          role: "user",
+          content: firstUserMessage,
+          timestamp: "2026-04-16T08:01:00.000Z",
+          sequence: 1,
+          attachments: []
+        }
+      ],
+      cursor: null,
+      nextCursor: null,
+      total: 1
+    }));
+
+    Object.defineProperty(service, "providerDiscoveryHelperClient", {
+      value: {
+        readSessionTitle
+      },
+      configurable: true
+    });
+    Object.defineProperty(service, "sessionSyncService", {
+      value: {
+        readHistory
+      },
+      configurable: true
+    });
+
+    await service.syncSessionTitle("session-title-manual");
+
+    expect(readHistory).toHaveBeenCalledTimes(1);
+    expect(readSessionTitle).not.toHaveBeenCalled();
+    expect(sessionIndexRepository.findIndexRecordBySessionId("session-title-manual")).toMatchObject({
+      title: manualTitle
+    });
+  });
 });

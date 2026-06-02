@@ -3380,7 +3380,13 @@ export class SessionHistoryService {
       return;
     }
 
-    if (!shouldSyncSessionTitleFromProvider(binding.provider, currentIndex.title)) {
+    let firstUserMessageTitle: string | null = null;
+
+    if (!shouldSyncSessionTitleFromProvider(binding.provider, currentIndex.title, null)) {
+      firstUserMessageTitle = await this.readFirstUserMessageTitleForSync(binding).catch(() => null);
+    }
+
+    if (!shouldSyncSessionTitleFromProvider(binding.provider, currentIndex.title, firstUserMessageTitle)) {
       return;
     }
 
@@ -3395,8 +3401,8 @@ export class SessionHistoryService {
           return "";
         }
 
-        throw error;
-      })
+      throw error;
+    })
     ).trim();
 
     const resolvedTitle = resolvePersistedSessionTitle(
@@ -3414,6 +3420,38 @@ export class SessionHistoryService {
       title: resolvedTitle,
       updatedAt: nowIso()
     });
+  }
+
+  private async readFirstUserMessageTitleForSync(
+    binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">
+  ): Promise<string | null> {
+    const pageSize = 20;
+    const maxPages = 3;
+    let cursor: string | null = null;
+
+    for (let index = 0; index < maxPages; index += 1) {
+      const page = await this.sessionSyncService.readHistory(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        cursor,
+        pageSize,
+        "forward"
+      );
+      const resolvedTitle = resolveFirstUserMessageSessionTitle(binding.provider, page.messages);
+
+      if (resolvedTitle) {
+        return resolvedTitle;
+      }
+
+      if (!page.nextCursor || page.nextCursor === cursor) {
+        break;
+      }
+
+      cursor = page.nextCursor;
+    }
+
+    return null;
   }
 
   private resolvePersistedParentSessionId(sessionId: string): string | null {
@@ -5295,6 +5333,22 @@ function looksLikeGeneratedSessionTitle(title: string): boolean {
   return /^(Claude|Codex|OpenCode)\s+会话\b/i.test(title);
 }
 
+function resolveFirstUserMessageSessionTitle(
+  provider: string,
+  messages: Array<Pick<HistoryPage["messages"][number], "role" | "content">>
+): string | null {
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  const preferredUserMessage = messages.find((message) => {
+    if (message.role !== "user") {
+      return false;
+    }
+
+    return !looksLikeSyntheticTitleSourceMessage(provider, message.content);
+  });
+
+  return normalizeRuntimePromptTitle(preferredUserMessage?.content ?? firstUserMessage?.content ?? null);
+}
+
 function pickEarlierIso(left: string | null, right: string | null): string | null {
   if (!left) {
     return right;
@@ -6047,6 +6101,16 @@ function buildUserMessageTitle(content: string, fallbackTitle: string): string {
   return title.slice(0, 48) || fallbackTitle;
 }
 
+function normalizeRuntimePromptTitle(content: string | null | undefined): string | null {
+  const normalized = (typeof content === "string" ? content : "").trim().replace(/\s+/g, " ");
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.slice(0, 48);
+}
+
 function buildRecoveredSessionTitle(provider: string, providerSessionId: string): string {
   if (isPendingBindingValue(providerSessionId)) {
     return "新会话";
@@ -6119,11 +6183,16 @@ function isSyntheticGeminiSessionTitle(title: string): boolean {
 
 function shouldSyncSessionTitleFromProvider(
   provider: string,
-  currentTitle: string | null
+  currentTitle: string | null,
+  firstUserMessageTitle: string | null
 ): boolean {
   const normalizedTitle = currentTitle?.trim() ?? "";
 
   if (normalizedTitle.length === 0) {
+    return true;
+  }
+
+  if (looksLikeGeneratedSessionTitle(normalizedTitle)) {
     return true;
   }
 
@@ -6135,7 +6204,51 @@ function shouldSyncSessionTitleFromProvider(
     return true;
   }
 
+  if (firstUserMessageTitle && normalizedTitle === firstUserMessageTitle) {
+    return true;
+  }
+
   return false;
+}
+
+function looksLikeSyntheticTitleSourceMessage(provider: string, content: string): boolean {
+  const normalizedProvider = provider.trim().toLowerCase();
+
+  if (normalizedProvider === "codex") {
+    return looksLikeCodexRuntimeRulesMessage(content);
+  }
+
+  if (normalizedProvider === "claude-code") {
+    return looksLikeClaudeRuntimeSyntheticTitleMessage(content);
+  }
+
+  return false;
+}
+
+function looksLikeCodexRuntimeRulesMessage(content: string): boolean {
+  const normalized = content.trim();
+  const beginsWithRulesHeader = /^#?\s*AGENTS\.md instructions for\b/i.test(normalized);
+
+  if (beginsWithRulesHeader) {
+    return true;
+  }
+
+  return /AGENTS\.md instructions for/i.test(normalized)
+    && /<INSTRUCTIONS>/i.test(normalized);
+}
+
+function looksLikeClaudeRuntimeSyntheticTitleMessage(content: string): boolean {
+  const normalized = content.trim();
+
+  if (normalized.length === 0) {
+    return true;
+  }
+
+  if (looksLikeCodexRuntimeRulesMessage(normalized)) {
+    return true;
+  }
+
+  return /^<(?:ide_[a-z0-9_:-]+|local-command-[a-z0-9_:-]+|command-name)>[\s\S]*$/i.test(normalized);
 }
 
 function shouldRemoveHiddenClaudeDebugSession(session: {
