@@ -63,7 +63,9 @@ const conversationApiMock = vi.hoisted(() => ({
   listAffairsLibraryDocuments: vi.fn(),
   requestAffairsLibraryRefresh: vi.fn(),
   saveAffairsDocumentTags: vi.fn(),
+  saveAffairsDocumentTagsWithCreate: vi.fn(),
   saveAffairsFolderTags: vi.fn(),
+  saveAffairsFolderTagsWithCreate: vi.fn(),
   saveAffairsLibraryBinding: vi.fn(),
   saveAffairsLibraryConfig: vi.fn(),
   setAffairsLibraryEnabled: vi.fn(),
@@ -90,7 +92,9 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     listAffairsLibraryDocuments: conversationApiMock.listAffairsLibraryDocuments,
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
     saveAffairsDocumentTags: conversationApiMock.saveAffairsDocumentTags,
+    saveAffairsDocumentTagsWithCreate: conversationApiMock.saveAffairsDocumentTagsWithCreate,
     saveAffairsFolderTags: conversationApiMock.saveAffairsFolderTags,
+    saveAffairsFolderTagsWithCreate: conversationApiMock.saveAffairsFolderTagsWithCreate,
     saveAffairsLibraryBinding: conversationApiMock.saveAffairsLibraryBinding,
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
     setAffairsLibraryEnabled: conversationApiMock.setAffairsLibraryEnabled,
@@ -405,7 +409,9 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.getAffairsDocumentTagDetails.mockReset();
     conversationApiMock.getAffairsFolderTagDetails.mockReset();
     conversationApiMock.saveAffairsDocumentTags.mockReset();
+    conversationApiMock.saveAffairsDocumentTagsWithCreate.mockReset();
     conversationApiMock.saveAffairsFolderTags.mockReset();
+    conversationApiMock.saveAffairsFolderTagsWithCreate.mockReset();
     conversationApiMock.requestAffairsLibraryRefresh.mockReset();
     conversationApiMock.saveAffairsLibraryBinding.mockReset();
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
@@ -460,7 +466,9 @@ describe("AffairsWorkbenchView", () => {
       bindings: []
     });
     conversationApiMock.saveAffairsDocumentTags.mockResolvedValue(undefined);
+    conversationApiMock.saveAffairsDocumentTagsWithCreate.mockResolvedValue(undefined);
     conversationApiMock.saveAffairsFolderTags.mockResolvedValue(undefined);
+    conversationApiMock.saveAffairsFolderTagsWithCreate.mockResolvedValue(undefined);
 
     conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
       workspaceId: "workspace-1",
@@ -675,6 +683,19 @@ describe("AffairsWorkbenchView", () => {
         srcPath: "Exchange 分层通讯簿.txt"
       });
     });
+  });
+
+  it("H5 右键菜单点击分配标签后会打开快捷分配面板", async () => {
+    platformBridgeMock.supported = false;
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+
+    const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextTags") }));
+
+    expect(await screen.findByRole("dialog", { name: t("shell.affairsTagQuickAssignModalTitle") })).toBeInTheDocument();
   });
 
   it("H5 环境下右键下载仍然可用", async () => {
@@ -1984,10 +2005,12 @@ describe("AffairsWorkbenchView", () => {
       parentPath: "客户",
       description: null,
       status: "active",
-            documentCount: 1,
+      documentCount: 1,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
     });
     conversationApiMock.createAffairsTag.mockResolvedValue({
       id: "tag-new",
@@ -1998,10 +2021,12 @@ describe("AffairsWorkbenchView", () => {
       parentPath: null,
       description: null,
       status: "active",
-            documentCount: 0,
+      documentCount: 0,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
     });
     conversationApiMock.updateAffairsTag.mockResolvedValue({
       id: "tag-1",
@@ -2012,10 +2037,12 @@ describe("AffairsWorkbenchView", () => {
       parentPath: "客户",
       description: null,
       status: "active",
-            documentCount: 1,
+      documentCount: 1,
       createdAt: "2026-06-01T08:00:00.000Z",
       updatedAt: "2026-06-01T08:00:00.000Z",
       disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
     });
 
     renderWorkbench();
@@ -2066,6 +2093,91 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagDeleteAction") }));
     await waitFor(() => {
       expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1");
+    });
+  });
+
+  it("标签管理模态框支持添加智能规则并保存", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-1",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+    conversationApiMock.getAffairsTagDetail.mockResolvedValue({
+      id: "tag-1",
+      path: "客户/合同",
+      name: "合同",
+      rootType: "客户",
+      parentId: null,
+      parentPath: null,
+      description: null,
+      status: "active",
+      documentCount: 1,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [],
+      smartRuleEnabled: false,
+    });
+    conversationApiMock.updateAffairsTag.mockResolvedValue({
+      id: "tag-1",
+      path: "客户/合同",
+      name: "合同",
+      rootType: "客户",
+      parentId: null,
+      parentPath: null,
+      description: null,
+      status: "active",
+      documentCount: 1,
+      createdAt: "2026-06-01T08:00:00.000Z",
+      updatedAt: "2026-06-01T08:00:00.000Z",
+      disabledAt: null,
+      smartRules: [
+        {
+          id: "rule-1",
+          relation: "and",
+          ruleType: "file_name_contains",
+          matcher: { keyword: "合同" },
+          enabled: true,
+          priority: 0
+        }
+      ],
+      smartRuleEnabled: true,
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: /合同.*客户\/合同/s }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagSmartRuleAddAction") }));
+    await userEvent.type(screen.getByPlaceholderText(t("shell.affairsTagSmartRuleKeywordPlaceholder")), "合同");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagUpdateSubmitAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1", expect.objectContaining({
+        name: "合同",
+        smartRules: [
+          expect.objectContaining({
+            relation: "and",
+            ruleType: "file_name_contains",
+            matcher: { keyword: "合同" },
+            enabled: true,
+            priority: 0
+          })
+        ]
+      }));
     });
   });
 
@@ -2148,10 +2260,10 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.queryByText("最近3天有修改")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "客户/合同" })).not.toBeInTheDocument();
 
-    const tagInput = screen.getByPlaceholderText(t("shell.affairsDocumentTagSearchPlaceholder"));
+    const tagInput = screen.getByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "时间");
     expect(screen.queryByRole("button", { name: "时间/最近7天" })).not.toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsDocumentTagNoMatch"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsTagQuickCreateAction", { tag: "时间" }))).toBeInTheDocument();
 
     await userEvent.clear(tagInput);
     await userEvent.type(tagInput, "合同");
@@ -2166,7 +2278,27 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-  it("文件夹详情仍然可以手动分配标签", async () => {
+  it("文档详情输入不存在的标签时会直接创建并分配", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: []
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByText("Exchange 分层通讯簿.txt"));
+    const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
+    await userEvent.type(tagInput, "项目/报价");
+    await userEvent.click(screen.getByRole("button", { name: /创建并分配“项目\/报价”/ }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.saveAffairsDocumentTagsWithCreate).toHaveBeenCalledWith("workspace-1", "doc-1", {
+        tagIds: [],
+        createTagPaths: ["项目/报价"]
+      });
+    });
+  });
+
+  it("文件夹详情可以通过输入分配已有标签", async () => {
     conversationApiMock.listAffairsTags.mockResolvedValue({
       items: [
         {
@@ -2196,6 +2328,8 @@ describe("AffairsWorkbenchView", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "/" }));
     expect(await screen.findByText(t("shell.affairsFolderTagsSectionTitle"))).toBeInTheDocument();
+    const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
+    await userEvent.type(tagInput, "合同");
     const folderTagButton = await screen.findByRole("button", { name: "客户/合同" });
     await userEvent.click(folderTagButton);
 
@@ -2203,6 +2337,31 @@ describe("AffairsWorkbenchView", () => {
       expect(conversationApiMock.saveAffairsFolderTags).toHaveBeenCalledWith("workspace-1", {
         folderPath: ".",
         tagIds: ["tag-1"]
+      });
+    });
+  });
+
+  it("文件夹详情输入不存在的标签时会直接创建并绑定", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({ items: [] });
+    conversationApiMock.getAffairsFolderTagDetails.mockResolvedValue({
+      folderPath: ".",
+      exists: true,
+      bindingTagIds: [],
+      bindings: []
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: "/" }));
+    const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
+    await userEvent.type(tagInput, "归档/待签");
+    await userEvent.click(screen.getByRole("button", { name: /创建并分配“归档\/待签”/ }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.saveAffairsFolderTagsWithCreate).toHaveBeenCalledWith("workspace-1", {
+        folderPath: ".",
+        tagIds: [],
+        createTagPaths: ["归档/待签"]
       });
     });
   });

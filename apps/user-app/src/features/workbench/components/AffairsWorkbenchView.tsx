@@ -3776,6 +3776,17 @@ function isAssignableManagedTag(tag: AffairsTagNodeDto): boolean {
   return rootType !== "类型" && rootType !== "type" && rootType !== "时间" && rootType !== "time";
 }
 
+function normalizeTagPathInput(value: string): string {
+  return value
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/g, "")
+    .split("/")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join("/");
+}
+
 function compactDocumentTagPaths(paths: string[]): string[] {
   const uniquePaths = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
   const recentTimeTags = uniquePaths
@@ -4605,6 +4616,102 @@ type ManagedTagTreeNode = {
   children: ManagedTagTreeNode[];
 };
 
+type EditableSmartTagRule = AffairsTagRuleDto;
+
+function createEditableSmartTagRule(priority: number): EditableSmartTagRule {
+  return {
+    id: `draft-rule-${priority}-${Math.random().toString(36).slice(2, 8)}`,
+    relation: "and",
+    ruleType: "file_name_contains",
+    matcher: { keyword: "" },
+    enabled: true,
+    priority,
+  };
+}
+
+function cloneSmartTagRules(rules: AffairsTagRuleDto[]): EditableSmartTagRule[] {
+  return rules
+    .map((rule, index) => ({
+      ...rule,
+      matcher: { ...rule.matcher },
+      priority: Number.isFinite(rule.priority) ? rule.priority : index,
+    }))
+    .sort((left, right) => left.priority - right.priority);
+}
+
+function normalizeSmartTagRuleMatcher(rule: EditableSmartTagRule): Record<string, unknown> {
+  switch (rule.ruleType) {
+    case "file_name_contains":
+    case "file_content_contains":
+      return {
+        keyword: String((rule.matcher as { keyword?: string }).keyword ?? "").trim(),
+      };
+    case "file_extension_in": {
+      const rawValue = Array.isArray((rule.matcher as { extensions?: string[] }).extensions)
+        ? ((rule.matcher as { extensions?: string[] }).extensions ?? []).join(", ")
+        : String((rule.matcher as { extensionsText?: string }).extensionsText ?? "");
+      return {
+        extensions: rawValue
+          .split(/[，,\n]/g)
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean)
+          .map((item) => item.startsWith(".") ? item : `.${item}`),
+      };
+    }
+    case "modified_time_between": {
+      const matcher = rule.matcher as { start?: string | null; end?: string | null };
+      return {
+        start: matcher.start?.trim() || null,
+        end: matcher.end?.trim() || null,
+      };
+    }
+    default:
+      return {};
+  }
+}
+
+function buildDefaultMatcherForRuleType(ruleType: AffairsTagRuleDto["ruleType"]): Record<string, unknown> {
+  switch (ruleType) {
+    case "file_name_contains":
+    case "file_content_contains":
+      return { keyword: "" };
+    case "file_extension_in":
+      return { extensions: [] };
+    case "modified_time_between":
+      return { start: "", end: "" };
+    default:
+      return {};
+  }
+}
+
+function resolveSmartRuleRelationLabel(relation: AffairsTagRuleDto["relation"]): string {
+  switch (relation) {
+    case "and":
+      return t("shell.affairsTagSmartRuleRelationAnd");
+    case "or":
+      return t("shell.affairsTagSmartRuleRelationOr");
+    case "not":
+      return t("shell.affairsTagSmartRuleRelationNot");
+    default:
+      return relation;
+  }
+}
+
+function resolveSmartRuleTypeLabel(ruleType: AffairsTagRuleDto["ruleType"]): string {
+  switch (ruleType) {
+    case "file_name_contains":
+      return t("shell.affairsTagSmartRuleTypeFileNameContains");
+    case "file_content_contains":
+      return t("shell.affairsTagSmartRuleTypeFileContentContains");
+    case "file_extension_in":
+      return t("shell.affairsTagSmartRuleTypeFileExtensionIn");
+    case "modified_time_between":
+      return t("shell.affairsTagSmartRuleTypeModifiedTimeBetween");
+    default:
+      return ruleType;
+  }
+}
+
 function AffairsTagManagementModal() {
   const {
     tagManagementOpen,
@@ -4620,6 +4727,7 @@ function AffairsTagManagementModal() {
   const [editorMode, setEditorMode] = useState<TagManagementEditorMode>("create-root");
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<string>("");
+  const [smartRules, setSmartRules] = useState<EditableSmartTagRule[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleManagedTags = useMemo(
@@ -4640,6 +4748,7 @@ function AffairsTagManagementModal() {
     setError(null);
     setName("");
     setParentId(nextMode === "create-child" ? parentTag?.id ?? "" : "");
+    setSmartRules([]);
   };
 
   const beginCreateRoot = () => {
@@ -4662,6 +4771,7 @@ function AffairsTagManagementModal() {
     setEditorMode("edit");
     setName(selectedEditableTag.name);
     setParentId(selectedEditableTag.parentId ?? "");
+    setSmartRules(cloneSmartTagRules(selectedEditableTag.smartRules ?? []));
     setError(null);
   };
 
@@ -4703,6 +4813,11 @@ function AffairsTagManagementModal() {
     ? t("shell.affairsTagUpdateSubmitAction")
     : t("shell.affairsTagCreateSubmitAction");
   const showParentField = editorMode === "edit";
+  const normalizedSmartRules = smartRules.map((rule, index) => ({
+    ...rule,
+    priority: index,
+    matcher: normalizeSmartTagRuleMatcher(rule),
+  }));
 
   const content = (
     <div className="affairs-library-settings-form affairs-tag-management-shell">
@@ -4772,6 +4887,161 @@ function AffairsTagManagementModal() {
                 </select>
               </ModalField>
             ) : null}
+          </ModalSection>
+
+          <ModalSection
+            className="affairs-tag-management-editor"
+            heading={t("shell.affairsTagSmartRulesSectionTitle")}
+            description={t("shell.affairsTagSmartRulesSectionDescription")}
+          >
+            {smartRules.length === 0 ? (
+              <ModalEmptyState
+                compact
+                title={t("shell.affairsTagSmartRulesEmpty")}
+                description={t("shell.affairsTagSmartRulesEmptyDescription")}
+              />
+            ) : (
+              <div className="affairs-tag-smart-rule-list">
+                {smartRules.map((rule, index) => (
+                  <div key={rule.id} className="affairs-tag-smart-rule-card">
+                    <div className="affairs-tag-smart-rule-row">
+                      <ModalField label={t("shell.affairsTagSmartRuleRelationLabel")}>
+                        <select
+                          value={rule.relation}
+                          disabled={submitting}
+                          onChange={(event) => {
+                            const nextRelation = event.target.value as AffairsTagRuleDto["relation"];
+                            setSmartRules((current) => current.map((item) => item.id === rule.id ? { ...item, relation: nextRelation } : item));
+                          }}
+                        >
+                          {(["and", "or", "not"] as const).map((relation) => (
+                            <option key={relation} value={relation}>{resolveSmartRuleRelationLabel(relation)}</option>
+                          ))}
+                        </select>
+                      </ModalField>
+                      <ModalField label={t("shell.affairsTagSmartRuleTypeLabel")}>
+                        <select
+                          value={rule.ruleType}
+                          disabled={submitting}
+                          onChange={(event) => {
+                            const nextType = event.target.value as AffairsTagRuleDto["ruleType"];
+                            setSmartRules((current) => current.map((item) => item.id === rule.id
+                              ? { ...item, ruleType: nextType, matcher: buildDefaultMatcherForRuleType(nextType) }
+                              : item));
+                          }}
+                        >
+                          {(["file_name_contains", "file_content_contains", "file_extension_in", "modified_time_between"] as const).map((ruleType) => (
+                            <option key={ruleType} value={ruleType}>{resolveSmartRuleTypeLabel(ruleType)}</option>
+                          ))}
+                        </select>
+                      </ModalField>
+                    </div>
+                    <div className="affairs-tag-smart-rule-row">
+                      {rule.ruleType === "file_name_contains" || rule.ruleType === "file_content_contains" ? (
+                        <ModalField label={t("shell.affairsTagSmartRuleKeywordLabel")}>
+                          <input
+                            value={String((rule.matcher as { keyword?: string }).keyword ?? "")}
+                            disabled={submitting}
+                            placeholder={t("shell.affairsTagSmartRuleKeywordPlaceholder")}
+                            onChange={(event) => {
+                              const nextKeyword = event.target.value;
+                              setSmartRules((current) => current.map((item) => item.id === rule.id
+                                ? { ...item, matcher: { keyword: nextKeyword } }
+                                : item));
+                            }}
+                          />
+                        </ModalField>
+                      ) : null}
+                      {rule.ruleType === "file_extension_in" ? (
+                        <ModalField label={t("shell.affairsTagSmartRuleExtensionsLabel")}>
+                          <input
+                            value={Array.isArray((rule.matcher as { extensions?: string[] }).extensions)
+                              ? ((rule.matcher as { extensions?: string[] }).extensions ?? []).join(", ")
+                              : ""}
+                            disabled={submitting}
+                            placeholder={t("shell.affairsTagSmartRuleExtensionsPlaceholder")}
+                            onChange={(event) => {
+                              const extensions = event.target.value
+                                .split(/[，,\n]/g)
+                                .map((item) => item.trim())
+                                .filter(Boolean);
+                              setSmartRules((current) => current.map((item) => item.id === rule.id
+                                ? { ...item, matcher: { extensions } }
+                                : item));
+                            }}
+                          />
+                        </ModalField>
+                      ) : null}
+                      {rule.ruleType === "modified_time_between" ? (
+                        <>
+                          <ModalField label={t("shell.affairsTagSmartRuleModifiedStartLabel")}>
+                            <input
+                              type="datetime-local"
+                              value={String((rule.matcher as { start?: string }).start ?? "")}
+                              disabled={submitting}
+                              onChange={(event) => {
+                                const nextStart = event.target.value;
+                                setSmartRules((current) => current.map((item) => item.id === rule.id
+                                  ? { ...item, matcher: { ...(item.matcher as Record<string, unknown>), start: nextStart } }
+                                  : item));
+                              }}
+                            />
+                          </ModalField>
+                          <ModalField label={t("shell.affairsTagSmartRuleModifiedEndLabel")}>
+                            <input
+                              type="datetime-local"
+                              value={String((rule.matcher as { end?: string }).end ?? "")}
+                              disabled={submitting}
+                              onChange={(event) => {
+                                const nextEnd = event.target.value;
+                                setSmartRules((current) => current.map((item) => item.id === rule.id
+                                  ? { ...item, matcher: { ...(item.matcher as Record<string, unknown>), end: nextEnd } }
+                                  : item));
+                              }}
+                            />
+                          </ModalField>
+                        </>
+                      ) : null}
+                    </div>
+                    <div className="affairs-tag-smart-rule-actions">
+                      <label className="affairs-tag-smart-rule-toggle">
+                        <input
+                          type="checkbox"
+                          checked={rule.enabled !== false}
+                          disabled={submitting}
+                          onChange={(event) => {
+                            const enabled = event.target.checked;
+                            setSmartRules((current) => current.map((item) => item.id === rule.id ? { ...item, enabled } : item));
+                          }}
+                        />
+                        <span>{t("shell.affairsTagSmartRuleEnabledLabel")}</span>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={submitting}
+                        onClick={() => {
+                          setSmartRules((current) => current.filter((item) => item.id !== rule.id).map((item, currentIndex) => ({ ...item, priority: currentIndex })));
+                        }}
+                      >
+                        {t("shell.affairsTagSmartRuleRemoveAction")}
+                      </button>
+                    </div>
+                    <span className="affairs-binding-hint">{t("shell.affairsTagSmartRuleOrderHint", { index: index + 1 })}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={submitting}
+              onClick={() => {
+                setSmartRules((current) => [...current, createEditableSmartTagRule(current.length)]);
+              }}
+            >
+              {t("shell.affairsTagSmartRuleAddAction")}
+            </button>
           </ModalSection>
 
           {editorMode === "edit" && selectedEditableTag ? (
@@ -4849,6 +5119,7 @@ function AffairsTagManagementModal() {
                 name: name.trim(),
                 parentId: parentId || null,
                 status: selectedEditableTag?.status ?? "active",
+                smartRules: normalizedSmartRules,
               });
               setEditorMode("edit");
               showToast({

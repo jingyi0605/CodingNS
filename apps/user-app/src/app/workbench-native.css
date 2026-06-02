@@ -8333,6 +8333,34 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   cursor: pointer;
 }
 
+.affairs-document-tag-suggestion {
+  display: inline-flex;
+  align-items: center;
+}
+
+.affairs-document-tag-create-suggestion {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 26%, var(--border-default));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-panel));
+  text-align: left;
+}
+
+.affairs-document-tag-create-suggestion:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-default));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-panel));
+}
+
+.affairs-document-tag-create-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .affairs-document-tag-token {
   display: inline-flex;
   align-items: center;
@@ -8489,6 +8517,50 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-management-editor textarea,
 .affairs-tag-management-editor input {
   width: 100%;
+}
+
+.affairs-tag-smart-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.affairs-tag-smart-rule-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+}
+
+.affairs-tag-smart-rule-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.affairs-tag-smart-rule-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.affairs-tag-smart-rule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.affairs-tag-smart-rule-toggle input {
+  width: 16px;
+  height: 16px;
 }
 
 .affairs-tag-management-danger {

@@ -591,7 +591,6 @@ function formatDuration(value: number | null): string {
 const AFFAIRS_LIBRARY_TASK_TYPES = new Set([
   "affairs.library_apply_config",
   "affairs.library_index",
-  "affairs.library_recompute_tags",
   "affairs.library_export"
 ]);
 
