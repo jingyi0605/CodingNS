@@ -17769,9 +17769,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .file-viewer-window-title-wrap h1 {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 15px;
   line-height: 1.2;
   color: var(--text-primary);
@@ -17847,9 +17844,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .file-viewer-modal .workbench-modal-header {
-  align-items: stretch;
+  align-items: flex-start;
   gap: 12px;
-  height: 56px;
+  height: auto;
   min-height: 56px;
 }
 
@@ -17861,20 +17858,34 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   align-items: center;
 }
 
-.file-viewer-modal .workbench-modal-title-wrap h2 {
+.file-viewer-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  font-size: clamp(13px, 1vw, 17px);
   line-height: 1.15;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.file-viewer-modal .workbench-modal-title-wrap h2.file-viewer-title {
+  font-size: clamp(13px, 1vw, 17px);
+}
+
+.file-viewer-window-title-wrap h1.file-viewer-title {
+  font-size: 15px;
+}
+
+.file-viewer-title[data-scale-tier="tight"] {
+  font-size: 12px;
+  line-height: 1.1;
 }
 
 .file-viewer-modal .workbench-modal-header-actions {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: 10px;
 }
 
@@ -17884,6 +17895,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
 }
 
 .file-viewer-header-tabs,
@@ -17908,10 +17921,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   flex-wrap: wrap;
 }
 
-.file-viewer-header-tabs,
-.file-viewer-header-action-buttons,
-.file-viewer-size-group {
-  flex-wrap: nowrap;
+.file-viewer-header-controls > *,
+.file-viewer-header-tabs > *,
+.file-viewer-header-action-buttons > *,
+.file-viewer-size-group > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .file-viewer-tab {

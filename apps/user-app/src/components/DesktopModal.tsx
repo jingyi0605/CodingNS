@@ -1,5 +1,11 @@
 import { createPortal } from "react-dom";
-import { useEffect, useId, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  type HTMLAttributes,
+  type ReactNode,
+  type RefObject
+} from "react";
 
 import { ModalCloseButton } from "./ModalCloseButton";
 import { t } from "../shared/i18n";
@@ -19,6 +25,9 @@ interface DesktopModalProps {
   readonly closeOnEscape?: boolean;
   readonly className?: string;
   readonly bodyClassName?: string;
+  readonly titleClassName?: string;
+  readonly titleRef?: RefObject<HTMLHeadingElement | null>;
+  readonly titleProps?: Omit<HTMLAttributes<HTMLHeadingElement>, "id" | "children" | "className" | "ref">;
   readonly headerActions?: ReactNode;
   readonly beforeCloseButton?: ReactNode;
   readonly footer?: ReactNode;
@@ -39,6 +48,9 @@ export function DesktopModal({
   closeOnEscape = true,
   className,
   bodyClassName,
+  titleClassName,
+  titleRef,
+  titleProps,
   headerActions,
   beforeCloseButton,
   footer,
@@ -104,7 +116,9 @@ export function DesktopModal({
         {!hideHeader ? (
           <div className="workbench-modal-header">
             <div className="workbench-modal-title-wrap">
-              <h2 id={titleId}>{title}</h2>
+              <h2 id={titleId} className={titleClassName} ref={titleRef} {...titleProps}>
+                {title}
+              </h2>
               {description ? <p id={descriptionId}>{description}</p> : null}
             </div>
             {headerActions || showCloseButton ? (

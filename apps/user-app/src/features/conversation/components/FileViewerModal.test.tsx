@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -26,6 +26,9 @@ const platformMock = vi.hoisted(() => ({
   writeClipboardText: vi.fn(),
   isDesktop: true,
   isMobile: false
+}));
+const resizeObserverState = vi.hoisted(() => ({
+  callback: null as ResizeObserverCallback | null
 }));
 
 function getPresentationRunsEditor(): HTMLDivElement | null {
@@ -115,10 +118,63 @@ describe("FileViewerModal", () => {
         writeText: clipboardWriteTextMock
       }
     });
+    resizeObserverState.callback = null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverState.callback = callback;
+        }
+
+        observe() {
+          return undefined;
+        }
+
+        disconnect() {
+          return undefined;
+        }
+      }
+    );
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("文件名换行后仍然溢出时，会自动切到更小字号，避免继续挤压操作按钮", async () => {
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="超长超长超长超长超长超长超长超长超长超长超长超长超长超长超长.pdf"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const title = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".file-viewer-title");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+
+    Object.defineProperty(title, "clientHeight", {
+      configurable: true,
+      value: 28
+    });
+    Object.defineProperty(title, "scrollHeight", {
+      configurable: true,
+      value: 56
+    });
+
+    await act(async () => {
+      resizeObserverState.callback?.([], {} as ResizeObserver);
+    });
+
+    expect(title.dataset.scaleTier).toBe("tight");
   });
 
   it("父组件重复渲染但文件未切换时，不会重新加载并覆盖编辑中的内容", async () => {
@@ -2763,9 +2819,7 @@ describe("FileViewerModal", () => {
     );
   });
 
-  it("PDF 文件使用内置 viewer，并支持翻页和适宽", async () => {
-    const user = userEvent.setup();
-
+  it("PDF 文件使用内置 viewer，并移除与内嵌查看器重复的顶部按钮", async () => {
     fileApiMock.getFilePreview.mockResolvedValue(
       createPreviewResponse({
         path: "docs/spec.pdf",
@@ -2799,20 +2853,16 @@ describe("FileViewerModal", () => {
     const previewFrame = await screen.findByTestId("file-viewer-pdf-preview");
     expect(previewFrame).toHaveAttribute(
       "src",
-      expect.stringContaining("docs/spec.pdf?_preview=0#page=1&zoom=page-width")
+      expect.stringContaining("docs/spec.pdf?_preview=0")
     );
-
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerNextPage") }));
-    expect(screen.getByTestId("file-viewer-pdf-preview")).toHaveAttribute(
-      "src",
-      expect.stringContaining("#page=2&zoom=page-width")
-    );
-
-    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerZoomIn") }));
-    expect(screen.getByTestId("file-viewer-pdf-preview")).toHaveAttribute(
-      "src",
-      expect.stringContaining("#page=2&zoom=120")
-    );
+    expect(previewFrame).toHaveAttribute("src", expect.stringContaining("#page=1&zoom=page-width"));
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerPreviousPage") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerNextPage") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerZoomOut") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerZoomIn") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerFitWidth") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /第\s*1\s*页/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") })).toBeInTheDocument();
   });
 
   it("PDF 预览时由查看器内容区自己承接滚动，不让模态框 body 抢滚动", async () => {

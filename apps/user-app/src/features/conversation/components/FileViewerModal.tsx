@@ -300,6 +300,7 @@ export function FileViewerPanel({
   previewLoader = getFilePreview,
   saveDisabledReason = null
 }: FileViewerPanelProps) {
+  const titleElementRef = useRef<HTMLHeadingElement | null>(null);
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
   const [presentationProject, setPresentationProject] = useState<DocumentProject | null>(null);
@@ -315,6 +316,7 @@ export function FileViewerPanel({
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfScale, setPdfScale] = useState(110);
   const [pdfFitWidth, setPdfFitWidth] = useState(true);
+  const [titleScaleTier, setTitleScaleTier] = useState<"default" | "tight">("default");
   const { showToast } = useToast();
   const platform = usePlatform();
   const onCloseRef = useRef(onClose);
@@ -399,6 +401,42 @@ export function FileViewerPanel({
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useLayoutEffect(() => {
+    if (!open || !filePath || isInlineViewer) {
+      setTitleScaleTier("default");
+      return;
+    }
+
+    const titleElement = titleElementRef.current;
+    if (!titleElement || typeof window === "undefined") {
+      setTitleScaleTier("default");
+      return;
+    }
+
+    const evaluateTitleScale = () => {
+      const nextTier = titleElement.scrollHeight > titleElement.clientHeight + 1 ? "tight" : "default";
+      setTitleScaleTier((currentTier) => (currentTier === nextTier ? currentTier : nextTier));
+    };
+
+    evaluateTitleScale();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(evaluateTitleScale);
+    resizeObserver.observe(titleElement);
+
+    const parentElement = titleElement.parentElement;
+    if (parentElement) {
+      resizeObserver.observe(parentElement);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [filePath, isInlineViewer, open, windowTitle]);
 
   useEffect(() => {
     if (!open) {
@@ -881,7 +919,14 @@ export function FileViewerPanel({
       <section className="file-viewer-window-panel" aria-label={resolvedWindowAriaLabel}>
         <header className="file-viewer-window-header" data-tauri-drag-region="">
           <div className="file-viewer-window-title-wrap" data-tauri-drag-region="">
-            <h1 data-tauri-drag-region="">{windowTitle ?? filePath}</h1>
+            <h1
+              className="file-viewer-title"
+              data-scale-tier={titleScaleTier}
+              data-tauri-drag-region=""
+              ref={titleElementRef}
+            >
+              {windowTitle ?? filePath}
+            </h1>
           </div>
           <div className="file-viewer-header-controls file-viewer-window-controls" data-window-drag="ignore">
             {viewerControls}
@@ -909,6 +954,9 @@ export function FileViewerPanel({
       layout="viewer"
       className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
       bodyClassName="file-viewer-modal-body"
+      titleClassName="file-viewer-title"
+      titleRef={titleElementRef}
+      titleProps={{ "data-scale-tier": titleScaleTier }}
       headerActions={!isMobileViewer ? <div className="file-viewer-header-controls">{viewerControls}</div> : undefined}
       beforeCloseButton={detachControl}
       onClose={onClose}
@@ -1181,53 +1229,12 @@ function buildFormatActions(input: {
   }
 
   if (input.preview.kind === "pdf") {
-    actions.push(
-      {
-        id: "pdf-prev-page",
-        label: t("conversation.fileViewerPreviousPage"),
-        disabled: input.pdfPage <= 1,
-        onClick: () => input.setPdfPage((current) => Math.max(1, current - 1))
-      },
-      {
-        id: "pdf-page-indicator",
-        label: t("conversation.fileViewerPageIndicator").replace("{page}", String(input.pdfPage)),
-        disabled: true,
-        onClick: () => undefined
-      },
-      {
-        id: "pdf-next-page",
-        label: t("conversation.fileViewerNextPage"),
-        onClick: () => input.setPdfPage((current) => current + 1)
-      },
-      {
-        id: "pdf-zoom-out",
-        label: t("conversation.fileViewerZoomOut"),
-        onClick: () => {
-          input.setPdfFitWidth(false);
-          input.setPdfScale((current) => Math.max(50, Math.round(current - 10)));
-        }
-      },
-      {
-        id: "pdf-zoom-in",
-        label: t("conversation.fileViewerZoomIn"),
-        onClick: () => {
-          input.setPdfFitWidth(false);
-          input.setPdfScale((current) => Math.min(300, Math.round(current + 10)));
-        }
-      },
-      {
-        id: "pdf-fit-width",
-        label: t("conversation.fileViewerFitWidth"),
-        active: input.pdfFitWidth,
-        onClick: () => input.setPdfFitWidth(true)
-      },
-      {
-        id: "pdf-refresh",
-        label: t("conversation.fileViewerRefreshPreview"),
-        disabled: refreshDisabled,
-        onClick: input.handleRefreshPreview
-      }
-    );
+    actions.push({
+      id: "pdf-refresh",
+      label: t("conversation.fileViewerRefreshPreview"),
+      disabled: refreshDisabled,
+      onClick: input.handleRefreshPreview
+    });
   }
 
   if (input.preview.kind === "html" || input.preview.kind === "markdown" || input.preview.kind === "text") {
