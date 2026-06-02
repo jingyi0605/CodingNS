@@ -10,6 +10,8 @@ import { TextIndexer } from "./core/src/services/indexer/text-indexer.js";
 import { ExportBuilder } from "./core/src/services/export/export-builder.js";
 import { initCatalog } from "./core/src/sqlite/init-catalog.js";
 import { CatalogWriteRepository } from "./core/src/repositories/catalog-write-repository.js";
+import { CatalogRepository } from "./core/src/repositories/catalog-repository.js";
+import { acquireAffairsIndexerRootLock } from "./core/src/utils/root-command-lock.js";
 import type { DirtyScope } from "./core/src/services/dirty/dirty-scope-resolver.js";
 import type { RuntimeConfig } from "./contracts/src/index.js";
 import { writeAffairsLibraryDebugLog } from "../workspace/affairs-library-debug-log.js";
@@ -22,6 +24,10 @@ interface AffairsIndexerTaskMeta {
   taskType?: string;
   key?: string;
   attempt?: number;
+}
+
+interface AffairsIndexerRootLockHandle {
+  release(): void;
 }
 
 export interface AffairsIndexerCommandResult<TResult = unknown> {
@@ -51,6 +57,7 @@ export async function runAffairsIndexerCommand(
 ): Promise<AffairsIndexerCommandResult> {
   const startedAt = performance.now();
   const runtimeStageWriter = createRuntimeStageWriter(rootDir, command, options);
+  let rootLock: AffairsIndexerRootLockHandle | null = null;
   writeAffairsIndexerHelperLog({
     phase: "start",
     command,
@@ -61,6 +68,13 @@ export async function runAffairsIndexerCommand(
 
   try {
     const config = createAffairsIndexerRuntimeConfig(rootDir);
+    rootLock = await acquireAffairsIndexerRootLock(rootDir, command, {
+      signal: options.signal,
+      reason: options.reason,
+      targetPath: options.targetPath,
+      taskId: options.taskMeta?.taskId,
+      taskType: options.taskMeta?.taskType,
+    });
     runtimeStageWriter.write("running", "init");
     initCatalog(config);
     writeAffairsLibraryDebugLog({
@@ -110,7 +124,8 @@ export async function runAffairsIndexerCommand(
       }
       case "index": {
         runtimeStageWriter.write("running", "index");
-        const indexResult = await new TextIndexer(config).index(undefined, {
+        const indexer = new TextIndexer(config);
+        const indexResult = await indexer.index(undefined, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "full",
           signal: options.signal
@@ -151,7 +166,8 @@ export async function runAffairsIndexerCommand(
       case "watch-touch": {
         const targetPath = normalizeOptionalTargetPath(options.targetPath);
         runtimeStageWriter.write("running", "index");
-        const indexResult = await new TextIndexer(config).index(targetPath, {
+        const indexer = new TextIndexer(config);
+        const indexResult = await indexer.index(targetPath, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "incremental",
           signal: options.signal
@@ -236,8 +252,12 @@ export async function runAffairsIndexerCommand(
       status: "finished",
       resultSummary: summarizeCommandResult(result)
     });
+    rootLock.release();
+    rootLock = null;
     return commandResult;
   } catch (error) {
+    rootLock?.release();
+    rootLock = null;
     runtimeStageWriter.write(
       "failed",
       "failed",
@@ -280,6 +300,24 @@ export function createAffairsIndexerRuntimeConfig(rootDir: string): RuntimeConfi
 function normalizeOptionalTargetPath(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized.replace(/^\.\//, "") : undefined;
+}
+
+function collectIndexerFailureDetails(rootDir: string): {
+  tagCount: number;
+  documentTagCount: number;
+  derivedTagCount: number;
+} | null {
+  try {
+    const config = createAffairsIndexerRuntimeConfig(rootDir);
+    const repository = new CatalogWriteRepository(config.dbPath);
+    return {
+      tagCount: new CatalogRepository(config.dbPath).listTagDefinitions(true).length,
+      documentTagCount: repository.countRows("document_tags"),
+      derivedTagCount: repository.countRows("derived_document_tags"),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function summarizeDirtyScope(
@@ -388,6 +426,7 @@ function normalizeAffairsIndexerError(
   }
 
   if (error instanceof Error) {
+    const details = collectIndexerFailureDetails(rootDir);
     return new AppError({
       statusCode: 500,
       errorCode: "AFFAIRS_LIBRARY_INTERNAL_INDEXER_FAILED",
@@ -395,6 +434,7 @@ function normalizeAffairsIndexerError(
       data: {
         command,
         rootDir,
+        ...(details ? { details } : {}),
       },
     });
   }

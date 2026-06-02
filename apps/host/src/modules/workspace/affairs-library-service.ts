@@ -2001,6 +2001,7 @@ export class AffairsLibraryService {
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_index",
+        concurrency: 1,
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
         run: async (input) =>
           await this.runInternalCommand(

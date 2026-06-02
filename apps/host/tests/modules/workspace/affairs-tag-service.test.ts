@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AffairsTagService } from "../../../src/modules/workspace/affairs-tag-service.js";
 import { HOST_TASK_TYPES } from "../../../src/modules/tasks/task-types.js";
 import { initCatalog } from "../../../src/modules/affairs-indexer/core/src/sqlite/init-catalog.js";
+import { CatalogRepository } from "../../../src/modules/affairs-indexer/core/src/repositories/catalog-repository.js";
 import { CatalogWriteRepository } from "../../../src/modules/affairs-indexer/core/src/repositories/catalog-write-repository.js";
 import { TagRecomputeService } from "../../../src/modules/affairs-indexer/core/src/services/tagging/tag-recompute-service.js";
 import { createAffairsIndexerRuntimeConfig } from "../../../src/modules/affairs-indexer/internal-command-runner.js";
+import { SimpleTagInferenceEngine } from "../../../src/modules/affairs-indexer/core/src/tagging/simple-tag-inference.js";
 
 function createRootDir() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-tag-service-"));
@@ -31,6 +33,10 @@ function createRootDir() {
 describe("AffairsTagService", () => {
   let rootDir: string;
   let enqueue: ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
     rootDir = createRootDir();
@@ -131,6 +137,168 @@ describe("AffairsTagService", () => {
       "人工确认:manual_document",
       "目录继承:folder_binding",
     ]));
+  });
+
+  it("文件夹标签变更时会走轻量重算，不再重新跑整套推理", async () => {
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const service = createService();
+    const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "目录继承",
+    });
+    service.saveFolderTagBindings("workspace-1", "user-1", ".", [folderTag.id]);
+    const inferSpy = vi.spyOn(SimpleTagInferenceEngine.prototype, "infer");
+
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "folder", folderPath: ".", mode: "folder_bindings_only" },
+    });
+
+    expect(inferSpy).not.toHaveBeenCalled();
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
+      "目录继承:folder_binding",
+    ]));
+  });
+
+  it("标签改名后重新跑标签重算与导出时不会再写入失效 tag_id，左侧标签树会看到新名称", async () => {
+    const document = addIndexedDocument("售前/方案.md", "系统集成方案");
+    const service = createService();
+    const tag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "系统集成",
+      smartRules: [],
+    });
+
+    service.saveFolderTagBindings("workspace-1", "user-1", ".", [tag.id]);
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "folder", folderPath: ".", mode: "folder_bindings_only" },
+    });
+
+    service.saveTagDefinition("workspace-1", "user-1", {
+      tagId: tag.id,
+      name: "售前",
+      smartRules: [],
+    });
+
+    await expect(new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "full" },
+    })).resolves.toMatchObject({
+      scannedCount: 1,
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
+      "售前:folder_binding",
+    ]));
+    expect(details.resolvedTags.map(item => item.path)).not.toContain("系统集成");
+
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(rootDir, ".ai-index", "exports", "manifest.json"), "utf8"),
+    ) as {
+      entries?: { taxonomy?: string };
+    };
+    const taxonomyEntry = manifest.entries?.taxonomy ?? "taxonomy.json";
+    const taxonomy = JSON.parse(
+      fs.readFileSync(path.join(rootDir, ".ai-index", "exports", taxonomyEntry), "utf8"),
+    ) as {
+      nodes?: Array<{ path?: string; name?: string }>;
+    };
+    expect(taxonomy.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "售前",
+        name: "售前",
+      }),
+    ]));
+    expect(taxonomy.nodes?.some((node) => node.path === "系统集成")).toBe(false);
+  });
+
+  it("清理 orphan tag 后，旧的 tagId cache 不会再导致后续写入 FK 失败", () => {
+    const dbPath = path.join(rootDir, ".ai-index", "catalog.db");
+    const writer = new CatalogWriteRepository(dbPath);
+    const now = new Date().toISOString();
+
+    const document = writer.upsertTextDocument(
+      {
+        relativePath: "售前/方案.md",
+        fullPath: path.join(rootDir, "售前/方案.md"),
+        name: "方案.md",
+        extension: ".md",
+        size: 128,
+        mtime: now,
+        ctime: now,
+      },
+      {
+        title: "售前方案",
+        text: "售前方案正文",
+        summary: "售前方案",
+        parser: "test",
+      },
+      [],
+      [
+        {
+          tagPath: "系统集成/售前",
+          source: "system_derived",
+          confidence: 1,
+          evidence: "first-pass",
+          manualOverride: false,
+        },
+      ],
+      now,
+    );
+
+    writer.recomputeDocumentTags([
+      {
+        documentId: document.documentId,
+        tags: [],
+        derivedTags: [],
+      },
+    ], now);
+    writer.cleanupOrphanTags();
+
+    expect(() => writer.upsertTextDocument(
+      {
+        relativePath: "售前/方案.md",
+        fullPath: path.join(rootDir, "售前/方案.md"),
+        name: "方案.md",
+        extension: ".md",
+        size: 256,
+        mtime: now,
+        ctime: now,
+      },
+      {
+        title: "售前方案",
+        text: "第二次写入",
+        summary: "售前方案",
+        parser: "test",
+      },
+      [],
+      [
+        {
+          tagPath: "系统集成/售前",
+          source: "system_derived",
+          confidence: 1,
+          evidence: "second-pass",
+          manualOverride: false,
+        },
+      ],
+      now,
+    )).not.toThrow();
+
+    const repository = new CatalogRepository(dbPath);
+    expect(repository.listTagDefinitions(true).map(item => item.path)).toEqual(expect.arrayContaining([
+      "系统集成",
+      "系统集成/售前",
+    ]));
+  });
+
+  it("大批量文档路径读取有效文件夹标签时不会再触发 SQLite 表达式树爆炸", () => {
+    const service = createService();
+    const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "目录继承",
+    });
+    service.saveFolderTagBindings("workspace-1", "user-1", ".", [folderTag.id]);
+    const repository = new CatalogRepository(path.join(rootDir, ".ai-index", "catalog.db"));
+    const paths = Array.from({ length: 1205 }, (_, index) => `客户A/文件-${index}.md`);
+
+    expect(() => repository.listEffectiveFolderTagBindingsForDocumentPaths(paths)).not.toThrow();
   });
 
   it("读取根目录标签详情时显式支持 folderPath=.", () => {

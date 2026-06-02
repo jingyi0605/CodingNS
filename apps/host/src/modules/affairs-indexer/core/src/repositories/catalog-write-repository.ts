@@ -159,6 +159,14 @@ export class CatalogWriteRepository {
     return relativePath.split(path.sep).join("/");
   }
 
+  private invalidateCachedTagPath(tagPath: string | null | undefined): void {
+    const normalizedPath = tagPath?.trim();
+    if (!normalizedPath) {
+      return;
+    }
+    this.tagIdCache.delete(normalizedPath);
+  }
+
   getSchemaMeta(key: string): string | null {
     return this.withConnection(db => {
       const row = db.prepare(`SELECT value FROM schema_meta WHERE key = ?`).get(key) as { value?: string } | undefined;
@@ -192,6 +200,13 @@ export class CatalogWriteRepository {
         WHERE f.status = 'active'
           AND d.index_status = 'indexed'
       `).get() as { count?: number } | undefined;
+      return Number(row?.count ?? 0);
+    });
+  }
+
+  countRows(tableName: "document_tags" | "derived_document_tags"): number {
+    return this.withConnection(db => {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as { count?: number } | undefined;
       return Number(row?.count ?? 0);
     });
   }
@@ -364,7 +379,19 @@ export class CatalogWriteRepository {
   ): string {
     const cached = tagCache.get(tagPath);
     if (cached) {
-      return cached;
+      const existingById = statements.selectTagById.get(cached) as { id?: string; path?: string } | undefined;
+      if (existingById?.id && existingById.path === tagPath) {
+        return cached;
+      }
+      tagCache.delete(tagPath);
+      this.invalidateCachedTagPath(tagPath);
+    }
+
+    const existingByPath = statements.selectTagByPath.get(tagPath) as { id?: string } | undefined;
+    if (existingByPath?.id) {
+      tagCache.set(tagPath, existingByPath.id);
+      this.tagIdCache.set(tagPath, existingByPath.id);
+      return existingByPath.id;
     }
 
     const segments = tagPath.split("/").filter(Boolean);
@@ -393,7 +420,7 @@ export class CatalogWriteRepository {
 
   private cleanupOrphanTagsInConnection(db: DatabaseSync): void {
     const selectOrphans = db.prepare(`
-      SELECT t.id
+      SELECT t.id, t.path
       FROM tags t
       WHERE NOT EXISTS (
         SELECT 1 FROM tags child WHERE child.parent_id = t.id
@@ -404,11 +431,23 @@ export class CatalogWriteRepository {
       AND NOT EXISTS (
         SELECT 1 FROM derived_document_tags ddt WHERE ddt.tag_id = t.id
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM tag_aliases ta WHERE ta.tag_id = t.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM tag_rules tr WHERE tr.tag_id = t.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM manual_document_tag_bindings mdtb WHERE mdtb.tag_id = t.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM folder_tag_bindings ftb WHERE ftb.tag_id = t.id
+      )
     `);
     const deleteTag = db.prepare(`DELETE FROM tags WHERE id = ?`);
 
     while (true) {
-      const orphanRows = selectOrphans.all() as Array<{ id: string }>;
+      const orphanRows = selectOrphans.all() as Array<{ id: string; path?: string }>;
 
       if (orphanRows.length === 0) {
         return;
@@ -416,6 +455,7 @@ export class CatalogWriteRepository {
 
       for (const row of orphanRows) {
         deleteTag.run(row.id);
+        this.invalidateCachedTagPath(row.path);
       }
     }
   }
@@ -939,7 +979,7 @@ export class CatalogWriteRepository {
         db.exec("BEGIN IMMEDIATE");
         const tagId = input.id?.trim() || makeStableId("tag", input.path);
         const disabledAt = input.status === "disabled" ? observedAt : null;
-        const existing = statements.selectTagById.get(tagId) as { id?: string; created_at?: string } | undefined;
+        const existing = statements.selectTagById.get(tagId) as { id?: string; path?: string; created_at?: string } | undefined;
         if (existing?.id) {
           statements.updateTagDefinition.run(
             input.rootType,
@@ -953,6 +993,9 @@ export class CatalogWriteRepository {
             disabledAt,
             tagId,
           );
+          if (typeof existing.path === "string" && existing.path && existing.path !== input.path) {
+            this.tagIdCache.delete(existing.path);
+          }
         } else {
           db.prepare(`
             INSERT INTO tags(id, root_type, path, name, parent_id, canonical_name, description, status, created_by, created_at, updated_at, disabled_at)
@@ -972,6 +1015,7 @@ export class CatalogWriteRepository {
             disabledAt,
           );
         }
+        this.tagIdCache.set(input.path, tagId);
         db.exec("COMMIT");
         return { id: tagId };
       } catch (error) {
@@ -1078,6 +1122,7 @@ export class CatalogWriteRepository {
     this.withConnection((db) => {
       try {
         db.exec("BEGIN IMMEDIATE");
+        const selectTagPath = db.prepare(`SELECT path FROM tags WHERE id = ?`);
         const deleteManualBindings = db.prepare(`DELETE FROM manual_document_tag_bindings WHERE tag_id = ?`);
         const deleteFolderBindings = db.prepare(`DELETE FROM folder_tag_bindings WHERE tag_id = ?`);
         const deleteRules = db.prepare(`DELETE FROM tag_rules WHERE tag_id = ?`);
@@ -1085,12 +1130,16 @@ export class CatalogWriteRepository {
         const deleteDerivedTags = db.prepare(`DELETE FROM derived_document_tags WHERE tag_id = ?`);
         const deleteTag = db.prepare(`DELETE FROM tags WHERE id = ?`);
         normalizedTagIds.forEach((tagId) => {
+          const current = selectTagPath.get(tagId) as { path?: string } | undefined;
           deleteManualBindings.run(tagId);
           deleteFolderBindings.run(tagId);
           deleteRules.run(tagId);
           deleteDocumentTags.run(tagId);
           deleteDerivedTags.run(tagId);
           deleteTag.run(tagId);
+          if (typeof current?.path === "string" && current.path) {
+            this.tagIdCache.delete(current.path);
+          }
         });
         db.exec("COMMIT");
       } catch (error) {
