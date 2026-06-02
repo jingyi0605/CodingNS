@@ -67,26 +67,38 @@ export class ButlerProfileService {
     return profile ? hydrateStoredProfile(profile) : null;
   }
 
+  isSetupCompleted(): boolean {
+    return this.getProfile()?.setupCompleted === true;
+  }
+
   initProfile(input: ButlerProfileInitInput): ButlerProfile {
-    if (this.butlerProfileRepository.find()) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "BUTLER_PROFILE_ALREADY_INITIALIZED",
-        detail: "代码助手已经初始化，不能重复初始化"
-      });
+    const current = this.getProfile();
+
+    if (current?.setupCompleted) {
+      throw createButlerAlreadyInitializedError();
     }
 
     const timestamp = nowIso();
     const profile = buildButlerProfileRecord(
       input,
       timestamp,
-      null,
+      current,
       this.butlerProjectRepository,
       this.dataRootDir,
       this.providerControlRepository
     );
 
-    return this.butlerProfileRepository.create(profile);
+    try {
+      return current
+        ? this.butlerProfileRepository.update(profile)
+        : this.butlerProfileRepository.create(profile);
+    } catch (error) {
+      if (isSqlitePrimaryKeyConflict(error) && this.isSetupCompleted()) {
+        throw createButlerAlreadyInitializedError();
+      }
+
+      throw error;
+    }
   }
 
   updateProfile(input: ButlerProfilePatchInput): ButlerProfile {
@@ -186,9 +198,31 @@ function buildButlerProfileRecord(
     agentsContent: agentsConfig.agentsContent,
     persona,
     focus,
+    setupCompleted: true,
     initializedAt,
     updatedAt: nowIso()
   };
+}
+
+function createButlerAlreadyInitializedError(): AppError {
+  return new AppError({
+    statusCode: 409,
+    errorCode: "BUTLER_PROFILE_ALREADY_INITIALIZED",
+    detail: "代码助手已经初始化，不能重复初始化"
+  });
+}
+
+function isSqlitePrimaryKeyConflict(error: unknown): boolean {
+  const errorCode =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : null;
+
+  return (
+    error instanceof Error
+    && (error.message.includes("UNIQUE constraint failed: butler_profiles.id")
+      || errorCode === "SQLITE_CONSTRAINT_PRIMARYKEY")
+  );
 }
 
 function normalizeDisplayName(value: unknown): string {

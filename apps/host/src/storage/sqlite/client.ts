@@ -743,11 +743,15 @@ function ensureButlerProfileSchema(db: BetterSqliteDatabase): void {
     .prepare("PRAGMA table_info(butler_profiles)")
     .all() as Array<{ name: string }>;
 
-  if (columns.some((column) => column.name === "display_name")) {
-    return;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("display_name")) {
+    db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
   }
 
-  db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
+  if (!columnNames.has("setup_completed")) {
+    db.exec("ALTER TABLE butler_profiles ADD COLUMN setup_completed INTEGER NOT NULL DEFAULT 0 CHECK (setup_completed IN (0, 1))");
+  }
 }
 
 function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
@@ -1754,6 +1758,12 @@ function ensureSessionRelationColumns(db: BetterSqliteDatabase): void {
     .prepare("PRAGMA table_info(session_indices)")
     .all() as Array<{ name: string }>;
   const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("session_visibility")) {
+    db.exec(
+      "ALTER TABLE session_indices ADD COLUMN session_visibility TEXT NOT NULL DEFAULT 'workspace' CHECK (session_visibility IN ('workspace', 'affairs_lightweight'))"
+    );
+  }
 
   if (!columnNames.has("parent_session_id")) {
     db.exec("ALTER TABLE session_indices ADD COLUMN parent_session_id TEXT");

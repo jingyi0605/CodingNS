@@ -305,7 +305,7 @@ export class ButlerController {
     const profile = this.butlerProfileService.getProfile();
 
     reply.send({
-      initialized: profile !== null,
+      initialized: profile?.setupCompleted === true,
       profile
     });
   };

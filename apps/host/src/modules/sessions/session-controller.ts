@@ -73,6 +73,7 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   provider?: string;
   content?: string;
   clientRequestId?: string;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   attachments?: SessionAttachmentInput[];
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
@@ -572,6 +573,10 @@ export class SessionController {
         provider,
         content,
         clientRequestId,
+        sessionVisibility:
+          request.body.sessionVisibility === "affairs_lightweight"
+            ? "affairs_lightweight"
+            : "workspace",
         parentSessionId: request.body.parentSessionId?.trim() || null,
         sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
         annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,

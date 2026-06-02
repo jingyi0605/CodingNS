@@ -678,6 +678,7 @@ export interface SessionIndexRecord {
   sessionId: string;
   workspaceId: string;
   provider: ProviderId;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
@@ -793,6 +794,7 @@ export interface SessionListItem {
   sessionId: string;
   workspaceId: string;
   provider: ProviderId;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   providerSessionId: string;
   rawStoreRef: string;
   providerConfigMode?: SessionProviderConfigMode;
@@ -1031,6 +1033,7 @@ export interface ButlerProfile {
   agentsContent: string;
   persona: ButlerPersonaProfile;
   focus: ButlerFocusProfile;
+  setupCompleted: boolean;
   initializedAt: string;
   updatedAt: string;
 }

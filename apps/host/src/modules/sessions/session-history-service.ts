@@ -115,6 +115,7 @@ interface StartSessionInput {
   providerConfigMode?: SessionProviderConfigMode | null;
   providerPresetId?: string | null;
   parentSessionId?: string | null;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
   annotationSourceText?: string | null;
@@ -920,7 +921,8 @@ export class SessionHistoryService {
   listWorkspaceSessions(workspaceId: string, userId: string): SessionListItem[] {
     const directItems = this.sessionIndexRepository
       .listByWorkspace(workspaceId, userId)
-      .filter((item) => !this.isPendingSessionAlias(item));
+      .filter((item) => !this.isPendingSessionAlias(item))
+      .filter((item) => (item.sessionVisibility ?? "workspace") === "workspace");
     const projectedItems = this.listProjectedIsolatedWorkspaceSessions(workspaceId, userId);
 
     return this.filterDisabledProviderSessions(this.enrichSessionItems(
@@ -1290,6 +1292,7 @@ export class SessionHistoryService {
           sessionId,
           workspaceId: workspace.id,
           provider: result.session.provider,
+          sessionVisibility: input.sessionVisibility ?? "workspace",
           parentSessionId: input.parentSessionId ?? result.session.parentProviderSessionId ?? null,
           sessionKind: input.sessionKind ?? "default",
           annotationSourceMessageId: input.annotationSourceMessageId ?? null,

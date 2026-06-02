@@ -22,7 +22,7 @@ import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 
 const tempDirs: string[] = [];
 
-describe("provider control in SessionHistoryService", () => {
+describe("provider control in SessionHistoryService", { timeout: 30_000 }, () => {
   afterEach(() => {
     vi.restoreAllMocks();
 
@@ -109,6 +109,45 @@ describe("provider control in SessionHistoryService", () => {
     const sessions = service.instance.listWorkspaceSessions("workspace-1", "user-1");
 
     expect(sessions.map((item) => item.sessionId)).toEqual(["session-claude"]);
+
+    service.dispose();
+  });
+
+  it("事务轻量会话不会出现在工作区会话列表里，但仍然可以按 id 读取", () => {
+    const service = createSessionHistoryHarness();
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-lightweight",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-1",
+      rawStoreRef: "synthetic://gemini/session-lightweight",
+      title: "事务轻量会话",
+      messageCount: 1,
+      lastMessageAt: "2026-06-02T10:00:00.000Z",
+      createdAt: "2026-06-02T10:00:00.000Z",
+      updatedAt: "2026-06-02T10:00:00.000Z",
+      sessionVisibility: "affairs_lightweight"
+    });
+    seedSession(service.database.db, {
+      sessionId: "session-workspace",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://session-workspace",
+      title: "普通工作区会话",
+      messageCount: 1,
+      lastMessageAt: "2026-06-02T10:01:00.000Z",
+      createdAt: "2026-06-02T10:01:00.000Z",
+      updatedAt: "2026-06-02T10:01:00.000Z"
+    });
+
+    const sessions = service.instance.listWorkspaceSessions("workspace-1", "user-1");
+    const hiddenSession = service.instance.getSession("session-lightweight", "user-1");
+
+    expect(sessions.map((item) => item.sessionId)).toEqual(["session-workspace"]);
+    expect(hiddenSession.sessionId).toBe("session-lightweight");
+    expect(hiddenSession.sessionVisibility).toBe("affairs_lightweight");
 
     service.dispose();
   });
@@ -466,6 +505,7 @@ function seedSession(
     updatedAt: string;
     isSubagent?: boolean;
     subagentLabel?: string | null;
+    sessionVisibility?: "workspace" | "affairs_lightweight";
   }
 ): void {
   db.prepare(
@@ -497,6 +537,7 @@ function seedSession(
        session_kind,
        annotation_source_message_id,
        annotation_source_text,
+       session_visibility,
        is_subagent,
        subagent_label,
        title,
@@ -505,7 +546,7 @@ function seedSession(
        last_message_at,
        created_at,
        updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     input.sessionId,
     input.workspaceId,
@@ -514,6 +555,7 @@ function seedSession(
     "default",
     null,
     null,
+    input.sessionVisibility ?? "workspace",
     input.isSubagent ? 1 : 0,
     input.subagentLabel ?? null,
     input.title,

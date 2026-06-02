@@ -134,6 +134,77 @@ describe("ButlerProfileService", () => {
     }).trim()).toBe(fs.realpathSync.native(workspacePath));
   });
 
+  it("旧档案只标记为未完成时，可以重新完成初始化而不会再插入重复主键", () => {
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-profile-"));
+    tempDirs.push(workspacePath);
+    let savedProfile: ButlerProfile | null = {
+      id: "default",
+      displayName: "旧助手",
+      providerId: "codex",
+      workspacePath,
+      agentsMode: "inline",
+      agentsFilePath: null,
+      agentsContent: "# AGENTS.md\n旧规则",
+      persona: {
+        tone: "direct",
+        language: "zh-CN",
+        summaryStyle: "brief"
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: "conservative",
+        reportPriority: ["risk"],
+        summaryDebounceSeconds: 300
+      },
+      setupCompleted: false,
+      initializedAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z"
+    };
+
+    const repository = {
+      find: vi.fn(() => savedProfile),
+      create: vi.fn((record: ButlerProfile) => {
+        savedProfile = record;
+        return record;
+      }),
+      update: vi.fn((record: ButlerProfile) => {
+        savedProfile = record;
+        return record;
+      })
+    } satisfies Pick<ButlerProfileRepository, "find" | "create" | "update">;
+
+    const service = new ButlerProfileService(
+      repository as unknown as ButlerProfileRepository,
+      {
+        list: vi.fn(() => [])
+      } as unknown as Pick<ButlerProjectRepository, "list">
+    );
+
+    const profile = service.initProfile({
+      displayName: "新助手",
+      providerId: "claude-code",
+      workspacePath,
+      agentsMode: "inline",
+      persona: {
+        tone: "steady",
+        language: "zh-CN",
+        summaryStyle: "brief"
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: "balanced",
+        reportPriority: ["risk", "blocker"]
+      }
+    });
+
+    expect(profile.displayName).toBe("新助手");
+    expect(profile.providerId).toBe("claude-code");
+    expect(profile.setupCompleted).toBe(true);
+    expect(repository.update).toHaveBeenCalledOnce();
+    expect(repository.create).not.toHaveBeenCalled();
+    expect(profile.initializedAt).not.toBe("2026-05-01T00:00:00.000Z");
+  });
+
   it("初始化或切换到已禁用 provider 时会直接拒绝", () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-profile-"));
     tempDirs.push(workspacePath);

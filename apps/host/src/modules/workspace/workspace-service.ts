@@ -15,6 +15,7 @@ import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
+import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 import { readWorkspaceCodeCompositionWithSignal } from "./workspace-code-composition.js";
 
 interface WorkspaceDirectoryOption {
@@ -322,17 +323,57 @@ export class WorkspaceService {
     const existing =
       this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
     const timestamp = nowIso();
+    try {
+      const nextRecord = this.workspaceNavigationStateRepository.upsert({
+        workspaceId,
+        userId,
+        collapsed: input.collapsed ?? existing?.collapsed ?? false,
+        backgroundColor:
+          normalizedBackgroundColor !== undefined
+            ? normalizedBackgroundColor
+            : existing?.backgroundColor ?? null,
+        affairsLibraryRootPath: existing?.affairsLibraryRootPath ?? null,
+        affairsLibraryEnabled: existing?.affairsLibraryEnabled ?? false,
+        affairsLibraryFavoritesJson: existing?.affairsLibraryFavoritesJson ?? null,
+        updatedAt: timestamp
+      });
 
-    return this.workspaceNavigationStateRepository.upsert({
-      workspaceId,
-      userId,
-      collapsed: input.collapsed ?? existing?.collapsed ?? false,
-      backgroundColor:
-        normalizedBackgroundColor !== undefined
-          ? normalizedBackgroundColor
-          : existing?.backgroundColor ?? null,
-      updatedAt: timestamp
-    });
+      writeAffairsLibraryDebugLog({
+        event: "workspace_navigation_state_update",
+        processRole: "host",
+        workspaceId,
+        rootDir: nextRecord.affairsLibraryRootPath ?? null,
+        source: "workspace.navigation_state",
+        status: "succeeded",
+        details: {
+          userId,
+          collapsed: input.collapsed ?? null,
+          backgroundColor: normalizedBackgroundColor ?? null,
+          oldBinding: toWorkspaceNavigationBindingLog(existing),
+          newBinding: toWorkspaceNavigationBindingLog(nextRecord),
+        },
+      });
+
+      return nextRecord;
+    } catch (error) {
+      writeAffairsLibraryDebugLog({
+        event: "workspace_navigation_state_update",
+        processRole: "host",
+        workspaceId,
+        rootDir: existing?.affairsLibraryRootPath ?? null,
+        source: "workspace.navigation_state",
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+        details: {
+          userId,
+          collapsed: input.collapsed ?? null,
+          backgroundColor: normalizedBackgroundColor ?? null,
+          oldBinding: toWorkspaceNavigationBindingLog(existing),
+          newBinding: null,
+        },
+      });
+      throw error;
+    }
   }
 
   private listVisibleWorkspaces(): Workspace[] {
@@ -535,6 +576,27 @@ function normalizeWorkspaceNavigationBackgroundColor(
   }
 
   return normalizedColor;
+}
+
+function toWorkspaceNavigationBindingLog(
+  record: Pick<
+    WorkspaceNavigationStateRecord,
+    "affairsLibraryRootPath" | "affairsLibraryEnabled" | "affairsLibraryFavoritesJson"
+  > | null | undefined
+): {
+  rootPath: string | null;
+  enabled: boolean;
+  favoritesJson: string | null;
+} | null {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    rootPath: record.affairsLibraryRootPath ?? null,
+    enabled: record.affairsLibraryEnabled === true,
+    favoritesJson: record.affairsLibraryFavoritesJson ?? null,
+  };
 }
 
 function createWorkspaceRecord(

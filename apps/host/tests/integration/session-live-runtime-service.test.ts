@@ -1461,6 +1461,92 @@ describe("SessionLiveRuntimeService", () => {
     expect(sessionStatusSnapshotRepository.upsert).toHaveBeenCalledTimes(2);
   });
 
+  it("startLiveSession 会把事务轻量会话可见性写入 session index", async () => {
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService,
+      sessionIndexRepository
+    } = createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "synthetic://gemini/provider-session-1",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-06-02T10:00:00.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: false
+    };
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "gemini",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "synthetic://gemini/provider-session-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "synthetic://gemini/provider-session-1",
+      messageCount: 0
+    }));
+
+    await service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "gemini",
+      content: "做一条事务轻量会话",
+      clientRequestId: null,
+      sessionVisibility: "affairs_lightweight"
+    });
+
+    expect(sessionIndexRepository.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionVisibility: "affairs_lightweight"
+      })
+    );
+  });
+
   it("startLiveSession 会为工作区会话显式注入工作区说明和 scoped 认证环境", async () => {
     const workspaceRoot = mkdtempSync(path.join(tmpdir(), "codingns-workspace-instruction-start-"));
     const workspaceInstructionFilePath = path.join(

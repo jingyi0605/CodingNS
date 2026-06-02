@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -213,6 +214,102 @@ describe("butler profile routes", () => {
     expect(duplicateResponse.statusCode).toBe(409);
     expect(duplicateResponse.json()).toMatchObject({
       error_code: "BUTLER_PROFILE_ALREADY_INITIALIZED"
+    });
+  });
+
+  it("旧事务模式档案被标记为未完成时，可以重新跑初始化", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    const butlerWorkspace = path.join(fixture.rootDir, "butler-workspace");
+    const agentsFilePath = path.join(butlerWorkspace, "AGENTS.md");
+    activeFixtures.push(fixture);
+    fs.mkdirSync(butlerWorkspace, { recursive: true });
+    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码助手。\n", "utf8");
+
+    const hosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+
+    const firstInitResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/butler/profile/init",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        displayName: "旧助手",
+        providerId: "codex",
+        workspacePath: butlerWorkspace,
+        agentsMode: "file",
+        agentsFilePath,
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: ["risk"]
+        }
+      }
+    });
+
+    expect(firstInitResponse.statusCode).toBe(201);
+
+    await hosted.app.close();
+    activeServers.pop();
+
+    const db = new Database(databasePath);
+    db.prepare(
+      "UPDATE butler_profiles SET setup_completed = 0, updated_at = ? WHERE id = 'default'"
+    ).run("2026-06-02T11:58:24.000Z");
+    db.close();
+
+    const reopened = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(reopened);
+    await reopened.app.ready();
+
+    const secondAccessToken = await login(reopened);
+    const reinitResponse = await reopened.app.inject({
+      method: "POST",
+      url: "/api/butler/profile/init",
+      headers: {
+        authorization: `Bearer ${secondAccessToken}`
+      },
+      payload: {
+        displayName: "新助手",
+        providerId: "claude-code",
+        workspacePath: butlerWorkspace,
+        agentsMode: "file",
+        agentsFilePath,
+        persona: {
+          tone: "steady",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "balanced",
+          reportPriority: ["risk", "blocker"]
+        }
+      }
+    });
+
+    expect(reinitResponse.statusCode).toBe(201);
+    expect(reinitResponse.json()).toMatchObject({
+      initialized: true,
+      profile: {
+        displayName: "新助手",
+        providerId: "claude-code",
+        setupCompleted: true
+      }
     });
   });
 

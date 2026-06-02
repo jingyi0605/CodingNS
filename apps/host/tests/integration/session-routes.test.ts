@@ -158,6 +158,53 @@ describe("session routes", () => {
     });
   });
 
+  it("start-live 会把事务轻量会话可见性透传给 runtime service", async () => {
+    const sessionLiveRuntimeService = {
+      startLiveSession: vi.fn(async () => ({
+        sessionId: "session-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-1",
+        message: {
+          messageId: "message-1",
+          provider: "gemini",
+          providerSessionId: "gemini-session-1",
+          role: "user",
+          kind: "text",
+          content: "开始实时会话",
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "synthetic://gemini/session-1/client-1"
+        }
+      }))
+    };
+    const app = await createSessionApp({
+      sessionHistoryService: {},
+      sessionLiveRuntimeService
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/sessions/start-live",
+      payload: {
+        workspaceId: "workspace-1",
+        provider: "gemini",
+        content: "开始实时会话",
+        sessionVisibility: "affairs_lightweight"
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(sessionLiveRuntimeService.startLiveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        provider: "gemini",
+        sessionVisibility: "affairs_lightweight"
+      })
+    );
+  });
+
   it("stale session 的只读接口会软降级，不再返回错误", async () => {
     const missingSessionError = new AppError({
       statusCode: 404,

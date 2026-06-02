@@ -638,6 +638,9 @@ CREATE TABLE IF NOT EXISTS session_indices (
   session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   provider TEXT NOT NULL,
+  session_visibility TEXT NOT NULL DEFAULT 'workspace' CHECK (
+    session_visibility IN ('workspace', 'affairs_lightweight')
+  ),
   parent_session_id TEXT,
   session_kind TEXT NOT NULL DEFAULT 'default' CHECK (session_kind IN ('default', 'annotation')),
   annotation_source_message_id TEXT,
@@ -1272,6 +1275,7 @@ CREATE TABLE IF NOT EXISTS butler_profiles (
   agents_content TEXT NOT NULL,
   persona_json TEXT NOT NULL,
   focus_json TEXT NOT NULL,
+  setup_completed INTEGER NOT NULL DEFAULT 1 CHECK (setup_completed IN (0, 1)),
   initialized_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

@@ -662,7 +662,12 @@ describe("sqlite 启动引导", () => {
     client.close();
 
     expect(columns.map((column) => column.name)).toEqual(
-      expect.arrayContaining(["parent_session_id", "is_subagent", "subagent_label"])
+      expect.arrayContaining([
+        "parent_session_id",
+        "session_visibility",
+        "is_subagent",
+        "subagent_label"
+      ])
     );
   });
 

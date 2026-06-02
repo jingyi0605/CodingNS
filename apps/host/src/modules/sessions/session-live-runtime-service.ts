@@ -106,6 +106,7 @@ interface StartLiveSessionInput {
   provider: string;
   content: string;
   clientRequestId: string | null;
+  sessionVisibility?: "workspace" | "affairs_lightweight";
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
@@ -493,6 +494,7 @@ export class SessionLiveRuntimeService {
         workspaceId: workspace.id,
         userId: input.userId,
         provider: input.provider,
+        sessionVisibility: input.sessionVisibility ?? "workspace",
         parentSessionId: input.parentSessionId ?? null,
         sessionKind: input.sessionKind ?? "default",
         annotationSourceMessageId: input.annotationSourceMessageId ?? null,
@@ -554,6 +556,7 @@ export class SessionLiveRuntimeService {
         workspaceId: workspace.id,
         userId: input.userId,
         provider: input.provider,
+        sessionVisibility: input.sessionVisibility ?? "workspace",
         parentSessionId: input.parentSessionId ?? null,
         sessionKind: input.sessionKind ?? "default",
         annotationSourceMessageId: input.annotationSourceMessageId ?? null,
@@ -2262,6 +2265,7 @@ export class SessionLiveRuntimeService {
     workspaceId: string;
     userId: string;
     provider: string;
+    sessionVisibility: "workspace" | "affairs_lightweight";
     parentSessionId: string | null;
     sessionKind: "default" | "annotation";
     annotationSourceMessageId: string | null;
@@ -2331,6 +2335,7 @@ export class SessionLiveRuntimeService {
     workspaceId: string;
     userId: string;
     provider: string;
+    sessionVisibility: "workspace" | "affairs_lightweight";
     parentSessionId: string | null;
     sessionKind: "default" | "annotation";
     annotationSourceMessageId: string | null;
@@ -2350,6 +2355,7 @@ export class SessionLiveRuntimeService {
         workspaceId: input.workspaceId,
         userId: input.userId,
         provider: input.provider,
+        sessionVisibility: input.sessionVisibility,
         parentSessionId: input.parentSessionId,
         sessionKind: input.sessionKind,
         annotationSourceMessageId: input.annotationSourceMessageId,
@@ -2367,6 +2373,7 @@ export class SessionLiveRuntimeService {
     workspaceId: string;
     userId: string;
     provider: string;
+    sessionVisibility: "workspace" | "affairs_lightweight";
     parentSessionId: string | null;
     sessionKind: "default" | "annotation";
     annotationSourceMessageId: string | null;
@@ -2399,6 +2406,7 @@ export class SessionLiveRuntimeService {
         currentIndex?.annotationSourceMessageId ?? input.annotationSourceMessageId,
       annotationSourceText:
         currentIndex?.annotationSourceText ?? input.annotationSourceText,
+      sessionVisibility: currentIndex?.sessionVisibility ?? input.sessionVisibility,
       isSubagent: currentIndex?.isSubagent ?? false,
       subagentLabel: currentIndex?.subagentLabel ?? null,
       title: currentIndex?.title?.trim() || buildSessionTitle(input.initialContent),

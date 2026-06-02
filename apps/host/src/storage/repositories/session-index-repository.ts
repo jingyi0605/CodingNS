@@ -15,6 +15,7 @@ export class SessionIndexRepository {
          session_id,
          workspace_id,
          provider,
+         session_visibility,
          parent_session_id,
          session_kind,
          annotation_source_message_id,
@@ -27,10 +28,11 @@ export class SessionIndexRepository {
          last_message_at,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          workspace_id = excluded.workspace_id,
          provider = excluded.provider,
+         session_visibility = excluded.session_visibility,
          parent_session_id = excluded.parent_session_id,
          session_kind = excluded.session_kind,
          annotation_source_message_id = excluded.annotation_source_message_id,
@@ -48,6 +50,7 @@ export class SessionIndexRepository {
          indices.session_id AS session_id,
          indices.workspace_id AS workspace_id,
          indices.provider AS provider,
+         indices.session_visibility AS session_visibility,
          bindings.provider_session_id AS provider_session_id,
          bindings.raw_store_ref AS raw_store_ref,
          bindings.provider_config_mode AS provider_config_mode,
@@ -96,6 +99,7 @@ export class SessionIndexRepository {
          indices.session_id AS session_id,
          indices.workspace_id AS workspace_id,
          indices.provider AS provider,
+         indices.session_visibility AS session_visibility,
          bindings.provider_session_id AS provider_session_id,
          bindings.raw_store_ref AS raw_store_ref,
          bindings.provider_config_mode AS provider_config_mode,
@@ -143,6 +147,7 @@ export class SessionIndexRepository {
          session_id AS session_id,
          workspace_id AS workspace_id,
          provider AS provider,
+         session_visibility AS session_visibility,
          parent_session_id AS parent_session_id,
          session_kind AS session_kind,
          annotation_source_message_id AS annotation_source_message_id,
@@ -171,6 +176,7 @@ export class SessionIndexRepository {
         record.sessionId,
         record.workspaceId,
         record.provider,
+        record.sessionVisibility ?? "workspace",
         record.parentSessionId ?? null,
         record.sessionKind ?? "default",
         record.annotationSourceMessageId ?? null,
@@ -212,6 +218,7 @@ interface SessionListItemRow {
   session_id: string;
   workspace_id: string;
   provider: SessionListItem["provider"];
+  session_visibility: NonNullable<SessionListItem["sessionVisibility"]>;
   provider_session_id: string;
   raw_store_ref: string;
   provider_config_mode: SessionListItem["providerConfigMode"];
@@ -251,6 +258,7 @@ interface SessionIndexRecordRow {
   session_id: string;
   workspace_id: string;
   provider: SessionIndexRecord["provider"];
+  session_visibility: NonNullable<SessionIndexRecord["sessionVisibility"]>;
   parent_session_id: string | null;
   session_kind: SessionIndexRecord["sessionKind"];
   annotation_source_message_id: string | null;
@@ -285,6 +293,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     sessionId: row.session_id,
     workspaceId: row.workspace_id,
     provider: row.provider,
+    sessionVisibility: row.session_visibility ?? "workspace",
     providerSessionId: row.provider_session_id,
     rawStoreRef: row.raw_store_ref,
     providerConfigMode: row.provider_config_mode,
@@ -327,6 +336,7 @@ function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecor
     sessionId: row.session_id,
     workspaceId: row.workspace_id,
     provider: row.provider,
+    sessionVisibility: row.session_visibility ?? "workspace",
     parentSessionId: row.parent_session_id,
     sessionKind: row.session_kind ?? "default",
     annotationSourceMessageId: row.annotation_source_message_id,
