@@ -4712,8 +4712,29 @@ function resolveSmartRuleTypeLabel(ruleType: AffairsTagRuleDto["ruleType"]): str
   }
 }
 
+function resolveBatchManagedTagRoots(tags: AffairsTagNodeDto[]): AffairsTagNodeDto[] {
+  const sorted = [...tags].sort((left, right) => left.path.length - right.path.length);
+  const roots: AffairsTagNodeDto[] = [];
+  sorted.forEach((tag) => {
+    const covered = roots.some((root) => tag.path === root.path || tag.path.startsWith(`${root.path}/`));
+    if (!covered) {
+      roots.push(tag);
+    }
+  });
+  return roots;
+}
+
+function isSelectableBatchParentTag(candidate: AffairsTagNodeDto, selectedTags: AffairsTagNodeDto[]): boolean {
+  return !selectedTags.some((tag) => (
+    tag.id === candidate.id
+    || candidate.path === tag.path
+    || candidate.path.startsWith(`${tag.path}/`)
+  ));
+}
+
 function AffairsTagManagementModal() {
   const {
+    workspaceId,
     tagManagementOpen,
     closeTagManagement,
     managedTags,
@@ -4721,6 +4742,7 @@ function AffairsTagManagementModal() {
     selectManagedTag,
     saveManagedTag,
     deleteManagedTag,
+    reloadTagManagement,
   } = useAffairsWorkbenchInternal();
   const platform = usePlatform();
   const { showToast } = useToast();
@@ -4728,6 +4750,9 @@ function AffairsTagManagementModal() {
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [smartRules, setSmartRules] = useState<EditableSmartTagRule[]>([]);
+  const [selectedBatchTagIds, setSelectedBatchTagIds] = useState<string[]>([]);
+  const [batchParentId, setBatchParentId] = useState<string>("__unchanged__");
+  const [batchStatus, setBatchStatus] = useState<"unchanged" | "active" | "disabled">("unchanged");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleManagedTags = useMemo(
@@ -4742,6 +4767,19 @@ function AffairsTagManagementModal() {
     () => flattenedTags.filter(({ tag }) => isSelectableParentTag(tag, selectedEditableTag)),
     [flattenedTags, selectedEditableTag],
   );
+  const selectedBatchTags = useMemo(
+    () => visibleManagedTags.filter((tag) => selectedBatchTagIds.includes(tag.id)),
+    [selectedBatchTagIds, visibleManagedTags],
+  );
+  const batchParentOptions = useMemo(
+    () => flattenedTags.filter(({ tag }) => isSelectableBatchParentTag(tag, selectedBatchTags)),
+    [flattenedTags, selectedBatchTags],
+  );
+  const batchDeleteTargets = useMemo(
+    () => resolveBatchManagedTagRoots(selectedBatchTags),
+    [selectedBatchTags],
+  );
+  const hasBatchSelection = selectedBatchTags.length > 0;
 
   const resetEditor = (nextMode: TagManagementEditorMode, parentTag?: AffairsTagDetailWithRulesDto | AffairsTagNodeDto | null) => {
     setEditorMode(nextMode);
@@ -4790,6 +4828,9 @@ function AffairsTagManagementModal() {
 
   useEffect(() => {
     if (!tagManagementOpen) {
+      setSelectedBatchTagIds([]);
+      setBatchParentId("__unchanged__");
+      setBatchStatus("unchanged");
       return;
     }
     if (selectedEditableTag) {
@@ -4819,6 +4860,86 @@ function AffairsTagManagementModal() {
     matcher: normalizeSmartTagRuleMatcher(rule),
   }));
 
+  const toggleBatchSelection = (tagId: string) => {
+    setSelectedBatchTagIds((current) => current.includes(tagId)
+      ? current.filter((item) => item !== tagId)
+      : [...current, tagId]);
+  };
+
+  const applyBatchUpdate = async () => {
+    if (!hasBatchSelection) {
+      return;
+    }
+    if (batchParentId === "__unchanged__" && batchStatus === "unchanged") {
+      setError(t("shell.affairsTagBatchUpdateNoop"));
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      for (const tag of selectedBatchTags) {
+        const detail = await getAffairsTagDetail(workspaceId, tag.id);
+        await updateAffairsTag(workspaceId, tag.id, {
+          name: detail.name,
+          parentId: batchParentId === "__unchanged__" ? detail.parentId : (batchParentId || null),
+          status: batchStatus === "unchanged" ? detail.status : batchStatus,
+          smartRules: detail.smartRules,
+        });
+      }
+      await reloadTagManagement();
+      if (selectedManagedTag?.id && selectedBatchTagIds.includes(selectedManagedTag.id)) {
+        await selectManagedTag(selectedManagedTag.id);
+      }
+      showToast({
+        title: t("shell.affairsTagBatchUpdateSuccess"),
+        description: t("shell.affairsTagBatchUpdateSuccessDescription", { count: selectedBatchTags.length }),
+        tone: "success",
+      });
+      setBatchParentId("__unchanged__");
+      setBatchStatus("unchanged");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagBatchUpdateFailed"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const applyBatchDelete = async () => {
+    if (!hasBatchSelection) {
+      return;
+    }
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(t("shell.affairsTagBatchDeleteConfirm", { count: batchDeleteTargets.length }));
+    if (!confirmed) {
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      for (const tag of batchDeleteTargets) {
+        await deleteAffairsTag(workspaceId, tag.id);
+      }
+      setSelectedBatchTagIds([]);
+      setBatchParentId("__unchanged__");
+      setBatchStatus("unchanged");
+      await reloadTagManagement();
+      if (selectedManagedTag && batchDeleteTargets.some((tag) => selectedManagedTag.path === tag.path || selectedManagedTag.path.startsWith(`${tag.path}/`))) {
+        await selectManagedTag(null);
+        beginCreateRoot();
+      }
+      showToast({
+        title: t("shell.affairsTagBatchDeleteSuccess"),
+        description: t("shell.affairsTagBatchDeleteSuccessDescription", { count: batchDeleteTargets.length }),
+        tone: "success",
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagBatchDeleteFailed"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const content = (
     <div className="affairs-library-settings-form affairs-tag-management-shell">
       <div className="affairs-tag-management-layout">
@@ -4844,6 +4965,27 @@ function AffairsTagManagementModal() {
             >
               {t("shell.affairsTagCreateChildAction")}
             </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={submitting || visibleManagedTags.length === 0}
+              onClick={() => setSelectedBatchTagIds(visibleManagedTags.map((tag) => tag.id))}
+            >
+              {t("shell.affairsTagBatchSelectAllAction")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={submitting || selectedBatchTagIds.length === 0}
+              onClick={() => setSelectedBatchTagIds([])}
+            >
+              {t("shell.affairsTagBatchClearSelectionAction")}
+            </button>
+          </div>
+          <div className="affairs-tag-management-selection-summary">
+            <span className="affairs-binding-hint">
+              {t("shell.affairsTagBatchSelectionSummary", { count: selectedBatchTagIds.length })}
+            </span>
           </div>
           {treeNodes.length === 0 ? (
             <ModalEmptyState
@@ -4856,17 +4998,88 @@ function AffairsTagManagementModal() {
               <AffairsTagManagementTreeNodes
                 nodes={treeNodes}
                 selectedTagId={currentEditTagId}
+                selectedBatchTagIds={selectedBatchTagIds}
                 onSelect={(tagId) => {
                   setEditorMode("edit");
                   setError(null);
                   void selectManagedTag(tagId);
                 }}
+                onToggleBatchSelect={toggleBatchSelection}
               />
             </div>
           )}
         </ModalSection>
 
         <div className="affairs-tag-management-editor-column">
+          <ModalSection
+            className="affairs-tag-management-editor"
+            heading={t("shell.affairsTagBatchSectionTitle")}
+            description={t("shell.affairsTagBatchSectionDescription")}
+          >
+            {!hasBatchSelection ? (
+              <ModalEmptyState
+                compact
+                title={t("shell.affairsTagBatchEmpty")}
+                description={t("shell.affairsTagBatchEmptyDescription")}
+              />
+            ) : (
+              <>
+                <div className="affairs-tag-management-batch-list">
+                  {selectedBatchTags.map((tag) => (
+                    <AffairsColorTag key={tag.id} label={tag.path} path={tag.path} />
+                  ))}
+                </div>
+                <ModalField label={t("shell.affairsTagBatchParentLabel")}>
+                  <select
+                    aria-label={t("shell.affairsTagBatchParentLabel")}
+                    value={batchParentId}
+                    onChange={(event) => setBatchParentId(event.target.value)}
+                    disabled={submitting}
+                  >
+                    <option value="__unchanged__">{t("shell.affairsTagBatchParentKeepOption")}</option>
+                    <option value="">{t("shell.affairsTagParentRootOption")}</option>
+                    {batchParentOptions.map(({ tag, depth }) => (
+                      <option key={tag.id} value={tag.id}>
+                        {`${"　".repeat(depth)}${tag.path}`}
+                      </option>
+                    ))}
+                  </select>
+                </ModalField>
+                <ModalField label={t("shell.affairsTagBatchStatusLabel")}>
+                  <select
+                    aria-label={t("shell.affairsTagBatchStatusLabel")}
+                    value={batchStatus}
+                    onChange={(event) => setBatchStatus(event.target.value as "unchanged" | "active" | "disabled")}
+                    disabled={submitting}
+                  >
+                    <option value="unchanged">{t("shell.affairsTagBatchStatusKeepOption")}</option>
+                    <option value="active">{t("shell.affairsTagBatchStatusActiveOption")}</option>
+                    <option value="disabled">{t("shell.affairsTagBatchStatusDisabledOption")}</option>
+                  </select>
+                </ModalField>
+                <div className="affairs-tag-management-batch-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={submitting}
+                    onClick={() => void applyBatchUpdate()}
+                  >
+                    {t("shell.affairsTagBatchUpdateAction")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button workbench-danger-button"
+                    disabled={submitting}
+                    onClick={() => void applyBatchDelete()}
+                  >
+                    {t("shell.affairsTagBatchDeleteAction")}
+                  </button>
+                </div>
+                <span className="affairs-binding-hint">{t("shell.affairsTagBatchHint")}</span>
+              </>
+            )}
+          </ModalSection>
+
           <ModalSection
             className="affairs-tag-management-editor"
             heading={editorTitle}
@@ -5174,31 +5387,51 @@ function AffairsTagManagementModal() {
 function AffairsTagManagementTreeNodes({
   nodes,
   selectedTagId,
+  selectedBatchTagIds,
   onSelect,
+  onToggleBatchSelect,
 }: {
   nodes: ManagedTagTreeNode[];
   selectedTagId: string | null;
+  selectedBatchTagIds: string[];
   onSelect: (tagId: string) => void;
+  onToggleBatchSelect: (tagId: string) => void;
 }) {
   return (
     <ul className="affairs-tag-management-tree-list">
       {nodes.map((node) => (
         <li key={node.tag.id} className="affairs-tag-management-tree-node" role="treeitem" aria-selected={selectedTagId === node.tag.id}>
-          <button
-            type="button"
-            className={selectedTagId === node.tag.id ? "affairs-tag-management-tree-button active" : "affairs-tag-management-tree-button"}
-            onClick={() => onSelect(node.tag.id)}
-          >
-            <span className="affairs-tag-management-tree-main">
-              <span className="affairs-tag-management-tree-name">{node.tag.name}</span>
-              <span className="affairs-tag-management-tree-path">{node.tag.path}</span>
-            </span>
-            <span className="affairs-tag-management-tree-meta">
-              {node.tag.documentCount > 0 ? <span className="affairs-binding-hint">{t("shell.affairsTagTreeDocumentCount", { count: node.tag.documentCount })}</span> : null}
-            </span>
-          </button>
+          <div className={selectedTagId === node.tag.id ? "affairs-tag-management-tree-button active" : "affairs-tag-management-tree-button"}>
+            <label className="affairs-tag-management-tree-check">
+              <input
+                type="checkbox"
+                aria-label={t("shell.affairsTagBatchCheckboxLabel", { tag: node.tag.path })}
+                checked={selectedBatchTagIds.includes(node.tag.id)}
+                onChange={() => onToggleBatchSelect(node.tag.id)}
+              />
+            </label>
+            <button
+              type="button"
+              className="affairs-tag-management-tree-button-main"
+              onClick={() => onSelect(node.tag.id)}
+            >
+              <span className="affairs-tag-management-tree-main">
+                <span className="affairs-tag-management-tree-name">{node.tag.name}</span>
+                <span className="affairs-tag-management-tree-path">{node.tag.path}</span>
+              </span>
+              <span className="affairs-tag-management-tree-meta">
+                {node.tag.documentCount > 0 ? <span className="affairs-binding-hint">{t("shell.affairsTagTreeDocumentCount", { count: node.tag.documentCount })}</span> : null}
+              </span>
+            </button>
+          </div>
           {node.children.length > 0 ? (
-            <AffairsTagManagementTreeNodes nodes={node.children} selectedTagId={selectedTagId} onSelect={onSelect} />
+            <AffairsTagManagementTreeNodes
+              nodes={node.children}
+              selectedTagId={selectedTagId}
+              selectedBatchTagIds={selectedBatchTagIds}
+              onSelect={onSelect}
+              onToggleBatchSelect={onToggleBatchSelect}
+            />
           ) : null}
         </li>
       ))}

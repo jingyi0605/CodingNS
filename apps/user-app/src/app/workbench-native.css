@@ -8446,6 +8446,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 8px;
 }
 
+.affairs-tag-management-selection-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .affairs-tag-management-tree {
   min-height: 180px;
 }
@@ -8469,7 +8476,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   padding: 10px 12px;
   border-radius: 12px;
@@ -8487,6 +8493,31 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-management-tree-button.active {
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border-default));
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+}
+
+.affairs-tag-management-tree-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.affairs-tag-management-tree-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.affairs-tag-management-tree-button-main {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
 }
 
 .affairs-tag-management-tree-main,
@@ -8523,6 +8554,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.affairs-tag-management-batch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.affairs-tag-management-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .affairs-tag-smart-rule-card {

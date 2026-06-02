@@ -2181,6 +2181,176 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("标签管理模态框支持批量修改标签上级和状态", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-root",
+          path: "客户",
+          name: "客户",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 2,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        },
+        {
+          id: "tag-1",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        },
+        {
+          id: "tag-2",
+          path: "客户/报价",
+          name: "报价",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        },
+        {
+          id: "tag-archive",
+          path: "归档",
+          name: "归档",
+          rootType: "归档",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 0,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+    conversationApiMock.getAffairsTagDetail.mockImplementation(async (_workspaceId, tagId) => {
+      const details: Record<string, object> = {
+        "tag-1": {
+          id: "tag-1",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null,
+          smartRules: [],
+          smartRuleEnabled: false,
+        },
+        "tag-2": {
+          id: "tag-2",
+          path: "客户/报价",
+          name: "报价",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null,
+          smartRules: [],
+          smartRuleEnabled: false,
+        }
+      };
+      return details[tagId] ?? null;
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    await userEvent.click(screen.getByRole("checkbox", { name: t("shell.affairsTagBatchCheckboxLabel", { tag: "客户/合同" }) }));
+    await userEvent.click(screen.getByRole("checkbox", { name: t("shell.affairsTagBatchCheckboxLabel", { tag: "客户/报价" }) }));
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsTagBatchParentLabel")), "tag-archive");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsTagBatchStatusLabel")), "disabled");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagBatchUpdateAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-1", expect.objectContaining({
+        name: "合同",
+        parentId: "tag-archive",
+        status: "disabled",
+      }));
+      expect(conversationApiMock.updateAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-2", expect.objectContaining({
+        name: "报价",
+        parentId: "tag-archive",
+        status: "disabled",
+      }));
+    });
+  });
+
+  it("标签管理模态框批量删除时会自动忽略已被父标签覆盖的子标签", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-root",
+          path: "客户",
+          name: "客户",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 2,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        },
+        {
+          id: "tag-1",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: "tag-root",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 1,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+
+    renderWorkbench();
+
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsTagManagerAction") }));
+    await userEvent.click(screen.getByRole("checkbox", { name: t("shell.affairsTagBatchCheckboxLabel", { tag: "客户" }) }));
+    await userEvent.click(screen.getByRole("checkbox", { name: t("shell.affairsTagBatchCheckboxLabel", { tag: "客户/合同" }) }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsTagBatchDeleteAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledTimes(1);
+      expect(conversationApiMock.deleteAffairsTag).toHaveBeenCalledWith("workspace-1", "tag-root");
+    });
+  });
+
   it("文档详情通过输入匹配添加标签，并且不把时间和类型标签当普通标签", async () => {
     conversationApiMock.listAffairsTags.mockResolvedValue({
       items: [
