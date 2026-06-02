@@ -155,7 +155,7 @@ export interface AffairsLibraryDocumentListDto {
   directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
 }
 
-export type AffairsLibraryOperationType = "delete" | "move" | "copy";
+export type AffairsLibraryOperationType = "delete" | "move" | "copy" | "create_directory" | "create_file";
 
 export interface AffairsLibraryDownloadDto {
   workspaceId: string;
@@ -1018,16 +1018,59 @@ export class AffairsLibraryService {
       opType: AffairsLibraryOperationType;
       srcPath?: string;
       dstPath?: string | null;
+      content?: string | null;
     }
   ): AffairsLibraryOperationResultDto {
     const opType = input.opType;
-    if (opType !== "delete" && opType !== "move" && opType !== "copy") {
+    if (
+      opType !== "delete"
+      && opType !== "move"
+      && opType !== "copy"
+      && opType !== "create_directory"
+      && opType !== "create_file"
+    ) {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_FILE_OPERATION",
         detail: "不支持的文档库文件操作",
         field: "opType"
       });
+    }
+
+    if (opType === "create_directory" || opType === "create_file") {
+      const target = this.resolvePreviewFile(workspaceId, userId, input.dstPath ?? "", {
+        mustExist: false,
+        kind: opType === "create_directory" ? "directory" : "file"
+      });
+      this.ensureUserContentPath(target.relativePath);
+
+      if (target.exists) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "FILE_ALREADY_EXISTS",
+          detail: "目标路径已存在",
+          field: "dstPath"
+        });
+      }
+
+      fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+      if (opType === "create_directory") {
+        fs.mkdirSync(target.absolutePath);
+      } else {
+        fs.writeFileSync(target.absolutePath, input.content ?? "", "utf8");
+      }
+      this.afterFileMutation(
+        workspaceId,
+        target.rootDir,
+        `library_${opType}:${target.relativePath}`,
+        target.relativePath
+      );
+      return {
+        success: true,
+        opType,
+        sourcePath: target.relativePath,
+        targetPath: target.relativePath
+      };
     }
 
     const source = this.resolvePreviewFile(workspaceId, userId, input.srcPath ?? "", {

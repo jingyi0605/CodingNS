@@ -23,6 +23,8 @@ export async function registerWorkspaceRoutes(
   app.get("/api/workspaces/:workspaceId/affairs/library-snapshot", affairsLibraryController.getSnapshot);
   app.get("/api/workspaces/:workspaceId/affairs/library-documents", affairsLibraryController.listDocuments);
   app.get("/api/workspaces/:workspaceId/affairs/library-preview", affairsLibraryController.previewDocument);
+  app.get("/api/workspaces/:workspaceId/affairs/library-download", affairsLibraryController.downloadFile);
+  app.post("/api/workspaces/:workspaceId/affairs/library-ops", affairsLibraryController.operateFile);
   app.post("/api/workspaces/:workspaceId/affairs/library-refresh", affairsLibraryController.requestRefresh);
   app.put("/api/workspaces/:workspaceId/affairs/library-favorites", affairsLibraryController.updateFavorites);
   app.get("/api/workspaces/:workspaceId/management", workspaceController.getManagementSummary);
