@@ -332,6 +332,8 @@ type LibraryContextMenuTarget =
       folderPath: string | null;
     };
 
+type LibraryFileSystemTarget = Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>;
+
 type LibraryContextMenuState = {
   left: number;
   top: number;
@@ -3242,6 +3244,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const [pendingLibraryCreate, setPendingLibraryCreate] = useState<PendingLibraryCreateState>(null);
   const [pendingLibraryCreateSubmitting, setPendingLibraryCreateSubmitting] = useState(false);
   const [pendingLibraryCreateError, setPendingLibraryCreateError] = useState<string | null>(null);
+  const [pendingLibraryDeleteTarget, setPendingLibraryDeleteTarget] = useState<LibraryFileSystemTarget | null>(null);
+  const [pendingLibraryDeleteSubmitting, setPendingLibraryDeleteSubmitting] = useState(false);
   const [pendingTagAssignmentTarget, setPendingTagAssignmentTarget] = useState<PendingTagAssignmentTarget | null>(null);
   const finderResizeStateRef = useRef<{
     column: FinderColumnKey;
@@ -3556,7 +3560,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
           }
         : null,
       onPaste: libraryClipboard ? () => handlePaste(target) : null,
-      onDelete: target.kind === "document" || target.kind === "folder" ? () => handleDeleteTarget(target) : null,
+      onDelete: target.kind === "document" || target.kind === "folder" ? () => requestDeleteTarget(target) : null,
       onCreateDirectory: () => handleRequestCreate(target, "directory"),
       onCreateMarkdownFile: () => handleRequestCreate(target, "markdown"),
       onCreateTextFile: () => handleRequestCreate(target, "text"),
@@ -3708,7 +3712,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     });
   }
 
-  async function handleDeleteTarget(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>) {
+  function requestDeleteTarget(target: LibraryFileSystemTarget) {
+    setContextMenu(null);
+    setPendingLibraryDeleteTarget(target);
+  }
+
+  async function handleDeleteTarget(target: LibraryFileSystemTarget) {
     await operateAffairsLibraryFile(workspaceId, {
       opType: "delete",
       srcPath: getContextTargetRelativePath(target)
@@ -3722,6 +3731,25 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       tone: "success"
     });
   }
+  async function submitPendingLibraryDelete() {
+    if (!pendingLibraryDeleteTarget) {
+      return;
+    }
+
+    setPendingLibraryDeleteSubmitting(true);
+    try {
+      await handleDeleteTarget(pendingLibraryDeleteTarget);
+      setPendingLibraryDeleteTarget(null);
+    } catch (deleteError) {
+      showToast({
+        title: readError(deleteError, t("shell.affairsLibraryActionFailed")),
+        tone: "error"
+      });
+    } finally {
+      setPendingLibraryDeleteSubmitting(false);
+    }
+  }
+
 
   function handleRequestCreate(target: LibraryContextMenuTarget, kind: PendingLibraryCreateKind) {
     setContextMenu(null);
@@ -3937,7 +3965,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
           {t("shell.affairsLibraryContextPaste")}
         </button>
         {isFileSystemTarget ? (
-          <button type="button" role="menuitem" className="danger" onClick={() => void runContextAction(() => handleDeleteTarget(target))}>
+          <button type="button" role="menuitem" className="danger" onClick={() => requestDeleteTarget(target)}>
             {t("shell.affairsLibraryContextDelete")}
           </button>
         ) : null}
@@ -4352,6 +4380,21 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
             {pendingLibraryCreateError ? <div className="affairs-binding-hint affairs-create-error">{pendingLibraryCreateError}</div> : null}
           </DesktopModal>
         )
+      ) : null}
+      {pendingLibraryDeleteTarget ? (
+        <AffairsLibraryDeleteConfirmModal
+          mobile={platform.isMobile}
+          target={pendingLibraryDeleteTarget}
+          busy={pendingLibraryDeleteSubmitting}
+          onClose={() => {
+            if (!pendingLibraryDeleteSubmitting) {
+              setPendingLibraryDeleteTarget(null);
+            }
+          }}
+          onConfirm={() => {
+            void submitPendingLibraryDelete();
+          }}
+        />
       ) : null}
       {pendingTagAssignmentTarget ? (
         platform.isMobile ? (
@@ -7807,6 +7850,80 @@ function AffairsLibraryFileViewerSurface({
       saveDisabledReason={t("shell.affairsLibraryViewerEditDisabled")}
     />
   );
+function AffairsLibraryDeleteConfirmModal({
+  mobile,
+  target,
+  busy,
+  onClose,
+  onConfirm
+}: {
+  mobile: boolean;
+  target: LibraryFileSystemTarget;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const description = t("shell.affairsLibraryDeleteConfirmDescription");
+  const targetPath = getContextTargetRelativePath(target);
+  const detail = target.kind === "folder"
+    ? t("shell.affairsLibraryDeleteFolderConfirm", { path: targetPath })
+    : t("shell.affairsLibraryDeleteDocumentConfirm", { path: targetPath });
+  const footer = (
+    <ModalActions>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={busy}
+        onClick={onClose}
+      >
+        {t("common.cancel")}
+      </button>
+      <button
+        type="button"
+        className="secondary-button workbench-danger-button"
+        disabled={busy}
+        onClick={onConfirm}
+      >
+        {busy ? t("shell.affairsLibraryDeleteSubmitting") : t("shell.affairsLibraryDeleteConfirmAction")}
+      </button>
+    </ModalActions>
+  );
+
+  if (mobile) {
+    return (
+      <MobileSheet
+        open
+        title={t("shell.affairsLibraryDeleteConfirmTitle")}
+        description={description}
+        height="auto"
+        kind="action"
+        dismissible={!busy}
+        showHandle
+        showCancelButton={false}
+        footer={footer}
+        onClose={onClose}
+      >
+        <p className="workbench-section-empty">{detail}</p>
+      </MobileSheet>
+    );
+  }
+
+  return (
+    <DesktopModal
+      open
+      title={t("shell.affairsLibraryDeleteConfirmTitle")}
+      description={description}
+      size="compact"
+      layout="confirm"
+      dismissible={!busy}
+      footer={footer}
+      onClose={onClose}
+    >
+      <p className="workbench-section-empty">{detail}</p>
+    </DesktopModal>
+  );
+}
+
 }
 
 function UniversalAssistantBridge({

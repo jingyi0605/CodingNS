@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -995,6 +995,34 @@ describe("AffairsWorkbenchView", () => {
     ]));
   });
 
+  it("macOS 原生右键菜单点击删除后会先打开确认弹窗", async () => {
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const deleteItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryContextDelete"));
+    expect(deleteItem).toBeTruthy();
+    if (!deleteItem || !("onSelect" in deleteItem)) {
+      throw new Error("未找到删除菜单项");
+    }
+
+    await act(async () => {
+      await deleteItem.onSelect();
+    });
+
+    expect(await screen.findByRole("dialog", { name: t("shell.affairsLibraryDeleteConfirmTitle") })).toBeInTheDocument();
+    expect(conversationApiMock.operateAffairsLibraryFile).not.toHaveBeenCalledWith("workspace-1", {
+      opType: "delete",
+      srcPath: "Exchange 分层通讯簿.txt"
+    });
+  });
+
   it("桌面端空白处右键菜单会包含新建、刷新、粘贴和属性", async () => {
     renderWorkbench();
 
@@ -1019,7 +1047,7 @@ describe("AffairsWorkbenchView", () => {
     ]));
   });
 
-  it("文档库文件右键菜单支持预览、复制路径、下载和删除", async () => {
+  it("文档库文件右键菜单点击删除后会先确认再删除", async () => {
     platformBridgeMock.supported = false;
     renderWorkbench();
 
@@ -1047,6 +1075,13 @@ describe("AffairsWorkbenchView", () => {
     fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
     const deleteMenu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     await userEvent.click(within(deleteMenu).getByRole("menuitem", { name: t("shell.affairsLibraryContextDelete") }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsLibraryDeleteConfirmTitle") });
+    expect(within(dialog).getByText(t("shell.affairsLibraryDeleteDocumentConfirm", { path: "Exchange 分层通讯簿.txt" }))).toBeInTheDocument();
+    expect(conversationApiMock.operateAffairsLibraryFile).not.toHaveBeenCalledWith("workspace-1", {
+      opType: "delete",
+      srcPath: "Exchange 分层通讯簿.txt"
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsLibraryDeleteConfirmAction") }));
     await waitFor(() => {
       expect(conversationApiMock.operateAffairsLibraryFile).toHaveBeenCalledWith("workspace-1", {
         opType: "delete",
