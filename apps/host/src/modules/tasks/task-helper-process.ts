@@ -4,6 +4,7 @@ import {
   runTaskHelperProcessHandler,
   type TaskHelperProcessHandlerName
 } from "./task-helper-process-handlers.js";
+import { resolveTaskHelperScheduling } from "./task-helper-scheduling.js";
 
 interface HelperTaskRequest {
   id: string;
@@ -37,17 +38,15 @@ type HelperTaskMessage = HelperTaskRequest | HelperTaskCancelRequest;
 interface QueuedHelperTask {
   payload: HelperTaskRequest;
   controller: AbortController;
+  schedulingBucket: string;
 }
 
-const TASK_HELPER_HANDLER_CONCURRENCY: Partial<Record<TaskHelperProcessHandlerName, number>> = {
-  "session.workspace_discovery": 2
-};
 const TASK_HELPER_RSS_HIGH_WATER_BYTES = 768 * 1024 * 1024;
 
 const activeRequests = new Map<string, AbortController>();
 const queuedRequests = new Map<string, QueuedHelperTask>();
-const queuedRequestsByHandler = new Map<TaskHelperProcessHandlerName, QueuedHelperTask[]>();
-const runningCountByHandler = new Map<TaskHelperProcessHandlerName, number>();
+const queuedRequestsByBucket = new Map<string, QueuedHelperTask[]>();
+const runningCountByBucket = new Map<string, number>();
 
 const reader = readline.createInterface({
   input: process.stdin,
@@ -85,44 +84,41 @@ async function handleLine(line: string): Promise<void> {
   }
 
   const controller = new AbortController();
+  const scheduling = resolveTaskHelperScheduling(payload.handler, payload.input);
   const task = {
     payload,
-    controller
+    controller,
+    schedulingBucket: scheduling.bucket
   } satisfies QueuedHelperTask;
 
-  if (canStartTask(payload.handler)) {
+  if (canStartTask(task)) {
     startTask(task);
     return;
   }
 
   queuedRequests.set(payload.id, task);
-  const queue = queuedRequestsByHandler.get(payload.handler) ?? [];
+  const queue = queuedRequestsByBucket.get(task.schedulingBucket) ?? [];
   queue.push(task);
-  queuedRequestsByHandler.set(payload.handler, queue);
+  queuedRequestsByBucket.set(task.schedulingBucket, queue);
 }
 
 function writeResponse(payload: HelperTaskResponse): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
-function canStartTask(handler: TaskHelperProcessHandlerName): boolean {
-  const limit = TASK_HELPER_HANDLER_CONCURRENCY[handler];
-
-  if (!limit || limit <= 0) {
-    return true;
-  }
-
-  return (runningCountByHandler.get(handler) ?? 0) < limit;
+function canStartTask(task: QueuedHelperTask): boolean {
+  const scheduling = resolveTaskHelperScheduling(task.payload.handler, task.payload.input);
+  return (runningCountByBucket.get(scheduling.bucket) ?? 0) < scheduling.concurrency;
 }
 
 function startTask(task: QueuedHelperTask): void {
-  const { payload, controller } = task;
+  const { payload, controller, schedulingBucket } = task;
 
   queuedRequests.delete(payload.id);
   activeRequests.set(payload.id, controller);
-  runningCountByHandler.set(
-    payload.handler,
-    (runningCountByHandler.get(payload.handler) ?? 0) + 1
+  runningCountByBucket.set(
+    schedulingBucket,
+    (runningCountByBucket.get(schedulingBucket) ?? 0) + 1
   );
 
   void runTask(task);
@@ -148,23 +144,23 @@ async function runTask(task: QueuedHelperTask): Promise<void> {
     });
   } finally {
     activeRequests.delete(payload.id);
-    runningCountByHandler.set(
-      payload.handler,
-      Math.max(0, (runningCountByHandler.get(payload.handler) ?? 1) - 1)
+    runningCountByBucket.set(
+      task.schedulingBucket,
+      Math.max(0, (runningCountByBucket.get(task.schedulingBucket) ?? 1) - 1)
     );
-    drainQueue(payload.handler);
+    drainQueue(task.schedulingBucket);
     maybeRecycleProcess();
   }
 }
 
-function drainQueue(handler: TaskHelperProcessHandlerName): void {
-  const queue = queuedRequestsByHandler.get(handler);
+function drainQueue(bucket: string): void {
+  const queue = queuedRequestsByBucket.get(bucket);
 
   if (!queue || queue.length === 0) {
     return;
   }
 
-  while (queue.length > 0 && canStartTask(handler)) {
+  while (queue.length > 0) {
     const next = queue.shift();
 
     if (!next) {
@@ -175,11 +171,16 @@ function drainQueue(handler: TaskHelperProcessHandlerName): void {
       continue;
     }
 
+    if (!canStartTask(next)) {
+      queue.unshift(next);
+      break;
+    }
+
     startTask(next);
   }
 
   if (queue.length === 0) {
-    queuedRequestsByHandler.delete(handler);
+    queuedRequestsByBucket.delete(bucket);
   }
 }
 
@@ -198,7 +199,7 @@ function cancelRequest(targetId: string): void {
   }
 
   queuedRequests.delete(targetId);
-  const queue = queuedRequestsByHandler.get(queued.payload.handler);
+  const queue = queuedRequestsByBucket.get(queued.schedulingBucket);
 
   if (!queue) {
     return;
@@ -207,11 +208,11 @@ function cancelRequest(targetId: string): void {
   const nextQueue = queue.filter((entry) => entry.payload.id !== targetId);
 
   if (nextQueue.length === 0) {
-    queuedRequestsByHandler.delete(queued.payload.handler);
+    queuedRequestsByBucket.delete(queued.schedulingBucket);
     return;
   }
 
-  queuedRequestsByHandler.set(queued.payload.handler, nextQueue);
+  queuedRequestsByBucket.set(queued.schedulingBucket, nextQueue);
 }
 
 function maybeRecycleProcess(): void {
