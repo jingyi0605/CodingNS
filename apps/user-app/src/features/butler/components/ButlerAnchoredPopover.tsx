@@ -20,6 +20,7 @@ interface PopoverPosition {
   left: number;
   width: number;
   placeAbove: boolean;
+  maxHeight: number;
 }
 
 const BUTLER_POPOVER_Z_INDEX = 1700;
@@ -65,12 +66,17 @@ export function ButlerAnchoredPopover({
       );
       const placeAbove = anchorRect.top >= Math.min(240, window.innerHeight * 0.42);
       const top = Math.round(placeAbove ? anchorRect.top - gap : anchorRect.bottom + gap);
+      const availableHeight = placeAbove
+        ? anchorRect.top - gap - viewportPadding
+        : window.innerHeight - anchorRect.bottom - gap - viewportPadding;
+      const maxHeight = Math.max(180, Math.floor(availableHeight));
 
       setPosition({
         top,
         left: Math.round(left),
         width,
-        placeAbove
+        placeAbove,
+        maxHeight
       });
     };
 
@@ -100,6 +106,7 @@ export function ButlerAnchoredPopover({
     left: position.left,
     width: position.width,
     maxWidth: `calc(100vw - ${viewportPadding * 2}px)`,
+    maxHeight: `${position.maxHeight}px`,
     zIndex: BUTLER_POPOVER_Z_INDEX,
     transform: position.placeAbove ? "translateY(-100%)" : undefined
   };

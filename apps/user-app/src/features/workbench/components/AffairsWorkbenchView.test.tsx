@@ -3982,6 +3982,97 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByText(t("shell.affairsLibraryStatusStageExportSearch"))).toBeInTheDocument();
   });
 
+  it("技术详情超出可视区域时会限制高度并允许内部滚动", async () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      writable: true,
+      value: 360,
+    });
+
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValueOnce(createLibrarySnapshot({
+      status: {
+        state: "fresh",
+        dirtyReasons: ["manual_refresh"],
+        lastRequestedAt: "2026-06-03T09:39:15.000Z",
+        lastStartedAt: "2026-06-03T09:39:16.000Z",
+        lastCompletedAt: "2026-06-03T09:39:17.000Z",
+        lastFailedAt: "2026-06-03T09:39:18.000Z",
+        nextAllowedAt: "2026-06-03T09:39:19.000Z",
+        runningTaskId: "task-long-status",
+        runningStage: "export_search",
+        errorSummary: "test",
+        progress: {
+          scannedCount: 100,
+          indexedCount: 4,
+          unchangedCount: 90,
+          skippedCount: 5,
+          failedCount: 1,
+          totalCount: 100,
+          maxConcurrency: 1
+        },
+        workerHealth: {
+          workerKey: "worker-1",
+          rootDir: ".",
+          state: "idle",
+          pid: 1234,
+          inflightLocalCount: 0,
+          inflightRemoteRequestCount: 0,
+          startedAt: "2026-06-03T09:39:20.000Z",
+          lastHeartbeatAt: "2026-06-03T09:39:21.000Z",
+          lastStartedAt: "2026-06-03T09:39:22.000Z",
+          lastCompletedAt: "2026-06-03T09:39:23.000Z",
+          lastFailedAt: "2026-06-03T09:39:24.000Z",
+          lastSoftCancelRequestedAt: "2026-06-03T09:39:25.000Z",
+          lastHardKillAt: "2026-06-03T09:39:26.000Z",
+          lastExitAt: "2026-06-03T09:39:27.000Z",
+          lastTerminationReason: "manual"
+        }
+      },
+      documentList: {
+        ...createDocumentListResponse([]),
+        directoryStatus: {
+          path: "folder",
+          state: "running",
+          source: "stale_fallback",
+          lastRequestedAt: "2026-06-03T09:39:28.000Z",
+          lastCompletedAt: "2026-06-03T09:39:29.000Z",
+          lastFailedAt: "2026-06-03T09:39:30.000Z",
+          runningTaskId: "directory-task",
+          errorSummary: "directory error",
+          generatedAt: "2026-06-03T09:39:31.000Z",
+          filesystemObservedAt: "2026-06-03T09:39:32.000Z",
+          staleReason: "index_running"
+        }
+      }
+    }));
+
+    renderWorkbench();
+
+    const indicator = await screen.findByRole("button", {
+      name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusFresh") })
+    });
+
+    await userEvent.hover(indicator);
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryStatusTechnicalToggle") }));
+
+    const popover = document.querySelector(".affairs-index-status-popover") as HTMLDivElement | null;
+    const scrollRegion = document.querySelector(".affairs-index-status-technical .affairs-index-status-section-list") as HTMLDivElement | null;
+    const technicalPanel = document.querySelector(".affairs-index-status-technical") as HTMLDivElement | null;
+
+    expect(popover).not.toBeNull();
+    expect(scrollRegion).not.toBeNull();
+    expect(technicalPanel).not.toBeNull();
+    expect(popover?.style.maxHeight).not.toBe("");
+    expect(technicalPanel?.contains(scrollRegion)).toBe(true);
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      writable: true,
+      value: originalInnerHeight,
+    });
+  });
+
   it("点击刷新按钮会手动请求文档库刷新", async () => {
     conversationApiMock.requestAffairsLibraryRefresh.mockResolvedValue({
       taskId: "task-refresh-1",
