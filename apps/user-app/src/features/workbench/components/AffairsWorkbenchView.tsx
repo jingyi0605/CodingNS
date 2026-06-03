@@ -77,12 +77,13 @@ import type {
   SessionSummaryDto,
 } from "../../conversation/api/conversation-api";
 import {
+  deleteAffairsLightweightSession,
   deleteSession,
   createAffairsTag,
   createWorkspaceDirectory,
   deleteAffairsTag,
-  getAffairsLightweightSession,
   getAffairsLightweightSessionMessages,
+  getAffairsLightweightSession,
   getAffairsDocumentTagDetails,
   getAffairsDocumentTagTask,
   getAffairsTagRecoveryStatus,
@@ -92,6 +93,7 @@ import {
   getGlobalAffairsLibraryBinding,
   listAffairsTags,
   listAffairsLightweightSessions,
+  markAffairsLightweightSessionSeen,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
   getAffairsLibraryPreviewWithOptions,
@@ -101,6 +103,7 @@ import {
   operateAffairsLibraryFile,
   requestAffairsLibraryRefresh,
   requestAffairsTagRecoveryRecompute,
+  renameAffairsLightweightSessionTitle,
   renameSessionTitle,
   saveAffairsDocumentTags,
   saveAffairsDocumentTagsWithCreate,
@@ -114,6 +117,8 @@ import {
   setGlobalAffairsLibraryEnabled,
   startAffairsLightweightSession,
   startAffairsLightweightSessionStream,
+  updateAffairsLightweightSessionArchiveState,
+  updateAffairsLightweightSessionFavoriteState,
   updateSessionArchiveState,
   updateSessionFavoriteState,
   updateAffairsTag,
@@ -633,7 +638,7 @@ interface AffairsWorkbenchContextValue {
   butlerStore: ButlerRuntimeStore;
   archiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   toggleConversationSessionFavorite: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
-  markConversationSessionSeen: (sessionId: string, seenAt?: string) => void;
+  markConversationSessionSeen: (kind: AffairsConversationKind, sessionId: string, seenAt?: string) => void;
   openConversationRenameModal: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => void;
   openConversationDeleteModal: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => void;
   renameConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto; title: string }) => Promise<SessionSummaryDto>;
@@ -745,6 +750,10 @@ export function AffairsWorkbenchProvider({
   const [lastObjectAssistantContext, setLastObjectAssistantContext] = useState<AffairsObjectContext | null>(null);
   const conversationExportRenderRootRef = useRef<HTMLDivElement | null>(null);
   const lightweightConversationSessionCacheScopeRef = useRef<string | null>(null);
+  const activeLightweightConversationSessionIds = useMemo(
+    () => new Set(lightweightConversationSessions.map((session) => session.sessionId)),
+    [lightweightConversationSessions]
+  );
   const initialLibrarySnapshot = useMemo(
     () => readCachedLibrarySnapshot(workspaceId),
     [workspaceId]
@@ -2430,20 +2439,34 @@ export function AffairsWorkbenchProvider({
     closeConversationCreateModal: () => setConversationCreateModalOpen(false),
     butlerStore,
     archiveConversationSession: async (input) => {
-      const nextSession = await updateSessionArchiveState(input.session.sessionId, true);
-      setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
-      setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+      const nextSession = input.kind === "lightweight"
+        ? await updateAffairsLightweightSessionArchiveState(workspaceId, input.session.sessionId, true)
+        : await updateSessionArchiveState(input.session.sessionId, true);
+      if (input.kind === "lightweight") {
+        setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+      } else {
+        setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+      }
     },
     toggleConversationSessionFavorite: async (input) => {
-      const nextSession = await updateSessionFavoriteState(input.session.sessionId, input.session.isFavorite !== true);
-      setLightweightConversationSessions((current) => current.map((item) => (
-        item.sessionId === nextSession.sessionId ? nextSession : item
-      )));
-      setAgentConversationSessions((current) => current.map((item) => (
-        item.sessionId === nextSession.sessionId ? nextSession : item
-      )));
+      const nextSession = input.kind === "lightweight"
+        ? await updateAffairsLightweightSessionFavoriteState(
+          workspaceId,
+          input.session.sessionId,
+          input.session.isFavorite !== true
+        )
+        : await updateSessionFavoriteState(input.session.sessionId, input.session.isFavorite !== true);
+      if (input.kind === "lightweight") {
+        setLightweightConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
+      } else {
+        setAgentConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
+      }
     },
-    markConversationSessionSeen: (sessionId, seenAt) => {
+    markConversationSessionSeen: (kind, sessionId, seenAt) => {
       const nextSeenAt = seenAt ?? new Date().toISOString();
       setLightweightConversationSessions((current) => current.map((item) => (
         item.sessionId === sessionId ? markAffairsSessionSeen(item, nextSeenAt) : item
@@ -2459,7 +2482,9 @@ export function AffairsWorkbenchProvider({
             }
           : current
       ));
-      void markSessionSeen(sessionId).catch(() => undefined);
+      void (kind === "lightweight"
+        ? markAffairsLightweightSessionSeen(workspaceId, sessionId, nextSeenAt)
+        : markSessionSeen(sessionId)).catch(() => undefined);
     },
     openConversationRenameModal: (input) => {
       setConversationRenameTarget(input);
@@ -2469,13 +2494,18 @@ export function AffairsWorkbenchProvider({
       setConversationDeleteTarget(input);
     },
     renameConversationSession: async (input) => {
-      const renamedSession = await renameSessionTitle(input.session.sessionId, input.title.trim());
-      setLightweightConversationSessions((current) => current.map((item) => (
-        item.sessionId === renamedSession.sessionId ? renamedSession : item
-      )));
-      setAgentConversationSessions((current) => current.map((item) => (
-        item.sessionId === renamedSession.sessionId ? renamedSession : item
-      )));
+      const renamedSession = input.kind === "lightweight"
+        ? await renameAffairsLightweightSessionTitle(workspaceId, input.session.sessionId, input.title.trim())
+        : await renameSessionTitle(input.session.sessionId, input.title.trim());
+      if (input.kind === "lightweight") {
+        setLightweightConversationSessions((current) => current.map((item) => (
+          item.sessionId === renamedSession.sessionId ? renamedSession : item
+        )));
+      } else {
+        setAgentConversationSessions((current) => current.map((item) => (
+          item.sessionId === renamedSession.sessionId ? renamedSession : item
+        )));
+      }
       setConversationRuntimeSeed((current) => (
         current && current.session.sessionId === renamedSession.sessionId
           ? {
@@ -2487,9 +2517,13 @@ export function AffairsWorkbenchProvider({
       return renamedSession;
     },
     deleteConversationSession: async (input) => {
-      await deleteSession(input.session.sessionId);
-      setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
-      setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
+      if (input.kind === "lightweight") {
+        await deleteAffairsLightweightSession(workspaceId, input.session.sessionId);
+        setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
+      } else {
+        await deleteSession(input.session.sessionId);
+        setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
+      }
       setLightweightRuntimeSnapshot(input.session.sessionId, null);
       setConversationRuntimeSeed((current) => (
         current?.session.sessionId === input.session.sessionId ? null : current
@@ -2516,7 +2550,9 @@ export function AffairsWorkbenchProvider({
       setConversationExportingSessionId(session.sessionId);
 
       try {
-        const snapshot = await loadSessionExportSnapshot(session.sessionId);
+        const snapshot = activeLightweightConversationSessionIds.has(session.sessionId)
+          ? await loadAffairsLightweightSessionExportSnapshot(workspaceId, session.sessionId)
+          : await loadSessionExportSnapshot(session.sessionId);
         const exportLayout = captureAffairsSessionExportLayoutSnapshot();
 
         if (format === "md") {
@@ -2628,7 +2664,11 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
         kind: input.kind,
         sessionId: nextSession.sessionId
       });
-      void Promise.resolve(markSessionSeen(nextSession.sessionId)).catch(() => undefined);
+      void Promise.resolve(
+        input.kind === "lightweight"
+          ? markAffairsLightweightSessionSeen(workspaceId, nextSession.sessionId)
+          : markSessionSeen(nextSession.sessionId)
+      ).catch(() => undefined);
       onStateChange({
         ...state,
         primarySection: "conversation",
@@ -3474,7 +3514,7 @@ export function AffairsSidebarPanel() {
                       isActive={item.id === state.selectedNodeId}
                       role="listitem"
                       onOpen={() => {
-                        markConversationSessionSeen(item.session.sessionId);
+                        markConversationSessionSeen(item.kind, item.session.sessionId);
                         selectSidebarNode(item.id);
                       }}
                       onRename={() => {
@@ -5247,6 +5287,16 @@ function convertHistoryMessageToViewModel(
   };
 }
 
+async function loadAffairsLightweightSessionExportSnapshot(
+  workspaceId: string,
+  sessionId: string
+): Promise<{ messages: SessionMessageViewModel[] }> {
+  const page = await getAffairsLightweightSessionMessages(workspaceId, sessionId);
+  return {
+    messages: page.messages.map((message) => convertHistoryMessageToViewModel(message, sessionId))
+  };
+}
+
 function createLightweightStreamingAssistantPlaceholder(
   sessionId: string,
   clientRequestId: string
@@ -5739,6 +5789,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     folderRecords,
     tagRecords,
     indexStatus,
+    libraryConfig,
     currentDirectoryStatus,
     loading,
     openLibraryViewer,
@@ -9893,7 +9944,9 @@ function buildDesktopLibraryContextMenuItems(input: {
   libraryClipboard: LibraryClipboardState | null;
   onPreview: (() => void | Promise<void>) | null;
   onOpen: (() => void | Promise<void>) | null;
+  onLocate: (() => void | Promise<void>) | null;
   onDownload: (() => void | Promise<void>) | null;
+  onOpenWithLocalApp: (() => void | Promise<void>) | null;
   onCopyFile: (() => void | Promise<void>) | null;
   onCopyFileName: (() => void | Promise<void>) | null;
   onCopyAbsolutePath: (() => void | Promise<void>) | null;
@@ -9925,6 +9978,22 @@ function buildDesktopLibraryContextMenuItems(input: {
       id: `open:${target.kind}:${getContextTargetRelativePath(target)}`,
       label: t("shell.affairsLibraryContextOpen"),
       onSelect: input.onOpen
+    });
+  }
+
+  if ((target.kind === "document" || target.kind === "folder") && input.onLocate) {
+    items.push({
+      id: `locate:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: t("shell.affairsLibraryContextLocate"),
+      onSelect: input.onLocate
+    });
+  }
+
+  if (target.kind === "document" && input.onOpenWithLocalApp) {
+    items.push({
+      id: `open-local-app:${target.record.id}`,
+      label: t("shell.affairsLibraryOpenWithLocalAppAction"),
+      onSelect: input.onOpenWithLocalApp
     });
   }
 
@@ -12874,8 +12943,12 @@ function resolveIndexStatusLabel(status: AffairsLibraryIndexStatusDto | null) {
   }
 
   switch (status.state) {
+    case "queued":
+      return t("shell.affairsLibraryStatusQueued");
     case "running":
       return t("shell.affairsLibraryStatusRunning");
+    case "queue_timeout":
+      return t("shell.affairsLibraryStatusQueueTimeout");
     case "cooldown":
       return t("shell.affairsLibraryStatusCooldown");
     case "failed":
@@ -13077,6 +13150,8 @@ function resolveDirectoryStatusLabel(state: string) {
       return t("shell.affairsLibraryDirectoryStatusQueued");
     case "running":
       return t("shell.affairsLibraryDirectoryStatusRunning");
+    case "queue_timeout":
+      return t("shell.affairsLibraryDirectoryStatusQueueTimeout");
     case "fresh":
       return t("shell.affairsLibraryDirectoryStatusFresh");
     case "failed":
