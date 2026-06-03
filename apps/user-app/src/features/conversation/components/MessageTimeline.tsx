@@ -225,6 +225,11 @@ interface ViewImageToolSnapshot {
         relativePath: string;
       }
     | {
+        kind: "session_attachment";
+        sessionId: string;
+        attachmentId: string;
+      }
+    | {
         kind: "office_artifact";
         artifactId: string;
       }
@@ -234,6 +239,7 @@ interface ViewImageToolSnapshot {
         fileName: string;
       }
     | null;
+  inlineImageUrl: string | null;
   displayPath: string;
   fileName: string;
 }
@@ -500,9 +506,121 @@ function getFileNameFromPath(filePath: string): string {
   return segments.at(-1) ?? filePath;
 }
 
+function collectInlineImageUrls(value: unknown, results: string[], depth: number) {
+  if (depth > 6 || results.length > 8 || value == null) {
+    return;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+
+    if (/^data:image\//i.test(normalized)) {
+      results.push(normalized);
+      return;
+    }
+
+    if ((normalized.startsWith("{") && normalized.endsWith("}")) || (normalized.startsWith("[") && normalized.endsWith("]"))) {
+      try {
+        collectInlineImageUrls(JSON.parse(normalized) as unknown, results, depth + 1);
+      } catch {
+        // ignore invalid nested json
+      }
+    }
+
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (results.length > 8) {
+        break;
+      }
+      collectInlineImageUrls(item, results, depth + 1);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) {
+    return;
+  }
+
+  const type = readText(value, "type")?.toLowerCase() ?? null;
+  const imageUrl = readText(value, "image_url");
+
+  if (imageUrl && /^data:image\//i.test(imageUrl) && (!type || type === "input_image" || type === "image_url")) {
+    results.push(imageUrl);
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    if (results.length > 8) {
+      break;
+    }
+    collectInlineImageUrls(nestedValue, results, depth + 1);
+  }
+}
+
+function resolveViewImageToolInlineImageUrl(tool: ResolvedToolCall): string | null {
+  const candidates: unknown[] = [];
+
+  if (tool.output?.trim()) {
+    candidates.push(tool.output);
+  }
+
+  if (tool.input?.trim()) {
+    candidates.push(tool.input);
+  }
+
+  const matches: string[] = [];
+
+  for (const candidate of candidates) {
+    collectInlineImageUrls(candidate, matches, 0);
+    if (matches.length > 0) {
+      return matches[0] ?? null;
+    }
+  }
+
+  return null;
+}
+
+function resolveSessionAttachmentPreviewTarget(
+  imagePath: string,
+  fallbackSessionId: string | null | undefined
+): {
+  kind: "session_attachment";
+  sessionId: string;
+  attachmentId: string;
+} | null {
+  const normalizedPath = normalizeMessagePathSeparators(stripFileReferenceDecorations(imagePath)).trim();
+
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const matched = normalizedPath.match(
+    /(?:^|\/)session-attachments\/([^/]+)\/[^/]+\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-[^/]+$/i
+  );
+
+  if (!matched?.[2]) {
+    return null;
+  }
+
+  const sessionId = (matched[1] || fallbackSessionId?.trim() || "").trim();
+
+  if (!sessionId) {
+    return null;
+  }
+
+  return {
+    kind: "session_attachment",
+    sessionId,
+    attachmentId: matched[2]
+  };
+}
+
 function resolveViewImageToolSnapshot(
   tool: ResolvedToolCall,
-  workspacePath: string | null | undefined
+  workspacePath: string | null | undefined,
+  sessionId?: string | null
 ): ViewImageToolSnapshot | null {
   const imagePath = readViewImageToolPath(tool);
 
@@ -524,6 +642,18 @@ function resolveViewImageToolSnapshot(
             taskId: officeArtifactPreviewTarget.taskId,
             fileName: officeArtifactPreviewTarget.fileName
           },
+      inlineImageUrl: resolveViewImageToolInlineImageUrl(tool),
+      displayPath: imagePath,
+      fileName: getFileNameFromPath(imagePath)
+    };
+  }
+
+  const sessionAttachmentPreviewTarget = resolveSessionAttachmentPreviewTarget(imagePath, sessionId);
+
+  if (sessionAttachmentPreviewTarget) {
+    return {
+      previewTarget: sessionAttachmentPreviewTarget,
+      inlineImageUrl: resolveViewImageToolInlineImageUrl(tool),
       displayPath: imagePath,
       fileName: getFileNameFromPath(imagePath)
     };
@@ -540,6 +670,7 @@ function resolveViewImageToolSnapshot(
           relativePath
         }
       : null,
+    inlineImageUrl: resolveViewImageToolInlineImageUrl(tool),
     displayPath: relativePath ?? imagePath,
     fileName: getFileNameFromPath(imagePath)
   };
@@ -2039,6 +2170,83 @@ function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGrou
   };
 }
 
+function mergeToolCallPair(
+  current: ResolvedToolCall | null | undefined,
+  incoming: ResolvedToolCall | null | undefined
+): ResolvedToolCall | null {
+  if (!current) {
+    return incoming ? { ...incoming } : null;
+  }
+
+  if (!incoming) {
+    return { ...current };
+  }
+
+  return {
+    ...incoming,
+    callId: incoming.callId || current.callId,
+    name: incoming.name || current.name,
+    input: incoming.input || current.input,
+    output: incoming.output || current.output,
+    error: incoming.error || current.error,
+    status: incoming.status === "completed" || incoming.status === "failed"
+      ? incoming.status
+      : current.status
+  };
+}
+
+function fillSeparatedViewImageResults(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
+  const callMap = new Map<string, ResolvedToolCall>();
+
+  for (const message of messages) {
+    if (!isToolMessage(message)) {
+      continue;
+    }
+
+    const tool = resolveToolCall(message);
+    const callId = tool?.callId.trim() ?? "";
+
+    if (!tool || !callId || tool.name.trim() !== "view_image") {
+      continue;
+    }
+
+    const merged = mergeToolCallPair(callMap.get(callId) ?? null, tool);
+
+    if (merged) {
+      callMap.set(callId, merged);
+    }
+  }
+
+  return messages.map((message) => {
+    if (!isToolMessage(message) || !message.toolCall || message.toolCall.name.trim() !== "view_image") {
+      return message;
+    }
+
+    const callId = message.toolCall.callId.trim();
+
+    if (!callId) {
+      return message;
+    }
+
+    const mergedTool = callMap.get(callId);
+
+    if (!mergedTool) {
+      return message;
+    }
+
+    const nextToolCall = mergeToolCallPair(message.toolCall, mergedTool);
+
+    if (!nextToolCall) {
+      return message;
+    }
+
+    return {
+      ...message,
+      toolCall: nextToolCall
+    };
+  });
+}
+
 function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] {
   const groups: ToolMessageGroup[] = [];
   let currentBlock: SessionMessageViewModel[] = [];
@@ -2097,6 +2305,16 @@ function buildTimelineRenderItems(
   sourceItems: ConversationTimelineSourceItem[],
   visibleMessages: SessionMessageViewModel[]
 ): TimelineRenderItem[] {
+  const hydratedVisibleMessages = fillSeparatedViewImageResults(visibleMessages);
+  const hydratedMessageById = new Map(hydratedVisibleMessages.map((message) => [message.id, message]));
+  const hydratedSourceItems = sourceItems.map((sourceItem) =>
+    sourceItem.type === "message"
+      ? {
+          ...sourceItem,
+          message: hydratedMessageById.get(sourceItem.message.id) ?? sourceItem.message
+        }
+      : sourceItem
+  );
   const renderItems: TimelineRenderItem[] = [];
   const toolMessageBlock: SessionMessageViewModel[] = [];
   let messageIndex = 0;
@@ -2134,7 +2352,7 @@ function buildTimelineRenderItems(
     toolMessageBlock.length = 0;
   }
 
-  for (const sourceItem of sourceItems) {
+  for (const sourceItem of hydratedSourceItems) {
     if (sourceItem.type !== "message") {
       flushToolMessageBlock();
       renderItems.push(sourceItem);
@@ -2145,7 +2363,7 @@ function buildTimelineRenderItems(
     const currentMessageIndex = messageIndex;
     messageIndex += 1;
 
-    if (shouldSuppressTurnAbortedMessage(visibleMessages, currentMessageIndex)) {
+    if (shouldSuppressTurnAbortedMessage(hydratedVisibleMessages, currentMessageIndex)) {
       continue;
     }
 
@@ -3436,11 +3654,13 @@ function ApplyPatchToolItem({
 function ViewImageToolItem({
   tool,
   snapshot,
+  sessionId,
   workspaceId,
   exportMode = false
 }: {
   tool: ResolvedToolCall;
   snapshot: ViewImageToolSnapshot;
+  sessionId?: string | null;
   workspaceId?: string | null;
   exportMode?: boolean;
 }) {
@@ -3448,37 +3668,75 @@ function ViewImageToolItem({
   const [previewState, setPreviewState] = useState<ViewImagePreviewState>({ status: "idle", url: null });
 
   useEffect(() => {
-    if (exportMode || !snapshot.previewTarget) {
+    if (exportMode) {
+      setPreviewState({ status: "idle", url: null });
+      return undefined;
+    }
+
+    if (snapshot.inlineImageUrl) {
+      setPreviewState({ status: "ready", url: snapshot.inlineImageUrl });
+      return undefined;
+    }
+
+    if (!snapshot.previewTarget) {
       setPreviewState({ status: "idle", url: null });
       return undefined;
     }
 
     let cancelled = false;
+    let objectUrl: string | null = null;
     setPreviewState({ status: "loading", url: null });
 
-    const previewLinkPromise = snapshot.previewTarget.kind === "workspace_file"
+    const previewPromise = snapshot.previewTarget.kind === "workspace_file"
       ? (workspaceId
-        ? getFilePreviewLink(workspaceId, snapshot.previewTarget.relativePath)
+        ? getFilePreviewLink(workspaceId, snapshot.previewTarget.relativePath).then((previewLink) => ({
+            url: resolveToolImagePreviewAccessUrl(
+              previewLink.previewPath,
+              previewLink.previewUrl,
+              platform.isDesktop
+            )
+          }))
         : Promise.reject(new Error("workspace preview requires workspaceId")))
-      : snapshot.previewTarget.kind === "office_artifact"
-        ? getOfficeArtifactPreviewLink(snapshot.previewTarget.artifactId)
-        : getOfficeTaskFilePreviewLink(snapshot.previewTarget.taskId, snapshot.previewTarget.fileName);
+      : snapshot.previewTarget.kind === "session_attachment"
+        ? getSessionAttachmentBlob(
+          snapshot.previewTarget.sessionId || sessionId || "",
+          snapshot.previewTarget.attachmentId
+        ).then((blob) => {
+          objectUrl = URL.createObjectURL(blob);
+          return { url: objectUrl };
+        })
+        : snapshot.previewTarget.kind === "office_artifact"
+          ? getOfficeArtifactPreviewLink(snapshot.previewTarget.artifactId).then((previewLink) => ({
+              url: resolveToolImagePreviewAccessUrl(
+                previewLink.previewPath,
+                previewLink.previewUrl,
+                platform.isDesktop
+              )
+            }))
+          : getOfficeTaskFilePreviewLink(snapshot.previewTarget.taskId, snapshot.previewTarget.fileName).then((previewLink) => ({
+              url: resolveToolImagePreviewAccessUrl(
+                previewLink.previewPath,
+                previewLink.previewUrl,
+                platform.isDesktop
+              )
+            }));
 
-    void previewLinkPromise
-      .then((previewLink) => {
+    void previewPromise
+      .then(({ url }) => {
         if (cancelled) {
+          if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+          }
           return;
         }
-
-        const url = resolveToolImagePreviewAccessUrl(
-          previewLink.previewPath,
-          previewLink.previewUrl,
-          platform.isDesktop
-        );
 
         setPreviewState(url ? { status: "ready", url } : { status: "error", url: null });
       })
       .catch(() => {
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+        }
         if (!cancelled) {
           setPreviewState({ status: "error", url: null });
         }
@@ -3486,8 +3744,11 @@ function ViewImageToolItem({
 
     return () => {
       cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-  }, [exportMode, platform.isDesktop, snapshot.previewTarget, workspaceId]);
+  }, [exportMode, platform.isDesktop, sessionId, snapshot.inlineImageUrl, snapshot.previewTarget, workspaceId]);
 
   return (
     <div className={`tool-call-item view-image-tool-item ${tool.status === "completed" ? "tool-result" : ""}`}>
