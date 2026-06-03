@@ -49,6 +49,7 @@ const getButlerFollowUpTaskMock = vi.hoisted(() => vi.fn());
 const getFilePreviewLinkMock = vi.hoisted(() => vi.fn());
 const getOfficeArtifactPreviewLinkMock = vi.hoisted(() => vi.fn());
 const getOfficeTaskFilePreviewLinkMock = vi.hoisted(() => vi.fn());
+const getSessionAttachmentBlobMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
@@ -76,6 +77,14 @@ vi.mock("./WorkbenchLayout", () => ({
 vi.mock("../../butler/api/butler-api", () => ({
   getButlerFollowUpTask: getButlerFollowUpTaskMock
 }));
+
+vi.mock("../api/conversation-api", async () => {
+  const actual = await vi.importActual<typeof import("../api/conversation-api")>("../api/conversation-api");
+  return {
+    ...actual,
+    getSessionAttachmentBlob: getSessionAttachmentBlobMock
+  };
+});
 
 vi.mock("../api/file-context-api", () => ({
   getFilePreviewLink: getFilePreviewLinkMock,
@@ -365,6 +374,20 @@ describe("MessageTimeline", () => {
       previewPath: "/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png",
       previewUrl: "http://localhost:3000/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png",
       expiresAt: "2026-04-13T10:05:00.000Z"
+    });
+    getSessionAttachmentBlobMock.mockReset();
+    getSessionAttachmentBlobMock.mockResolvedValue(
+      new Blob(["mock-session-attachment"], {
+        type: "image/png"
+      })
+    );
+    Object.defineProperty(window.URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:mock-session-attachment")
+    });
+    Object.defineProperty(window.URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn()
     });
   });
 
@@ -1406,6 +1429,212 @@ describe("MessageTimeline", () => {
       expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
     });
   });
+
+  it("会把 view_image 的会话附件绝对路径转换成附件内容预览", async () => {
+    render(
+      <MessageTimeline
+        sessionId="session-1"
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-session-attachment",
+            callId: "call-view-image-session-attachment",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/session-1/client-request-1/12345678-1234-1234-1234-123456789abc-image.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(getSessionAttachmentBlobMock).toHaveBeenCalledWith(
+      "session-1",
+      "12345678-1234-1234-1234-123456789abc"
+    );
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+    expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
+    expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
+
+    const image = await screen.findByAltText("12345678-1234-1234-1234-123456789abc-image.png");
+    expect(image.getAttribute("src")).toBe("blob:mock-session-attachment");
+  });
+
+  it("历史 view_image 指向旧会话附件时，优先使用路径里的真实 sessionId", async () => {
+    render(
+      <MessageTimeline
+        sessionId="current-session"
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-history-session-attachment",
+            callId: "call-view-image-history-session-attachment",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-image.png"
+            }),
+            status: "running"
+          })
+        ]}
+      />
+    );
+
+    expect(getSessionAttachmentBlobMock).toHaveBeenCalledWith(
+      "ff44e87f-ee74-49ad-8270-68e242c5cd27",
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    );
+  });
+
+  it("view_image 的 tool_result 里带内联图片时，直接显示 data url", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-result-view-image-inline",
+            callId: "call-view-image-inline",
+            name: "view_image",
+            kind: "tool_result",
+            content: JSON.stringify({
+              type: "input_image",
+              image_url: SAMPLE_IMAGE_DATA_URL
+            }),
+            toolInput: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/session-1/client-request-3/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff-image.png"
+            })
+          })
+        ]}
+      />
+    );
+
+    const image = await screen.findByAltText("bbbbbbbb-cccc-4ddd-8eee-ffffffffffff-image.png");
+    expect(image.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
+    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+    expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
+    expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
+  });
+
+  it("同一个 view_image 调用同时有 path 和 tool_result 内联图片时，优先显示内联图片", async () => {
+    render(
+      <MessageTimeline
+        sessionId="current-session"
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-call-view-image-inline-priority",
+            callId: "call-view-image-inline-priority",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/cccccccc-dddd-4eee-8fff-111111111111-image.png"
+            }),
+            status: "running",
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "tool-result-view-image-inline-priority",
+            callId: "call-view-image-inline-priority",
+            name: "view_image",
+            kind: "tool_result",
+            content: JSON.stringify({
+              output: [
+                {
+                  type: "input_image",
+                  image_url: SAMPLE_IMAGE_DATA_URL
+                }
+              ]
+            }),
+            toolInput: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/cccccccc-dddd-4eee-8fff-111111111111-image.png"
+            }),
+            sequence: 2
+          })
+        ]}
+      />
+    );
+
+    const image = await screen.findByAltText("cccccccc-dddd-4eee-8fff-111111111111-image.png");
+    expect(image.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
+    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
+    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
+  });
+
+  it("历史 view_image 被其他工具消息打断时，也会回填同 callId 的最终图片结果", async () => {
+    render(
+      <MessageTimeline
+        sessionId="31302177-e632-4155-a13d-f0a3367d2498"
+        historyState="ready"
+        provider="codex"
+        workspaceId="workspace-1"
+        workspacePath="/Users/jackson/Code/CodingNS"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createAssistantCliToolMessage({
+            id: "shell-between-1",
+            command: "rg -n \"host switch\" apps/user-app"
+          }),
+          createToolMessage({
+            id: "view-image-call-separated",
+            callId: "call-history-view-image-separated",
+            name: "view_image",
+            kind: "tool_call",
+            content: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/31302177-e632-4155-a13d-f0a3367d2498/c068243d-1dc1-4ce3-bf73-60412fd5ddd9/0fec62fd-6f04-438c-8da5-065c56ab0426-image.png",
+              detail: "original"
+            }),
+            status: "running",
+            sequence: 2
+          }),
+          createAssistantCliToolMessage({
+            id: "shell-between-2",
+            command: "sed -n '1,220p' docs/开发设计规范/20260419-前端页面与样式设计规范.md"
+          }),
+          createToolMessage({
+            id: "view-image-result-separated",
+            callId: "call-history-view-image-separated",
+            name: "view_image",
+            kind: "tool_result",
+            content: JSON.stringify({
+              type: "input_image",
+              image_url: SAMPLE_IMAGE_DATA_URL,
+              detail: "original"
+            }),
+            toolInput: JSON.stringify({
+              path: "/Users/jackson/.codingns/session-attachments/31302177-e632-4155-a13d-f0a3367d2498/c068243d-1dc1-4ce3-bf73-60412fd5ddd9/0fec62fd-6f04-438c-8da5-065c56ab0426-image.png",
+              detail: "original"
+            }),
+            sequence: 4
+          })
+        ]}
+      />
+    );
+
+    const images = await screen.findAllByAltText("0fec62fd-6f04-438c-8da5-065c56ab0426-image.png");
+    expect(images[0]?.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
+    expect(images[1]?.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
+    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
+  });
+
 
   it("会把工作区内 markdown 本地图片路径转换成受控预览链接", async () => {
     render(
