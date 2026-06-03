@@ -27,6 +27,190 @@ afterEach(() => {
 });
 
 describe("OpenCliBridgeBrowserExecutor", () => {
+  it("只给 startUrl + read_dom 时，也会先导航到真实页面，而不是停在 about:blank", async () => {
+    const fixture = createExecutorFixture();
+    const installPath = createFakeOpenCliInstall({
+      pageSource: `
+        export class Page {
+          constructor(workspace) {
+            this.workspace = workspace;
+            this.url = "about:blank";
+          }
+          async goto(url) { this.url = url; }
+          async click() {}
+          async typeText() {}
+          async pressKey() {}
+          async evaluate(code) {
+            if (code.includes("window.location.href")) {
+              return this.url;
+            }
+            return "fake dom";
+          }
+          async snapshot() { return {}; }
+          async screenshot() { return ""; }
+          async wait() {}
+          async setFileInput() {}
+          async getCurrentUrl() { return this.url; }
+        }
+      `
+    });
+    const executor = new OpenCliBridgeBrowserExecutor(
+      fixture.databasePath,
+      fixture.officeTaskRepository,
+      fixture.officeTaskStepRepository,
+      fixture.officeArtifactRepository,
+      fixture.officeReceiptRepository,
+      fixture.officeAuditEventRepository,
+      {
+        check: vi.fn(async () => ({
+          installState: "installed",
+          healthState: "ready",
+          version: "1.0.0",
+          installPath,
+          checkedAt: "2026-06-02T09:00:00.000Z",
+          errorCode: null,
+          errorDetail: null
+        }))
+      } as any
+    );
+    const task = fixture.createTask({
+      inputJson: JSON.stringify({
+        startUrl: "https://example.com/real-page",
+        actions: [{ type: "read_dom" }]
+      })
+    });
+
+    const result = await executor.execute({ task });
+    const receiptPayload = JSON.parse(result.receipt.payloadJson) as { finalUrl?: string | null };
+
+    expect(result.task.status).toBe("succeeded");
+    expect(result.stepResults).toHaveLength(1);
+    expect(receiptPayload.finalUrl).toBe("https://example.com/real-page");
+  });
+
+  it("首跳仍是 about:blank 时，会按同一个 startUrl 自动重试一次", async () => {
+    const fixture = createExecutorFixture();
+    const installPath = createFakeOpenCliInstall({
+      pageSource: `
+        export class Page {
+          constructor(workspace) {
+            this.workspace = workspace;
+            this.url = "about:blank";
+            this.gotoCount = 0;
+          }
+          async goto(url) {
+            this.gotoCount += 1;
+            this.url = this.gotoCount >= 2 ? url : "about:blank";
+          }
+          async click() {}
+          async typeText() {}
+          async pressKey() {}
+          async evaluate(code) {
+            if (code.includes("window.location.href")) {
+              return this.url;
+            }
+            return "fake dom";
+          }
+          async snapshot() { return {}; }
+          async screenshot() { return ""; }
+          async wait() {}
+          async setFileInput() {}
+          async getCurrentUrl() { return this.url; }
+        }
+      `
+    });
+    const executor = new OpenCliBridgeBrowserExecutor(
+      fixture.databasePath,
+      fixture.officeTaskRepository,
+      fixture.officeTaskStepRepository,
+      fixture.officeArtifactRepository,
+      fixture.officeReceiptRepository,
+      fixture.officeAuditEventRepository,
+      {
+        check: vi.fn(async () => ({
+          installState: "installed",
+          healthState: "ready",
+          version: "1.0.0",
+          installPath,
+          checkedAt: "2026-06-02T09:00:00.000Z",
+          errorCode: null,
+          errorDetail: null
+        }))
+      } as any
+    );
+    const task = fixture.createTask({
+      inputJson: JSON.stringify({
+        startUrl: "https://example.com/retry-page",
+        actions: [{ type: "read_dom" }]
+      })
+    });
+
+    const result = await executor.execute({ task });
+    const receiptPayload = JSON.parse(result.receipt.payloadJson) as { finalUrl?: string | null };
+
+    expect(result.task.status).toBe("succeeded");
+    expect(receiptPayload.finalUrl).toBe("https://example.com/retry-page");
+  });
+
+  it("首跳和补偿重试后仍是 about:blank 时，会抛出明确错误", async () => {
+    const fixture = createExecutorFixture();
+    const installPath = createFakeOpenCliInstall({
+      pageSource: `
+        export class Page {
+          constructor(workspace) {
+            this.workspace = workspace;
+            this.url = "about:blank";
+          }
+          async goto() { this.url = "about:blank"; }
+          async click() {}
+          async typeText() {}
+          async pressKey() {}
+          async evaluate(code) {
+            if (code.includes("window.location.href")) {
+              return this.url;
+            }
+            return "fake dom";
+          }
+          async snapshot() { return {}; }
+          async screenshot() { return ""; }
+          async wait() {}
+          async setFileInput() {}
+          async getCurrentUrl() { return this.url; }
+        }
+      `
+    });
+    const executor = new OpenCliBridgeBrowserExecutor(
+      fixture.databasePath,
+      fixture.officeTaskRepository,
+      fixture.officeTaskStepRepository,
+      fixture.officeArtifactRepository,
+      fixture.officeReceiptRepository,
+      fixture.officeAuditEventRepository,
+      {
+        check: vi.fn(async () => ({
+          installState: "installed",
+          healthState: "ready",
+          version: "1.0.0",
+          installPath,
+          checkedAt: "2026-06-02T09:00:00.000Z",
+          errorCode: null,
+          errorDetail: null
+        }))
+      } as any
+    );
+    const task = fixture.createTask({
+      inputJson: JSON.stringify({
+        startUrl: "https://example.com/still-blank",
+        actions: [{ type: "read_dom" }]
+      })
+    });
+
+    await expect(executor.execute({ task })).rejects.toMatchObject({
+      errorCode: "OPENCLI_BRIDGE_START_URL_NOT_REACHED",
+      message: expect.stringContaining("https://example.com/still-blank")
+    });
+  });
+
   it("bridge ready 时只使用健康检查返回的 installPath，不再二次 discover", async () => {
     const fixture = createExecutorFixture();
     const installPath = createFakeOpenCliInstall({
@@ -72,7 +256,7 @@ describe("OpenCliBridgeBrowserExecutor", () => {
     const task = fixture.createTask({
       inputJson: JSON.stringify({
         startUrl: "https://example.com",
-        actions: [{ type: "goto", url: "https://example.com" }]
+        actions: [{ type: "read_dom" }]
       })
     });
 

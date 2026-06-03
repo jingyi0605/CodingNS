@@ -71,6 +71,7 @@ export class OpenCliBridgeBrowserExecutor implements BrowserTaskExecutor {
     const bridge = await this.requireBridgeReady();
     const payload = parseBrowserTaskPayload(input.task.inputJson);
     const page = await this.createPageFromInstallPath(bridge.installPath);
+    await this.ensureStartPage(page, payload.startUrl);
 
     return await runBrowserTaskActions({
       task: input.task,
@@ -283,8 +284,52 @@ export class OpenCliBridgeBrowserExecutor implements BrowserTaskExecutor {
       });
     }
   }
+
+  private async ensureStartPage(page: OpenCliPageLike, startUrl?: string): Promise<void> {
+    const normalizedStartUrl = startUrl?.trim();
+
+    if (!normalizedStartUrl) {
+      return;
+    }
+
+    await this.navigateToStartPage(page, normalizedStartUrl);
+
+    if (!isAboutBlank(await page.getCurrentUrl())) {
+      return;
+    }
+
+    await delay(500);
+    await this.navigateToStartPage(page, normalizedStartUrl);
+
+    const currentUrl = await page.getCurrentUrl();
+    if (!isAboutBlank(currentUrl)) {
+      return;
+    }
+
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "OPENCLI_BRIDGE_START_URL_NOT_REACHED",
+      detail: `OpenCLI 浏览器桥接首跳后仍停留在 about:blank，目标页面未打开：${normalizedStartUrl}`
+    });
+  }
+
+  private async navigateToStartPage(page: OpenCliPageLike, startUrl: string): Promise<void> {
+    await page.goto(startUrl, {
+      waitUntil: "domcontentloaded",
+      settleMs: 15_000
+    });
+  }
 }
 
 interface BrowserBridgeReadyResult {
   installPath: string;
+}
+
+function isAboutBlank(url: string | null): boolean {
+  const normalizedUrl = url?.trim().toLowerCase();
+  return !normalizedUrl || normalizedUrl === "about:blank";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
