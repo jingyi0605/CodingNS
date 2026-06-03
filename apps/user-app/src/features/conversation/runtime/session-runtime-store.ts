@@ -3651,11 +3651,16 @@ function findMatchingRuntimeOverlayEquivalentCodexMessageId(
     }
 
     const currentStore = extractTimelineCodexRawRefStore(current.rawRef);
+    const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
+    const storesMatch = currentStore === incomingStore;
 
     if (
       !currentStore
-      || currentStore !== incomingStore
       || compareViewMessageOrder(current, incoming) < 0
+      || (
+        !storesMatch
+        && sequenceDistance > TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW
+      )
       || !isTimelineEquivalentCodexTextMessageWithinWindow(
         current,
         incoming,
@@ -3666,6 +3671,8 @@ function findMatchingRuntimeOverlayEquivalentCodexMessageId(
     }
 
     logSessionMessageDedupDebug("session.messages.codex_runtime_overlay_bridge_match", {
+      bridgeMode: storesMatch ? "same_store" : "cross_store_sequence_window",
+      sequenceDistance,
       previous: summarizeTimelineBridgeMessageForDebug(current),
       incoming: summarizeTimelineBridgeMessageForDebug(incoming)
     });

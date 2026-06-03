@@ -1066,6 +1066,59 @@ describe("SessionRuntimeStore", () => {
     ]);
   });
 
+  it("Codex runtime assistant 从 synthetic rawRef 切到真实 transcript 后不会把最终回复渲染两遍", () => {
+    const runtimeFirst = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "assistant-runtime-synthetic-1",
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: "这是最终回复",
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-05-08T02:39:41.000Z",
+        sequence: 52,
+        rawRef: "codex:///tmp/codingns-runtime/codex-session-1.jsonl#line=52",
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtimeFirst.timeline.runtimeOverlayMessages).toHaveLength(1);
+    expect(runtimeFirst.messages.map((item) => item.id)).toEqual([
+      "assistant-runtime-synthetic-1"
+    ]);
+
+    const historyMerged = applyTimelineEventToLayers(runtimeFirst.timeline, "session-1", {
+      type: "history.merge",
+      source: "realtime_delta",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-history-real-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: "这是最终回复",
+          timestamp: "2026-05-08T02:39:42.000Z",
+          sequence: 53,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=120"
+        })
+      ]
+    });
+
+    expect(historyMerged.validationIssues).toEqual([]);
+    expect(historyMerged.timeline.activeRuntimeOverlayKeys).toEqual([]);
+    expect(historyMerged.messages.map((item) => item.id)).toEqual([
+      "assistant-history-real-1"
+    ]);
+  });
+
   it("单入口 reducer 会抑制带图片用户消息的 runtime echo 重复", () => {
     const imageAttachment = createImageAttachment("screen.png", 2048);
     const pending = createPendingMessage(
