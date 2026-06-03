@@ -870,14 +870,16 @@ function renderWorkbenchWithCustomNavigationGroups(initialState: AffairsViewStat
   return render(<TestHarness />);
 }
 
-function getAffairsGridViewport(): HTMLElement {
-  const element = document.querySelector(".affairs-doc-grid-viewport");
+async function findAffairsGridViewport(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const element = document.querySelector(".affairs-doc-grid-viewport");
 
-  if (!(element instanceof HTMLElement)) {
-    throw new Error("未找到事务文档网格视口");
-  }
+    if (!(element instanceof HTMLElement)) {
+      throw new Error("未找到事务文档网格视口");
+    }
 
-  return element;
+    return element;
+  });
 }
 
 function openDesktopContextMenu(target: HTMLElement, coordinates: { clientX: number; clientY: number }) {
@@ -1841,7 +1843,7 @@ describe("AffairsWorkbenchView", () => {
   it("桌面端空白处右键菜单会包含新建、刷新、粘贴和属性", async () => {
     renderWorkbench();
 
-    const grid = getAffairsGridViewport();
+    const grid = await findAffairsGridViewport();
     const items = openDesktopContextMenu(grid, { clientX: 300, clientY: 260 });
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: t("shell.affairsLibraryContextNew") }),
@@ -1977,7 +1979,7 @@ describe("AffairsWorkbenchView", () => {
     platformStateMock.isWeb = true;
     renderWorkbench();
 
-    const grid = getAffairsGridViewport();
+    const grid = await findAffairsGridViewport();
     fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextPaste") })).toBeDisabled();
@@ -1994,7 +1996,7 @@ describe("AffairsWorkbenchView", () => {
     platformStateMock.isWeb = true;
     renderWorkbench();
 
-    const grid = getAffairsGridViewport();
+    const grid = await findAffairsGridViewport();
     fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     await userEvent.hover(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextNew") }));
