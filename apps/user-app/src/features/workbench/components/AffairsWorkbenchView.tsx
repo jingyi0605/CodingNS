@@ -4592,6 +4592,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
               : t("shell.affairsTagQuickAssignFolderDescription", { name: pendingTagAssignmentTarget.title })}
             height="auto"
             kind="form"
+            backdropVisible={false}
             onClose={() => setPendingTagAssignmentTarget(null)}
             footer={(
               <ModalActions>
@@ -4642,6 +4643,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
               : t("shell.affairsTagQuickAssignFolderDescription", { name: pendingTagAssignmentTarget.title })}
             size="compact"
             layout="form"
+            backdropVisible={false}
             onClose={() => setPendingTagAssignmentTarget(null)}
             footer={(
               <ModalActions>

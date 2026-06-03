@@ -23,6 +23,7 @@ interface DesktopModalProps {
   readonly dismissible?: boolean;
   readonly closeOnBackdrop?: boolean;
   readonly closeOnEscape?: boolean;
+  readonly backdropVisible?: boolean;
   readonly className?: string;
   readonly bodyClassName?: string;
   readonly titleClassName?: string;
@@ -46,6 +47,7 @@ export function DesktopModal({
   dismissible = true,
   closeOnBackdrop = true,
   closeOnEscape = true,
+  backdropVisible = true,
   className,
   bodyClassName,
   titleClassName,
@@ -91,6 +93,7 @@ export function DesktopModal({
       className="workbench-modal-layer desktop-modal-layer"
       data-fullscreen={size === "full" ? "true" : undefined}
       data-layout={layout}
+      data-backdrop-visible={backdropVisible ? "true" : "false"}
     >
       <button
         type="button"

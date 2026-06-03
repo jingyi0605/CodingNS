@@ -67,4 +67,25 @@ describe("MobileSheet", () => {
     expect(cancelButton).toBeDisabled();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("可以关闭背景遮罩视觉效果，但保留 sheet 壳层", () => {
+    render(
+      <MobileSheet
+        open
+        title="分配标签"
+        backdropVisible={false}
+        onClose={() => {}}
+      >
+        <p>正文</p>
+      </MobileSheet>
+    );
+
+    const overlay = document.querySelector(".mobile-sheet-overlay");
+
+    if (!(overlay instanceof HTMLDivElement)) {
+      throw new Error("未找到 mobile sheet overlay");
+    }
+
+    expect(overlay.dataset.backdropVisible).toBe("false");
+  });
 });

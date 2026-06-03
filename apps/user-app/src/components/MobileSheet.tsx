@@ -14,6 +14,7 @@ interface MobileSheetProps {
   readonly kind?: MobileSheetKind;
   readonly dismissible?: boolean;
   readonly closeOnBackdrop?: boolean;
+  readonly backdropVisible?: boolean;
   readonly showHandle?: boolean;
   readonly showCancelButton?: boolean;
   readonly cancelLabel?: string;
@@ -33,6 +34,7 @@ export function MobileSheet({
   kind = "form",
   dismissible = true,
   closeOnBackdrop = true,
+  backdropVisible = true,
   showHandle = false,
   showCancelButton = true,
   cancelLabel,
@@ -54,6 +56,7 @@ export function MobileSheet({
   return createPortal(
     <div
       className="ios-action-sheet-overlay mobile-sheet-overlay"
+      data-backdrop-visible={backdropVisible ? "true" : "false"}
       role="presentation"
       onClick={() => {
         if (canCloseOnBackdrop) {

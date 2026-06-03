@@ -15948,6 +15948,12 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(var(--modal-backdrop-blur));
 }
 
+.workbench-modal-layer[data-backdrop-visible="false"] .workbench-modal-backdrop {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .workbench-modal-card {
   position: relative;
   z-index: 1;
@@ -26692,6 +26698,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   padding: max(1rem, env(safe-area-inset-top)) 0.75rem max(1rem, env(safe-area-inset-bottom));
   background: color-mix(in srgb, #000 18%, transparent);
   backdrop-filter: blur(8px);
+}
+
+.ios-action-sheet-overlay[data-backdrop-visible="false"] {
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .mobile-workspace-home-sheet {

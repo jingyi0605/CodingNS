@@ -77,4 +77,25 @@ describe("DesktopModal", () => {
     expect(closeButton).toBeDisabled();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("可以关闭背景遮罩视觉效果，但保留弹层结构", () => {
+    render(
+      <DesktopModal
+        open
+        title="分配标签"
+        backdropVisible={false}
+        onClose={() => {}}
+      >
+        <p>正文</p>
+      </DesktopModal>
+    );
+
+    const layer = document.querySelector(".workbench-modal-layer");
+
+    if (!(layer instanceof HTMLDivElement)) {
+      throw new Error("未找到模态框 layer");
+    }
+
+    expect(layer.dataset.backdropVisible).toBe("false");
+  });
 });
