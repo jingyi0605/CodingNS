@@ -11,6 +11,7 @@ interface HelperTaskRequest {
   type: "run";
   handler: TaskHelperProcessHandlerName;
   input: unknown;
+  queueWaitTimeoutMs?: number | null;
 }
 
 interface HelperTaskCancelRequest {
@@ -31,6 +32,7 @@ type HelperTaskResponse =
       id: string;
       ok: false;
       error: string;
+      errorCode?: string;
     };
 
 type HelperTaskMessage = HelperTaskRequest | HelperTaskCancelRequest;
@@ -39,6 +41,8 @@ interface QueuedHelperTask {
   payload: HelperTaskRequest;
   controller: AbortController;
   schedulingBucket: string;
+  queueWaitTimeoutMs: number | null;
+  queueWaitTimer: NodeJS.Timeout | null;
 }
 
 const TASK_HELPER_RSS_HIGH_WATER_BYTES = 768 * 1024 * 1024;
@@ -88,7 +92,9 @@ async function handleLine(line: string): Promise<void> {
   const task = {
     payload,
     controller,
-    schedulingBucket: scheduling.bucket
+    schedulingBucket: scheduling.bucket,
+    queueWaitTimeoutMs: normalizeHelperQueueWaitTimeout(payload.queueWaitTimeoutMs),
+    queueWaitTimer: null
   } satisfies QueuedHelperTask;
 
   if (canStartTask(task)) {
@@ -100,6 +106,7 @@ async function handleLine(line: string): Promise<void> {
   const queue = queuedRequestsByBucket.get(task.schedulingBucket) ?? [];
   queue.push(task);
   queuedRequestsByBucket.set(task.schedulingBucket, queue);
+  armQueuedTaskTimeout(task);
 }
 
 function writeResponse(payload: HelperTaskResponse): void {
@@ -114,6 +121,7 @@ function canStartTask(task: QueuedHelperTask): boolean {
 function startTask(task: QueuedHelperTask): void {
   const { payload, controller, schedulingBucket } = task;
 
+  clearQueuedTaskTimeout(task);
   queuedRequests.delete(payload.id);
   activeRequests.set(payload.id, controller);
   runningCountByBucket.set(
@@ -198,6 +206,7 @@ function cancelRequest(targetId: string): void {
     return;
   }
 
+  clearQueuedTaskTimeout(queued);
   queuedRequests.delete(targetId);
   const queue = queuedRequestsByBucket.get(queued.schedulingBucket);
 
@@ -213,6 +222,56 @@ function cancelRequest(targetId: string): void {
   }
 
   queuedRequestsByBucket.set(queued.schedulingBucket, nextQueue);
+}
+
+function armQueuedTaskTimeout(task: QueuedHelperTask): void {
+  if (!task.queueWaitTimeoutMs || task.queueWaitTimeoutMs <= 0) {
+    return;
+  }
+
+  task.queueWaitTimer = setTimeout(() => {
+    const queued = queuedRequests.get(task.payload.id);
+    if (!queued) {
+      return;
+    }
+
+    clearQueuedTaskTimeout(queued);
+    queuedRequests.delete(task.payload.id);
+    const queue = queuedRequestsByBucket.get(task.schedulingBucket);
+    if (queue) {
+      const nextQueue = queue.filter((entry) => entry.payload.id !== task.payload.id);
+      if (nextQueue.length === 0) {
+        queuedRequestsByBucket.delete(task.schedulingBucket);
+      } else {
+        queuedRequestsByBucket.set(task.schedulingBucket, nextQueue);
+      }
+    }
+
+    writeResponse({
+      type: "result",
+      id: task.payload.id,
+      ok: false,
+      error: `${task.payload.handler}:${task.payload.id} helper 内部排队等待超过 ${task.queueWaitTimeoutMs}ms 仍未开始执行`,
+      errorCode: "TASK_QUEUE_WAIT_TIMEOUT"
+    });
+  }, task.queueWaitTimeoutMs);
+}
+
+function clearQueuedTaskTimeout(task: QueuedHelperTask): void {
+  if (!task.queueWaitTimer) {
+    return;
+  }
+
+  clearTimeout(task.queueWaitTimer);
+  task.queueWaitTimer = null;
+}
+
+function normalizeHelperQueueWaitTimeout(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.floor(value));
 }
 
 function maybeRecycleProcess(): void {

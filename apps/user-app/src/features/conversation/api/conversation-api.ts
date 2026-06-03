@@ -120,7 +120,7 @@ export interface WorkspaceManagementSummaryDto {
 }
 
 export type AffairsLibraryFavoriteKindDto = "folder" | "tag";
-export type AffairsLibraryIndexStateDto = "fresh" | "stale" | "running" | "cooldown" | "failed";
+export type AffairsLibraryIndexStateDto = "fresh" | "stale" | "queued" | "running" | "queue_timeout" | "cooldown" | "failed";
 
 export interface AffairsLibraryBindingDto {
   workspaceId: string | null;
@@ -156,7 +156,26 @@ export interface AffairsLibraryIndexStatusDto {
   runningTaskId: string | null;
   runningStage: string | null;
   errorSummary: string | null;
+  workerHealth?: AffairsLibraryWorkerHealthDto | null;
   progress?: AffairsLibraryIndexProgressDto | null;
+}
+
+export interface AffairsLibraryWorkerHealthDto {
+  workerKey: string;
+  rootDir: string | null;
+  state: "idle" | "running" | "terminating" | "recycled";
+  pid: number | null;
+  inflightLocalCount: number;
+  inflightRemoteRequestCount: number;
+  startedAt: string | null;
+  lastHeartbeatAt: string | null;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
+  lastSoftCancelRequestedAt: string | null;
+  lastHardKillAt: string | null;
+  lastExitAt: string | null;
+  lastTerminationReason: string | null;
 }
 
 export interface AffairsLibraryIndexProgressDto {
@@ -169,8 +188,8 @@ export interface AffairsLibraryIndexProgressDto {
   maxConcurrency: number | null;
 }
 
-export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "fresh" | "failed";
-export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed";
+export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "queue_timeout" | "fresh" | "failed";
+export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed" | "stale_fallback";
 
 export interface AffairsLibraryDirectoryStatusDto {
   path: string;
@@ -181,6 +200,9 @@ export interface AffairsLibraryDirectoryStatusDto {
   lastFailedAt: string | null;
   runningTaskId: string | null;
   errorSummary: string | null;
+  generatedAt?: string | null;
+  filesystemObservedAt?: string | null;
+  staleReason?: string | null;
 }
 
 export interface AffairsLibraryFavoriteRecordDto {
@@ -2279,6 +2301,63 @@ export function getAffairsLightweightSession(workspaceId: string, sessionId: str
 export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string) {
   return httpClient.request<HistoryPageDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`
+  );
+}
+
+export function markAffairsLightweightSessionSeen(workspaceId: string, sessionId: string, seenAt?: string) {
+  return httpClient.request<void>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/seen`,
+    {
+      method: "POST",
+      body: JSON.stringify(seenAt ? { seenAt } : {})
+    }
+  );
+}
+
+export function renameAffairsLightweightSessionTitle(workspaceId: string, sessionId: string, title: string) {
+  return httpClient.request<SessionSummaryDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/title`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title })
+    }
+  );
+}
+
+export function updateAffairsLightweightSessionArchiveState(
+  workspaceId: string,
+  sessionId: string,
+  archived: boolean
+) {
+  return httpClient.request<SessionSummaryDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/archive`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ archived })
+    }
+  );
+}
+
+export function updateAffairsLightweightSessionFavoriteState(
+  workspaceId: string,
+  sessionId: string,
+  favorite: boolean
+) {
+  return httpClient.request<SessionSummaryDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/favorite`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ favorite })
+    }
+  );
+}
+
+export function deleteAffairsLightweightSession(workspaceId: string, sessionId: string) {
+  return httpClient.request<void>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "DELETE"
+    }
   );
 }
 

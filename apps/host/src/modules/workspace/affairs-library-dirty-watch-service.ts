@@ -9,7 +9,7 @@ import {
 import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
 
 export interface AffairsLibraryWatchDirtyEvent {
-  kind: "index" | "config";
+  kind: "index" | "config" | "audit";
   reason: string;
   targetPath?: string;
 }
@@ -37,7 +37,7 @@ const INDEX_EXPORTS_RELATIVE_PATH = ".ai-index/exports";
 const INDEX_EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
 const INDEX_EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
 const AUTO_REFRESH_QUIET_WINDOW_MS = 800;
-const PERIODIC_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const PERIODIC_AUDIT_INTERVAL_MS = 10 * 60 * 1000;
 const INDEX_DIR_NAME = ".ai-index";
 const DIRECTORY_EVENT_RECENT_WINDOW_MS = 5_000;
 const DIRECTORY_EVENT_SCAN_LIMIT = 2_000;
@@ -203,10 +203,10 @@ export class AffairsLibraryDirtyWatchService {
 
       const periodicTimer = setInterval(() => {
         this.onWorkspaceDirty(workspaceId, {
-          kind: "index",
-          reason: "periodic_refresh"
+          kind: "audit",
+          reason: "periodic_audit"
         });
-      }, PERIODIC_REFRESH_INTERVAL_MS);
+      }, PERIODIC_AUDIT_INTERVAL_MS);
 
       this.watchersByWorkspace.set(workspaceId, {
         rootDir,
@@ -218,7 +218,7 @@ export class AffairsLibraryDirtyWatchService {
         {
           workspaceId,
           rootDir,
-          periodicRefreshIntervalMs: PERIODIC_REFRESH_INTERVAL_MS,
+          periodicAuditIntervalMs: PERIODIC_AUDIT_INTERVAL_MS,
           source: "affairs_library.watch"
         },
         "事务文档库外部刷新监听已启动"
@@ -231,7 +231,7 @@ export class AffairsLibraryDirtyWatchService {
         source: "affairs_library.watch",
         status: "running",
         details: {
-          periodicRefreshIntervalMs: PERIODIC_REFRESH_INTERVAL_MS
+          periodicAuditIntervalMs: PERIODIC_AUDIT_INTERVAL_MS
         }
       });
     } catch (error) {

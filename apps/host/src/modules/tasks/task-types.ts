@@ -6,6 +6,7 @@ export const HOST_TASK_TYPES = {
   workspaceDiscoveryScan: "workspace.discovery_scan",
   providerCapabilityRefresh: "provider.capability_refresh",
   workbenchSyncTitles: "workbench.sync_titles",
+  workbenchAffairsAssistantSessions: "workbench.affairs_assistant_sessions",
   workspaceManagementSummary: "workspace.management_summary",
   workspaceCodeCompositionScan: "workspace.code_composition_scan",
   butlerInboxAnalyze: "butler.inbox_analyze",
@@ -45,6 +46,7 @@ export type TaskExecutionLane =
 export type TaskStatus =
   | "queued"
   | "running"
+  | "queue_timeout"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -72,6 +74,7 @@ export interface TaskDefinition<TInput = unknown, TResult = unknown> {
   executionLane: TaskExecutionLane;
   concurrency?: number;
   timeoutMs?: number;
+  queueWaitTimeoutMs?: number;
   retryPolicy?: TaskRetryPolicy;
   helperProcessHandler?: string;
   run: (input: TInput, context: TaskRunContext) => Promise<TResult>;
@@ -190,5 +193,12 @@ export class TaskTimeoutError extends Error {
   constructor(message = "任务执行超时") {
     super(message);
     this.name = "TaskTimeoutError";
+  }
+}
+
+export class TaskQueueWaitTimeoutError extends Error {
+  constructor(message = "任务排队等待超时") {
+    super(message);
+    this.name = "TaskQueueWaitTimeoutError";
   }
 }

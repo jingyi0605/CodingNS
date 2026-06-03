@@ -1,8 +1,8 @@
-import { getSharedTaskHelperProcessClient } from "./task-helper-client.js";
+import { getSharedTaskHelperPool } from "./task-helper-pool.js";
 import type { TaskExecutionLane, TaskLaneExecutor } from "./task-types.js";
 
 export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane, TaskLaneExecutor>> {
-  const helperProcessClient = getSharedTaskHelperProcessClient();
+  const helperPool = getSharedTaskHelperPool();
 
   return {
     helper_process: {
@@ -11,10 +11,13 @@ export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane,
           return await definition.run(input, context);
         }
 
-        return await helperProcessClient.execute(
+        return await helperPool.execute(
           definition.helperProcessHandler as never,
           attachHelperTaskMeta(input, context),
-          context.signal
+          context.signal,
+          {
+            queueWaitTimeoutMs: definition.queueWaitTimeoutMs
+          }
         );
       }
     },

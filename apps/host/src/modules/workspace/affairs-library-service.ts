@@ -29,6 +29,18 @@ import {
   SUPPORTED_INDEX_EXTENSION_LIST
 } from "../affairs-indexer/core/src/scanner/file-scanner.js";
 import { writeAffairsLibraryDebugLog } from "./affairs-library-debug-log.js";
+import {
+  AFFAIRS_LIBRARY_DEBUG_EVENTS,
+  AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS,
+  AFFAIRS_LIBRARY_RECONCILE_REASONS,
+  AFFAIRS_LIBRARY_RECONCILE_SCOPES,
+  AFFAIRS_LIBRARY_RECONCILE_STATUSES,
+  type AffairsLibraryReconcileResult
+} from "./affairs-library-refresh-contract.js";
+import {
+  getSharedTaskHelperPool,
+  type TaskHelperWorkerHealthSnapshot
+} from "../tasks/task-helper-pool.js";
 
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const INDEX_DIR_RELATIVE_PATH = ".ai-index";
@@ -42,18 +54,23 @@ const COMMAND_LOCK_HEARTBEAT_RELATIVE_PATH = ".ai-index/runtime/command.lock/hea
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 const DIRECTORY_HINT_TASK_TIMEOUT_MS = 8_000;
+const INDEX_TASK_QUEUE_WAIT_TIMEOUT_MS = 60_000;
+const DIRECTORY_HINT_QUEUE_WAIT_TIMEOUT_MS = 15_000;
 const INDEX_TASK_COOLDOWN_MS = 15_000;
 const AUTO_TASK_QUIET_WINDOW_MS = 800;
 const AUTO_TASK_RETRY_WINDOW_MS = 1_000;
+const LIGHTWEIGHT_RECONCILE_INTERVAL_MS = 45_000;
+const LIGHTWEIGHT_RECONCILE_DRIFT_TOLERANCE_MS = 1_500;
 const COMMAND_LOCK_STALE_HEARTBEAT_MS = 3 * 60 * 1000;
 const ORPHAN_TASK_RECONCILE_GRACE_MS = 15_000;
 const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
 const SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
 const HOT_DIRECTORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const HOT_DIRECTORY_MAX_PER_WORKSPACE = 3;
+const LIVE_DIRECTORY_SYNC_SCAN_MAX_DOCUMENTS = 200;
 
-export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "fresh" | "failed";
-export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed";
+export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "queue_timeout" | "fresh" | "failed";
+export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed" | "stale_fallback";
 
 export type AffairsLibraryFavoriteKind = "folder" | "tag";
 
@@ -76,7 +93,7 @@ export interface AffairsLibraryBindingDto {
 }
 
 export interface AffairsLibraryIndexStatusDto {
-  state: "fresh" | "stale" | "running" | "cooldown" | "failed";
+  state: "fresh" | "stale" | "queued" | "running" | "queue_timeout" | "cooldown" | "failed";
   dirtyReasons: string[];
   lastRequestedAt: string | null;
   lastStartedAt: string | null;
@@ -86,7 +103,26 @@ export interface AffairsLibraryIndexStatusDto {
   runningTaskId: string | null;
   runningStage: string | null;
   errorSummary: string | null;
+  workerHealth?: AffairsLibraryWorkerHealthDto | null;
   progress?: AffairsLibraryIndexProgressDto | null;
+}
+
+export interface AffairsLibraryWorkerHealthDto {
+  workerKey: string;
+  rootDir: string | null;
+  state: "idle" | "running" | "terminating" | "recycled";
+  pid: number | null;
+  inflightLocalCount: number;
+  inflightRemoteRequestCount: number;
+  startedAt: string | null;
+  lastHeartbeatAt: string | null;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
+  lastSoftCancelRequestedAt: string | null;
+  lastHardKillAt: string | null;
+  lastExitAt: string | null;
+  lastTerminationReason: string | null;
 }
 
 export interface AffairsLibraryIndexProgressDto {
@@ -108,6 +144,9 @@ export interface AffairsLibraryDirectoryStatusDto {
   lastFailedAt: string | null;
   runningTaskId: string | null;
   errorSummary: string | null;
+  generatedAt?: string | null;
+  filesystemObservedAt?: string | null;
+  staleReason?: string | null;
 }
 
 export interface AffairsLibraryDocumentRecordDto {
@@ -382,6 +421,8 @@ interface AffairsLibraryDirectoryHintTaskResult {
   itemCount: number;
   changedPaths: string[];
   items: AffairsLibraryDocumentRecordDto[];
+  generatedAt: string | null;
+  filesystemObservedAt: string | null;
 }
 
 interface AffairsLibraryHotDirectoryCacheEntry {
@@ -399,17 +440,41 @@ interface AffairsLibraryHotDirectoryCacheEntry {
   lastRefreshFailedAt: string | null;
   lastError: string | null;
   status: AffairsLibraryDirectoryStateDto;
+  generatedAt: string | null;
+  filesystemObservedAt: string | null;
+  staleReason: string | null;
 }
 
 interface AffairsLibraryFolderDocumentsBuildResult {
   items: AffairsLibraryDocumentRecordDto[];
   source: AffairsLibraryDirectorySourceDto;
+  generatedAt: string | null;
+  filesystemObservedAt: string | null;
+  staleReason: string | null;
+}
+
+interface AffairsLibraryLiveDirectoryScanDecision {
+  avoidSyncScan: boolean;
+  staleReason: string | null;
+  estimatedDocumentCount: number | null;
+}
+
+interface AffairsLibraryLightweightReconcileResult extends AffairsLibraryReconcileResult {
+  recentDirectoryPath: string | null;
+}
+
+interface AffairsLibraryReconcileObservationState {
+  consecutiveLightweightDrifts: number;
+  lastLightweightReason: string | null;
+  lastLightweightObservedAt: string | null;
 }
 
 export class AffairsLibraryService {
   private readonly exportCache = new Map<string, AffairsLibraryExportCachePayload>();
   private readonly autoTaskStateByWorkspace = new Map<string, AffairsLibraryAutoTaskState>();
   private readonly hotDirectoryCache = new Map<string, AffairsLibraryHotDirectoryCacheEntry>();
+  private readonly lightweightReconcileTimers = new Map<string, NodeJS.Timeout>();
+  private readonly reconcileObservationStateByWorkspace = new Map<string, AffairsLibraryReconcileObservationState>();
 
   constructor(
     private readonly workspaceService: WorkspaceService,
@@ -420,6 +485,7 @@ export class AffairsLibraryService {
   ) {
     this.registerBackgroundTasks();
     this.resumeEnabledBindings();
+    this.syncLightweightReconcileTimers();
   }
 
   getGlobalBinding(userId: string): AffairsLibraryBindingDto | null {
@@ -451,6 +517,7 @@ export class AffairsLibraryService {
       enabled: true,
       favoritesJson: nextSetting.favoritesJson
     });
+    this.syncLightweightReconcileTimers();
     if (workspaceId) {
       this.scheduleAutoRefresh(workspaceId, "binding_saved");
     }
@@ -488,6 +555,7 @@ export class AffairsLibraryService {
       enabled,
       favoritesJson: nextSetting.favoritesJson
     });
+    this.syncLightweightReconcileTimers();
     if (enabled && workspaceId) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
     }
@@ -540,6 +608,7 @@ export class AffairsLibraryService {
       enabled: true,
       favoritesJson: nextSetting.favoritesJson
     });
+    this.syncLightweightReconcileTimers();
     this.scheduleAutoRefresh(workspaceId, "binding_saved");
 
     return this.buildBindingFromSetting(nextSetting, workspaceId)!;
@@ -576,6 +645,7 @@ export class AffairsLibraryService {
       enabled,
       favoritesJson: nextSetting.favoritesJson
     });
+    this.syncLightweightReconcileTimers();
     if (enabled) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
     }
@@ -853,21 +923,28 @@ export class AffairsLibraryService {
     const directoryStatus = this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, "snapshot");
     const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedDirectoryPath);
     const cachedDirectoryEntry = this.hotDirectoryCache.get(cacheKey) ?? null;
-    const shouldAvoidLiveScan = this.shouldAvoidLiveDirectoryScan(
+    const liveScanDecision = this.decideLiveDirectoryScan(
       input.indexStatus,
       directoryStatus,
-      cachedDirectoryEntry
+      cachedDirectoryEntry,
+      normalizedFolderPath,
+      exportData
     );
-    const fallbackResult = shouldAvoidLiveScan
+    const fallbackResult = liveScanDecision.avoidSyncScan
       ? this.buildCachedFolderDocuments(
         workspaceId,
         rootDir,
         normalizedFolderPath,
         exportData,
-        directoryStatus
+        directoryStatus,
+        liveScanDecision.staleReason
       )
       : null;
+    const liveScanStartedAtMs = liveScanDecision.avoidSyncScan ? 0 : Date.now();
     const directoryResult = fallbackResult ?? this.buildFreshFolderDocuments(rootDir, normalizedFolderPath, exportData);
+    const liveScanDurationMs = liveScanDecision.avoidSyncScan
+      ? null
+      : Math.max(0, Date.now() - liveScanStartedAtMs);
     const itemsWithFavorites = directoryResult.items.map((item) => ({
       ...item,
       isFavorite: favorites.some((favorite) =>
@@ -883,24 +960,58 @@ export class AffairsLibraryService {
         return left.path.localeCompare(right.path, "zh-Hans-CN");
       });
 
-    const effectiveSource = shouldAvoidLiveScan && fallbackResult
+    const effectiveSource = liveScanDecision.avoidSyncScan && fallbackResult
       ? fallbackResult.source
       : directoryResult.source;
 
-    if (!shouldAvoidLiveScan) {
+    if (!liveScanDecision.avoidSyncScan) {
       this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, directoryResult.source, {
         preserveStatus: directoryStatus.state === "running" || directoryStatus.state === "queued"
+          || directoryStatus.state === "queue_timeout",
+        generatedAt: directoryResult.generatedAt,
+        filesystemObservedAt: directoryResult.filesystemObservedAt,
+        staleReason: null
+      });
+      writeAffairsLibraryDebugLog({
+        event: "directory_live_scan_sync",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        source: "affairs_library.folder_list",
+        targetPath: normalizedDirectoryPath,
+        status: directoryResult.source,
+        durationMs: liveScanDurationMs,
+        details: {
+          estimatedDocumentCount: liveScanDecision.estimatedDocumentCount,
+          itemCount: items.length,
+          generatedAt: directoryResult.generatedAt,
+          filesystemObservedAt: directoryResult.filesystemObservedAt
+        }
       });
     } else {
+      const fallbackEntry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, normalizedDirectoryPath);
+      fallbackEntry.items = directoryResult.items;
+      fallbackEntry.source = directoryResult.source;
+      fallbackEntry.generatedAt = directoryResult.generatedAt;
+      fallbackEntry.filesystemObservedAt = directoryResult.filesystemObservedAt;
+      fallbackEntry.staleReason = directoryResult.staleReason;
+      this.writeDirectoryFallbackDebugLog(workspaceId, rootDir, normalizedDirectoryPath, liveScanDecision, directoryResult);
       this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
     }
     this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
     if (
-      !shouldAvoidLiveScan
+      !liveScanDecision.avoidSyncScan
       && directoryStatus.state !== "running"
       && directoryStatus.state !== "queued"
     ) {
       this.scheduleDirectoryHintRefresh(workspaceId, normalizedDirectoryPath, "list_documents");
+    } else if (
+      liveScanDecision.avoidSyncScan
+      && liveScanDecision.staleReason?.startsWith("large_directory:")
+      && directoryStatus.state !== "running"
+      && directoryStatus.state !== "queued"
+    ) {
+      this.scheduleDirectoryHintRefresh(workspaceId, normalizedDirectoryPath, "large_directory_live_scan");
     }
 
     const resultItems = items.slice(input.offset, input.offset + input.limit);
@@ -914,9 +1025,13 @@ export class AffairsLibraryService {
       status: "served",
       details: {
         resultSource: effectiveSource,
-        usedCachedResult: shouldAvoidLiveScan,
+        usedCachedResult: liveScanDecision.avoidSyncScan,
         indexState: input.indexStatus.state,
         directoryState: directoryStatus.state,
+        staleReason: directoryResult.staleReason,
+        generatedAt: directoryResult.generatedAt,
+        filesystemObservedAt: directoryResult.filesystemObservedAt,
+        estimatedDocumentCount: liveScanDecision.estimatedDocumentCount,
         total: items.length,
         returned: resultItems.length,
         offset: input.offset,
@@ -935,28 +1050,67 @@ export class AffairsLibraryService {
     };
   }
 
-  private shouldAvoidLiveDirectoryScan(
+  private decideLiveDirectoryScan(
     indexStatus: AffairsLibraryIndexStatusDto,
     directoryStatus: AffairsLibraryDirectoryStatusDto | null,
-    cachedDirectoryEntry: AffairsLibraryHotDirectoryCacheEntry | null
-  ): boolean {
+    cachedDirectoryEntry: AffairsLibraryHotDirectoryCacheEntry | null,
+    normalizedFolderPath: string,
+    exportData: AffairsLibraryExportData | null
+  ): AffairsLibraryLiveDirectoryScanDecision {
+    const estimatedDocumentCount = estimateFolderDocumentCount(
+      normalizedFolderPath,
+      exportData,
+      cachedDirectoryEntry
+    );
+
+    if (
+      typeof estimatedDocumentCount === "number"
+      && estimatedDocumentCount > LIVE_DIRECTORY_SYNC_SCAN_MAX_DOCUMENTS
+    ) {
+      return {
+        avoidSyncScan: true,
+        staleReason: `large_directory:${estimatedDocumentCount}`,
+        estimatedDocumentCount
+      };
+    }
+
     if (!cachedDirectoryEntry || cachedDirectoryEntry.items.length === 0) {
-      return false;
+      return {
+        avoidSyncScan: false,
+        staleReason: null,
+        estimatedDocumentCount
+      };
     }
 
     if (cachedDirectoryEntry.dirty) {
-      return false;
+      return {
+        avoidSyncScan: false,
+        staleReason: null,
+        estimatedDocumentCount
+      };
     }
 
     if (indexStatus.state === "running") {
-      return true;
+      return {
+        avoidSyncScan: true,
+        staleReason: "index_running",
+        estimatedDocumentCount
+      };
     }
 
     if (!directoryStatus) {
-      return false;
+      return {
+        avoidSyncScan: false,
+        staleReason: null,
+        estimatedDocumentCount
+      };
     }
 
-    return directoryStatus.state === "running";
+    return {
+      avoidSyncScan: directoryStatus.state === "running",
+      staleReason: directoryStatus.state === "running" ? "directory_hint_running" : null,
+      estimatedDocumentCount
+    };
   }
 
   private buildCachedFolderDocuments(
@@ -964,18 +1118,29 @@ export class AffairsLibraryService {
     rootDir: string,
     normalizedFolderPath: string,
     exportData: AffairsLibraryExportData | null,
-    directoryStatus: AffairsLibraryDirectoryStatusDto | null
+    directoryStatus: AffairsLibraryDirectoryStatusDto | null,
+    staleReason: string | null
   ): AffairsLibraryFolderDocumentsBuildResult {
     const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedFolderPath || ".");
     const cached = this.hotDirectoryCache.get(cacheKey);
     if (cached && cached.items.length > 0) {
       return {
         items: cached.items,
-        source: cached.source
+        source: staleReason ? "stale_fallback" : cached.source,
+        generatedAt: cached.generatedAt,
+        filesystemObservedAt: cached.filesystemObservedAt,
+        staleReason
       };
     }
 
-    return this.buildSnapshotFolderDocuments(rootDir, normalizedFolderPath, exportData, directoryStatus);
+    const snapshotResult = this.buildSnapshotFolderDocuments(rootDir, normalizedFolderPath, exportData, directoryStatus);
+    return staleReason
+      ? {
+          ...snapshotResult,
+          source: "stale_fallback",
+          staleReason
+        }
+      : snapshotResult;
   }
 
   private buildSnapshotFolderDocuments(
@@ -993,7 +1158,10 @@ export class AffairsLibraryService {
 
     return {
       items,
-      source: directoryStatus?.source ?? "snapshot"
+      source: directoryStatus?.source ?? "snapshot",
+      generatedAt: exportData?.generatedAt ?? directoryStatus?.generatedAt ?? null,
+      filesystemObservedAt: directoryStatus?.filesystemObservedAt ?? null,
+      staleReason: directoryStatus?.staleReason ?? null
     };
   }
 
@@ -1029,6 +1197,31 @@ export class AffairsLibraryService {
       },
       supportedExtensions
     );
+  }
+
+  private writeDirectoryFallbackDebugLog(
+    workspaceId: string,
+    rootDir: string,
+    directoryPath: string,
+    decision: AffairsLibraryLiveDirectoryScanDecision,
+    result: AffairsLibraryFolderDocumentsBuildResult
+  ): void {
+    writeAffairsLibraryDebugLog({
+      event: "directory_live_scan_deferred",
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.folder_list",
+      targetPath: directoryPath,
+      status: result.source,
+      reason: decision.staleReason,
+      details: {
+        estimatedDocumentCount: decision.estimatedDocumentCount,
+        generatedAt: result.generatedAt,
+        filesystemObservedAt: result.filesystemObservedAt,
+        itemCount: result.items.length
+      }
+    });
   }
 
   updateFavorites(
@@ -1630,6 +1823,445 @@ export class AffairsLibraryService {
     this.armAutoTaskTimer(normalizedWorkspaceId, AUTO_TASK_QUIET_WINDOW_MS);
   }
 
+  private syncLightweightReconcileTimers(): void {
+    const enabledStates = this.workspaceNavigationStateRepository.listEnabledAffairsLibraries();
+    const activeWorkspaceIds = new Set<string>();
+
+    for (const state of enabledStates) {
+      const rootDir = state.affairsLibraryRootPath?.trim() ?? "";
+      if (!rootDir || state.affairsLibraryEnabled !== true) {
+        continue;
+      }
+
+      activeWorkspaceIds.add(state.workspaceId);
+      this.ensureLightweightReconcileTimer(state.workspaceId);
+    }
+
+    for (const workspaceId of [...this.lightweightReconcileTimers.keys()]) {
+      if (!activeWorkspaceIds.has(workspaceId)) {
+        this.clearLightweightReconcileTimer(workspaceId);
+      }
+    }
+  }
+
+  private ensureLightweightReconcileTimer(workspaceId: string): void {
+    if (this.lightweightReconcileTimers.has(workspaceId)) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      this.scheduleLightweightReconcile(workspaceId, AFFAIRS_LIBRARY_RECONCILE_REASONS.timer);
+    }, LIGHTWEIGHT_RECONCILE_INTERVAL_MS);
+    this.lightweightReconcileTimers.set(workspaceId, timer);
+  }
+
+  private clearLightweightReconcileTimer(workspaceId: string): void {
+    const timer = this.lightweightReconcileTimers.get(workspaceId);
+    if (!timer) {
+      return;
+    }
+
+    clearInterval(timer);
+    this.lightweightReconcileTimers.delete(workspaceId);
+  }
+
+  private scheduleLightweightReconcile(workspaceId: string, triggerReason: string): void {
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+      this.clearLightweightReconcileTimer(workspaceId);
+      return;
+    }
+
+    const activeTask = this.findBlockingAutoTask(workspaceId);
+    if (activeTask) {
+      writeAffairsLibraryDebugLog({
+        event: AFFAIRS_LIBRARY_DEBUG_EVENTS.lightweightReconcileSkipped,
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: activeTask.taskType,
+        taskId: activeTask.taskId,
+        source: "affairs_library.lightweight_reconcile",
+        reason: triggerReason,
+        status: activeTask.status,
+        details: {
+          skipReason: "blocking_task_active",
+          triggerReason
+        }
+      });
+      return;
+    }
+
+    const result = this.evaluateLightweightReconcile(workspaceId, rootDir);
+    this.recordLightweightReconcileObservation(workspaceId, result);
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.lightweightReconcileTick,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.lightweight_reconcile",
+      reason: result.reason,
+      status: result.status,
+      details: {
+        triggerReason,
+        scope: result.scope,
+        targetPaths: result.targetPaths
+      }
+    });
+
+    if (result.status === AFFAIRS_LIBRARY_RECONCILE_STATUSES.healthy) {
+      return;
+    }
+
+    if (result.recentDirectoryPath) {
+      this.scheduleDirectoryHintRefresh(
+        workspaceId,
+        result.recentDirectoryPath,
+        `${AFFAIRS_LIBRARY_RECONCILE_REASONS.recentDirectoryMtime}:${result.recentDirectoryPath}`
+      );
+    }
+
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.lightweightReconcileDriftDetected,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.lightweight_reconcile",
+      reason: result.reason,
+      status: result.status,
+      details: {
+        scope: result.scope,
+        targetPaths: result.targetPaths,
+        observedAt: result.observedAt
+      }
+    });
+
+    this.scheduleAutoRefresh(workspaceId, result.reason);
+
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.lightweightReconcileScheduledRefresh,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.lightweight_reconcile",
+      reason: result.reason,
+      status: "queued",
+      details: {
+        scope: result.scope,
+        targetPaths: result.targetPaths,
+        observedAt: result.observedAt
+      }
+    });
+  }
+
+  schedulePeriodicAudit(workspaceId: string, triggerReason: string): void {
+    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
+    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+      return;
+    }
+
+    const activeTask = this.findBlockingAutoTask(workspaceId);
+    if (activeTask) {
+      writeAffairsLibraryDebugLog({
+        event: AFFAIRS_LIBRARY_DEBUG_EVENTS.periodicAuditSkipped,
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: activeTask.taskType,
+        taskId: activeTask.taskId,
+        source: "affairs_library.periodic_audit",
+        reason: triggerReason,
+        status: activeTask.status,
+        details: {
+          skipReason: "blocking_task_active",
+          triggerReason
+        }
+      });
+      return;
+    }
+
+    const result = this.evaluatePeriodicAudit(workspaceId, rootDir);
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.periodicAuditTick,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.periodic_audit",
+      reason: result.reason,
+      status: result.status,
+      details: {
+        triggerReason,
+        scope: result.scope,
+        targetPaths: result.targetPaths
+      }
+    });
+
+    if (result.status === AFFAIRS_LIBRARY_RECONCILE_STATUSES.healthy) {
+      return;
+    }
+
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.periodicAuditDriftDetected,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.periodic_audit",
+      reason: result.reason,
+      status: result.status,
+      details: {
+        scope: result.scope,
+        targetPaths: result.targetPaths,
+        observedAt: result.observedAt
+      }
+    });
+
+    this.scheduleAutoRefresh(workspaceId, result.reason);
+
+    writeAffairsLibraryDebugLog({
+      event: AFFAIRS_LIBRARY_DEBUG_EVENTS.periodicAuditScheduledRefresh,
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.periodic_audit",
+      reason: result.reason,
+      status: "queued",
+      details: {
+        scope: result.scope,
+        targetPaths: result.targetPaths,
+        observedAt: result.observedAt
+      }
+    });
+  }
+
+  private evaluateLightweightReconcile(
+    workspaceId: string,
+    rootDir: string
+  ): AffairsLibraryLightweightReconcileResult {
+    const observedAt = nowIso();
+    const missingArtifact = detectMissingIndexArtifact(rootDir);
+    if (missingArtifact) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.lightweight,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.rebuildRequired,
+        reason: `lightweight_reconcile:${missingArtifact.reason}`,
+        targetPaths: [],
+        observedAt,
+        recentDirectoryPath: null
+      };
+    }
+
+    const pendingAutoTaskState = this.autoTaskStateByWorkspace.get(workspaceId);
+    if (pendingAutoTaskState && hasPendingAutoTasks(pendingAutoTaskState) && !pendingAutoTaskState.timer) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.lightweight,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.pendingDirtySignal,
+        targetPaths: [],
+        observedAt,
+        recentDirectoryPath: null
+      };
+    }
+
+    const exportStatus = readIndexStatusFileSafe(rootDir);
+    const runtimeStatus = readRuntimeStatusFileSafe(rootDir);
+    if (
+      runtimeStatus?.updatedAtMs
+      && Number.isFinite(runtimeStatus.updatedAtMs)
+      && runtimeStatus.updatedAtMs > (exportStatus?.exportedAtMs ?? 0) + LIGHTWEIGHT_RECONCILE_DRIFT_TOLERANCE_MS
+    ) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.lightweight,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.runtimeStatusAhead,
+        targetPaths: [],
+        observedAt,
+        recentDirectoryPath: null
+      };
+    }
+
+    const recentDirectoryDrift = this.findRecentDirectoryDrift(
+      workspaceId,
+      rootDir,
+      exportStatus?.exportedAtMs ?? 0
+    );
+    if (recentDirectoryDrift) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.lightweight,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: `${AFFAIRS_LIBRARY_RECONCILE_REASONS.recentDirectoryMtime}:${recentDirectoryDrift.directoryPath}`,
+        targetPaths: [recentDirectoryDrift.directoryPath],
+        observedAt,
+        recentDirectoryPath: recentDirectoryDrift.directoryPath
+      };
+    }
+
+    return {
+      scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.lightweight,
+      status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.healthy,
+      reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.timer,
+      targetPaths: [],
+      observedAt,
+      recentDirectoryPath: null
+    };
+  }
+
+  private evaluatePeriodicAudit(
+    workspaceId: string,
+    rootDir: string
+  ): AffairsLibraryReconcileResult {
+    const observedAt = nowIso();
+    const missingArtifact = detectMissingIndexArtifact(rootDir);
+    if (missingArtifact) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.rebuildRequired,
+        reason: `periodic_audit:${missingArtifact.reason}`,
+        targetPaths: [],
+        observedAt
+      };
+    }
+
+    const pendingAutoTaskState = this.autoTaskStateByWorkspace.get(workspaceId);
+    if (pendingAutoTaskState && hasPendingAutoTasks(pendingAutoTaskState) && !pendingAutoTaskState.timer) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.periodicAuditPendingDirtySignal,
+        targetPaths: [],
+        observedAt
+      };
+    }
+
+    const exportStatus = readIndexStatusFileSafe(rootDir);
+    const runtimeStatus = readRuntimeStatusFileSafe(rootDir);
+    if (
+      runtimeStatus?.updatedAtMs
+      && Number.isFinite(runtimeStatus.updatedAtMs)
+      && runtimeStatus.updatedAtMs > (exportStatus?.exportedAtMs ?? 0) + LIGHTWEIGHT_RECONCILE_DRIFT_TOLERANCE_MS
+    ) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.periodicAuditRuntimeStatusAhead,
+        targetPaths: [],
+        observedAt
+      };
+    }
+
+    const observation = this.reconcileObservationStateByWorkspace.get(workspaceId);
+    if ((observation?.consecutiveLightweightDrifts ?? 0) >= 2) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: `${AFFAIRS_LIBRARY_RECONCILE_REASONS.periodicAuditLightweightDriftStreak}:${observation?.lastLightweightReason ?? "unknown"}`,
+        targetPaths: [],
+        observedAt
+      };
+    }
+
+    const rootStats = readAffairsLibraryStatsSafe(rootDir, ".");
+    if (
+      rootStats
+      && Number.isFinite(rootStats.mtimeMs)
+      && rootStats.mtimeMs > (exportStatus?.exportedAtMs ?? 0) + LIGHTWEIGHT_RECONCILE_DRIFT_TOLERANCE_MS
+    ) {
+      return {
+        scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+        status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.driftDetected,
+        reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.periodicAuditRootDirMtime,
+        targetPaths: ["."],
+        observedAt
+      };
+    }
+
+    return {
+      scope: AFFAIRS_LIBRARY_RECONCILE_SCOPES.periodicAudit,
+      status: AFFAIRS_LIBRARY_RECONCILE_STATUSES.healthy,
+      reason: AFFAIRS_LIBRARY_RECONCILE_REASONS.periodicAuditTimer,
+      targetPaths: [],
+      observedAt
+    };
+  }
+
+  private recordLightweightReconcileObservation(
+    workspaceId: string,
+    result: AffairsLibraryReconcileResult
+  ): void {
+    const current = this.reconcileObservationStateByWorkspace.get(workspaceId) ?? {
+      consecutiveLightweightDrifts: 0,
+      lastLightweightObservedAt: null,
+      lastLightweightReason: null
+    } satisfies AffairsLibraryReconcileObservationState;
+
+    if (result.status === AFFAIRS_LIBRARY_RECONCILE_STATUSES.healthy) {
+      this.reconcileObservationStateByWorkspace.set(workspaceId, {
+        consecutiveLightweightDrifts: 0,
+        lastLightweightObservedAt: result.observedAt,
+        lastLightweightReason: null
+      });
+      return;
+    }
+
+    this.reconcileObservationStateByWorkspace.set(workspaceId, {
+      consecutiveLightweightDrifts: current.consecutiveLightweightDrifts + 1,
+      lastLightweightObservedAt: result.observedAt,
+      lastLightweightReason: result.reason
+    });
+  }
+
+  private findRecentDirectoryDrift(
+    workspaceId: string,
+    rootDir: string,
+    referenceTimestampMs: number
+  ): { directoryPath: string; observedAt: string } | null {
+    const candidateDirectoryPaths = new Set<string>(["."]);
+    const recentDirectories = [...this.hotDirectoryCache.values()]
+      .filter((entry) => entry.workspaceId === workspaceId)
+      .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+      .slice(0, HOT_DIRECTORY_MAX_PER_WORKSPACE);
+
+    for (const entry of recentDirectories) {
+      candidateDirectoryPaths.add(entry.directoryPath);
+    }
+
+    let selected: { directoryPath: string; observedAt: string; observedAtMs: number } | null = null;
+
+    for (const directoryPath of candidateDirectoryPaths) {
+      const stats = readAffairsLibraryStatsSafe(rootDir, directoryPath);
+      if (!stats) {
+        continue;
+      }
+
+      const observedAtMs = stats.mtimeMs;
+      if (!Number.isFinite(observedAtMs)) {
+        continue;
+      }
+
+      if (observedAtMs <= referenceTimestampMs + LIGHTWEIGHT_RECONCILE_DRIFT_TOLERANCE_MS) {
+        continue;
+      }
+
+      const candidate = {
+        directoryPath,
+        observedAt: new Date(observedAtMs).toISOString(),
+        observedAtMs
+      };
+
+      if (!selected || candidate.observedAtMs > selected.observedAtMs) {
+        selected = candidate;
+      }
+    }
+
+    return selected
+      ? {
+          directoryPath: selected.directoryPath,
+          observedAt: selected.observedAt
+        }
+      : null;
+  }
+
 
   dispose(): void {
     for (const state of this.autoTaskStateByWorkspace.values()) {
@@ -1638,6 +2270,11 @@ export class AffairsLibraryService {
       }
     }
     this.autoTaskStateByWorkspace.clear();
+    for (const timer of this.lightweightReconcileTimers.values()) {
+      clearInterval(timer);
+    }
+    this.lightweightReconcileTimers.clear();
+    this.reconcileObservationStateByWorkspace.clear();
     this.hotDirectoryCache.clear();
   }
 
@@ -1655,16 +2292,27 @@ export class AffairsLibraryService {
     const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedPath);
     const entry = this.hotDirectoryCache.get(cacheKey);
     const snapshot = this.taskManager.peek(HOST_TASK_TYPES.affairsLibraryDirectoryHint, cacheKey);
-    if (snapshot && (snapshot.status === "queued" || snapshot.status === "running")) {
+    if (snapshot && (snapshot.status === "queued" || snapshot.status === "running" || snapshot.status === "queue_timeout")) {
       return {
         path: normalizedPath,
-        state: snapshot.status === "running" ? "running" : "queued",
+        state: snapshot.status === "running"
+          ? "running"
+          : snapshot.status === "queue_timeout"
+            ? "queue_timeout"
+            : "queued",
         source: entry?.source ?? fallbackSource,
         lastRequestedAt: toIso(snapshot.enqueuedAt),
         lastCompletedAt: entry?.lastRefreshCompletedAt ?? null,
-        lastFailedAt: entry?.lastRefreshFailedAt ?? null,
-        runningTaskId: snapshot.taskId,
-        errorSummary: entry?.lastError ?? null
+        lastFailedAt: snapshot.status === "queue_timeout"
+          ? toIso(snapshot.finishedAt)
+          : entry?.lastRefreshFailedAt ?? null,
+        runningTaskId: snapshot.status === "running" ? snapshot.taskId : null,
+        errorSummary: snapshot.status === "queue_timeout"
+          ? snapshot.errorMessage ?? entry?.lastError ?? null
+          : entry?.lastError ?? null,
+        generatedAt: entry?.generatedAt ?? null,
+        filesystemObservedAt: entry?.filesystemObservedAt ?? null,
+        staleReason: entry?.staleReason ?? null
       };
     }
     return {
@@ -1675,7 +2323,10 @@ export class AffairsLibraryService {
       lastCompletedAt: entry?.lastRefreshCompletedAt ?? null,
       lastFailedAt: entry?.lastRefreshFailedAt ?? null,
       runningTaskId: null,
-      errorSummary: entry?.lastError ?? null
+      errorSummary: entry?.lastError ?? null,
+      generatedAt: entry?.generatedAt ?? null,
+      filesystemObservedAt: entry?.filesystemObservedAt ?? null,
+      staleReason: entry?.staleReason ?? null
     };
   }
 
@@ -1708,7 +2359,10 @@ export class AffairsLibraryService {
       lastRefreshCompletedAt: null,
       lastRefreshFailedAt: null,
       lastError: null,
-      status: "idle"
+      status: "idle",
+      generatedAt: null,
+      filesystemObservedAt: null,
+      staleReason: null
     };
     this.hotDirectoryCache.set(cacheKey, entry);
     return entry;
@@ -1726,6 +2380,9 @@ export class AffairsLibraryService {
       completedAt?: string | null;
       failedAt?: string | null;
       errorSummary?: string | null;
+      generatedAt?: string | null;
+      filesystemObservedAt?: string | null;
+      staleReason?: string | null;
     } = {}
   ): AffairsLibraryHotDirectoryCacheEntry {
     const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, directoryPath);
@@ -1737,6 +2394,9 @@ export class AffairsLibraryService {
     entry.lastRefreshCompletedAt = options.completedAt ?? entry.lastRefreshCompletedAt;
     entry.lastRefreshFailedAt = options.failedAt ?? entry.lastRefreshFailedAt;
     entry.lastError = options.errorSummary ?? null;
+    entry.generatedAt = options.generatedAt ?? entry.generatedAt;
+    entry.filesystemObservedAt = options.filesystemObservedAt ?? entry.filesystemObservedAt;
+    entry.staleReason = options.staleReason ?? null;
     entry.dirty = false;
     if (!options.preserveStatus) {
       entry.status = options.errorSummary ? "failed" : "fresh";
@@ -1759,6 +2419,7 @@ export class AffairsLibraryService {
     entry.status = entry.status === "running" ? "running" : "idle";
     entry.pendingHintReasons.add(reason);
     entry.lastHintAt = nowIso();
+    entry.staleReason = null;
     this.ensureDirectoryWindow(workspaceId, rootDir, directoryPath);
   }
 
@@ -1871,7 +2532,9 @@ export class AffairsLibraryService {
       source: liveResult.source,
       itemCount: liveResult.items.length,
       changedPaths,
-      items: liveResult.items
+      items: liveResult.items,
+      generatedAt: liveResult.generatedAt,
+      filesystemObservedAt: liveResult.filesystemObservedAt
     };
   }
 
@@ -1913,7 +2576,10 @@ export class AffairsLibraryService {
         {
           requestedAt: this.getOrCreateHotDirectoryEntry(workspaceId, meta.rootDir, meta.directoryPath).lastRefreshRequestedAt,
           completedAt: result.refreshedAt,
-          errorSummary: null
+          errorSummary: null,
+          generatedAt: result.generatedAt,
+          filesystemObservedAt: result.filesystemObservedAt,
+          staleReason: null
         }
       );
       writeAffairsLibraryDebugLog({
@@ -1940,6 +2606,7 @@ export class AffairsLibraryService {
         entry.status = "failed";
         entry.lastError = error instanceof Error ? error.message : String(error);
         entry.lastRefreshFailedAt = nowIso();
+        entry.staleReason = AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.staleFallback;
       }
       writeAffairsLibraryDebugLog({
         event: "task_failed",
@@ -1989,6 +2656,26 @@ export class AffairsLibraryService {
     const taskSnapshot = this.findRelevantIndexTaskSnapshot(workspaceId);
     const exportStatus = binding?.enabled ? readIndexStatusFileSafe(binding.rootDir) : null;
     const runtimeStatus = binding?.enabled ? readRuntimeStatusFileSafe(binding.rootDir) : null;
+    const workerHealth = binding?.enabled
+      ? mapTaskHelperWorkerHealth(getSharedTaskHelperPool().getWorkerHealth(binding.rootDir))
+      : null;
+    if (taskSnapshot?.status === "queue_timeout") {
+      return {
+        state: "queue_timeout",
+        dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.queueTimeout],
+        lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        lastFailedAt: toIso(taskSnapshot.finishedAt),
+        nextAllowedAt: null,
+        runningTaskId: null,
+        runningStage: null,
+        errorSummary: taskSnapshot.errorMessage ?? "文档库刷新排队等待超时",
+        workerHealth,
+        progress: runtimeStatus?.progress ?? null
+      };
+    }
+
     if (taskSnapshot && (taskSnapshot.status === "queued" || taskSnapshot.status === "running")) {
       const activeStartedAtMs = taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? null;
       const reconciledStatus = hasExportCaughtUp(exportStatus, activeStartedAtMs)
@@ -1999,7 +2686,11 @@ export class AffairsLibraryService {
         )
         : null;
       if (reconciledStatus) {
-        return reconciledStatus;
+        return {
+          ...reconciledStatus,
+          workerHealth,
+          progress: runtimeStatus?.progress ?? null
+        };
       }
 
       const orphanedRunningTask = binding?.enabled
@@ -2008,7 +2699,7 @@ export class AffairsLibraryService {
       if (orphanedRunningTask) {
         return {
           state: "failed",
-          dirtyReasons: ["refresh_failed", orphanedRunningTask.reason],
+          dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.refreshFailed, orphanedRunningTask.reason],
           lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
           lastStartedAt: toIso(taskSnapshot.startedAt),
           lastCompletedAt: null,
@@ -2017,21 +2708,23 @@ export class AffairsLibraryService {
           runningTaskId: null,
           runningStage: null,
           errorSummary: orphanedRunningTask.errorSummary,
+          workerHealth,
           progress: runtimeStatus?.progress ?? null,
         };
       }
 
       return {
-        state: "running",
-        dirtyReasons: ["refresh_requested"],
+        state: taskSnapshot.status === "queued" ? "queued" : "running",
+        dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.refreshRequested],
         lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
         lastStartedAt: toIso(taskSnapshot.startedAt),
         lastCompletedAt: null,
         lastFailedAt: null,
         nextAllowedAt: null,
-        runningTaskId: taskSnapshot.taskId,
+        runningTaskId: taskSnapshot.status === "running" ? taskSnapshot.taskId : null,
         runningStage: resolveAffairsLibraryRunningStage(workspaceId, taskSnapshot, runtimeStatus),
         errorSummary: null,
+        workerHealth,
         progress: runtimeStatus?.progress ?? null,
       };
     }
@@ -2039,11 +2732,16 @@ export class AffairsLibraryService {
     if (taskSnapshot?.status === "failed" || taskSnapshot?.status === "timeout" || taskSnapshot?.status === "cancelled") {
       const failedReferenceMs = taskSnapshot.finishedAt ?? taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? null;
       if (hasExportCaughtUp(exportStatus, failedReferenceMs)) {
-        return buildCompletedStatusFromExport(
+        const completedStatus = buildCompletedStatusFromExport(
           exportStatus,
           taskSnapshot.enqueuedAt,
           taskSnapshot.startedAt
-        ) ?? {
+        );
+        return completedStatus ? {
+          ...completedStatus,
+          workerHealth,
+          progress: runtimeStatus?.progress ?? null
+        } : {
           state: "fresh",
           dirtyReasons: [],
           lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
@@ -2054,6 +2752,7 @@ export class AffairsLibraryService {
           runningTaskId: null,
           runningStage: null,
           errorSummary: null,
+          workerHealth,
           progress: runtimeStatus?.progress ?? null,
         };
       }
@@ -2065,7 +2764,7 @@ export class AffairsLibraryService {
 
       return {
         state: now < nextAllowedAtMs ? "cooldown" : "failed",
-        dirtyReasons: ["refresh_failed"],
+        dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.refreshFailed],
         lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
         lastStartedAt: toIso(taskSnapshot.startedAt),
         lastCompletedAt: null,
@@ -2074,6 +2773,7 @@ export class AffairsLibraryService {
         runningTaskId: null,
         runningStage: null,
         errorSummary: taskSnapshot.errorMessage ?? "最近一次文档库刷新失败",
+        workerHealth,
         progress: runtimeStatus?.progress ?? null,
       };
     }
@@ -2081,7 +2781,7 @@ export class AffairsLibraryService {
     if (!binding) {
       return {
         state: "stale",
-        dirtyReasons: ["binding_required"],
+        dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.bindingRequired],
         lastRequestedAt: null,
         lastStartedAt: null,
         lastCompletedAt: null,
@@ -2089,14 +2789,15 @@ export class AffairsLibraryService {
         nextAllowedAt: null,
         runningTaskId: null,
         runningStage: null,
-        errorSummary: null
+        errorSummary: null,
+        workerHealth
       };
     }
 
     if (!binding.enabled) {
       return {
         state: "stale",
-        dirtyReasons: ["library_disabled"],
+        dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.libraryDisabled],
         lastRequestedAt: null,
         lastStartedAt: null,
         lastCompletedAt: null,
@@ -2104,7 +2805,8 @@ export class AffairsLibraryService {
         nextAllowedAt: null,
         runningTaskId: null,
         runningStage: null,
-        errorSummary: "文档库功能已关闭，启用后才会启动内置索引服务。"
+        errorSummary: "文档库功能已关闭，启用后才会启动内置索引服务。",
+        workerHealth
       };
     }
 
@@ -2121,13 +2823,19 @@ export class AffairsLibraryService {
         nextAllowedAt: null,
         runningTaskId: null,
         runningStage: null,
-        errorSummary: missingArtifact.errorSummary
+        errorSummary: missingArtifact.errorSummary,
+        workerHealth
       };
     }
 
-    return buildCompletedStatusFromExport(exportStatus, null, null) ?? {
+    const completedStatus = buildCompletedStatusFromExport(exportStatus, null, null);
+    return completedStatus ? {
+      ...completedStatus,
+      workerHealth,
+      progress: runtimeStatus?.progress ?? null
+    } : {
       state: "stale",
-      dirtyReasons: ["missing_export_status"],
+      dirtyReasons: [AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportStatus],
       lastRequestedAt: null,
       lastStartedAt: null,
       lastCompletedAt: null,
@@ -2135,7 +2843,8 @@ export class AffairsLibraryService {
       nextAllowedAt: null,
       runningTaskId: null,
       runningStage: null,
-      errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。"
+      errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。",
+      workerHealth
     };
   }
 
@@ -2146,6 +2855,7 @@ export class AffairsLibraryService {
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_apply_config",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
+        queueWaitTimeoutMs: INDEX_TASK_QUEUE_WAIT_TIMEOUT_MS,
         run: async (input) =>
           await this.runInternalCommand(input.rootDir, "apply-config", {
             reason: input.reason
@@ -2164,6 +2874,7 @@ export class AffairsLibraryService {
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_directory_hint",
         timeoutMs: DIRECTORY_HINT_TASK_TIMEOUT_MS,
+        queueWaitTimeoutMs: DIRECTORY_HINT_QUEUE_WAIT_TIMEOUT_MS,
         run: async (input) => await this.runDirectoryHintTask(input)
       });
     }
@@ -2180,6 +2891,7 @@ export class AffairsLibraryService {
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_index",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
+        queueWaitTimeoutMs: INDEX_TASK_QUEUE_WAIT_TIMEOUT_MS,
         run: async (input) =>
           await this.runInternalCommand(
             input.rootDir,
@@ -2198,6 +2910,7 @@ export class AffairsLibraryService {
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_export",
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
+        queueWaitTimeoutMs: INDEX_TASK_QUEUE_WAIT_TIMEOUT_MS,
         run: async (input) => await this.runInternalCommand(input.rootDir, "export")
       });
     }
@@ -2229,7 +2942,7 @@ export class AffairsLibraryService {
     for (const state of this.workspaceNavigationStateRepository.listEnabledAffairsLibraries()) {
       const binding = this.getBinding(state.workspaceId, state.userId);
       const status = this.readIndexStatus(state.workspaceId, binding);
-      if (status.state === "fresh" || status.state === "cooldown" || status.state === "running") {
+      if (status.state === "fresh" || status.state === "cooldown" || status.state === "queued" || status.state === "running") {
         this.logger.info(
           {
             workspaceId: state.workspaceId,
@@ -2603,7 +3316,10 @@ export class AffairsLibraryService {
 
     const failed = snapshots
       .filter((snapshot) =>
-        snapshot.status === "failed" || snapshot.status === "timeout" || snapshot.status === "cancelled"
+        snapshot.status === "failed"
+        || snapshot.status === "timeout"
+        || snapshot.status === "cancelled"
+        || snapshot.status === "queue_timeout"
       )
       .sort((left, right) =>
         (right.finishedAt ?? right.startedAt ?? right.enqueuedAt ?? 0)
@@ -2906,10 +3622,37 @@ export class AffairsLibraryService {
   }
 
   private readAvailableExportData(rootDir: string): AffairsLibraryExportData | null {
+    const startedAtMs = Date.now();
     try {
-      return this.readExportData(rootDir);
+      const result = this.readExportData(rootDir);
+      writeAffairsLibraryDebugLog({
+        event: "export_data_read",
+        processRole: "host",
+        rootDir,
+        source: "affairs_library.export_data",
+        status: result ? "fresh" : "missing",
+        durationMs: Math.max(0, Date.now() - startedAtMs),
+        details: {
+          generatedAt: result?.generatedAt ?? null,
+          documentCount: result?.documents.length ?? 0
+        }
+      });
+      return result;
     } catch {
-      return this.readLastUsableExportData(rootDir);
+      const fallback = this.readLastUsableExportData(rootDir);
+      writeAffairsLibraryDebugLog({
+        event: "export_data_read",
+        processRole: "host",
+        rootDir,
+        source: "affairs_library.export_data",
+        status: fallback ? "stale_fallback" : "missing",
+        durationMs: Math.max(0, Date.now() - startedAtMs),
+        details: {
+          generatedAt: fallback?.generatedAt ?? null,
+          documentCount: fallback?.documents.length ?? 0
+        }
+      });
+      return fallback;
     }
   }
 
@@ -3386,6 +4129,55 @@ function buildHotDirectoryCacheKey(workspaceId: string, directoryPath: string): 
   return `${workspaceId}::${normalizeFolderPath(directoryPath) || "."}`;
 }
 
+function estimateFolderDocumentCount(
+  normalizedFolderPath: string,
+  exportData: AffairsLibraryExportData | null,
+  cachedEntry: AffairsLibraryHotDirectoryCacheEntry | null
+): number | null {
+  if (cachedEntry?.items.length) {
+    return cachedEntry.items.length;
+  }
+
+  const folderPath = normalizedFolderPath || ".";
+  const folderNode = exportData?.folders.find((item) => normalizeFolderPath(item.path) === folderPath);
+  if (folderNode) {
+    return Math.max(0, folderNode.directDocumentCount);
+  }
+
+  if (!exportData) {
+    return null;
+  }
+
+  if (!normalizedFolderPath) {
+    return exportData.documents.length;
+  }
+
+  let count = 0;
+  for (const document of exportData.documents) {
+    if (!matchesDirectFolder(document.path, normalizedFolderPath)) {
+      continue;
+    }
+    count += 1;
+    if (count > LIVE_DIRECTORY_SYNC_SCAN_MAX_DOCUMENTS) {
+      return count;
+    }
+  }
+
+  return count;
+}
+
+function mapTaskHelperWorkerHealth(
+  snapshot: TaskHelperWorkerHealthSnapshot | null
+): AffairsLibraryWorkerHealthDto | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  return {
+    ...snapshot
+  };
+}
+
 function detectMissingIndexArtifact(rootDir: string): {
   reason: string;
   errorSummary: string;
@@ -3393,22 +4185,22 @@ function detectMissingIndexArtifact(rootDir: string): {
   const checks = [
     {
       relativePath: INDEX_DIR_RELATIVE_PATH,
-      reason: "missing_index_artifact",
+      reason: AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingIndexArtifact,
       errorSummary: "文档库索引目录缺失，系统会自动补跑一次全量重建。"
     },
     {
       relativePath: EXPORT_DIR_RELATIVE_PATH,
-      reason: "missing_export_dir",
+      reason: AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportDir,
       errorSummary: "文档库导出目录缺失，系统会自动补跑一次全量重建。"
     },
     {
       relativePath: EXPORT_STATUS_RELATIVE_PATH,
-      reason: "missing_export_status",
+      reason: AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportStatus,
       errorSummary: "文档库导出状态文件缺失，系统会自动补跑一次全量重建。"
     },
     {
       relativePath: EXPORT_MANIFEST_RELATIVE_PATH,
-      reason: "missing_export_manifest",
+      reason: AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportManifest,
       errorSummary: "文档库导出清单缺失，系统会自动补跑一次全量重建。"
     }
   ] as const;
@@ -3427,10 +4219,10 @@ function detectMissingIndexArtifact(rootDir: string): {
 
 function shouldForceFullRebuild(reason: string): boolean {
   const normalizedReason = reason.trim();
-  return normalizedReason.includes("missing_index_artifact")
-    || normalizedReason.includes("missing_export_dir")
-    || normalizedReason.includes("missing_export_status")
-    || normalizedReason.includes("missing_export_manifest");
+  return normalizedReason.includes(AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingIndexArtifact)
+    || normalizedReason.includes(AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportDir)
+    || normalizedReason.includes(AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportStatus)
+    || normalizedReason.includes(AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportManifest);
 }
 
 function matchesFavorite(
@@ -3669,7 +4461,10 @@ function buildAffairsFolderDocumentsFromFilesystem(
       ? "mixed"
       : hasLiveData
         ? "live"
-        : "snapshot"
+        : "snapshot",
+    generatedAt: exportData?.generatedAt ?? null,
+    filesystemObservedAt: hasLiveData ? nowIso() : null,
+    staleReason: null
   };
 }
 
@@ -3694,7 +4489,9 @@ export async function runAffairsLibraryDirectoryHintInHelper(input: {
     source: result.source,
     itemCount: result.items.length,
     changedPaths: result.items.map((item) => item.path).sort((left, right) => left.localeCompare(right, "zh-CN")),
-    items: result.items
+    items: result.items,
+    generatedAt: result.generatedAt,
+    filesystemObservedAt: result.filesystemObservedAt
   };
 }
 

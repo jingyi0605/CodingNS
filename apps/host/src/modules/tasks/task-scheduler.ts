@@ -3,6 +3,7 @@ import { TaskMetrics } from "./task-metrics.js";
 import { TaskRegistry } from "./task-registry.js";
 import {
   TaskCancelledError,
+  TaskQueueWaitTimeoutError,
   type TaskProgressUpdate,
   type TaskActivitySink,
   type TaskDefinition,
@@ -41,6 +42,7 @@ export class TaskScheduler {
   private readonly latestSnapshots = new Map<string, TaskSnapshot>();
   private readonly queuedTasks = new Map<string, TaskRecord<any, any>[]>();
   private readonly runningCountByType = new Map<string, number>();
+  private queueWaitSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly registry: TaskRegistry,
@@ -194,6 +196,7 @@ export class TaskScheduler {
       queue.push(record);
       this.queuedTasks.set(record.taskType, queue);
       this.latestSnapshots.set(record.dedupeKey, cloneSnapshot(record.snapshot));
+      this.rescheduleQueueWaitSweep();
       return;
     }
 
@@ -269,6 +272,11 @@ export class TaskScheduler {
 
           if (error instanceof TaskTimeoutError) {
             this.finishTimeout(record, error);
+            return;
+          }
+
+          if (error instanceof TaskQueueWaitTimeoutError) {
+            this.finishQueueWaitTimeout(record, error);
             return;
           }
 
@@ -515,6 +523,40 @@ export class TaskScheduler {
     this.settle(record, "reject", error);
   }
 
+  private finishQueueWaitTimeout(record: TaskRecord, error: TaskQueueWaitTimeoutError): void {
+    if (record.settled) {
+      return;
+    }
+
+    removeQueuedRecord(this.queuedTasks.get(record.taskType), record);
+    cleanupQueueBucketIfEmpty(this.queuedTasks, record.taskType);
+    this.metrics.increment(record.taskType, record.definition.executionLane, "timeout");
+    const finishedAt = Date.now();
+    record.snapshot = {
+      ...record.snapshot,
+      status: "queue_timeout",
+      finishedAt,
+      errorCode: "TASK_QUEUE_WAIT_TIMEOUT",
+      errorMessage: error.message,
+      errorDetail: error.message
+    };
+    this.activitySink?.record({
+      eventType: "timeout",
+      taskId: record.taskId,
+      taskType: record.taskType,
+      key: record.key,
+      executionLane: record.definition.executionLane,
+      source: record.source,
+      status: "queue_timeout",
+      attempt: record.snapshot.attempt,
+      waitMs: Date.now() - record.snapshot.enqueuedAt,
+      runMs: null,
+      errorMessage: error.message
+    });
+    this.settle(record, "reject", error);
+    this.rescheduleQueueWaitSweep();
+  }
+
   private settle<TResult>(
     record: TaskRecord<unknown, TResult>,
     mode: "resolve" | "reject",
@@ -542,10 +584,12 @@ export class TaskScheduler {
     }
 
     removeQueuedRecord(this.queuedTasks.get(record.taskType), record);
+    cleanupQueueBucketIfEmpty(this.queuedTasks, record.taskType);
     record.controller.abort(
       new TaskCancelledError(reason ? `任务已取消: ${reason}` : "任务已取消")
     );
     this.finishCancelled(record, record.controller.signal.reason);
+    this.rescheduleQueueWaitSweep();
   }
 
   private startNext(taskType: string): void {
@@ -570,6 +614,82 @@ export class TaskScheduler {
     if (queue.length === 0) {
       this.queuedTasks.delete(taskType);
     }
+
+    this.rescheduleQueueWaitSweep();
+  }
+
+  private sweepQueuedTimeouts(): void {
+    const now = Date.now();
+
+    for (const [taskType, queue] of this.queuedTasks.entries()) {
+      for (const record of [...queue]) {
+        if (record.settled || record.snapshot.startedAt !== null) {
+          continue;
+        }
+
+        const queueWaitTimeoutMs = normalizeQueueWaitTimeout(record.definition.queueWaitTimeoutMs);
+        if (queueWaitTimeoutMs === null) {
+          continue;
+        }
+
+        const queuedForMs = now - record.snapshot.enqueuedAt;
+        if (queuedForMs < queueWaitTimeoutMs) {
+          continue;
+        }
+
+        this.finishQueueWaitTimeout(
+          record,
+          new TaskQueueWaitTimeoutError(
+            `${record.taskType}:${record.key} 排队等待超过 ${queueWaitTimeoutMs}ms 仍未开始执行`
+          )
+        );
+      }
+
+      cleanupQueueBucketIfEmpty(this.queuedTasks, taskType);
+    }
+  }
+
+  private rescheduleQueueWaitSweep(): void {
+    if (this.queueWaitSweepTimer) {
+      clearTimeout(this.queueWaitSweepTimer);
+      this.queueWaitSweepTimer = null;
+    }
+
+    const delayMs = this.computeNextQueueWaitSweepDelay();
+    if (delayMs === null) {
+      return;
+    }
+
+    this.queueWaitSweepTimer = setTimeout(() => {
+      this.queueWaitSweepTimer = null;
+      this.sweepQueuedTimeouts();
+      this.rescheduleQueueWaitSweep();
+    }, delayMs);
+  }
+
+  private computeNextQueueWaitSweepDelay(): number | null {
+    const now = Date.now();
+    let nextDelayMs: number | null = null;
+
+    for (const queue of this.queuedTasks.values()) {
+      for (const record of queue) {
+        if (record.settled || record.snapshot.startedAt !== null) {
+          continue;
+        }
+
+        const queueWaitTimeoutMs = normalizeQueueWaitTimeout(record.definition.queueWaitTimeoutMs);
+        if (queueWaitTimeoutMs === null) {
+          continue;
+        }
+
+        const remainingMs = Math.max(1, queueWaitTimeoutMs - (now - record.snapshot.enqueuedAt));
+        nextDelayMs = nextDelayMs === null
+          ? remainingMs
+          : Math.min(nextDelayMs, remainingMs);
+      }
+    }
+
+    return nextDelayMs;
   }
 }
 
@@ -617,6 +737,14 @@ function resolveBackoffMs(definition: TaskDefinition, attempt: number): number {
   return typeof retryPolicy.backoffMs === "function"
     ? Math.max(0, retryPolicy.backoffMs(attempt))
     : Math.max(0, retryPolicy.backoffMs);
+}
+
+function normalizeQueueWaitTimeout(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.floor(value));
 }
 
 function normalizeCancelledError(error: unknown): TaskCancelledError {
@@ -672,5 +800,15 @@ function removeQueuedRecord(queue: TaskRecord[] | undefined, record: TaskRecord)
 
   if (index >= 0) {
     queue.splice(index, 1);
+  }
+}
+
+function cleanupQueueBucketIfEmpty(
+  queuedTasks: Map<string, TaskRecord<any, any>[]>,
+  taskType: string
+): void {
+  const queue = queuedTasks.get(taskType);
+  if (queue && queue.length === 0) {
+    queuedTasks.delete(taskType);
   }
 }

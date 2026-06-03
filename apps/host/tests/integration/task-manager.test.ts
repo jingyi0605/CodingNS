@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTaskManager } from "../../src/modules/tasks/task-manager.js";
 import { createHostTaskLaneExecutors } from "../../src/modules/tasks/task-lane-executors.js";
-import { TaskCancelledError, TaskTimeoutError } from "../../src/modules/tasks/task-types.js";
+import { TaskCancelledError, TaskQueueWaitTimeoutError, TaskTimeoutError } from "../../src/modules/tasks/task-types.js";
 
 describe("TaskManager", () => {
   it("会按 taskType + key 去重，并记录最小指标", async () => {
@@ -109,6 +109,90 @@ describe("TaskManager", () => {
     expect(metrics.totals.timeout).toBe(1);
     expect(metrics.totals.finished).toBe(0);
     expect(manager.peek("test.timeout", "provider-1")?.status).toBe("timeout");
+  });
+
+  it("并发受限且排队过久时，会进入 queue_timeout 并清理陈旧 queued 快照", async () => {
+    vi.useFakeTimers();
+    const manager = createTaskManager();
+    const firstDeferred = createDeferred<string>();
+    const run = vi.fn(async ({ value }: { value: string }) => {
+      if (value === "first") {
+        return firstDeferred.promise;
+      }
+      return value;
+    });
+
+    manager.register({
+      taskType: "test.queue_wait_timeout",
+      executionLane: "host_background",
+      concurrency: 1,
+      queueWaitTimeoutMs: 20,
+      run
+    });
+
+    const first = manager.enqueue<{ value: string }, string>("test.queue_wait_timeout", {
+      key: "first",
+      input: { value: "first" }
+    });
+    const second = manager.enqueue<{ value: string }, string>("test.queue_wait_timeout", {
+      key: "second",
+      input: { value: "second" }
+    });
+    const secondResult = second.promise.catch((error) => error);
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(secondResult).resolves.toBeInstanceOf(TaskQueueWaitTimeoutError);
+    expect(manager.peek("test.queue_wait_timeout", "second")).toMatchObject({
+      status: "queue_timeout",
+      errorCode: "TASK_QUEUE_WAIT_TIMEOUT"
+    });
+
+    firstDeferred.resolve("first");
+    await expect(first.promise).resolves.toBe("first");
+    expect(run).toHaveBeenCalledTimes(1);
+
+    const third = manager.enqueue<{ value: string }, string>("test.queue_wait_timeout", {
+      key: "third",
+      input: { value: "third" }
+    });
+    await expect(third.promise).resolves.toBe("third");
+    expect(run).toHaveBeenCalledTimes(2);
+
+    const metrics = manager.observe();
+    expect(metrics.totals.timeout).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it("helper 内部排队超时上抛后，Host 任务快照也会收口成 queue_timeout", async () => {
+    const manager = createTaskManager(null, {
+      helper_process: {
+        execute: async () => {
+          throw new TaskQueueWaitTimeoutError("affairs.library_index:1 helper 内部排队等待超过 15000ms 仍未开始执行");
+        }
+      }
+    });
+
+    manager.register({
+      taskType: "test.helper_queue_wait_timeout",
+      executionLane: "helper_process",
+      helperProcessHandler: "affairs.library_index",
+      queueWaitTimeoutMs: 15_000,
+      run: async () => "unexpected"
+    });
+
+    const handle = manager.enqueue("test.helper_queue_wait_timeout", {
+      key: "workspace-1",
+      input: {
+        rootDir: "/tmp/demo"
+      }
+    });
+
+    await expect(handle.promise).rejects.toBeInstanceOf(TaskQueueWaitTimeoutError);
+    expect(manager.peek("test.helper_queue_wait_timeout", "workspace-1")).toMatchObject({
+      status: "queue_timeout",
+      errorCode: "TASK_QUEUE_WAIT_TIMEOUT"
+    });
   });
 
   it("helper_process lane 会优先走统一 helper executor，而不是回落到主线程 run", async () => {

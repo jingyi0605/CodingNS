@@ -163,7 +163,7 @@ import { RuntimeObservabilityService } from "../modules/tasks/observability-serv
 import { SchedulerMetrics } from "../modules/tasks/scheduler-metrics.js";
 import { TaskActivityLog } from "../modules/tasks/task-activity-log.js";
 import { createTaskManager } from "../modules/tasks/task-manager.js";
-import { disposeSharedTaskHelperProcessClient } from "../modules/tasks/task-helper-client.js";
+import { disposeSharedTaskHelperPool } from "../modules/tasks/task-helper-pool.js";
 import { createHostTaskLaneExecutors } from "../modules/tasks/task-lane-executors.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
@@ -1392,6 +1392,10 @@ export function createServer(config: HostConfig) {
         affairsLibraryService.scheduleAutoApplyConfig(workspaceId, event.reason);
         return;
       }
+      if (event.kind === "audit") {
+        affairsLibraryService.schedulePeriodicAudit(workspaceId, event.reason);
+        return;
+      }
       affairsLibraryService.scheduleAutoRefresh(workspaceId, event.reason, event.targetPath);
     },
     app.log
@@ -1842,7 +1846,7 @@ export function createServer(config: HostConfig) {
     gitCommandRunner.dispose();
     tailscaleHelperClient.dispose();
     wechatClawRuntimeManager?.dispose();
-    disposeSharedTaskHelperProcessClient();
+    disposeSharedTaskHelperPool();
     disposeSharedProviderDiscoveryHelperClient();
     disposeSharedOpenCodeSystemProbeHelperClient();
     database.close();

@@ -4,12 +4,39 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import type { TaskHelperProcessHandlerName } from "./task-helper-process-handlers.js";
-import { TaskTimeoutError } from "./task-types.js";
+import { TaskQueueWaitTimeoutError, TaskTimeoutError } from "./task-types.js";
 
 interface PendingRequest<TResult> {
   resolve: (value: TResult) => void;
   reject: (reason?: unknown) => void;
   child: ChildProcessWithoutNullStreams;
+}
+
+interface TaskHelperExecuteOptions {
+  queueWaitTimeoutMs?: number;
+}
+
+export interface TaskHelperProcessClientHealthSnapshot {
+  pid: number | null;
+  alive: boolean;
+  inflightRemoteRequestCount: number;
+  startedAt: string | null;
+  lastHeartbeatAt: string | null;
+  lastExitAt: string | null;
+  lastTerminationReason: string | null;
+}
+
+export interface TaskHelperWorkerClientLike {
+  execute<TResult>(
+    handler: TaskHelperProcessHandlerName,
+    input: unknown,
+    signal?: AbortSignal,
+    options?: TaskHelperExecuteOptions
+  ): Promise<TResult>;
+  dispose(): void;
+  hasInflightRemoteWork(): boolean;
+  terminateCurrentChild(reason: string): void;
+  getHealthSnapshot(): TaskHelperProcessClientHealthSnapshot;
 }
 
 type HelperTransportError = Error & {
@@ -28,6 +55,7 @@ type HelperResponse =
       id: string;
       ok: false;
       error: string;
+      errorCode?: string;
     };
 
 const GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY = "__codingnsTaskHelperProcessClient__";
@@ -39,8 +67,13 @@ export class TaskHelperProcessClient {
   private stdoutReader: readline.Interface | null = null;
   private stdoutReaderChild: ChildProcessWithoutNullStreams | null = null;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
+  private readonly inflightRemoteRequestIds = new Set<string>();
   private nextRequestId = 1;
   private disposed = false;
+  private startedAtMs: number | null = null;
+  private lastHeartbeatAtMs: number | null = null;
+  private lastExitAtMs: number | null = null;
+  private lastTerminationReason: string | null = null;
 
   constructor() {
     this.ensureChild();
@@ -49,13 +82,14 @@ export class TaskHelperProcessClient {
   async execute<TResult>(
     handler: TaskHelperProcessHandlerName,
     input: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options: TaskHelperExecuteOptions = {}
   ): Promise<TResult> {
     let attempt = 0;
 
     while (true) {
       try {
-        return await this.executeOnce<TResult>(handler, input, signal);
+        return await this.executeOnce<TResult>(handler, input, signal, options);
       } catch (error) {
         if (isHelperTimeoutError(error, signal)) {
           // 超时现在先走 cancel 链路，不再第一时间把整个 helper 进程打死。
@@ -98,7 +132,8 @@ export class TaskHelperProcessClient {
   private async executeOnce<TResult>(
     handler: TaskHelperProcessHandlerName,
     input: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options: TaskHelperExecuteOptions = {}
   ): Promise<TResult> {
     if (this.disposed) {
       return Promise.reject(new Error("task helper 已关闭"));
@@ -148,13 +183,15 @@ export class TaskHelperProcessClient {
           }
         }
       });
+      this.inflightRemoteRequestIds.add(id);
 
       child.stdin.write(
         `${JSON.stringify({
           id,
           type: "run",
           handler,
-          input
+          input,
+          queueWaitTimeoutMs: normalizeHelperQueueWaitTimeout(options.queueWaitTimeoutMs)
         })}\n`,
         (error) => {
           if (!error) {
@@ -166,6 +203,7 @@ export class TaskHelperProcessClient {
           }
 
           this.pendingRequests.delete(id);
+          this.inflightRemoteRequestIds.delete(id);
           reject(attachFailedHelperChild(
             normalizeHelperTransportError(error, "task helper stdin 已断开"),
             child
@@ -193,6 +231,28 @@ export class TaskHelperProcessClient {
     this.stdoutReaderChild = null;
   }
 
+  hasInflightRemoteWork(): boolean {
+    return this.inflightRemoteRequestIds.size > 0;
+  }
+
+  terminateCurrentChild(reason: string): void {
+    this.lastTerminationReason = reason;
+    this.lastExitAtMs = Date.now();
+    this.forceRecycleCurrentChild(reason);
+  }
+
+  getHealthSnapshot(): TaskHelperProcessClientHealthSnapshot {
+    return {
+      pid: this.child?.pid ?? null,
+      alive: Boolean(this.child && !this.child.killed && !this.child.stdin.destroyed),
+      inflightRemoteRequestCount: this.inflightRemoteRequestIds.size,
+      startedAt: toIso(this.startedAtMs),
+      lastHeartbeatAt: toIso(this.lastHeartbeatAtMs),
+      lastExitAt: toIso(this.lastExitAtMs),
+      lastTerminationReason: this.lastTerminationReason
+    };
+  }
+
   private handleResponseLine(line: string): void {
     const trimmed = line.trim();
 
@@ -209,6 +269,8 @@ export class TaskHelperProcessClient {
     }
 
     const pending = this.pendingRequests.get(payload.id);
+    this.inflightRemoteRequestIds.delete(payload.id);
+    this.lastHeartbeatAtMs = Date.now();
 
     if (!pending) {
       return;
@@ -221,6 +283,11 @@ export class TaskHelperProcessClient {
       return;
     }
 
+    if (payload.errorCode === "TASK_QUEUE_WAIT_TIMEOUT") {
+      pending.reject(new TaskQueueWaitTimeoutError(payload.error));
+      return;
+    }
+
     pending.reject(new Error(payload.error));
   }
 
@@ -230,6 +297,7 @@ export class TaskHelperProcessClient {
     }
 
     this.pendingRequests.clear();
+    this.inflightRemoteRequestIds.clear();
   }
 
   private async sendCancel(targetId: string): Promise<void> {
@@ -331,6 +399,10 @@ export class TaskHelperProcessClient {
     this.child = child;
     this.stdoutReader = stdoutReader;
     this.stdoutReaderChild = child;
+    this.startedAtMs = Date.now();
+    this.lastHeartbeatAtMs = this.startedAtMs;
+    this.lastExitAtMs = null;
+    this.lastTerminationReason = null;
     return child;
   }
 
@@ -343,6 +415,8 @@ export class TaskHelperProcessClient {
   }
 
   private forceRecycleChild(child: ChildProcessWithoutNullStreams, reason: string): void {
+    this.lastTerminationReason = reason;
+    this.lastExitAtMs = Date.now();
     if (this.child === child) {
       this.child = null;
     }
@@ -373,6 +447,11 @@ export class TaskHelperProcessClient {
 
     if (!error) {
       return;
+    }
+
+    this.lastExitAtMs = Date.now();
+    if (!this.lastTerminationReason) {
+      this.lastTerminationReason = error.message;
     }
 
     if (!child) {
@@ -414,9 +493,18 @@ export class TaskHelperProcessClient {
       }
 
       this.pendingRequests.delete(requestId);
+      this.inflightRemoteRequestIds.delete(requestId);
       pending.reject(error);
     }
   }
+}
+
+function normalizeHelperQueueWaitTimeout(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.floor(value));
 }
 
 function normalizeHelperTransportError(error: unknown, fallbackMessage: string): HelperTransportError {
@@ -498,6 +586,14 @@ export function disposeSharedTaskHelperProcessClient(): void {
   sharedClient.dispose();
   scope[GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY] = null;
   sharedTaskHelperProcessClient = null;
+}
+
+function toIso(timestampMs: number | null): string | null {
+  if (!timestampMs || !Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  return new Date(timestampMs).toISOString();
 }
 
 function resolveHelperLaunch(): { command: string; args: string[] } {

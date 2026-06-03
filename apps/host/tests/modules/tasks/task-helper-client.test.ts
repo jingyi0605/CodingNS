@@ -4,7 +4,7 @@ import type * as readline from "node:readline";
 import { describe, expect, it, vi } from "vitest";
 
 import { TaskHelperProcessClient } from "../../../src/modules/tasks/task-helper-client.js";
-import { TaskTimeoutError } from "../../../src/modules/tasks/task-types.js";
+import { TaskQueueWaitTimeoutError, TaskTimeoutError } from "../../../src/modules/tasks/task-types.js";
 
 describe("TaskHelperProcessClient", () => {
   it("helper recycle 导致 stdout 关闭时会自动重试一次", async () => {
@@ -155,5 +155,34 @@ describe("TaskHelperProcessClient", () => {
     expect(client.stdoutReader).not.toBeNull();
     expect(client.stdoutReaderChild).toBe(child);
     expect(rejectPendingForChild).not.toHaveBeenCalled();
+  });
+
+  it("helper 返回 queue timeout 错误码时，会映射成 TaskQueueWaitTimeoutError", () => {
+    const reject = vi.fn();
+    const client = Object.create(TaskHelperProcessClient.prototype) as TaskHelperProcessClient & {
+      pendingRequests: Map<string, { reject: (reason?: unknown) => void }>;
+      inflightRemoteRequestIds: Set<string>;
+      lastHeartbeatAtMs: number | null;
+    };
+
+    client.pendingRequests = new Map([
+      ["1", { reject }]
+    ]);
+    client.inflightRemoteRequestIds = new Set(["1"]);
+    client.lastHeartbeatAtMs = null;
+
+    (TaskHelperProcessClient.prototype as any).handleResponseLine.call(
+      client,
+      JSON.stringify({
+        type: "result",
+        id: "1",
+        ok: false,
+        error: "affairs.library_index:1 helper 内部排队等待超过 15000ms 仍未开始执行",
+        errorCode: "TASK_QUEUE_WAIT_TIMEOUT"
+      })
+    );
+
+    expect(reject).toHaveBeenCalledTimes(1);
+    expect(reject.mock.calls[0]?.[0]).toBeInstanceOf(TaskQueueWaitTimeoutError);
   });
 });

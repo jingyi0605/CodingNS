@@ -185,6 +185,7 @@ interface AffairsWorkbenchProviderProps {
   navigationGroups: WorkspaceSessionGroup[];
   state: AffairsViewState;
   onStateChange: (nextState: AffairsViewState) => void;
+  onRefreshNavigation?: () => Promise<void>;
   children: ReactNode;
 }
 
@@ -684,6 +685,7 @@ export function AffairsWorkbenchProvider({
   navigationGroups,
   state,
   onStateChange,
+  onRefreshNavigation,
   children
 }: AffairsWorkbenchProviderProps) {
   const navigationContext = useContext(UNSAFE_NavigationContext) as { navigator?: Navigator } | null;
@@ -950,6 +952,57 @@ export function AffairsWorkbenchProvider({
       };
     });
   }, []);
+
+  const clearSelectedConversationSession = useCallback((input: {
+    kind: AffairsConversationKind;
+    sessionId: string;
+  }) => {
+    setSelectedConversationSession((current) => (
+      current?.sessionId === input.sessionId && current.kind === input.kind ? null : current
+    ));
+    setConversationRuntimeSeed((current) => (
+      current?.session.sessionId === input.sessionId ? null : current
+    ));
+    setLightweightRuntimeSnapshot(input.sessionId, null);
+    if (lastConversationNodeIdRef.current === buildAffairsConversationSessionNodeId(input.kind, input.sessionId)) {
+      lastConversationNodeIdRef.current = null;
+    }
+    if (state.selectedNodeId === buildAffairsConversationSessionNodeId(input.kind, input.sessionId)) {
+      onStateChange({
+        ...state,
+        primarySection: "conversation",
+        selectedNodeId: null,
+        selectedObjectId: null,
+        selectedDocumentId: null
+      });
+    }
+  }, [onStateChange, setLightweightRuntimeSnapshot, state]);
+
+  useEffect(() => {
+    if (!selectedConversationSession) {
+      return;
+    }
+
+    if (conversationRuntimeSeed?.session.sessionId === selectedConversationSession.sessionId) {
+      return;
+    }
+
+    if (selectedConversationSession.kind === "lightweight") {
+      if (lightweightConversationSessions.some((item) => item.sessionId === selectedConversationSession.sessionId)) {
+        return;
+      }
+    } else if (agentConversationSessions.some((item) => item.sessionId === selectedConversationSession.sessionId)) {
+      return;
+    }
+
+    clearSelectedConversationSession(selectedConversationSession);
+  }, [
+    agentConversationSessions,
+    clearSelectedConversationSession,
+    conversationRuntimeSeed?.session.sessionId,
+    lightweightConversationSessions,
+    selectedConversationSession
+  ]);
 
   const reloadLightweightConversationSessions = useCallback(async () => {
     setLightweightConversationSessionsLoading(true);
@@ -2447,6 +2500,11 @@ export function AffairsWorkbenchProvider({
       } else {
         setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
       }
+      clearSelectedConversationSession({
+        kind: input.kind,
+        sessionId: nextSession.sessionId
+      });
+      await onRefreshNavigation?.();
     },
     toggleConversationSessionFavorite: async (input) => {
       const nextSession = input.kind === "lightweight"
@@ -2465,6 +2523,7 @@ export function AffairsWorkbenchProvider({
           item.sessionId === nextSession.sessionId ? nextSession : item
         )));
       }
+      await onRefreshNavigation?.();
     },
     markConversationSessionSeen: (kind, sessionId, seenAt) => {
       const nextSeenAt = seenAt ?? new Date().toISOString();
@@ -2524,23 +2583,11 @@ export function AffairsWorkbenchProvider({
         await deleteSession(input.session.sessionId);
         setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
       }
-      setLightweightRuntimeSnapshot(input.session.sessionId, null);
-      setConversationRuntimeSeed((current) => (
-        current?.session.sessionId === input.session.sessionId ? null : current
-      ));
-      if (selectedConversationSession?.sessionId === input.session.sessionId) {
-        setSelectedConversationSession(null);
-        if (lastConversationNodeIdRef.current === buildAffairsConversationSessionNodeId(input.kind, input.session.sessionId)) {
-          lastConversationNodeIdRef.current = null;
-        }
-        onStateChange({
-          ...state,
-          primarySection: "conversation",
-          selectedNodeId: null,
-          selectedObjectId: null,
-          selectedDocumentId: null
-        });
-      }
+      clearSelectedConversationSession({
+        kind: input.kind,
+        sessionId: input.session.sessionId
+      });
+      await onRefreshNavigation?.();
     },
     exportConversationSession: async ({ session, format }) => {
       if (conversationExportingSessionId) {
@@ -2711,6 +2758,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     managedTags,
     initGuard,
     onStateChange,
+    onRefreshNavigation,
     selectedManagedTag,
     selectedConversationDraft,
     selectedConversationSession,
@@ -2723,6 +2771,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     agentConversationSessions,
     agentConversationSessionsLoading,
     reloadAgentConversationSessions,
+    clearSelectedConversationSession,
     selectedObject,
     sidebarNodes,
     selectedTagPaths,
@@ -5072,6 +5121,14 @@ function AffairsAgentConversationState(input: {
       return;
     }
 
+    if (!currentAgentConversationSession || currentAgentConversationSession.isArchived) {
+      restoredHistorySessionIdRef.current = requestedSessionId;
+      if (restoringSessionId === requestedSessionId) {
+        setRestoringSessionId(null);
+      }
+      return;
+    }
+
     const butlerSessionId = extractButlerManagedSessionIdFromRawStoreRef(currentAgentConversationSession?.rawStoreRef ?? null);
     if (!agentProjectId || !butlerSessionId) {
       return;
@@ -5097,6 +5154,11 @@ function AffairsAgentConversationState(input: {
           ),
           bootstrapMessages: []
         });
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        restoredHistorySessionIdRef.current = requestedSessionId;
       } finally {
         if (!cancelled) {
           setRestoringSessionId(null);
@@ -5111,6 +5173,7 @@ function AffairsAgentConversationState(input: {
     activateConversationSession,
     agentProjectId,
     butlerStore,
+    currentAgentConversationSession?.isArchived,
     currentAgentConversationSession?.rawStoreRef,
     currentAgentConversationSession?.workspaceId,
     scopedControlSession?.session.sessionId,
@@ -12014,7 +12077,7 @@ function convertButlerManagedSessionToAffairsSessionSummary(
     isSubagent: false,
     subagentLabel: null,
     isArchived: session.isArchived,
-    isFavorite: false,
+    isFavorite: session.isFavorite === true,
     title: session.title?.trim() || session.sessionId,
     messageCount: 0,
     lastMessageAt: session.updatedAt,
@@ -13084,6 +13147,58 @@ function buildIndexStatusDetails(
         multiline: true
       });
     }
+    pushIndexStatusDetail(
+      details,
+      t("shell.affairsLibraryDirectoryStatusGeneratedAtLabel"),
+      directoryStatus.generatedAt ?? null
+    );
+    pushIndexStatusDetail(
+      details,
+      t("shell.affairsLibraryDirectoryStatusFilesystemObservedAtLabel"),
+      directoryStatus.filesystemObservedAt ?? null
+    );
+    if (directoryStatus.staleReason?.trim()) {
+      details.push({
+        label: t("shell.affairsLibraryDirectoryStatusStaleReasonLabel"),
+        value: directoryStatus.staleReason.trim(),
+        multiline: true
+      });
+    }
+  }
+
+  if (status.workerHealth) {
+    const workerHealth = status.workerHealth;
+    details.push({
+      label: t("shell.affairsLibraryWorkerHealthStateLabel"),
+      value: resolveWorkerHealthStateLabel(workerHealth.state)
+    });
+    details.push({
+      label: t("shell.affairsLibraryWorkerHealthPidLabel"),
+      value: workerHealth.pid === null ? t("common.none") : String(workerHealth.pid)
+    });
+    details.push({
+      label: t("shell.affairsLibraryWorkerHealthLocalInflightLabel"),
+      value: String(workerHealth.inflightLocalCount)
+    });
+    details.push({
+      label: t("shell.affairsLibraryWorkerHealthRemoteInflightLabel"),
+      value: String(workerHealth.inflightRemoteRequestCount)
+    });
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthStartedAtLabel"), workerHealth.startedAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthHeartbeatLabel"), workerHealth.lastHeartbeatAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastStartedAtLabel"), workerHealth.lastStartedAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastCompletedAtLabel"), workerHealth.lastCompletedAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastFailedAtLabel"), workerHealth.lastFailedAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthSoftCancelAtLabel"), workerHealth.lastSoftCancelRequestedAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthHardKillAtLabel"), workerHealth.lastHardKillAt);
+    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastExitAtLabel"), workerHealth.lastExitAt);
+    if (workerHealth.lastTerminationReason?.trim()) {
+      details.push({
+        label: t("shell.affairsLibraryWorkerHealthTerminationReasonLabel"),
+        value: workerHealth.lastTerminationReason.trim(),
+        multiline: true
+      });
+    }
   }
 
   return details;
@@ -13168,9 +13283,25 @@ function resolveDirectoryStatusSourceLabel(source: string) {
       return t("shell.affairsLibraryDirectoryStatusSourceLive");
     case "snapshot":
       return t("shell.affairsLibraryDirectoryStatusSourceSnapshot");
+    case "stale_fallback":
+      return t("shell.affairsLibraryDirectoryStatusSourceStaleFallback");
     case "mixed":
     default:
       return t("shell.affairsLibraryDirectoryStatusSourceMixed");
+  }
+}
+
+function resolveWorkerHealthStateLabel(state: string) {
+  switch (state) {
+    case "running":
+      return t("shell.affairsLibraryWorkerHealthStateRunning");
+    case "terminating":
+      return t("shell.affairsLibraryWorkerHealthStateTerminating");
+    case "recycled":
+      return t("shell.affairsLibraryWorkerHealthStateRecycled");
+    case "idle":
+    default:
+      return t("shell.affairsLibraryWorkerHealthStateIdle");
   }
 }
 
