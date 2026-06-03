@@ -216,6 +216,7 @@ const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_STATUS_POLL_IDLE_MS = 12_000;
 const AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS = 3_000;
 const AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS = 12_000;
+const AFFAIRS_LIBRARY_DIRECTORY_POLL_PAUSED_DURING_INDEX_MS = 30_000;
 const AFFAIRS_FOLDER_TAG_TASK_POLL_RUNNING_MS = 1_200;
 const AFFAIRS_FOLDER_TAG_TASK_POLL_TERMINAL_HIDE_MS = 8_000;
 const AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_RUNNING_MS = 1_200;
@@ -1398,13 +1399,26 @@ export function AffairsWorkbenchProvider({
 
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const pollIntervalMs = currentDirectoryStatus?.state === "queued"
-      || currentDirectoryStatus?.state === "running"
-      || indexStatus?.state === "running"
-      ? AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS
-      : AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS;
+    const indexRunning = indexStatus?.state === "running";
+    const pollIntervalMs = indexRunning
+      ? AFFAIRS_LIBRARY_DIRECTORY_POLL_PAUSED_DURING_INDEX_MS
+      : (
+        currentDirectoryStatus?.state === "queued"
+        || currentDirectoryStatus?.state === "running"
+          ? AFFAIRS_LIBRARY_DIRECTORY_POLL_ACTIVE_MS
+          : AFFAIRS_LIBRARY_DIRECTORY_POLL_IDLE_MS
+      );
 
     const pollDirectory = async () => {
+      if (indexRunning) {
+        if (!disposed) {
+          timer = setTimeout(() => {
+            void pollDirectory();
+          }, pollIntervalMs);
+        }
+        return;
+      }
+
       try {
         const response = await listAffairsLibraryDocuments(workspaceId, {
           browseMode: "folder",
