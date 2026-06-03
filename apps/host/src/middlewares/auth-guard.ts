@@ -21,7 +21,8 @@ export function isPublicRoute(method: string, routePath: string): boolean {
 }
 
 function isPublicRoutePrefix(routePath: string): boolean {
-  return routePath.startsWith("/api/public/channel-gateways/");
+  return routePath.startsWith("/api/public/channel-gateways/")
+    || routePath.startsWith("/api/office/onlyoffice/callback/");
 }
 
 function isAssistantRoute(routePath: string): boolean {

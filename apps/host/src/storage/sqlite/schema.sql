@@ -568,6 +568,19 @@ CREATE TABLE IF NOT EXISTS office_rollback_records (
 CREATE INDEX IF NOT EXISTS idx_office_rollback_records_task_id ON office_rollback_records(task_id);
 CREATE INDEX IF NOT EXISTS idx_office_rollback_records_step_id ON office_rollback_records(step_id);
 
+CREATE TABLE IF NOT EXISTS office_onlyoffice_settings (
+  singleton_key TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  server_url TEXT,
+  public_base_url TEXT,
+  callback_base_url TEXT,
+  user_display_name TEXT,
+  user_avatar_url TEXT,
+  jwt_secret TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workspace_worktrees (
   workspace_id TEXT PRIMARY KEY,
   root_workspace_id TEXT NOT NULL,
@@ -792,6 +805,22 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
+
+CREATE TABLE IF NOT EXISTS affairs_assistant_session_snapshots (
+  workspace_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  project_id TEXT,
+  project_workspace_id TEXT,
+  agent_workspace_path TEXT,
+  sessions_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, user_id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_affairs_assistant_session_snapshots_user_id
+  ON affairs_assistant_session_snapshots(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS session_states (
   session_id TEXT NOT NULL,

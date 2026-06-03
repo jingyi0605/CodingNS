@@ -64,6 +64,36 @@ export class AffairsLibraryPreviewLinkService {
     };
   }
 
+  createOnlyOfficeLink(workspaceId: string, userId: string, requestedPath: string): AffairsLibraryPreviewLinkResult {
+    const resolved = this.affairsLibraryService.resolvePreviewFile(workspaceId, userId, requestedPath, {
+      mustExist: true,
+      kind: "file"
+    });
+    const previewKind = detectPreviewKind(resolved.relativePath);
+
+    if (previewKind !== "office") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "FILE_PREVIEW_NOT_SUPPORTED",
+        detail: "当前只支持为 Office 文件生成 ONLYOFFICE 受控链接",
+        field: "path"
+      });
+    }
+
+    const expiresAt = Date.now() + AFFAIRS_LIBRARY_PREVIEW_TOKEN_TTL_MS;
+    const token = this.createToken({
+      workspaceId,
+      userId,
+      expiresAt
+    });
+
+    return {
+      previewPath: buildAffairsPublicPreviewPath(token, resolved.relativePath),
+      previewUrl: "",
+      expiresAt: new Date(expiresAt).toISOString()
+    };
+  }
+
   resolvePublicFile(token: string, requestedPath: string): PublicAffairsLibraryPreviewResult {
     const payload = this.verifyToken(token);
     const resolved = this.affairsLibraryService.resolvePreviewFile(

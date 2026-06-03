@@ -1266,6 +1266,102 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("目录刷新只是 queued 时，仍然会直接读磁盘拿到最新修改时间", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-queued-live-folder-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(path.join(rootDir, "临时文件"), { recursive: true });
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(exportDir, "status.json"),
+      JSON.stringify({
+        version: 2,
+        format: "static-v2",
+        exported_at: "2026-05-31T10:00:00.000Z",
+        document_count: 1
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T10:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+    fs.writeFileSync(
+      path.join(exportDir, "bootstrap.json"),
+      JSON.stringify({
+        folders: [
+          {
+            path: "临时文件",
+            name: "临时文件",
+            parent_path: null,
+            direct_document_count: 1,
+            document_count: 1
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-old",
+            path: "临时文件/账号.txt",
+            title: "账号",
+            summary: "账号",
+            mtime: "2026-05-31T10:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          }
+        ]
+      })
+    );
+
+    const filePath = path.join(rootDir, "临时文件", "账号.txt");
+    fs.writeFileSync(filePath, "old\n");
+    const freshMtime = new Date("2026-06-03T13:14:15.000Z");
+    fs.utimesSync(filePath, freshMtime, freshMtime);
+
+    const service = createService({
+      rootDir,
+      peek: (taskType, key) => taskType === HOST_TASK_TYPES.affairsLibraryDirectoryHint
+        && key === "workspace-1::临时文件"
+        ? ({
+            taskId: "task-dir-queued",
+            taskType,
+            key,
+            executionLane: "helper_process",
+            status: "queued",
+            source: "affairs_library.directory_hint",
+            attempt: 0,
+            enqueuedAt: Date.now() - 1_000,
+            startedAt: null,
+            finishedAt: null,
+            timeoutMs: 30_000
+          } satisfies TaskSnapshot)
+        : null
+    });
+
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "临时文件"
+    });
+
+    expect(documentList.items).toHaveLength(1);
+    expect(documentList.items[0]?.updatedAt).toBe(freshMtime.toISOString());
+    expect(documentList.directoryStatus?.state).toBe("queued");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("目录列表会打出结果来源日志，区分 live cache snapshot", () => {
     const writeDebugLog = vi.spyOn(affairsLibraryDebugLogModule, "writeAffairsLibraryDebugLog").mockImplementation(() => {});
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-folder-source-log-"));
@@ -1441,6 +1537,62 @@ describe("AffairsLibraryService auto tasks", () => {
     expect(snapshot.status.runningStage).toBeNull();
     expect(snapshot.status.dirtyReasons).toContain("command_lock_owner_dead");
     expect(snapshot.status.errorSummary).toContain("helper 进程");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("别的工作区的 queued 索引任务，不会把当前工作区的自动刷新卡死", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-other-workspace-queued-"));
+    seedExistingArtifacts(rootDir);
+
+    const enqueue = vi.fn(() => ({
+      taskId: "task-current-workspace",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({
+      rootDir,
+      peek: (taskType, key) => taskType === HOST_TASK_TYPES.affairsLibraryIndex && key === "workspace-1"
+        ? null
+        : taskType === HOST_TASK_TYPES.affairsLibraryIndex
+          ? ({
+              taskId: "task-other-workspace",
+              taskType,
+              key,
+              executionLane: "helper_process",
+              status: "queued",
+              source: "affairs_library.auto_refresh",
+              attempt: 0,
+              enqueuedAt: Date.now() - 60_000,
+              startedAt: null,
+              finishedAt: null,
+              timeoutMs: 15 * 60 * 1000
+            } satisfies TaskSnapshot)
+          : null,
+      enqueue
+    });
+
+    service.scheduleAutoRefresh("workspace-1", "watch:index_changed:notes/demo.md", "notes/demo.md");
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        key: "workspace-1",
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir,
+          targetPath: "notes/demo.md"
+        })
+      })
+    );
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

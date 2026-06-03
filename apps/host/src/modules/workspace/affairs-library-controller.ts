@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { requireUserId } from "../preferences/common.js";
+import type { OnlyOfficeIntegrationService } from "../office/onlyoffice-integration-service.js";
 import type {
   AffairsLibraryFavoriteRecord,
   AffairsLibraryOperationType,
@@ -48,6 +49,7 @@ interface ListAffairsLibraryDocumentsQuery {
 
 interface AffairsLibraryPreviewQuery {
   path?: string;
+  displayMode?: string;
 }
 
 interface AffairsLibraryOperationBody {
@@ -61,6 +63,7 @@ export class AffairsLibraryController {
   constructor(
     private readonly affairsLibraryService: AffairsLibraryService,
     private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
+    private readonly onlyOfficeIntegrationService: OnlyOfficeIntegrationService,
     private readonly onBindingChanged?: (workspaceId: string | null) => void
   ) {}
 
@@ -259,6 +262,7 @@ export class AffairsLibraryController {
   ): Promise<void> => {
     const workspaceId = request.params.workspaceId;
     const userId = requireUserId(request);
+    const username = request.auth?.user.username ?? userId;
     const filePath = request.query.path ?? "";
     const preview = this.affairsLibraryService.previewDocument(
       workspaceId,
@@ -274,6 +278,19 @@ export class AffairsLibraryController {
       );
       preview.previewPath = previewLink.previewPath;
       preview.previewUrl = buildAbsolutePreviewUrl(request, previewLink.previewPath);
+    }
+
+    if (preview.supported && preview.kind === "office") {
+      preview.onlyOffice = this.onlyOfficeIntegrationService.buildAffairsPreview({
+        workspaceId,
+        userId,
+        username,
+        filePath,
+        version: preview.version,
+        editable: true,
+        displayMode: normalizeOnlyOfficeDisplayMode(request.query.displayMode)
+      });
+      preview.previewUrl = preview.onlyOffice.documentUrl;
     }
 
     reply.send(preview);
@@ -309,6 +326,10 @@ export class AffairsLibraryController {
       )
     );
   };
+}
+
+function normalizeOnlyOfficeDisplayMode(value: string | undefined): "default" | "reading" {
+  return value === "reading" ? "reading" : "default";
 }
 
 function buildAbsolutePreviewUrl(request: FastifyRequest, previewPath: string): string {

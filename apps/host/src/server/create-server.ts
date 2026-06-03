@@ -97,6 +97,7 @@ import { GitReadService } from "../modules/git/git-read-service.js";
 import { GitRuleRepository } from "../modules/git/git-rule-repository.js";
 import { GitWriteService } from "../modules/git/git-write-service.js";
 import { OfficeController } from "../modules/office/office-controller.js";
+import { OnlyOfficeIntegrationService } from "../modules/office/onlyoffice-integration-service.js";
 import { OfficePreviewLinkService } from "../modules/office/office-preview-link-service.js";
 import { OfficeService } from "../modules/office/office-service.js";
 import { OpsRuntimeController } from "../modules/ops-runtime/ops-runtime-controller.js";
@@ -169,6 +170,7 @@ import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TemplateReverseProxyService } from "../modules/terminal/template-reverse-proxy-service.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
 import { CodexArchiveWatcher } from "../modules/workbench/codex-archive-watcher.js";
+import { AffairsAssistantSessionSnapshotService } from "../modules/workbench/affairs-assistant-session-snapshot-service.js";
 import { WorkbenchController } from "../modules/workbench/workbench-controller.js";
 import { WorkbenchService } from "../modules/workbench/workbench-service.js";
 import { WorkspacePanelSnapshotService } from "../modules/workbench/workspace-panel-snapshot-service.js";
@@ -233,6 +235,7 @@ import { AuthTokenRepository } from "../storage/repositories/auth-token-reposito
 import { AuthLoginAttemptRepository } from "../storage/repositories/auth-login-attempt-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { AiFallbackEditRepository } from "../storage/repositories/ai-fallback-edit-repository.js";
+import { AffairsAssistantSessionSnapshotRepository } from "../storage/repositories/affairs-assistant-session-snapshot-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
 import { ButlerControlTimerRepository } from "../storage/repositories/butler-control-timer-repository.js";
 import { ButlerControlSessionRepository } from "../storage/repositories/butler-control-session-repository.js";
@@ -278,6 +281,7 @@ import { ManagedSkillRepository } from "../storage/repositories/managed-skill-re
 import { OpenCliCatalogEntryRepository } from "../storage/repositories/opencli-catalog-entry-repository.js";
 import { OpenCliProviderRepository } from "../storage/repositories/opencli-provider-repository.js";
 import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
+import { OfficeOnlyOfficeSettingRepository } from "../storage/repositories/office-onlyoffice-setting-repository.js";
 import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
 import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
 import { PluginPermissionGrantRepository } from "../storage/repositories/plugin-permission-grant-repository.js";
@@ -367,6 +371,7 @@ export function createServer(config: HostConfig) {
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
+    affairsAssistantSessionSnapshotRepository: new AffairsAssistantSessionSnapshotRepository(database.db),
     userAffairsLibrarySettingRepository: new UserAffairsLibrarySettingRepository(database.db),
     parallelSessionGroupRepository: new ParallelSessionGroupRepository(database.db),
     parallelSessionMemberRepository: new ParallelSessionMemberRepository(database.db),
@@ -383,6 +388,7 @@ export function createServer(config: HostConfig) {
     officeConnectorRepository: new OfficeConnectorRepository(database.db),
     officeAuditEventRepository: new OfficeAuditEventRepository(database.db),
     officeRollbackRecordRepository: new OfficeRollbackRecordRepository(database.db),
+    officeOnlyOfficeSettingRepository: new OfficeOnlyOfficeSettingRepository(database.db),
     browserProfileRepository: new BrowserProfileRepository(database.db),
     pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
     pluginEnablementRepository: new PluginEnablementRepository(database.db),
@@ -952,16 +958,6 @@ export function createServer(config: HostConfig) {
     sessionHistoryService
   );
   let parallelSessionGroupService!: ParallelSessionGroupService;
-  const workbenchService = new WorkbenchService(
-    repositories.workspaceRepository,
-    repositories.workspaceNavigationStateRepository,
-    sessionHistoryService,
-    butlerProfileService,
-    repositories.butlerControlSessionRepository,
-    repositories.workspaceWorktreeRepository,
-    taskManager,
-    repositories.sessionIsolatedWorkspaceRepository
-  );
   const butlerProjectService = new ButlerProjectService(
     repositories.butlerProjectRepository,
     repositories.butlerSessionRepository,
@@ -1405,6 +1401,32 @@ export function createServer(config: HostConfig) {
     affairsLibraryService,
     config.filePreviewTokenSecret
   );
+  const affairsAssistantSessionSnapshotService = new AffairsAssistantSessionSnapshotService(
+    repositories.affairsAssistantSessionSnapshotRepository,
+    affairsLibraryService,
+    butlerProjectService,
+    butlerSessionService,
+    taskManager
+  );
+  const workbenchService = new WorkbenchService(
+    repositories.workspaceRepository,
+    repositories.workspaceNavigationStateRepository,
+    sessionHistoryService,
+    butlerProfileService,
+    repositories.butlerControlSessionRepository,
+    repositories.workspaceWorktreeRepository,
+    taskManager,
+    repositories.sessionIsolatedWorkspaceRepository,
+    affairsAssistantSessionSnapshotService
+  );
+  const onlyOfficeIntegrationService = new OnlyOfficeIntegrationService(
+    repositories.officeOnlyOfficeSettingRepository,
+    filePreviewLinkService,
+    affairsLibraryPreviewLinkService,
+    fileAccessGuard,
+    affairsLibraryService,
+    config.filePreviewTokenSecret
+  );
   const affairsLightweightSessionService = new AffairsLightweightSessionService(
     path.dirname(config.databasePath)
   );
@@ -1431,6 +1453,7 @@ export function createServer(config: HostConfig) {
   const affairsLibraryController = new AffairsLibraryController(
     affairsLibraryService,
     affairsLibraryPreviewLinkService,
+    onlyOfficeIntegrationService,
     (workspaceId) => {
       if (!workspaceId?.trim()) {
         return;
@@ -1513,7 +1536,11 @@ export function createServer(config: HostConfig) {
     officeService,
     config.filePreviewTokenSecret
   );
-  const officeController = new OfficeController(officeService, officePreviewLinkService);
+  const officeController = new OfficeController(
+    officeService,
+    officePreviewLinkService,
+    onlyOfficeIntegrationService
+  );
   const pluginController = new PluginController(
     pluginRegistryService,
     pluginRuntimeService,
@@ -1629,6 +1656,7 @@ export function createServer(config: HostConfig) {
     filePreviewService,
     filePreviewLinkService,
     affairsLibraryPreviewLinkService,
+    onlyOfficeIntegrationService,
     workspaceFileBridgeService,
     workspaceIndexApplyService
   );

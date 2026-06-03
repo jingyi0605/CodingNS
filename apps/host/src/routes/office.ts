@@ -6,6 +6,10 @@ export async function registerOfficeRoutes(
   app: FastifyInstance,
   officeController: OfficeController
 ): Promise<void> {
+  app.get("/api/office/onlyoffice/settings", officeController.getOnlyOfficeSettings);
+  app.put("/api/office/onlyoffice/settings", officeController.updateOnlyOfficeSettings);
+  app.get("/api/office/onlyoffice/status", officeController.getOnlyOfficeStatus);
+  app.post("/api/office/onlyoffice/callback/*", officeController.handleOnlyOfficeCallback);
   app.get("/api/office/tasks", officeController.listTasks);
   app.post("/api/office/tasks", officeController.createTask);
   app.get("/api/office/tasks/:taskId", officeController.getTask);

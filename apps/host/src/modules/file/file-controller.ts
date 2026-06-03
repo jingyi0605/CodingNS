@@ -14,6 +14,7 @@ import type { WorkspaceIndexApplyService } from "./workspace-index-apply-service
 import type { RecentFileService } from "./recent-file-service.js";
 import type { RecentModifiedFileService } from "./recent-modified-file-service.js";
 import type { AffairsLibraryPreviewLinkService } from "../workspace/affairs-library-preview-link-service.js";
+import type { OnlyOfficeIntegrationService } from "../office/onlyoffice-integration-service.js";
 import type {
   WorkspaceFileBridgeListDirOptions,
   WorkspaceFileBridgeService,
@@ -29,6 +30,7 @@ interface FileWorkspaceQuery {
   page?: string;
   pageSize?: string;
   limit?: string;
+  displayMode?: string;
 }
 
 interface SaveFileBody {
@@ -129,6 +131,7 @@ export class FileController {
     private readonly filePreviewService: FilePreviewService,
     private readonly filePreviewLinkService: FilePreviewLinkService,
     private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
+    private readonly onlyOfficeIntegrationService: OnlyOfficeIntegrationService,
     private readonly workspaceFileBridgeService: WorkspaceFileBridgeService,
     private readonly workspaceIndexApplyService: WorkspaceIndexApplyService
   ) {}
@@ -290,21 +293,36 @@ export class FileController {
     reply: FastifyReply
   ): Promise<void> => {
     const workspaceId = requireWorkspaceId(request.query.workspaceId);
+    const userId = requireUserId(request);
+    const username = request.auth?.user.username ?? userId;
     const filePath = request.query.path ?? "";
     const preview = this.filePreviewService.preview(
       workspaceId,
       filePath,
-      requireUserId(request)
+      userId
     );
 
-    if (preview.supported && isResourcePreviewKind(preview.kind)) {
+    if (preview.supported && preview.kind !== "office" && isResourcePreviewKind(preview.kind)) {
       const previewLink = this.filePreviewLinkService.createLink(
         workspaceId,
         filePath,
-        requireUserId(request)
+        userId
       );
       preview.previewPath = previewLink.previewPath;
       preview.previewUrl = buildAbsolutePreviewUrl(request, previewLink.previewPath);
+    }
+
+    if (preview.supported && preview.kind === "office") {
+      preview.onlyOffice = this.onlyOfficeIntegrationService.buildWorkspacePreview({
+        workspaceId,
+        userId,
+        username,
+        filePath,
+        version: preview.version,
+        editable: true,
+        displayMode: normalizeOnlyOfficeDisplayMode(request.query.displayMode)
+      });
+      preview.previewUrl = preview.onlyOffice.documentUrl;
     }
 
     reply.send(preview);
@@ -774,6 +792,10 @@ export class FileController {
     reply.type("text/javascript; charset=utf-8");
     reply.send(readFileSync(resolveWorkspaceBridgeRuntimePath(), "utf8"));
   };
+}
+
+function normalizeOnlyOfficeDisplayMode(value: string | undefined): "default" | "reading" {
+  return value === "reading" ? "reading" : "default";
 }
 
 function parsePublicPreviewPath(rawPath: string): {

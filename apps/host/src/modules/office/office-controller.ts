@@ -5,6 +5,10 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { OfficeConnectorKind, OfficeRiskLevel, OfficeTaskStatus, OfficeTaskType } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
+import type {
+  OnlyOfficeIntegrationService,
+  UpdateOnlyOfficeSettingsInput
+} from "./onlyoffice-integration-service.js";
 import type { OfficePreviewLinkService } from "./office-preview-link-service.js";
 import type { CreateOfficeTaskInput, ReplyOfficeApprovalInput } from "./office-service.js";
 import { OfficeService } from "./office-service.js";
@@ -42,10 +46,15 @@ interface OfficeConnectorListQuery {
   kind?: OfficeConnectorKind;
 }
 
+interface OnlyOfficeCallbackParams {
+  "*": string;
+}
+
 export class OfficeController {
   constructor(
     private readonly officeService: OfficeService,
-    private readonly officePreviewLinkService: OfficePreviewLinkService
+    private readonly officePreviewLinkService: OfficePreviewLinkService,
+    private readonly onlyOfficeIntegrationService: OnlyOfficeIntegrationService
   ) {}
 
   readonly listTasks = async (
@@ -242,6 +251,39 @@ export class OfficeController {
       })
     );
   };
+
+  readonly getOnlyOfficeSettings = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.onlyOfficeIntegrationService.getSettings());
+  };
+
+  readonly updateOnlyOfficeSettings = async (
+    request: FastifyRequest<{ Body: UpdateOnlyOfficeSettingsInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.onlyOfficeIntegrationService.updateSettings(request.body ?? {}));
+  };
+
+  readonly getOnlyOfficeStatus = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.onlyOfficeIntegrationService.getStatus());
+  };
+
+  readonly handleOnlyOfficeCallback = async (
+    request: FastifyRequest<{ Params: OnlyOfficeCallbackParams; Body: unknown }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.onlyOfficeIntegrationService.handleCallback(
+        parseOnlyOfficeCallbackToken(request.params["*"]),
+        request.body
+      )
+    );
+  };
 }
 
 function normalizeOptionalText(value: string | undefined): string | null | undefined {
@@ -269,6 +311,20 @@ function buildAbsolutePreviewUrl(request: FastifyRequest, previewPath: string): 
     previewPath,
     host.endsWith("/") ? `${protocol}://${host}` : `${protocol}://${host}/`
   ).toString();
+}
+
+function parseOnlyOfficeCallbackToken(rawTail: string | undefined): string {
+  const token = rawTail?.trim() ?? "";
+
+  if (!token) {
+    throw new AppError({
+      statusCode: 401,
+      errorCode: "ONLYOFFICE_CALLBACK_TOKEN_INVALID",
+      detail: "ONLYOFFICE 回调 token 无效或已过期。"
+    });
+  }
+
+  return token;
 }
 
 function parseOfficeArtifactPreviewTail(tail: string | undefined): {

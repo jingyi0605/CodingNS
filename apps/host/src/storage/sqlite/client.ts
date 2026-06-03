@@ -62,6 +62,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureButlerControlTimerSchema(db);
   ensureAssistantAutomationSchema(db);
   ensureAssistantSandboxSchema(db);
+  ensureOnlyOfficeSettingsSchema(db);
   ensureDocumentTemplateSchema(db);
   ensurePluginRegistrySchema(db);
   ensurePluginRuntimeSessionSchema(db);
@@ -1372,6 +1373,25 @@ function ensureDocumentTemplateSchema(db: BetterSqliteDatabase): void {
 
   if (!columnNames.has("template_source_path")) {
     db.exec("ALTER TABLE document_templates ADD COLUMN template_source_path TEXT");
+  }
+}
+
+function ensureOnlyOfficeSettingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "office_onlyoffice_settings")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(office_onlyoffice_settings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("user_display_name")) {
+    db.exec("ALTER TABLE office_onlyoffice_settings ADD COLUMN user_display_name TEXT");
+  }
+
+  if (!columnNames.has("user_avatar_url")) {
+    db.exec("ALTER TABLE office_onlyoffice_settings ADD COLUMN user_avatar_url TEXT");
   }
 }
 

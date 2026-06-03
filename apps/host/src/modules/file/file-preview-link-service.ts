@@ -60,6 +60,35 @@ export class FilePreviewLinkService {
     };
   }
 
+  createOnlyOfficeLink(workspaceId: string, requestedPath: string, _userId: string): FilePreviewLinkResult {
+    const resolved = this.fileAccessGuard.resolvePath(workspaceId, requestedPath, {
+      mustExist: true,
+      kind: "file"
+    });
+    const previewKind = detectPreviewKind(resolved.relativePath);
+
+    if (previewKind !== "office") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "FILE_PREVIEW_NOT_SUPPORTED",
+        detail: "当前只支持为 Office 文件生成 ONLYOFFICE 受控链接",
+        field: "path"
+      });
+    }
+
+    const expiresAt = Date.now() + FILE_PREVIEW_TOKEN_TTL_MS;
+    const token = this.createToken({
+      workspaceId,
+      expiresAt
+    });
+
+    return {
+      previewPath: buildPublicPreviewPath(token, resolved.relativePath),
+      previewUrl: "",
+      expiresAt: new Date(expiresAt).toISOString()
+    };
+  }
+
   resolveWorkspaceId(token: string): string {
     return this.verifyToken(token).workspaceId;
   }

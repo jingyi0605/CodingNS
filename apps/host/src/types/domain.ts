@@ -733,6 +733,16 @@ export interface SessionStatusSnapshot {
   updatedAt: string;
 }
 
+export interface AffairsAssistantSessionSnapshotRecord {
+  workspaceId: string;
+  userId: string;
+  projectId: string | null;
+  projectWorkspaceId: string | null;
+  agentWorkspacePath: string | null;
+  sessionsJson: string;
+  updatedAt: string;
+}
+
 export interface SessionStateRecord {
   sessionId: string;
   userId: string;

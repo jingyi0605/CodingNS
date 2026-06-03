@@ -6,6 +6,7 @@ export type FilePreviewKind =
   | "html"
   | "image"
   | "pdf"
+  | "office"
   | "binary"
   | "unsupported";
 
@@ -29,7 +30,16 @@ export interface FilePreviewResult {
   updatedAt: string | null;
   previewPath: string | null;
   previewUrl: string | null;
+  onlyOffice: OnlyOfficePreviewPayload | null;
   capabilities: FilePreviewCapabilities;
+}
+
+export interface OnlyOfficePreviewPayload {
+  apiScriptUrl: string;
+  editorMode: "edit" | "view";
+  documentUrl: string;
+  callbackUrl: string;
+  editorConfig: Record<string, unknown>;
 }
 
 export interface FilePreviewContentSnapshot {
@@ -51,8 +61,9 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   ".ico"
 ]);
 const PDF_FILE_EXTENSIONS = new Set([".pdf"]);
+const OFFICE_FILE_EXTENSIONS = new Set([".docx", ".xlsx", ".pptx"]);
 
-export const RESOURCE_PREVIEW_KINDS = new Set<FilePreviewKind>(["html", "image", "pdf"]);
+export const RESOURCE_PREVIEW_KINDS = new Set<FilePreviewKind>(["html", "image", "pdf", "office"]);
 
 export const PREVIEW_CONTENT_TYPES = new Map<string, string>([
   [".html", "text/html; charset=utf-8"],
@@ -72,6 +83,9 @@ export const PREVIEW_CONTENT_TYPES = new Map<string, string>([
   [".ico", "image/x-icon"],
   [".bmp", "image/bmp"],
   [".pdf", "application/pdf"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
   [".txt", "text/plain; charset=utf-8"],
   [".wasm", "application/wasm"],
   [".woff", "font/woff"],
@@ -98,6 +112,10 @@ export function detectPreviewKind(filePath: string): FilePreviewKind {
 
   if (PDF_FILE_EXTENSIONS.has(extension)) {
     return "pdf";
+  }
+
+  if (OFFICE_FILE_EXTENSIONS.has(extension)) {
+    return "office";
   }
 
   return "text";

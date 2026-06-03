@@ -61,7 +61,7 @@ export class FilePreviewService {
 
     this.recentFileService.recordOpened(workspaceId, userId, resolved.relativePath);
 
-    if (previewKind === "image" || previewKind === "pdf") {
+    if (previewKind === "image" || previewKind === "pdf" || previewKind === "office") {
       return this.buildResult({
         workspaceId,
         path: resolved.relativePath,
@@ -69,7 +69,9 @@ export class FilePreviewService {
         kind: previewKind,
         reason: null,
         content: null,
-        version: null,
+        version: previewKind === "office"
+          ? buildOfficeDocumentVersion(fileSize, resolved.stats?.mtime.toISOString() ?? null)
+          : null,
         size: fileSize,
         updatedAt: resolved.stats?.mtime.toISOString() ?? null
       });
@@ -166,12 +168,13 @@ export class FilePreviewService {
   }
 
   private buildResult(
-    input: Omit<FilePreviewResult, "previewPath" | "previewUrl" | "capabilities">
+    input: Omit<FilePreviewResult, "previewPath" | "previewUrl" | "onlyOffice" | "capabilities">
   ): FilePreviewResult {
     return {
       ...input,
       previewPath: null,
       previewUrl: null,
+      onlyOffice: null,
       capabilities: buildPreviewCapabilities(input.kind, {
         supported: input.supported,
         content: input.content,
@@ -186,5 +189,13 @@ function isBinaryBuffer(buffer: Buffer): boolean {
 }
 
 function isResourcePreviewKind(kind: FilePreviewKind): boolean {
-  return kind === "html" || kind === "image" || kind === "pdf";
+  return kind === "html" || kind === "image" || kind === "pdf" || kind === "office";
+}
+
+function buildOfficeDocumentVersion(fileSize: number, updatedAt: string | null): string | null {
+  if (!updatedAt) {
+    return null;
+  }
+
+  return `${updatedAt}:${fileSize}`;
 }

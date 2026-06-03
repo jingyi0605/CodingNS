@@ -944,6 +944,10 @@ export class AffairsLibraryService {
       return false;
     }
 
+    if (cachedDirectoryEntry.dirty) {
+      return false;
+    }
+
     if (indexStatus.state === "running") {
       return true;
     }
@@ -952,7 +956,7 @@ export class AffairsLibraryService {
       return false;
     }
 
-    return directoryStatus.state === "queued" || directoryStatus.state === "running";
+    return directoryStatus.state === "running";
   }
 
   private buildCachedFolderDocuments(
@@ -2171,7 +2175,6 @@ export class AffairsLibraryService {
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
         executionLane: "helper_process",
         helperProcessHandler: "affairs.library_index",
-        concurrency: 1,
         timeoutMs: INDEX_TASK_TIMEOUT_MS,
         run: async (input) =>
           await this.runInternalCommand(
