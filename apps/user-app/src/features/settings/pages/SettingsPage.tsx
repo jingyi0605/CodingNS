@@ -24,13 +24,14 @@ import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
+import { OnlyOfficeSettingsButton } from "../../../settings/OnlyOfficeSettingsButton";
 import { ProviderManagementPanel } from "../../../settings/ProviderManagementPanel";
 import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { PluginManagementModal } from "../../../settings/PluginManagementModal";
-import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
+import { SettingsSwitch } from "../../../settings/SettingsSwitch";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 import type { DebugPortPoolConfig } from "../../../preferences/types";
@@ -578,12 +579,9 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 </span>
               </div>
               <div className="settings-row-control">
-                <SkillManagementPanel
+                <OnlyOfficeSettingsButton
                   triggerClassName="settings-button"
                   triggerLabel={t("settings.skillOnlyOfficeOpenSettingsAction")}
-                  workspaceId={pluginManagementWorkspaceId}
-                  initialTab="office"
-                  triggerMode="onlyoffice"
                 />
               </div>
             </div>
@@ -1429,12 +1427,10 @@ function MobileAbilityManagementSection() {
                 {t("settings.skillOnlyOfficeSectionDescription")}
               </span>
             </div>
-            <SkillManagementPanel
+            <OnlyOfficeSettingsButton
               triggerClassName="settings-mobile-primary-button"
               triggerLabel={t("settings.skillOnlyOfficeOpenSettingsAction")}
-              workspaceId={pluginManagementWorkspaceId}
-              initialTab="office"
-              triggerMode="onlyoffice"
+              mobile
             />
           </div>
         </div>
@@ -1551,42 +1547,6 @@ function MobileSettingsLogoutBar({ onLogout }: { onLogout: () => void }) {
         {t("common.logout")}
       </button>
     </div>
-  );
-}
-
-function SettingsSwitch({
-  checked,
-  label,
-  onChange
-}: {
-  checked: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label
-      className="settings-mobile-switch"
-      aria-label={label}
-      onClick={(event) => {
-        if (event.target instanceof HTMLInputElement) {
-          return;
-        }
-
-        event.preventDefault();
-        // 不再把可点击性赌在隐藏 input 的默认行为上，直接让可见开关自己负责切换。
-        onChange(!checked);
-      }}
-    >
-      <input
-        type="checkbox"
-        aria-label={label}
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span className="settings-mobile-switch-track" aria-hidden="true">
-        <span className="settings-mobile-switch-thumb" />
-      </span>
-    </label>
   );
 }
 
