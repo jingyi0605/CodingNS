@@ -7992,6 +7992,50 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   color: var(--danger-fg, #d04d4d);
 }
 
+.affairs-tag-task-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.affairs-tag-task-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.affairs-tag-task-history-item + .affairs-tag-task-history-item {
+  border-top: 1px solid color-mix(in srgb, var(--panel-separator) 84%, transparent);
+  padding-top: 12px;
+}
+
+.affairs-tag-task-history-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.affairs-tag-task-history-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.affairs-tag-task-history-item-title strong,
+.affairs-tag-task-history-item-status {
+  font-size: 12px;
+}
+
+.affairs-tag-task-history-item-status {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .affairs-library-context-menu {
   position: fixed;
   z-index: 2502;

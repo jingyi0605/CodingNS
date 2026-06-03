@@ -41,6 +41,7 @@ export async function registerWorkspaceRoutes(
     app.post("/api/workspaces/:workspaceId/affairs/tags/recovery/recompute", affairsTagController.requestTagRecoveryRecompute);
     app.get("/api/workspaces/:workspaceId/affairs/tags/recovery/status", affairsTagController.getTagRecoveryStatus);
     app.get("/api/workspaces/:workspaceId/affairs/documents/:documentId/tag-details", affairsTagController.getDocumentTagDetails);
+    app.get("/api/workspaces/:workspaceId/affairs/documents/:documentId/tag-task", affairsTagController.getDocumentTagTask);
     app.put("/api/workspaces/:workspaceId/affairs/documents/:documentId/tags", affairsTagController.saveDocumentTags);
     app.get("/api/workspaces/:workspaceId/affairs/folders/tag-details", affairsTagController.getFolderTagDetails);
     app.get("/api/workspaces/:workspaceId/affairs/folders/tag-task", affairsTagController.getFolderTagTask);

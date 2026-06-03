@@ -1,4 +1,5 @@
 import {
+  useCallback,
   createContext,
   Fragment,
   useContext,
@@ -71,6 +72,7 @@ import {
   createWorkspaceDirectory,
   deleteAffairsTag,
   getAffairsDocumentTagDetails,
+  getAffairsDocumentTagTask,
   getAffairsTagRecoveryStatus,
   getAffairsFolderTagTask,
   getAffairsFolderTagDetails,
@@ -162,11 +164,32 @@ interface AffairsAuxiliaryPanelProps {
   onToggleCollapse?: () => void;
 }
 
+type TagApplyOperation = "attach" | "remove" | "update";
+
 interface FolderTagApplyTaskMonitorState {
   folderPath: string;
   taskId: string;
   snapshot: AffairsTaskSnapshotDto | null;
-  operation: "attach" | "remove" | "update";
+  operation: TagApplyOperation;
+}
+
+interface DocumentTagApplyTaskMonitorState {
+  documentId: string;
+  documentTitle: string;
+  taskId: string;
+  snapshot: AffairsTaskSnapshotDto | null;
+  operation: TagApplyOperation;
+}
+
+interface RecentAffairsTagTaskRecord {
+  id: string;
+  targetType: "folder" | "document";
+  targetKey: string;
+  targetLabel: string;
+  taskId: string;
+  snapshot: AffairsTaskSnapshotDto | null;
+  operation: TagApplyOperation;
+  createdAt: number;
 }
 
 interface FullTagRecomputeTaskMonitorState {
@@ -510,6 +533,7 @@ interface AffairsWorkbenchContextValue {
   documentTagDetails: AffairsDocumentTagDetailsDto | null;
   folderTagDetails: AffairsFolderTagDetailsDto | null;
   folderTagTaskMonitor: FolderTagApplyTaskMonitorState | null;
+  recentTagTasks: RecentAffairsTagTaskRecord[];
   fullTagRecomputeTaskMonitor: FullTagRecomputeTaskMonitorState | null;
   tagRecoveryStatus: AffairsTagRecoveryStatusDto | null;
   reloadTagManagement: () => Promise<void>;
@@ -524,7 +548,13 @@ interface AffairsWorkbenchContextValue {
   }) => Promise<AffairsTagDetailWithRulesDto>;
   deleteManagedTag: (tagId: string) => Promise<{ deletedTagIds: string[]; deletedPaths: string[] }>;
   requestFullTagRecompute: () => Promise<{ taskId: string; deduped: boolean; status: "queued"; scope: "full" }>;
-  saveDocumentTagSelection: (documentId: string, tagIds: string[], createTagPaths?: string[]) => Promise<void>;
+  saveDocumentTagSelection: (
+    documentId: string,
+    tagIds: string[],
+    createTagPaths?: string[],
+    previousTagIds?: string[],
+    documentTitle?: string,
+  ) => Promise<void>;
   saveFolderTagSelection: (folderPath: string, tagIds: string[], createTagPaths?: string[], previousTagIds?: string[]) => Promise<void>;
   conversationCreateModalOpen: boolean;
   openConversationCreateModal: () => void;
@@ -608,6 +638,8 @@ export function AffairsWorkbenchProvider({
   const [documentTagDetails, setDocumentTagDetails] = useState<AffairsDocumentTagDetailsDto | null>(null);
   const [folderTagDetails, setFolderTagDetails] = useState<AffairsFolderTagDetailsDto | null>(null);
   const [folderTagTaskMonitor, setFolderTagTaskMonitor] = useState<FolderTagApplyTaskMonitorState | null>(null);
+  const [documentTagTaskMonitor, setDocumentTagTaskMonitor] = useState<DocumentTagApplyTaskMonitorState | null>(null);
+  const [recentTagTasks, setRecentTagTasks] = useState<RecentAffairsTagTaskRecord[]>([]);
   const [fullTagRecomputeTaskMonitor, setFullTagRecomputeTaskMonitor] = useState<FullTagRecomputeTaskMonitorState | null>(null);
   const [tagRecoveryStatus, setTagRecoveryStatus] = useState<AffairsTagRecoveryStatusDto | null>(null);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
@@ -680,6 +712,52 @@ export function AffairsWorkbenchProvider({
     });
   }, [selectedConversationSession]);
 
+  const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
+    setRecentTagTasks((previous) => {
+      const next = [
+        record,
+        ...previous.filter((item) => item.id !== record.id),
+      ];
+      return next
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .slice(0, 5);
+    });
+  }, []);
+
+  const syncFolderTaskRecord = useCallback((monitor: FolderTagApplyTaskMonitorState | null) => {
+    if (!monitor) {
+      return;
+    }
+    upsertRecentTagTask({
+      id: `folder:${monitor.folderPath}`,
+      targetType: "folder",
+      targetKey: monitor.folderPath,
+      targetLabel: monitor.folderPath === "."
+        ? t("shell.affairsLibraryDirectoryStatusRootPath")
+        : getPathLeafName(monitor.folderPath) || monitor.folderPath,
+      taskId: monitor.taskId,
+      snapshot: monitor.snapshot,
+      operation: monitor.operation,
+      createdAt: monitor.snapshot?.enqueuedAt ?? Date.now(),
+    });
+  }, [upsertRecentTagTask]);
+
+  const syncDocumentTaskRecord = useCallback((monitor: DocumentTagApplyTaskMonitorState | null) => {
+    if (!monitor) {
+      return;
+    }
+    upsertRecentTagTask({
+      id: `document:${monitor.documentId}`,
+      targetType: "document",
+      targetKey: monitor.documentId,
+      targetLabel: monitor.documentTitle || monitor.documentId,
+      taskId: monitor.taskId,
+      snapshot: monitor.snapshot,
+      operation: monitor.operation,
+      createdAt: monitor.snapshot?.enqueuedAt ?? Date.now(),
+    });
+  }, [upsertRecentTagTask]);
+
   useEffect(() => {
     if (!folderTagTaskMonitor) {
       return;
@@ -701,10 +779,12 @@ export function AffairsWorkbenchProvider({
           if (areAffairsTaskSnapshotsEqual(previous.snapshot, snapshot)) {
             return previous;
           }
-          return {
+          const nextMonitor = {
             ...previous,
             snapshot,
           };
+          syncFolderTaskRecord(nextMonitor);
+          return nextMonitor;
         });
         if (!snapshot || isTerminalAffairsTaskStatus(snapshot.status)) {
           return;
@@ -730,9 +810,63 @@ export function AffairsWorkbenchProvider({
         clearTimeout(timer);
       }
     };
-  }, [folderTagTaskMonitor?.folderPath, folderTagTaskMonitor?.taskId, workspaceId]);
+  }, [folderTagTaskMonitor?.folderPath, folderTagTaskMonitor?.taskId, syncFolderTaskRecord, workspaceId]);
 
   useEffect(() => {
+    if (!documentTagTaskMonitor) {
+      return;
+    }
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const pollTask = async () => {
+      try {
+        const snapshot = await getAffairsDocumentTagTask(workspaceId, documentTagTaskMonitor.documentId);
+        if (disposed) {
+          return;
+        }
+        setDocumentTagTaskMonitor((previous) => {
+          if (!previous || previous.taskId !== documentTagTaskMonitor.taskId || previous.documentId !== documentTagTaskMonitor.documentId) {
+            return previous;
+          }
+          if (areAffairsTaskSnapshotsEqual(previous.snapshot, snapshot)) {
+            return previous;
+          }
+          const nextMonitor = {
+            ...previous,
+            snapshot,
+          };
+          syncDocumentTaskRecord(nextMonitor);
+          return nextMonitor;
+        });
+        if (!snapshot || isTerminalAffairsTaskStatus(snapshot.status)) {
+          return;
+        }
+      } catch {
+        if (disposed) {
+          return;
+        }
+      }
+
+      if (!disposed) {
+        timer = setTimeout(() => {
+          void pollTask();
+        }, AFFAIRS_FOLDER_TAG_TASK_POLL_RUNNING_MS);
+      }
+    };
+
+    void pollTask();
+
+    return () => {
+      disposed = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [documentTagTaskMonitor?.documentId, documentTagTaskMonitor?.taskId, syncDocumentTaskRecord, workspaceId]);
+
+useEffect(() => {
     if (!fullTagRecomputeTaskMonitor) {
       return;
     }
@@ -786,7 +920,7 @@ export function AffairsWorkbenchProvider({
     };
   }, [fullTagRecomputeTaskMonitor?.taskId, workspaceId]);
 
-  useEffect(() => {
+    useEffect(() => {
     if (!folderTagTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(folderTagTaskMonitor.snapshot.status)) {
       return;
     }
@@ -798,6 +932,19 @@ export function AffairsWorkbenchProvider({
       clearTimeout(timer);
     };
   }, [folderTagTaskMonitor?.snapshot?.status, folderTagTaskMonitor?.taskId]);
+
+  useEffect(() => {
+    if (!documentTagTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(documentTagTaskMonitor.snapshot.status)) {
+      return;
+    }
+    const currentTaskId = documentTagTaskMonitor.taskId;
+    const timer = setTimeout(() => {
+      setDocumentTagTaskMonitor((previous) => previous?.taskId === currentTaskId ? null : previous);
+    }, AFFAIRS_FOLDER_TAG_TASK_POLL_TERMINAL_HIDE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [documentTagTaskMonitor?.snapshot?.status, documentTagTaskMonitor?.taskId]);
 
   useEffect(() => {
     if (!tagManagementOpen) {
@@ -1871,6 +2018,7 @@ export function AffairsWorkbenchProvider({
     documentTagDetails,
     folderTagDetails,
     folderTagTaskMonitor,
+    recentTagTasks,
     fullTagRecomputeTaskMonitor,
     tagRecoveryStatus,
     reloadTagManagement,
@@ -1911,11 +2059,37 @@ export function AffairsWorkbenchProvider({
       });
       return result;
     },
-    saveDocumentTagSelection: async (documentId, tagIds, createTagPaths = []) => {
-      if (createTagPaths.length > 0) {
-        await saveAffairsDocumentTagsWithCreate(workspaceId, documentId, { tagIds, createTagPaths });
+    saveDocumentTagSelection: async (documentId, tagIds, createTagPaths = [], previousTagIds = [], documentTitle) => {
+      const operation = resolveTagTaskOperation(previousTagIds, tagIds);
+      const optimisticMonitor: DocumentTagApplyTaskMonitorState = {
+        documentId,
+        documentTitle: documentTitle?.trim() || documentTagDetails?.title || documentId,
+        taskId: `pending:document:${documentId}:${Date.now()}`,
+        snapshot: createOptimisticTagTaskSnapshot(`doc:${documentId}`, operation),
+        operation,
+      };
+      setDocumentTagTaskMonitor(optimisticMonitor);
+      syncDocumentTaskRecord(optimisticMonitor);
+      const result = createTagPaths.length > 0
+        ? await saveAffairsDocumentTagsWithCreate(workspaceId, documentId, { tagIds, createTagPaths })
+        : await saveAffairsDocumentTags(workspaceId, documentId, { tagIds });
+      if (result?.refreshTask) {
+        const nextMonitor: DocumentTagApplyTaskMonitorState = {
+          documentId,
+          documentTitle: documentTitle?.trim() || documentTagDetails?.title || documentId,
+          taskId: result.refreshTask.taskId,
+          snapshot: null,
+          operation,
+        };
+        setDocumentTagTaskMonitor(nextMonitor);
+        syncDocumentTaskRecord(nextMonitor);
       } else {
-        await saveAffairsDocumentTags(workspaceId, documentId, { tagIds });
+        const completedMonitor: DocumentTagApplyTaskMonitorState = {
+          ...optimisticMonitor,
+          snapshot: createCompletedTagTaskSnapshot(optimisticMonitor.snapshot, operation),
+        };
+        setDocumentTagTaskMonitor(completedMonitor);
+        syncDocumentTaskRecord(completedMonitor);
       }
       if (createTagPaths.length > 0) {
         await reloadTagManagement();
@@ -1924,23 +2098,34 @@ export function AffairsWorkbenchProvider({
       await refreshLibraryNow();
     },
     saveFolderTagSelection: async (folderPath, tagIds, createTagPaths = [], previousTagIds = []) => {
-      const operation = resolveFolderTagTaskOperation(previousTagIds, tagIds);
-      setFolderTagTaskMonitor({
+      const operation = resolveTagTaskOperation(previousTagIds, tagIds);
+      const optimisticMonitor: FolderTagApplyTaskMonitorState = {
         folderPath,
         taskId: `pending:${folderPath}:${Date.now()}`,
-        snapshot: createOptimisticFolderTagTaskSnapshot(folderPath, operation),
+        snapshot: createOptimisticTagTaskSnapshot(`folder:${folderPath}`, operation),
         operation,
-      });
+      };
+      setFolderTagTaskMonitor(optimisticMonitor);
+      syncFolderTaskRecord(optimisticMonitor);
       const result = createTagPaths.length > 0
         ? await saveAffairsFolderTagsWithCreate(workspaceId, { folderPath, tagIds, createTagPaths })
         : await saveAffairsFolderTags(workspaceId, { folderPath, tagIds });
       if (result.refreshTask) {
-        setFolderTagTaskMonitor({
+        const nextMonitor: FolderTagApplyTaskMonitorState = {
           folderPath: result.target.folderPath,
           taskId: result.refreshTask.taskId,
           snapshot: null,
           operation,
-        });
+        };
+        setFolderTagTaskMonitor(nextMonitor);
+        syncFolderTaskRecord(nextMonitor);
+      } else {
+        const completedMonitor: FolderTagApplyTaskMonitorState = {
+          ...optimisticMonitor,
+          snapshot: createCompletedTagTaskSnapshot(optimisticMonitor.snapshot, operation),
+        };
+        setFolderTagTaskMonitor(completedMonitor);
+        syncFolderTaskRecord(completedMonitor);
       }
       if (createTagPaths.length > 0) {
         await reloadTagManagement();
@@ -2027,6 +2212,7 @@ export function AffairsWorkbenchProvider({
     documentTagDetails,
     folderTagDetails,
     folderTagTaskMonitor,
+    recentTagTasks,
     fullTagRecomputeTaskMonitor,
     tagRecoveryStatus,
     refreshLibraryNow,
@@ -4012,7 +4198,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 <AffairsLibraryStageToolbar
                   browseMode={state.browseMode}
                   folderBreadcrumbs={folderBreadcrumbs}
-                  folderTagTaskMonitor={folderTagTaskMonitor}
+                  recentTagTasks={recentTagTasks}
                   tagRecords={tagRecords}
                   indexStatus={indexStatus}
                   directoryStatus={state.browseMode === "folder" ? currentDirectoryStatus : null}
@@ -4422,7 +4608,13 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 emptyText={t("shell.affairsDocumentTagsEmpty")}
                 inputLabel={t("shell.affairsDocumentTagAddLabel")}
                 suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(pendingTagAssignmentTarget.documentId, nextTagIds, createTagPaths)}
+                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
+                  pendingTagAssignmentTarget.documentId,
+                  nextTagIds,
+                  createTagPaths,
+                  pendingTagAssignmentTarget.existingTagIds,
+                  pendingTagAssignmentTarget.title,
+                )}
                 onSaved={() => setPendingTagAssignmentTarget(null)}
               />
             ) : (
@@ -4466,7 +4658,13 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 emptyText={t("shell.affairsDocumentTagsEmpty")}
                 inputLabel={t("shell.affairsDocumentTagAddLabel")}
                 suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(pendingTagAssignmentTarget.documentId, nextTagIds, createTagPaths)}
+                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
+                  pendingTagAssignmentTarget.documentId,
+                  nextTagIds,
+                  createTagPaths,
+                  pendingTagAssignmentTarget.existingTagIds,
+                  pendingTagAssignmentTarget.title,
+                )}
                 onSaved={() => setPendingTagAssignmentTarget(null)}
               />
             ) : (
@@ -5286,7 +5484,7 @@ function AffairsStageSkeleton({ viewMode }: { viewMode: "grid" | "list" }) {
 function AffairsLibraryStageToolbar({
   browseMode,
   folderBreadcrumbs,
-  folderTagTaskMonitor,
+  recentTagTasks = [],
   tagRecords,
   indexStatus,
   directoryStatus,
@@ -5305,7 +5503,7 @@ function AffairsLibraryStageToolbar({
 }: {
   browseMode: "folder" | "tag";
   folderBreadcrumbs: Array<{ label: string; path: string }>;
-  folderTagTaskMonitor: FolderTagApplyTaskMonitorState | null;
+  recentTagTasks: RecentAffairsTagTaskRecord[];
   tagRecords: TagRecord[];
   indexStatus: AffairsLibraryIndexStatusDto | null;
   directoryStatus: AffairsLibraryDocumentListDto["directoryStatus"];
@@ -5525,9 +5723,9 @@ function AffairsLibraryStageToolbar({
             <RefreshLibraryIcon />
           </button>
         </div>
-        {folderTagTaskMonitor ? (
+        {recentTagTasks.length > 0 ? (
           <div className="affairs-stage-toolbar-group">
-            <AffairsFolderTagTaskProgressButton task={folderTagTaskMonitor} />
+            <AffairsTagTaskHistoryButton tasks={recentTagTasks} />
           </div>
         ) : null}
         <div className="affairs-stage-toolbar-group">
@@ -5639,23 +5837,24 @@ function AffairsTagDetailPanel({ detail }: { detail: TagDetailState }) {
   );
 }
 
-function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTaskMonitorState }) {
+function AffairsTagTaskHistoryButton({ tasks }: { tasks: RecentAffairsTagTaskRecord[] }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
-  const snapshot = task.snapshot;
+  const primaryTask = useMemo(
+    () => tasks.find((item) => !item.snapshot || !isTerminalAffairsTaskStatus(item.snapshot.status)) ?? tasks[0] ?? null,
+    [tasks],
+  );
+  if (!primaryTask) {
+    return null;
+  }
+  const snapshot = primaryTask.snapshot;
   const status = snapshot?.status ?? "queued";
   const progress = snapshot?.progress ?? null;
   const normalizedPercent = Math.max(0, Math.min(100, Math.round(progress?.percent ?? (isTerminalAffairsTaskStatus(status) ? 100 : 0))));
-  const folderLabel = task.folderPath === "."
-    ? t("shell.affairsLibraryDirectoryStatusRootPath")
-    : getPathLeafName(task.folderPath) || task.folderPath;
   const statusLabel = resolveAffairsTaskStatusLabel(status);
-  const phaseLabel = resolveAffairsTaskPhaseLabel(progress?.phase ?? null);
-  const progressSummary = progress && typeof progress.current === "number" && typeof progress.total === "number"
-    ? t("shell.affairsFolderTagTaskProgressCount", { current: progress.current, total: progress.total })
-    : t("shell.affairsFolderTagTaskPreparing");
-  const operationLabel = resolveFolderTagTaskOperationLabel(task.operation);
+  const operationLabel = resolveTagTaskOperationLabel(primaryTask.operation);
+  const runningCount = tasks.filter((item) => !item.snapshot || !isTerminalAffairsTaskStatus(item.snapshot.status)).length;
 
   return (
     <>
@@ -5663,9 +5862,10 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
         ref={triggerRef}
         type="button"
         className="affairs-folder-tag-task-trigger"
-        aria-label={t("shell.affairsFolderTagTaskButtonLabel", {
+        aria-label={t("shell.affairsTagTaskHistoryButtonLabel", {
+          count: tasks.length,
           operation: operationLabel,
-          folder: folderLabel,
+          target: primaryTask.targetLabel,
           status: statusLabel,
           percent: normalizedPercent,
         })}
@@ -5674,10 +5874,10 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
       >
         <span className={`affairs-folder-tag-task-dot state-${status}`} aria-hidden="true" />
         <span className="affairs-folder-tag-task-text">
-          {t("shell.affairsFolderTagTaskShortTitle", { operation: operationLabel })}
+          {t("shell.affairsTagTaskHistoryShortTitle")}
         </span>
         <span className="affairs-folder-tag-task-badge">
-          {status === "running" ? `${normalizedPercent}%` : statusLabel}
+          {runningCount > 0 ? t("shell.affairsTagTaskHistoryRunningCount", { count: runningCount }) : status === "running" ? `${normalizedPercent}%` : statusLabel}
         </span>
       </button>
       <ButlerAnchoredPopover
@@ -5686,39 +5886,66 @@ function AffairsFolderTagTaskProgressButton({ task }: { task: FolderTagApplyTask
         anchorRef={triggerRef}
         popoverRef={popoverRef}
         role="dialog"
-        labelledBy="affairs-folder-tag-task-popover-title"
-        maxWidth={340}
+        labelledBy="affairs-tag-task-popover-title"
+        maxWidth={360}
         gap={8}
       >
         <div className="affairs-folder-tag-task-popover-card">
           <div className="affairs-folder-tag-task-popover-header">
-            <strong id="affairs-folder-tag-task-popover-title">{t("shell.affairsFolderTagTaskTitle", { operation: operationLabel })}</strong>
-            <span>{statusLabel}</span>
+            <strong id="affairs-tag-task-popover-title">{t("shell.affairsTagTaskHistoryTitle")}</strong>
+            <span>{t("shell.affairsTagTaskHistoryCount", { count: tasks.length })}</span>
           </div>
-          <div className="affairs-folder-tag-task-popover-grid">
-            <div className="affairs-folder-tag-task-popover-row">
-              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskFolderLabel")}</span>
-              <span className="affairs-folder-tag-task-popover-value">{task.folderPath === "." ? "/" : task.folderPath}</span>
-            </div>
-            <div className="affairs-folder-tag-task-popover-row">
-              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
-              <span className="affairs-folder-tag-task-popover-value">{phaseLabel}</span>
-            </div>
-            <div className="affairs-folder-tag-task-popover-row">
-              <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
-              <span className="affairs-folder-tag-task-popover-value">{progressSummary}</span>
-            </div>
+          <div className="affairs-tag-task-history-list">
+            {tasks.map((task) => {
+              const taskSnapshot = task.snapshot;
+              const taskStatus = taskSnapshot?.status ?? "queued";
+              const taskProgress = taskSnapshot?.progress ?? null;
+              const taskPercent = Math.max(0, Math.min(100, Math.round(taskProgress?.percent ?? (isTerminalAffairsTaskStatus(taskStatus) ? 100 : 0))));
+              const taskStatusLabel = resolveAffairsTaskStatusLabel(taskStatus);
+              const taskPhaseLabel = resolveAffairsTaskPhaseLabel(taskProgress?.phase ?? null);
+              const taskProgressSummary = taskProgress && typeof taskProgress.current === "number" && typeof taskProgress.total === "number"
+                ? t("shell.affairsFolderTagTaskProgressCount", { current: taskProgress.current, total: taskProgress.total })
+                : t("shell.affairsFolderTagTaskPreparing");
+              const taskOperationLabel = resolveTagTaskOperationLabel(task.operation);
+              return (
+                <div key={task.id} className="affairs-tag-task-history-item">
+                  <div className="affairs-tag-task-history-item-header">
+                    <div className="affairs-tag-task-history-item-title">
+                      <span className={`affairs-folder-tag-task-dot state-${taskStatus}`} aria-hidden="true" />
+                      <strong>{t("shell.affairsFolderTagTaskTitle", { operation: taskOperationLabel })}</strong>
+                    </div>
+                    <span className="affairs-tag-task-history-item-status">
+                      {taskStatus === "running" ? `${taskPercent}%` : taskStatusLabel}
+                    </span>
+                  </div>
+                  <div className="affairs-folder-tag-task-popover-grid">
+                    <div className="affairs-folder-tag-task-popover-row">
+                      <span className="affairs-folder-tag-task-popover-label">{task.targetType === "folder" ? t("shell.affairsFolderTagTaskFolderLabel") : t("shell.affairsTagTaskDocumentLabel")}</span>
+                      <span className="affairs-folder-tag-task-popover-value">{task.targetLabel}</span>
+                    </div>
+                    <div className="affairs-folder-tag-task-popover-row">
+                      <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
+                      <span className="affairs-folder-tag-task-popover-value">{taskPhaseLabel}</span>
+                    </div>
+                    <div className="affairs-folder-tag-task-popover-row">
+                      <span className="affairs-folder-tag-task-popover-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
+                      <span className="affairs-folder-tag-task-popover-value">{taskProgressSummary}</span>
+                    </div>
+                  </div>
+                  <div className="affairs-folder-tag-task-progress-track" aria-hidden="true">
+                    <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${taskPercent}%` }} />
+                  </div>
+                  <p className="affairs-folder-tag-task-popover-detail">
+                    {taskProgress?.label ?? t("shell.affairsFolderTagTaskPreparing")}
+                    {taskProgress?.detail ? ` · ${taskProgress.detail}` : ""}
+                  </p>
+                  {taskSnapshot?.errorMessage ? (
+                    <p className="affairs-folder-tag-task-popover-error">{taskSnapshot.errorMessage}</p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
-          <div className="affairs-folder-tag-task-progress-track" aria-hidden="true">
-            <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${normalizedPercent}%` }} />
-          </div>
-          <p className="affairs-folder-tag-task-popover-detail">
-            {progress?.label ?? t("shell.affairsFolderTagTaskPreparing")}
-            {progress?.detail ? ` · ${progress.detail}` : ""}
-          </p>
-          {snapshot?.errorMessage ? (
-            <p className="affairs-folder-tag-task-popover-error">{snapshot.errorMessage}</p>
-          ) : null}
         </div>
       </ButlerAnchoredPopover>
     </>
@@ -8208,6 +8435,10 @@ function resolveFolderTagTaskOperationLabel(operation: FolderTagApplyTaskMonitor
   }
 }
 
+function resolveTagTaskOperationLabel(operation: TagApplyOperation): string {
+  return resolveFolderTagTaskOperationLabel(operation);
+}
+
 function resolveFolderTagTaskOperation(
   currentTagIds: string[],
   nextTagIds: string[],
@@ -8261,6 +8492,52 @@ function createOptimisticFolderTagTaskSnapshot(
       current: 0,
       total: 1,
       percent: 0,
+      updatedAt: now,
+    },
+  };
+}
+
+function resolveTagTaskOperation(
+  currentTagIds: string[],
+  nextTagIds: string[],
+): FolderTagApplyTaskMonitorState["operation"] {
+  return resolveFolderTagTaskOperation(currentTagIds, nextTagIds);
+}
+
+function createOptimisticTagTaskSnapshot(
+  targetKey: string,
+  operation: FolderTagApplyTaskMonitorState["operation"],
+): AffairsTaskSnapshotDto {
+  return createOptimisticFolderTagTaskSnapshot(targetKey, operation);
+}
+
+function createCompletedTagTaskSnapshot(
+  base: AffairsTaskSnapshotDto | null,
+  operation: TagApplyOperation,
+): AffairsTaskSnapshotDto {
+  const now = Date.now();
+  const fallbackTaskId = `completed-tag-task-${now}`;
+  return {
+    taskId: base?.taskId ?? fallbackTaskId,
+    taskType: base?.taskType ?? "affairs.library_tag_apply_bindings",
+    key: base?.key ?? `completed:${fallbackTaskId}`,
+    executionLane: base?.executionLane ?? "helper_process",
+    source: base?.source ?? "affairs_tag.completed_local",
+    attempt: base?.attempt ?? 1,
+    enqueuedAt: base?.enqueuedAt ?? now,
+    timeoutMs: base?.timeoutMs ?? null,
+    status: "succeeded",
+    startedAt: base?.startedAt ?? base?.enqueuedAt ?? now,
+    finishedAt: now,
+    progress: {
+      phase: "finished",
+      label: t("shell.affairsFolderTagTaskSubmitting", {
+        operation: resolveTagTaskOperationLabel(operation),
+      }),
+      detail: t("shell.affairsFolderTagTaskPhaseFinished"),
+      current: 1,
+      total: 1,
+      percent: 100,
       updatedAt: now,
     },
   };

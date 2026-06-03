@@ -568,6 +568,14 @@ export class AffairsTagService {
     );
   }
 
+  getDocumentTagApplyTaskSnapshot(workspaceId: string, userId: string, documentId: string): TaskSnapshot | null {
+    this.requireBinding(workspaceId, userId);
+    return this.taskManager.peek(
+      HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
+      `${workspaceId}:doc:${documentId}`,
+    );
+  }
+
   getFullTagRecomputeTaskSnapshot(workspaceId: string, userId: string): TaskSnapshot | null {
     this.requireBinding(workspaceId, userId);
     return this.taskManager.peek(

@@ -192,6 +192,17 @@ export class AffairsTagController {
     ));
   };
 
+  readonly getDocumentTagTask = async (
+    request: FastifyRequest<{ Params: WorkspaceDocumentParams }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.getDocumentTagApplyTaskSnapshot(
+      request.params.workspaceId,
+      requireUserId(request),
+      request.params.documentId,
+    ));
+  };
+
   readonly getFolderTagDetails = async (
     request: FastifyRequest<{ Params: WorkspaceParams; Querystring: FolderTagDetailsQuery }>,
     reply: FastifyReply,
