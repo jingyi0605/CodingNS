@@ -86,6 +86,7 @@ function createService(options: {
   } | null;
   peek?: (taskType: string, key: string) => TaskSnapshot | null;
   enqueue?: ReturnType<typeof vi.fn>;
+  cancel?: ReturnType<typeof vi.fn>;
 }) {
   return new AffairsLibraryService(
     {
@@ -149,7 +150,8 @@ function createService(options: {
         promise: Promise.resolve(createIndexerResult("index")),
         cancel: vi.fn()
       })),
-      peek: vi.fn(options.peek ?? (() => null))
+      peek: vi.fn(options.peek ?? (() => null)),
+      cancel: options.cancel ?? vi.fn()
     } as never,
     {
       info: vi.fn(),
@@ -396,6 +398,233 @@ describe("AffairsLibraryService auto tasks", () => {
         })
       })
     );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("自动刷新遇到 orphan running 时，会先主动取消旧任务，再继续排新任务", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-orphan-reconcile-auto-"));
+    seedExistingArtifacts(rootDir);
+    fs.mkdirSync(path.join(rootDir, ".ai-index", "runtime", "command.lock"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime-status.json"),
+      JSON.stringify({
+        version: 1,
+        status: "running",
+        stage: "export",
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        updatedAt: new Date(Date.now() - 120_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "owner.json"),
+      JSON.stringify({
+        pid: 999999,
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        acquiredAt: new Date(Date.now() - 180_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "heartbeat.json"),
+      JSON.stringify({
+        ts: new Date(Date.now() - 180_000).toISOString()
+      })
+    );
+
+    let runningSnapshot: TaskSnapshot | null = {
+      taskId: "task-orphan",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      status: "running",
+      source: "affairs_library.auto_refresh",
+      attempt: 1,
+      enqueuedAt: Date.now() - 240_000,
+      startedAt: Date.now() - 235_000,
+      finishedAt: null,
+      timeoutMs: 15 * 60 * 1000
+    };
+    const cancel = vi.fn(() => {
+      runningSnapshot = null;
+    });
+    const enqueue = vi.fn(() => ({
+      taskId: "task-new",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({
+      rootDir,
+      peek: (taskType) => taskType === HOST_TASK_TYPES.affairsLibraryIndex ? runningSnapshot : null,
+      enqueue,
+      cancel
+    });
+
+    service.scheduleAutoRefresh("workspace-1", "watch:index_changed:notes/demo.md", "notes/demo.md");
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(cancel).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      "workspace-1",
+      expect.stringContaining("orphaned_helper_process:command_lock_owner_dead")
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir,
+          reason: "watch:index_changed:notes/demo.md",
+          targetPath: "notes/demo.md"
+        })
+      })
+    );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("手动刷新遇到 orphan running 时，不会一直被旧任务卡住", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-orphan-reconcile-manual-"));
+    seedExistingArtifacts(rootDir);
+    fs.mkdirSync(path.join(rootDir, ".ai-index", "runtime", "command.lock"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime-status.json"),
+      JSON.stringify({
+        version: 1,
+        status: "running",
+        stage: "export",
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        updatedAt: new Date(Date.now() - 120_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "owner.json"),
+      JSON.stringify({
+        pid: 999999,
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        acquiredAt: new Date(Date.now() - 180_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "heartbeat.json"),
+      JSON.stringify({
+        ts: new Date(Date.now() - 180_000).toISOString()
+      })
+    );
+
+    let runningSnapshot: TaskSnapshot | null = {
+      taskId: "task-orphan",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      status: "running",
+      source: "affairs_library.refresh",
+      attempt: 1,
+      enqueuedAt: Date.now() - 240_000,
+      startedAt: Date.now() - 235_000,
+      finishedAt: null,
+      timeoutMs: 15 * 60 * 1000
+    };
+    const cancel = vi.fn(() => {
+      runningSnapshot = null;
+    });
+    const enqueue = vi.fn(() => ({
+      taskId: "task-manual-new",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({
+      rootDir,
+      peek: (taskType) => taskType === HOST_TASK_TYPES.affairsLibraryIndex ? runningSnapshot : null,
+      enqueue,
+      cancel
+    });
+
+    const refresh = service.requestRefresh("workspace-1", "user-1", "manual_refresh");
+
+    expect(cancel).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      "workspace-1",
+      expect.stringContaining("orphaned_helper_process:command_lock_owner_dead")
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir,
+          reason: "manual_refresh"
+        })
+      })
+    );
+    expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(enqueue.mock.invocationCallOrder[0]);
+    expect(refresh.taskId).toBe("task-manual-new");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("刚启动不久的 running 任务不会被误判成 orphan 并取消", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-orphan-grace-"));
+    seedExistingArtifacts(rootDir);
+
+    const recentRunningSnapshot: TaskSnapshot = {
+      taskId: "task-recent",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      status: "running",
+      source: "affairs_library.auto_refresh",
+      attempt: 1,
+      enqueuedAt: Date.now() - 5_000,
+      startedAt: Date.now() - 4_000,
+      finishedAt: null,
+      timeoutMs: 15 * 60 * 1000
+    };
+    const cancel = vi.fn();
+    const enqueue = vi.fn(() => ({
+      taskId: "task-new",
+      taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+      key: "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({
+      rootDir,
+      peek: (taskType) => taskType === HOST_TASK_TYPES.affairsLibraryIndex ? recentRunningSnapshot : null,
+      enqueue,
+      cancel
+    });
+
+    service.scheduleAutoRefresh("workspace-1", "watch:index_changed:notes/demo.md", "notes/demo.md");
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(enqueue.mock.calls.some((call) => call[0] === HOST_TASK_TYPES.affairsLibraryIndex)).toBe(false);
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
