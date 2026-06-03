@@ -2,8 +2,11 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadRuntimeConfig } from "../affairs-indexer/core/src/config/load-runtime-config.js";
+
 const DEFAULT_LOG_FILE_NAME = "affairs-library-debug.log";
 const LOG_DIR_ENV_KEY = "CODINGNS_AFFAIRS_DEBUG_LOG_DIR";
+const LOG_LEVEL_ENV_KEY = "DOC_SEMANTIC_INDEX_LOG_LEVEL";
 
 export interface AffairsLibraryDebugPayload {
   event: string;
@@ -27,9 +30,10 @@ export interface AffairsLibraryDebugPayload {
 }
 
 let ensuredLogDir: string | null = null;
+const debugEnabledCache = new Map<string, boolean>();
 
 export function writeAffairsLibraryDebugLog(payload: AffairsLibraryDebugPayload): void {
-  const logDir = resolveAffairsLibraryDebugLogDir();
+  const logDir = resolveAffairsLibraryDebugLogDir(payload.rootDir);
   if (!logDir) {
     return;
   }
@@ -70,12 +74,47 @@ export function writeAffairsLibraryDebugLog(payload: AffairsLibraryDebugPayload)
   }
 }
 
-export function getAffairsLibraryDebugLogPath(): string | null {
-  const logDir = resolveAffairsLibraryDebugLogDir();
+export function getAffairsLibraryDebugLogPath(rootDir?: string | null): string | null {
+  const logDir = resolveAffairsLibraryDebugLogDir(rootDir);
   return logDir ? path.join(logDir, DEFAULT_LOG_FILE_NAME) : null;
 }
 
-function resolveAffairsLibraryDebugLogDir(): string | null {
+export function isAffairsLibraryDebugEnabled(rootDir?: string | null): boolean {
+  if (process.env[LOG_LEVEL_ENV_KEY]?.trim() === "debug") {
+    return true;
+  }
+
+  const normalizedRootDir = normalizeString(rootDir);
+  if (!normalizedRootDir) {
+    return false;
+  }
+
+  const cached = debugEnabledCache.get(normalizedRootDir);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let enabled = false;
+  try {
+    enabled = loadRuntimeConfig(normalizedRootDir, {
+      args: {
+        rootDir: normalizedRootDir,
+        "root-dir": normalizedRootDir,
+      },
+      env: process.env,
+    }).logLevel === "debug";
+  } catch {
+    enabled = false;
+  }
+  debugEnabledCache.set(normalizedRootDir, enabled);
+  return enabled;
+}
+
+function resolveAffairsLibraryDebugLogDir(rootDir?: string | null): string | null {
+  if (!isAffairsLibraryDebugEnabled(rootDir)) {
+    return null;
+  }
+
   const explicitDir = process.env[LOG_DIR_ENV_KEY]?.trim();
   if (explicitDir) {
     return path.resolve(explicitDir);

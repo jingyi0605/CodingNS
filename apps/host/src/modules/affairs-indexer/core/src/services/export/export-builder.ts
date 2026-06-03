@@ -436,7 +436,7 @@ export class ExportBuilder {
       await yieldToEventLoop(options.signal, "事务文档库导出已取消");
     }
     flushMetaShard();
-    logAffairsIndexerRss("export.meta_detail_complete", {
+    logAffairsIndexerRss(this.config, "export.meta_detail_complete", {
       rootDir: this.config.rootDir,
       fullBuild,
       lightBuild,
@@ -557,7 +557,7 @@ export class ExportBuilder {
       await yieldToEventLoop(options.signal, "事务文档库导出已取消");
     }
     flushCurrentRoot();
-    logAffairsIndexerRss("export.tag_complete", {
+    logAffairsIndexerRss(this.config, "export.tag_complete", {
       rootDir: this.config.rootDir,
       tagShardCount: tagShards.length,
       dirtyTagPathCount: dirtyTagPaths.size
@@ -676,7 +676,7 @@ export class ExportBuilder {
     if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
       fs.rmdirSync(tempDir);
     }
-    logAffairsIndexerRss("export.relation_complete", {
+    logAffairsIndexerRss(this.config, "export.relation_complete", {
       rootDir: this.config.rootDir,
       relationGroupCount: relationShards.length,
       dirtyRelationCount: dirtyRelationIds.size,
@@ -703,7 +703,7 @@ export class ExportBuilder {
         reason: options.reason,
         targetPath: options.targetPath
       });
-    logAffairsIndexerRss("export.search_complete", {
+    logAffairsIndexerRss(this.config, "export.search_complete", {
       rootDir: this.config.rootDir,
       searchBucketCount: searchIndexResult.bucketCount,
       searchFilesWritten: searchIndexResult.filesWritten.length
@@ -767,7 +767,7 @@ export class ExportBuilder {
     const manifestPath = path.join(this.config.exportDir, "manifest.json");
     writeJson(manifestPath, manifest);
     filesWritten.push(manifestPath);
-    logAffairsIndexerRss("export.complete", {
+    logAffairsIndexerRss(this.config, "export.complete", {
       rootDir: this.config.rootDir,
       manifestPath,
       metaShardCount: metaShards.length,

@@ -73,17 +73,21 @@ export async function runAffairsIndexerCommand(
 ): Promise<AffairsIndexerCommandResult> {
   const startedAt = performance.now();
   const runtimeStageWriter = createRuntimeStageWriter(rootDir, command, options);
+  let config: RuntimeConfig | null = null;
   let rootLock: AffairsIndexerRootLockHandle | null = null;
-  writeAffairsIndexerHelperLog({
-    phase: "start",
-    command,
-    rootDir,
-    targetPath: options.targetPath,
-    reason: options.reason
-  });
 
   try {
-    const config = createAffairsIndexerRuntimeConfig(rootDir);
+    config = createAffairsIndexerRuntimeConfig(rootDir);
+    writeAffairsIndexerHelperLog(
+      {
+        phase: "start",
+        command,
+        rootDir,
+        targetPath: options.targetPath,
+        reason: options.reason
+      },
+      config.logLevel
+    );
     rootLock = await acquireAffairsIndexerRootLock(rootDir, command, {
       signal: options.signal,
       reason: options.reason,
@@ -292,15 +296,18 @@ export async function runAffairsIndexerCommand(
     };
     runtimeStageWriter.stopHeartbeat();
     runtimeStageWriter.write("finished", "finished");
-    writeAffairsIndexerHelperLog({
-      phase: "finish",
-      command,
-      rootDir,
-      targetPath: options.targetPath,
-      reason: options.reason,
-      durationMs: commandResult.durationMs,
-      resultSummary: summarizeCommandResult(result)
-    });
+    writeAffairsIndexerHelperLog(
+      {
+        phase: "finish",
+        command,
+        rootDir,
+        targetPath: options.targetPath,
+        reason: options.reason,
+        durationMs: commandResult.durationMs,
+        resultSummary: summarizeCommandResult(result)
+      },
+      config.logLevel
+    );
     writeAffairsLibraryDebugLog({
       event: "helper_command_finished",
       processRole: "helper",
@@ -324,15 +331,18 @@ export async function runAffairsIndexerCommand(
       "failed",
       error instanceof Error ? error.message : String(error)
     );
-    writeAffairsIndexerHelperLog({
-      phase: "error",
-      command,
-      rootDir,
-      targetPath: options.targetPath,
-      reason: options.reason,
-      durationMs: Number((performance.now() - startedAt).toFixed(2)),
-      error: error instanceof Error ? error.message : String(error)
-    });
+    writeAffairsIndexerHelperLog(
+      {
+        phase: "error",
+        command,
+        rootDir,
+        targetPath: options.targetPath,
+        reason: options.reason,
+        durationMs: Number((performance.now() - startedAt).toFixed(2)),
+        error: error instanceof Error ? error.message : String(error)
+      },
+      config?.logLevel ?? null
+    );
     writeAffairsLibraryDebugLog({
       event: "helper_command_failed",
       processRole: "helper",
@@ -657,16 +667,23 @@ function summarizeCommandResult(result: unknown): Record<string, unknown> | null
   return null;
 }
 
-function writeAffairsIndexerHelperLog(payload: {
-  phase: "start" | "finish" | "error";
-  command: AffairsIndexerCommandName;
-  rootDir: string;
-  targetPath?: string;
-  reason?: string;
-  durationMs?: number;
-  error?: string;
-  resultSummary?: Record<string, unknown> | null;
-}): void {
+function writeAffairsIndexerHelperLog(
+  payload: {
+    phase: "start" | "finish" | "error";
+    command: AffairsIndexerCommandName;
+    rootDir: string;
+    targetPath?: string;
+    reason?: string;
+    durationMs?: number;
+    error?: string;
+    resultSummary?: Record<string, unknown> | null;
+  },
+  logLevel: RuntimeConfig["logLevel"] | null
+): void {
+  if (!shouldWriteAffairsIndexerStructuredDebugLog(logLevel)) {
+    return;
+  }
+
   try {
     const rssBytes = process.memoryUsage.rss();
     console.error(
@@ -685,4 +702,10 @@ function writeAffairsIndexerHelperLog(payload: {
   } catch {
     // 结构化日志写失败不影响主流程。
   }
+}
+
+function shouldWriteAffairsIndexerStructuredDebugLog(
+  logLevel: RuntimeConfig["logLevel"] | null
+): boolean {
+  return logLevel === "debug" || process.env.DOC_SEMANTIC_INDEX_LOG_LEVEL?.trim() === "debug";
 }

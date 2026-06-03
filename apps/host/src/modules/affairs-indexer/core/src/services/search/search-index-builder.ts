@@ -371,7 +371,7 @@ export class SearchIndexBuilder {
       buckets: manifestBuckets,
     } satisfies SearchManifest);
     filesWritten.push(manifestPath);
-    logAffairsIndexerRss("search.complete", {
+    logAffairsIndexerRss(this.config, "search.complete", {
       rootDir: this.config.rootDir,
       bucketCount: manifestBuckets.length,
       fileCount: filesWritten.length

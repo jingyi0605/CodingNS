@@ -1,7 +1,14 @@
+import type { RuntimeConfig } from "../../../contracts/src/index.js";
+
 export function logAffairsIndexerRss(
+  config: Pick<RuntimeConfig, "logLevel">,
   stage: string,
   extra: Record<string, unknown> = {}
 ): void {
+  if (config.logLevel !== "debug") {
+    return;
+  }
+
   try {
     const rssBytes = process.memoryUsage.rss();
     console.error(

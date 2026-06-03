@@ -213,7 +213,7 @@ export class TextIndexer {
         return;
       }
 
-      logAffairsIndexerRss("index.parse_progress", {
+      logAffairsIndexerRss(this.config, "index.parse_progress", {
         rootDir: this.config.rootDir,
         scannedCount,
         indexedCount,
@@ -234,7 +234,7 @@ export class TextIndexer {
         return;
       }
 
-      logAffairsIndexerRss("index.write_progress", {
+      logAffairsIndexerRss(this.config, "index.write_progress", {
         rootDir: this.config.rootDir,
         kind,
         scannedCount,
@@ -528,7 +528,7 @@ export class TextIndexer {
     }
     cleanupMs = 0;
     const scanAndParseMs = performance.now() - scanStartedAt;
-    logAffairsIndexerRss("index.parse_complete", {
+    logAffairsIndexerRss(this.config, "index.parse_complete", {
       rootDir: this.config.rootDir,
       scannedCount,
       indexedCount,
@@ -565,7 +565,7 @@ export class TextIndexer {
     const dirtyScopeMs = performance.now() - dirtyScopeStartedAt;
     const scanLoopMs = performance.now() - scanStartedAt - cleanupMs - reconcileMs - dirtyScopeMs;
     const writeSuccessMs = writeIndexedMs + writeSkippedMs;
-    logAffairsIndexerRss("index.write_complete", {
+    logAffairsIndexerRss(this.config, "index.write_complete", {
       rootDir: this.config.rootDir,
       scannedCount,
       indexedCount,
