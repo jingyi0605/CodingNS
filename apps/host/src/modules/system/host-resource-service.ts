@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { nowIso } from "../../shared/utils/time.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface HostResourceSnapshot {
   observedAt: string;
@@ -39,6 +43,8 @@ interface HostResourceServiceOptions {
   readonly sampleCpu?: () => CpuSample;
   readonly totalMemory?: () => number;
   readonly freeMemory?: () => number;
+  readonly platform?: () => NodeJS.Platform;
+  readonly readDarwinVmStat?: () => Promise<string>;
   readonly nowIso?: () => string;
 }
 
@@ -58,7 +64,7 @@ export class HostResourceService {
       this.readDiskUsage()
     ]);
     const totalMemory = Math.max(0, this.readTotalMemory());
-    const freeMemory = clampBytes(this.readFreeMemory(), totalMemory);
+    const freeMemory = clampBytes(await this.readAvailableMemory(totalMemory), totalMemory);
     const usedMemory = clampBytes(totalMemory - freeMemory, totalMemory);
 
     return {
@@ -113,6 +119,30 @@ export class HostResourceService {
 
   private readFreeMemory(): number {
     return (this.options.freeMemory ?? os.freemem)();
+  }
+
+  private readPlatform(): NodeJS.Platform {
+    return (this.options.platform ?? os.platform)();
+  }
+
+  private async readAvailableMemory(totalMemory: number): Promise<number> {
+    if (this.readPlatform() === "darwin") {
+      const reusableMemory = await this.readDarwinReusableMemoryBytes();
+      if (reusableMemory !== null) {
+        return reusableMemory;
+      }
+    }
+
+    return this.readFreeMemory();
+  }
+
+  private async readDarwinReusableMemoryBytes(): Promise<number | null> {
+    try {
+      const rawOutput = await (this.options.readDarwinVmStat ?? readDarwinVmStat)();
+      return parseDarwinReusableMemoryBytes(rawOutput);
+    } catch {
+      return null;
+    }
   }
 
   private async sleep(delayMs: number): Promise<void> {
@@ -171,4 +201,41 @@ function clampBytes(value: number, maxValue: number): number {
   }
 
   return Math.min(Math.round(value), Math.max(0, Math.round(maxValue)));
+}
+
+async function readDarwinVmStat(): Promise<string> {
+  const result = await execFileAsync("vm_stat");
+  return result.stdout;
+}
+
+function parseDarwinReusableMemoryBytes(rawOutput: string): number | null {
+  const pageSizeMatch = rawOutput.match(/page size of (\d+) bytes/i);
+  if (!pageSizeMatch) {
+    return null;
+  }
+
+  const pageSize = Number.parseInt(pageSizeMatch[1] ?? "", 10);
+  if (!Number.isFinite(pageSize) || pageSize <= 0) {
+    return null;
+  }
+
+  const reusablePageCount =
+    readVmStatPageCount(rawOutput, "Pages free")
+    + readVmStatPageCount(rawOutput, "Pages inactive")
+    + readVmStatPageCount(rawOutput, "Pages speculative")
+    + readVmStatPageCount(rawOutput, "Pages purgeable");
+
+  return reusablePageCount * pageSize;
+}
+
+function readVmStatPageCount(rawOutput: string, label: string): number {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`${escapedLabel}:\\s+(\\d+)\\.`, "i");
+  const match = rawOutput.match(pattern);
+  if (!match) {
+    return 0;
+  }
+
+  const count = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(count) && count > 0 ? count : 0;
 }

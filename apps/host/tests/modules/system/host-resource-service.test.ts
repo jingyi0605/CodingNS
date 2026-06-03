@@ -20,6 +20,7 @@ describe("HostResourceService", () => {
       }),
       totalMemory: () => 16 * 1024,
       freeMemory: () => 6 * 1024,
+      platform: () => "linux",
       nowIso: () => "2026-06-03T00:00:00.000Z"
     });
 
@@ -65,6 +66,7 @@ describe("HostResourceService", () => {
       }),
       totalMemory: () => 10,
       freeMemory: () => 2,
+      platform: () => "linux",
       nowIso: () => "2026-06-03T00:00:00.000Z"
     });
 
@@ -74,5 +76,38 @@ describe("HostResourceService", () => {
     expect(sleepCallCount).toBe(1);
     expect(firstSnapshot.cpu.usedRatio).toBe(0.5);
     expect(secondSnapshot.cpu.usedRatio).toBeCloseTo(2 / 3, 6);
+  });
+
+  it("macOS 下会用 vm_stat 可回收内存，而不是 os.freemem", async () => {
+    const service = new HostResourceService("/tmp/demo", {
+      sampleCpu: () => ({ idle: 10, total: 20 }),
+      sleep: async () => undefined,
+      statfs: async () => ({
+        bsize: 1,
+        blocks: 10,
+        bfree: 3,
+        bavail: 3
+      }),
+      totalMemory: () => 16 * 1024,
+      freeMemory: () => 128,
+      platform: () => "darwin",
+      readDarwinVmStat: async () => `Mach Virtual Memory Statistics: (page size of 1024 bytes)
+Pages free:                                       1.
+Pages active:                                  4096.
+Pages inactive:                                   1.
+Pages speculative:                                1.
+Pages purgeable:                                  0.
+Pages wired down:                              1024.
+`,
+      nowIso: () => "2026-06-03T00:00:00.000Z"
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.memory).toEqual({
+      usedBytes: 13 * 1024,
+      totalBytes: 16 * 1024,
+      freeBytes: 3 * 1024
+    });
   });
 });
