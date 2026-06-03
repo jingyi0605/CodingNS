@@ -151,6 +151,7 @@ const butlerRuntimeStateMock = vi.hoisted(() => {
 const conversationApiMock = vi.hoisted(() => ({
   createAffairsTag: vi.fn(),
   createWorkspaceDirectory: vi.fn(),
+  deleteAffairsLightweightSession: vi.fn(),
   deleteAffairsTag: vi.fn(),
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
@@ -169,6 +170,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
   listAffairsLightweightSessions: vi.fn(),
+  markAffairsLightweightSessionSeen: vi.fn(),
   operateAffairsLibraryFile: vi.fn(),
   listProviderCatalog: vi.fn(),
   listProviderCapabilities: vi.fn(),
@@ -177,6 +179,7 @@ const conversationApiMock = vi.hoisted(() => ({
   requestAffairsLibraryRefresh: vi.fn(),
   requestAffairsTagFullRecompute: vi.fn(),
   requestAffairsTagRecoveryRecompute: vi.fn(),
+  renameAffairsLightweightSessionTitle: vi.fn(),
   saveAffairsDocumentTags: vi.fn(),
   saveAffairsDocumentTagsWithCreate: vi.fn(),
   saveAffairsFolderTags: vi.fn(),
@@ -192,6 +195,8 @@ const conversationApiMock = vi.hoisted(() => ({
   setGlobalAffairsLibraryEnabled: vi.fn(),
   startAffairsLightweightSession: vi.fn(),
   startAffairsLightweightSessionStream: vi.fn(),
+  updateAffairsLightweightSessionArchiveState: vi.fn(),
+  updateAffairsLightweightSessionFavoriteState: vi.fn(),
   updateSessionArchiveState: vi.fn(),
   updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
@@ -209,6 +214,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     ...actual,
     createAffairsTag: conversationApiMock.createAffairsTag,
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
+    deleteAffairsLightweightSession: conversationApiMock.deleteAffairsLightweightSession,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
@@ -227,6 +233,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
     listAffairsLightweightSessions: conversationApiMock.listAffairsLightweightSessions,
+    markAffairsLightweightSessionSeen: conversationApiMock.markAffairsLightweightSessionSeen,
     operateAffairsLibraryFile: conversationApiMock.operateAffairsLibraryFile,
     listProviderCatalog: conversationApiMock.listProviderCatalog,
     listProviderCapabilities: conversationApiMock.listProviderCapabilities,
@@ -235,6 +242,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
     requestAffairsTagFullRecompute: conversationApiMock.requestAffairsTagFullRecompute,
     requestAffairsTagRecoveryRecompute: conversationApiMock.requestAffairsTagRecoveryRecompute,
+    renameAffairsLightweightSessionTitle: conversationApiMock.renameAffairsLightweightSessionTitle,
     saveAffairsDocumentTags: conversationApiMock.saveAffairsDocumentTags,
     saveAffairsDocumentTagsWithCreate: conversationApiMock.saveAffairsDocumentTagsWithCreate,
     saveAffairsFolderTags: conversationApiMock.saveAffairsFolderTags,
@@ -250,6 +258,8 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     setGlobalAffairsLibraryEnabled: conversationApiMock.setGlobalAffairsLibraryEnabled,
     startAffairsLightweightSession: conversationApiMock.startAffairsLightweightSession,
     startAffairsLightweightSessionStream: conversationApiMock.startAffairsLightweightSessionStream,
+    updateAffairsLightweightSessionArchiveState: conversationApiMock.updateAffairsLightweightSessionArchiveState,
+    updateAffairsLightweightSessionFavoriteState: conversationApiMock.updateAffairsLightweightSessionFavoriteState,
     updateSessionArchiveState: conversationApiMock.updateSessionArchiveState,
     updateSessionFavoriteState: conversationApiMock.updateSessionFavoriteState,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
@@ -546,7 +556,11 @@ const navigationGroups: WorkspaceSessionGroup[] = [
       path: "/tmp/workspace-1",
       repoRoot: "/tmp/workspace-1"
     },
-    sessions: []
+    sessions: [],
+    affairsAssistantProjectId: "project-2",
+    affairsAssistantProjectWorkspaceId: "workspace-2",
+    affairsAssistantSessions: [],
+    affairsAssistantSessionsUpdatedAt: "2026-06-03T10:00:00.000Z"
   }
 ];
 
@@ -582,6 +596,56 @@ function createState(): AffairsViewState {
     selectedDocumentId: null,
     selectedFavoriteId: null
   };
+}
+
+function createAgentSnapshotSession(overrides: Partial<NonNullable<WorkspaceSessionGroup["affairsAssistantSessions"]>[number]> = {}) {
+  return {
+    sessionId: overrides.sessionId ?? "agent-session-1",
+    workspaceId: overrides.workspaceId ?? "workspace-2",
+    provider: overrides.provider ?? "codex",
+    providerSessionId: overrides.providerSessionId ?? (overrides.sessionId ?? "agent-session-1"),
+    rawStoreRef: overrides.rawStoreRef ?? `butler://${overrides.sessionId ?? "agent-session-1"}`,
+    providerConfigMode: "global-default" as const,
+    providerPresetId: null,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    isFavorite: false,
+    title: overrides.title ?? "事务 Agent 会话",
+    messageCount: overrides.messageCount ?? 0,
+    lastMessageAt: overrides.lastMessageAt ?? "2026-06-03T13:08:00.000Z",
+    createdAt: overrides.createdAt ?? "2026-06-03T13:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-06-03T13:08:00.000Z",
+    syncStatus: "idle" as const,
+    syncCursor: null,
+    lastSyncAt: overrides.lastSyncAt ?? "2026-06-03T13:08:00.000Z",
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: overrides.runningState ?? "completed",
+    activitySource: overrides.activitySource ?? "inferred",
+    lastEventAt: overrides.lastEventAt ?? "2026-06-03T13:08:00.000Z",
+    completedAt: overrides.completedAt ?? "2026-06-03T13:08:00.000Z",
+    lastSeenAt: null,
+    activityState: overrides.activityState ?? "completed_unread"
+  };
+}
+
+function createNavigationGroupsWithAgentSessions(
+  sessions: ReturnType<typeof createAgentSnapshotSession>[]
+): WorkspaceSessionGroup[] {
+  return navigationGroupsWithBoundLibraryWorkspace.map((group) => (
+    group.workspace.id === "workspace-1"
+      ? {
+          ...group,
+          affairsAssistantProjectId: "project-2",
+          affairsAssistantProjectWorkspaceId: "workspace-2",
+          affairsAssistantSessions: sessions,
+          affairsAssistantSessionsUpdatedAt: "2026-06-03T13:10:00.000Z"
+        }
+      : group
+  ));
 }
 
 function createConversationState(): AffairsViewState {
@@ -1732,6 +1796,8 @@ describe("AffairsWorkbenchView", () => {
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: t("shell.affairsLibraryContextPreview") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextOpen") }),
+      expect.objectContaining({ label: t("shell.affairsLibraryContextLocate") }),
+      expect.objectContaining({ label: t("shell.affairsLibraryOpenWithLocalAppAction") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextDownload") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextCopy") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextDelete") }),
@@ -1792,6 +1858,63 @@ describe("AffairsWorkbenchView", () => {
     ]));
   });
 
+  it("macOS 原生右键菜单点击定位后会切到文件所在目录", async () => {
+    conversationApiMock.listAffairsLibraryDocuments
+      .mockResolvedValueOnce(createDocumentListResponse())
+      .mockResolvedValueOnce(createDocumentListResponse([]));
+
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const locateItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryContextLocate"));
+    expect(locateItem).toBeTruthy();
+    if (!locateItem || !("onSelect" in locateItem)) {
+      throw new Error("未找到定位菜单项");
+    }
+
+    await act(async () => {
+      await locateItem.onSelect();
+    });
+
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenLastCalledWith("workspace-1", expect.objectContaining({
+        browseMode: "folder",
+        selectedFolderPath: null
+      }));
+    });
+  });
+
+  it("macOS 原生右键菜单点击使用本地应用程序打开会走镜像路径", async () => {
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const openLocalAppItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryOpenWithLocalAppAction"));
+    expect(openLocalAppItem).toBeTruthy();
+    if (!openLocalAppItem || !("onSelect" in openLocalAppItem)) {
+      throw new Error("未找到使用本地应用程序打开菜单项");
+    }
+
+    await act(async () => {
+      await openLocalAppItem.onSelect();
+    });
+
+    expect(desktopBridgeMock.fs.openFile).toHaveBeenCalledWith("/Users/jackson/SynologyDrive/Exchange 分层通讯簿.txt");
+  });
+
   it("文档库文件右键菜单点击删除后会先确认再删除", async () => {
     platformBridgeMock.supported = false;
     renderWorkbench();
@@ -1802,6 +1925,8 @@ describe("AffairsWorkbenchView", () => {
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextPreview") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextOpen") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextLocate") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryOpenWithLocalAppAction") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextDownload") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextCopy") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextDelete") })).toBeInTheDocument();
@@ -2560,50 +2685,12 @@ describe("AffairsWorkbenchView", () => {
       },
       activeProvider: "codex"
     });
-    butlerApiMock.listButlerProjects.mockResolvedValue({
-      items: [
-        {
-          id: "project-1",
-          workspaceId: "workspace-1",
-          name: "事务工作区",
-          repoRoot: "/tmp/workspace-1",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        },
-        {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        }
-      ]
-    });
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: null
-    }, navigationGroups);
+    }, navigationGroupsWithBoundLibraryWorkspace);
 
     const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
@@ -2658,92 +2745,6 @@ describe("AffairsWorkbenchView", () => {
   });
 
   it("事务对话页切回历史 Agent 会话时会自动恢复对应的 Butler 会话", async () => {
-    butlerApiMock.listButlerProjects.mockResolvedValue({
-      items: [
-        {
-          id: "project-1",
-          workspaceId: "workspace-1",
-          name: "事务工作区",
-          repoRoot: "/tmp/workspace-1",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        },
-        {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        }
-      ]
-    });
-    butlerApiMock.listButlerProjectSessions.mockResolvedValue({
-      items: [
-        {
-          id: "butler-session-history-1",
-          projectId: "project-2",
-          sessionId: "agent-history-1",
-          provider: "claude-code",
-          title: "历史 Agent 会话",
-          isArchived: false,
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T11:00:00.000Z",
-          updatedAt: "2026-06-03T11:05:00.000Z"
-        }
-      ]
-    });
-    butlerApiMock.getButlerSessionTarget.mockResolvedValue({
-      target: {
-        workspaceId: "workspace-2",
-        project: {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          lifecycleStatus: "active",
-          riskLevel: "low"
-        },
-        session: {
-          id: "butler-session-history-1",
-          projectId: "project-2",
-          sessionId: "agent-history-1",
-          provider: "claude-code",
-          title: "历史 Agent 会话",
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T11:00:00.000Z",
-          updatedAt: "2026-06-03T11:05:00.000Z"
-        }
-      }
-    });
     butlerApiMock.resumeButlerProjectSession.mockResolvedValue({
       resumed: {
         session: {
@@ -2772,7 +2773,20 @@ describe("AffairsWorkbenchView", () => {
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:agent:session:agent-history-1"
-    }, navigationGroups);
+    }, createNavigationGroupsWithAgentSessions([
+      createAgentSnapshotSession({
+        sessionId: "agent-history-1",
+        provider: "claude-code",
+        title: "历史 Agent 会话",
+        rawStoreRef: "butler://butler-session-history-1",
+        createdAt: "2026-06-03T11:00:00.000Z",
+        updatedAt: "2026-06-03T11:05:00.000Z",
+        lastMessageAt: "2026-06-03T11:05:00.000Z",
+        lastSyncAt: "2026-06-03T11:05:00.000Z",
+        lastEventAt: "2026-06-03T11:05:00.000Z",
+        completedAt: "2026-06-03T11:05:00.000Z"
+      })
+    ]));
 
     await waitFor(() => {
       expect(butlerApiMock.resumeButlerProjectSession).toHaveBeenCalledWith("project-2", "butler-session-history-1");
@@ -2780,103 +2794,6 @@ describe("AffairsWorkbenchView", () => {
   });
 
   it("历史 Agent 会话列表只显示当前文档库绑定工作区的 CLI 会话", async () => {
-    butlerApiMock.listButlerProjectSessions.mockResolvedValue({
-      items: [
-        {
-          id: "butler-session-current-1",
-          projectId: "project-2",
-          sessionId: "agent-current-1",
-          provider: "codex",
-          title: "当前工作区 Agent 会话",
-          isArchived: false,
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T11:00:00.000Z",
-          updatedAt: "2026-06-03T11:05:00.000Z"
-        },
-        {
-          id: "butler-session-other-1",
-          projectId: "project-1",
-          sessionId: "agent-other-1",
-          provider: "claude-code",
-          title: "其他工作区 Agent 会话",
-          isArchived: false,
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:05:00.000Z"
-        }
-      ]
-    });
-    butlerApiMock.getButlerSessionTarget.mockImplementation(async (sessionId: string) => {
-      if (sessionId === "agent-other-1") {
-        return {
-          target: {
-            workspaceId: "workspace-1",
-            project: {
-              id: "project-1",
-              workspaceId: "workspace-1",
-              name: "其他工作区",
-              repoRoot: "/tmp/workspace-1",
-              lifecycleStatus: "active",
-              riskLevel: "low"
-            },
-            session: {
-              id: "butler-session-other-1",
-              projectId: "project-1",
-              sessionId: "agent-other-1",
-              provider: "claude-code",
-              title: "其他工作区 Agent 会话",
-              role: "adhoc",
-              ownershipMode: "managed",
-              status: "idle",
-              runningState: "completed",
-              lastSummary: null,
-              lastCheckpointAt: null,
-              createdAt: "2026-06-03T10:00:00.000Z",
-              updatedAt: "2026-06-03T10:05:00.000Z"
-            }
-          }
-        };
-      }
-
-      return {
-        target: {
-          workspaceId: "workspace-2",
-          project: {
-            id: "project-2",
-            workspaceId: "workspace-2",
-            name: "事务文档库",
-            repoRoot: "/Users/jackson/SynologyDrive",
-            lifecycleStatus: "active",
-            riskLevel: "low"
-          },
-          session: {
-            id: "butler-session-current-1",
-            projectId: "project-2",
-            sessionId: "agent-current-1",
-            provider: "codex",
-            title: "当前工作区 Agent 会话",
-            role: "adhoc",
-            ownershipMode: "managed",
-            status: "idle",
-            runningState: "completed",
-            lastSummary: null,
-            lastCheckpointAt: null,
-            createdAt: "2026-06-03T11:00:00.000Z",
-            updatedAt: "2026-06-03T11:05:00.000Z"
-          }
-        }
-      };
-    });
     butlerRuntimeStateMock.setState({
       controlSession: {
         id: "control-session-other",
@@ -2924,50 +2841,23 @@ describe("AffairsWorkbenchView", () => {
       }
     });
 
-    butlerApiMock.listButlerProjects.mockResolvedValue({
-      items: [
-        {
-          id: "project-1",
-          workspaceId: "workspace-1",
-          name: "事务工作区",
-          repoRoot: "/tmp/workspace-1",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        },
-        {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        }
-      ]
-    });
-
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:draft:agent:codex"
-    }, navigationGroups);
+    }, createNavigationGroupsWithAgentSessions([
+      createAgentSnapshotSession({
+        sessionId: "agent-current-1",
+        title: "当前工作区 Agent 会话",
+        rawStoreRef: "butler://butler-session-current-1",
+        createdAt: "2026-06-03T11:00:00.000Z",
+        updatedAt: "2026-06-03T11:05:00.000Z",
+        lastMessageAt: "2026-06-03T11:05:00.000Z",
+        lastSyncAt: "2026-06-03T11:05:00.000Z",
+        lastEventAt: "2026-06-03T11:05:00.000Z",
+        completedAt: "2026-06-03T11:05:00.000Z"
+      })
+    ]));
 
     const conversationSidebar = await screen.findByRole("heading", { name: "对话" });
     const sidebarSection = conversationSidebar.closest(".affairs-sidebar-block");
@@ -3015,81 +2905,25 @@ describe("AffairsWorkbenchView", () => {
         }
       ]
     });
-    butlerApiMock.listButlerProjectSessions.mockResolvedValue({
-      items: [
-        {
-          id: "butler-session-merged-1",
-          projectId: "project-1",
-          sessionId: "agent-session-merged-1",
-          provider: "claude-code",
-          title: "事务 Agent 会话",
-          isArchived: false,
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T09:00:00.000Z",
-          updatedAt: "2026-06-03T09:16:00.000Z"
-        }
-      ]
-    });
-    butlerApiMock.getButlerSessionTarget.mockResolvedValue({
-      target: {
-        workspaceId: "workspace-2",
-        project: {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          lifecycleStatus: "active",
-          riskLevel: "low"
-        },
-        session: {
-          id: "butler-session-merged-1",
-          projectId: "project-2",
-          sessionId: "agent-session-merged-1",
-          provider: "claude-code",
-          title: "事务 Agent 会话",
-          role: "adhoc",
-          ownershipMode: "managed",
-          status: "idle",
-          runningState: "completed",
-          lastSummary: null,
-          lastCheckpointAt: null,
-          createdAt: "2026-06-03T09:00:00.000Z",
-          updatedAt: "2026-06-03T09:16:00.000Z"
-        }
-      }
-    });
-    butlerApiMock.listButlerProjects.mockResolvedValue({
-      items: [
-        {
-          id: "project-2",
-          workspaceId: "workspace-2",
-          name: "事务文档库",
-          repoRoot: "/Users/jackson/SynologyDrive",
-          defaultProvider: null,
-          instructionProfileId: null,
-          approvalMode: "controlled",
-          lifecycleStatus: "active",
-          riskLevel: "low",
-          config: {},
-          lastPatrolAt: null,
-          lastVerificationAt: null,
-          createdAt: "2026-06-03T10:00:00.000Z",
-          updatedAt: "2026-06-03T10:00:00.000Z",
-          archivedAt: null
-        }
-      ]
-    });
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:draft:lightweight:codex"
-    }, navigationGroupsWithBoundLibraryWorkspace);
+    }, createNavigationGroupsWithAgentSessions([
+      createAgentSnapshotSession({
+        sessionId: "agent-session-merged-1",
+        provider: "claude-code",
+        title: "事务 Agent 会话",
+        rawStoreRef: "butler://butler-session-merged-1",
+        createdAt: "2026-06-03T09:00:00.000Z",
+        updatedAt: "2026-06-03T09:16:00.000Z",
+        lastMessageAt: "2026-06-03T09:16:00.000Z",
+        lastSyncAt: "2026-06-03T09:16:00.000Z",
+        lastEventAt: "2026-06-03T09:16:00.000Z",
+        completedAt: "2026-06-03T09:16:00.000Z"
+      })
+    ]));
 
     expect(await screen.findByText("事务轻量会话")).toBeInTheDocument();
     expect(await screen.findByText("事务 Agent 会话")).toBeInTheDocument();
@@ -3167,7 +3001,7 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务会话列表收藏操作会更新卡片标记", async () => {
     const { lightweightSession } = mockAffairsConversationSidebarSessions();
-    conversationApiMock.updateSessionFavoriteState.mockResolvedValue({
+    conversationApiMock.updateAffairsLightweightSessionFavoriteState.mockResolvedValue({
       ...lightweightSession,
       isFavorite: true
     });
@@ -3198,7 +3032,7 @@ describe("AffairsWorkbenchView", () => {
       await favoriteItem.onSelect();
     });
 
-    expect(conversationApiMock.updateSessionFavoriteState).toHaveBeenCalledWith("light-session-1", true);
+    expect(conversationApiMock.updateAffairsLightweightSessionFavoriteState).toHaveBeenCalledWith("workspace-1", "light-session-1", true);
     await waitFor(() => {
       expect((sessionCard as HTMLElement).querySelector(".affairs-conversation-favorite-badge")).not.toBeNull();
     });
@@ -3206,7 +3040,7 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务会话列表归档操作后会从主列表移除会话", async () => {
     const { lightweightSession } = mockAffairsConversationSidebarSessions();
-    conversationApiMock.updateSessionArchiveState.mockResolvedValue({
+    conversationApiMock.updateAffairsLightweightSessionArchiveState.mockResolvedValue({
       ...lightweightSession,
       isArchived: true
     });
@@ -3237,7 +3071,7 @@ describe("AffairsWorkbenchView", () => {
       await archiveItem.onSelect();
     });
 
-    expect(conversationApiMock.updateSessionArchiveState).toHaveBeenCalledWith("light-session-1", true);
+    expect(conversationApiMock.updateAffairsLightweightSessionArchiveState).toHaveBeenCalledWith("workspace-1", "light-session-1", true);
     await waitFor(() => {
       expect(screen.queryByText("事务轻量会话")).not.toBeInTheDocument();
     });
@@ -3245,7 +3079,7 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务会话列表重命名操作会调用重命名接口", async () => {
     const { lightweightSession } = mockAffairsConversationSidebarSessions();
-    conversationApiMock.renameSessionTitle.mockResolvedValue({
+    conversationApiMock.renameAffairsLightweightSessionTitle.mockResolvedValue({
       ...lightweightSession,
       title: "已重命名会话"
     });
@@ -3282,14 +3116,14 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("common.save") }));
 
     await waitFor(() => {
-      expect(conversationApiMock.renameSessionTitle).toHaveBeenCalledWith("light-session-1", "已重命名会话");
+      expect(conversationApiMock.renameAffairsLightweightSessionTitle).toHaveBeenCalledWith("workspace-1", "light-session-1", "已重命名会话");
     });
     expect(await screen.findByText("已重命名会话")).toBeInTheDocument();
   });
 
   it("事务会话列表删除操作会调用删除接口", async () => {
     mockAffairsConversationSidebarSessions();
-    conversationApiMock.deleteSession.mockResolvedValue(undefined);
+    conversationApiMock.deleteAffairsLightweightSession.mockResolvedValue(undefined);
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
@@ -3321,7 +3155,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.deleteSessionAction") }));
 
     await waitFor(() => {
-      expect(conversationApiMock.deleteSession).toHaveBeenCalledWith("light-session-1");
+      expect(conversationApiMock.deleteAffairsLightweightSession).toHaveBeenCalledWith("workspace-1", "light-session-1");
     });
     await waitFor(() => {
       expect(screen.queryByText("事务轻量会话")).not.toBeInTheDocument();
@@ -3330,7 +3164,7 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务会话列表导出操作会调用消息加载接口", async () => {
     mockAffairsConversationSidebarSessions();
-    conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
+    conversationApiMock.getAffairsLightweightSessionMessages.mockResolvedValue({ messages: [], cursor: null, nextCursor: null, total: 0 });
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
@@ -3361,9 +3195,10 @@ describe("AffairsWorkbenchView", () => {
     });
 
     await waitFor(() => {
-      expect(conversationApiMock.getSessionMessages).toHaveBeenCalledWith("light-session-1", null, 200, "forward");
+      expect(conversationApiMock.getAffairsLightweightSessionMessages).toHaveBeenCalledWith("workspace-1", "light-session-1");
     });
   });
+
 
   it("事务模式未初始化时切到自动化分区也不会被强制打回对话初始化页", async () => {
     butlerApiMock.listAssistantAutomations.mockResolvedValue({ payload: { items: [] } });
@@ -3560,17 +3395,11 @@ describe("AffairsWorkbenchView", () => {
 
     await waitFor(() => {
       expect(conversationApiMock.listAffairsLightweightSessions).toHaveBeenCalledWith("workspace-1");
-      expect(butlerApiMock.listButlerProjects).toHaveBeenCalled();
     });
+    expect(butlerApiMock.listButlerProjects).not.toHaveBeenCalled();
   });
 
   it("事务对话侧栏已有轻量会话时，不会继续被助手会话加载占位挡住", async () => {
-    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
-    butlerApiMock.listButlerProjects.mockImplementation(
-      () => new Promise((resolve) => {
-        resolveProjects = resolve;
-      })
-    );
     conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
       items: [
         {
@@ -3618,9 +3447,7 @@ describe("AffairsWorkbenchView", () => {
     expect(sidebarSection).not.toBeNull();
     expect(await within(sidebarSection as HTMLElement).findByText("事务轻量会话")).toBeInTheDocument();
     expect(within(sidebarSection as HTMLElement).queryByText(t("common.loading"))).not.toBeInTheDocument();
-    expect(within(sidebarSection as HTMLElement).getByText(t("shell.affairsConversationSidebarLoadingAgent"))).toBeInTheDocument();
-
-    resolveProjects?.({ items: [] });
+    expect(within(sidebarSection as HTMLElement).queryByText(t("shell.affairsConversationSidebarLoadingAgent"))).not.toBeInTheDocument();
   });
 
   it("事务对话刷新时会先显示缓存的轻量会话标题，再后台刷新更新", async () => {
@@ -3720,70 +3547,29 @@ describe("AffairsWorkbenchView", () => {
   });
 
   it("事务对话刷新时会先显示缓存的助手会话标题，不再等实时检索完成", async () => {
-    writeViewSnapshot("affairs.conversation.agent.sessions.workspace-1", [
-      {
-        sessionId: "agent-session-cached-1",
-        workspaceId: "workspace-2",
-        provider: "codex",
-        providerSessionId: "agent-session-cached-1",
-        rawStoreRef: "butler://agent-session-cached-1",
-        providerConfigMode: "global-default",
-        providerPresetId: null,
-        parentSessionId: null,
-        isSubagent: false,
-        subagentLabel: null,
-        isArchived: false,
-        isFavorite: false,
-        title: "缓存助手会话",
-        messageCount: 0,
-        lastMessageAt: "2026-06-03T13:08:00.000Z",
-        createdAt: "2026-06-03T13:00:00.000Z",
-        updatedAt: "2026-06-03T13:08:00.000Z",
-        syncStatus: "idle",
-        syncCursor: null,
-        lastSyncAt: "2026-06-03T13:08:00.000Z",
-        lastErrorCode: null,
-        lastErrorDetail: null,
-        resumedAt: null,
-        runningState: "completed",
-        activitySource: "inferred",
-        lastEventAt: "2026-06-03T13:08:00.000Z",
-        completedAt: "2026-06-03T13:08:00.000Z",
-        lastSeenAt: null,
-        activityState: "completed_unread"
-      }
-    ]);
-    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
-    butlerApiMock.listButlerProjects.mockImplementation(
-      () => new Promise((resolve) => {
-        resolveProjects = resolve;
-      })
-    );
     conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:draft:agent:codex"
-    }, navigationGroupsWithBoundLibraryWorkspace);
+    }, createNavigationGroupsWithAgentSessions([
+      createAgentSnapshotSession({
+        sessionId: "agent-session-cached-1",
+        title: "缓存助手会话",
+        rawStoreRef: "butler://agent-session-cached-1"
+      })
+    ]));
 
     const sidebarHeading = await screen.findByRole("heading", { name: "对话" });
     const sidebarSection = sidebarHeading.closest(".affairs-sidebar-block");
     expect(sidebarSection).not.toBeNull();
     expect(within(sidebarSection as HTMLElement).getByText("缓存助手会话")).toBeInTheDocument();
-    expect(within(sidebarSection as HTMLElement).getByText(t("shell.affairsConversationSidebarLoadingAgent"))).toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).queryByText(t("shell.affairsConversationSidebarLoadingAgent"))).not.toBeInTheDocument();
     expect(within(sidebarSection as HTMLElement).queryByText(t("common.loading"))).not.toBeInTheDocument();
-
-    resolveProjects?.({ items: [] });
   });
 
   it("进入事务对话时不会重复请求 Butler 项目列表", async () => {
-    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
-    butlerApiMock.listButlerProjects.mockImplementation(
-      () => new Promise((resolve) => {
-        resolveProjects = resolve;
-      })
-    );
     conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
 
     renderWorkbenchWithCustomNavigationGroups({
@@ -3793,10 +3579,9 @@ describe("AffairsWorkbenchView", () => {
     }, navigationGroups);
 
     await waitFor(() => {
-      expect(butlerApiMock.listButlerProjects).toHaveBeenCalledTimes(1);
+      expect(conversationApiMock.listAffairsLightweightSessions).toHaveBeenCalledWith("workspace-1");
     });
-
-    resolveProjects?.({ items: [] });
+    expect(butlerApiMock.listButlerProjects).not.toHaveBeenCalled();
   });
 
   it("辅助面板从连接检查切回正常态时不会触发 hooks 顺序错误", async () => {
@@ -5151,14 +4936,14 @@ describe("AffairsWorkbenchView", () => {
   it("详情区在有镜像路径时会提供本地文件动作，并显示完整元信息", async () => {
     renderWorkbench();
 
-    const button = await screen.findByText("Exchange 分层通讯簿.txt");
+    const button = await screen.findByRole("button", { name: /Exchange 分层通讯簿\.txt/i });
     await userEvent.click(button);
 
     expect(await screen.findByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.affairsLibraryLocateFolderAction") })).toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsLibraryDocumentCreatedAt"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsLibraryDocumentSize"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("shell.affairsLibraryDocumentCreatedAt")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("shell.affairsLibraryDocumentSize"), { selector: "dt" })).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
     expect(screen.getByText("2026/05/30 08:00:00")).toBeInTheDocument();
     expect(screen.getByText("2026/05/31 08:00:00")).toBeInTheDocument();
