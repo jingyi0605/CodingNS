@@ -870,6 +870,22 @@ function renderWorkbenchWithCustomNavigationGroups(initialState: AffairsViewStat
   return render(<TestHarness />);
 }
 
+function getAffairsGridViewport(): HTMLElement {
+  const element = document.querySelector(".affairs-doc-grid-viewport");
+
+  if (!(element instanceof HTMLElement)) {
+    throw new Error("未找到事务文档网格视口");
+  }
+
+  return element;
+}
+
+function openDesktopContextMenu(target: HTMLElement, coordinates: { clientX: number; clientY: number }) {
+  fireEvent.contextMenu(target, coordinates);
+  expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+  return showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+}
+
 function findTagTreeNode(label: string) {
   const tree = screen.getByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
   const labelNode = within(tree).queryAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
@@ -1785,14 +1801,8 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
 
     const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
-    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
-
-    await waitFor(() => {
-      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
-    });
+    const items = openDesktopContextMenu(card, { clientX: 240, clientY: 180 });
     expect(screen.queryByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") })).not.toBeInTheDocument();
-
-    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: t("shell.affairsLibraryContextPreview") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextOpen") }),
@@ -1810,13 +1820,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
 
     const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
-    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
-
-    await waitFor(() => {
-      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
-    });
-
-    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const items = openDesktopContextMenu(card, { clientX: 240, clientY: 180 });
     const deleteItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryContextDelete"));
     expect(deleteItem).toBeTruthy();
     if (!deleteItem || !("onSelect" in deleteItem)) {
@@ -1837,19 +1841,8 @@ describe("AffairsWorkbenchView", () => {
   it("桌面端空白处右键菜单会包含新建、刷新、粘贴和属性", async () => {
     renderWorkbench();
 
-    const grid = await waitFor(() => {
-      const element = document.querySelector(".affairs-doc-grid-viewport");
-      expect(element).not.toBeNull();
-      return element as HTMLElement;
-    });
-
-    fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
-
-    await waitFor(() => {
-      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
-    });
-
-    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const grid = getAffairsGridViewport();
+    const items = openDesktopContextMenu(grid, { clientX: 300, clientY: 260 });
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: t("shell.affairsLibraryContextNew") }),
       expect.objectContaining({ label: t("shell.affairsLibraryContextRefresh") }),
@@ -1866,13 +1859,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
 
     const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
-    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
-
-    await waitFor(() => {
-      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
-    });
-
-    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const items = openDesktopContextMenu(card, { clientX: 240, clientY: 180 });
     const locateItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryContextLocate"));
     expect(locateItem).toBeTruthy();
     if (!locateItem || !("onSelect" in locateItem)) {
@@ -1895,13 +1882,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
 
     const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
-    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
-
-    await waitFor(() => {
-      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
-    });
-
-    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const items = openDesktopContextMenu(card, { clientX: 240, clientY: 180 });
     const openLocalAppItem = items.find((item: { label?: string }) => item.label === t("shell.affairsLibraryOpenWithLocalAppAction"));
     expect(openLocalAppItem).toBeTruthy();
     if (!openLocalAppItem || !("onSelect" in openLocalAppItem)) {
@@ -1996,12 +1977,7 @@ describe("AffairsWorkbenchView", () => {
     platformStateMock.isWeb = true;
     renderWorkbench();
 
-    const grid = await waitFor(() => {
-      const element = document.querySelector(".affairs-doc-grid-viewport");
-      expect(element).not.toBeNull();
-      return element as HTMLElement;
-    });
-
+    const grid = getAffairsGridViewport();
     fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     expect(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextPaste") })).toBeDisabled();
@@ -2018,12 +1994,7 @@ describe("AffairsWorkbenchView", () => {
     platformStateMock.isWeb = true;
     renderWorkbench();
 
-    const grid = await waitFor(() => {
-      const element = document.querySelector(".affairs-doc-grid-viewport");
-      expect(element).not.toBeNull();
-      return element as HTMLElement;
-    });
-
+    const grid = getAffairsGridViewport();
     fireEvent.contextMenu(grid, { clientX: 300, clientY: 260 });
     const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
     await userEvent.hover(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextNew") }));
@@ -3089,6 +3060,147 @@ describe("AffairsWorkbenchView", () => {
     await waitFor(() => {
       expect(screen.queryByText("事务轻量会话")).not.toBeInTheDocument();
     });
+  });
+
+  it("事务会话侧栏存在归档会话时会显示归档会话按钮", async () => {
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+      items: [
+        {
+          sessionId: "archived-light-session-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider://codex/archived-light-session-1",
+          rawStoreRef: "raw://codex/archived-light-session-1",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: true,
+          isFavorite: false,
+          title: "已归档轻量会话",
+          messageCount: 3,
+          lastMessageAt: "2026-06-03T12:48:00.000Z",
+          createdAt: "2026-06-03T12:30:00.000Z",
+          updatedAt: "2026-06-03T12:48:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-03T12:48:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-03T12:48:00.000Z",
+          completedAt: "2026-06-03T12:48:00.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const archiveButton = await screen.findByRole("button", { name: /归档会话/i });
+    expect(archiveButton).toBeInTheDocument();
+    expect(within(archiveButton).getByText("1")).toBeInTheDocument();
+  });
+
+  it("事务会话侧栏可以打开归档会话列表并取消归档", async () => {
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+      items: [
+        {
+          sessionId: "archived-light-session-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider://codex/archived-light-session-1",
+          rawStoreRef: "raw://codex/archived-light-session-1",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: true,
+          isFavorite: false,
+          title: "已归档轻量会话",
+          messageCount: 3,
+          lastMessageAt: "2026-06-03T12:48:00.000Z",
+          createdAt: "2026-06-03T12:30:00.000Z",
+          updatedAt: "2026-06-03T12:48:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-03T12:48:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-03T12:48:00.000Z",
+          completedAt: "2026-06-03T12:48:00.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+    conversationApiMock.updateAffairsLightweightSessionArchiveState.mockResolvedValue({
+      sessionId: "archived-light-session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider://codex/archived-light-session-1",
+      rawStoreRef: "raw://codex/archived-light-session-1",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "已归档轻量会话",
+      messageCount: 3,
+      lastMessageAt: "2026-06-03T12:48:00.000Z",
+      createdAt: "2026-06-03T12:30:00.000Z",
+      updatedAt: "2026-06-03T12:48:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-06-03T12:48:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "completed",
+      activitySource: "runtime",
+      lastEventAt: "2026-06-03T12:48:00.000Z",
+      completedAt: "2026-06-03T12:48:00.000Z",
+      lastSeenAt: null,
+      activityState: "completed_unread"
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: /归档会话/i }));
+    expect(await screen.findByRole("dialog", { name: "归档会话" })).toBeInTheDocument();
+    expect(screen.getByText("已归档轻量会话")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "取消归档" }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.updateAffairsLightweightSessionArchiveState).toHaveBeenCalledWith(
+        "workspace-1",
+        "archived-light-session-1",
+        false
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText("已归档轻量会话")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog", { name: "归档会话" })).not.toBeInTheDocument();
   });
 
   it("事务会话列表重命名操作会调用重命名接口", async () => {

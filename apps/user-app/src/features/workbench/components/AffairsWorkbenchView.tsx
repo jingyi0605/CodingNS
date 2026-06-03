@@ -638,6 +638,7 @@ interface AffairsWorkbenchContextValue {
   closeConversationCreateModal: () => void;
   butlerStore: ButlerRuntimeStore;
   archiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
+  unarchiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   toggleConversationSessionFavorite: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   markConversationSessionSeen: (kind: AffairsConversationKind, sessionId: string, seenAt?: string) => void;
   openConversationRenameModal: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => void;
@@ -2496,14 +2497,29 @@ export function AffairsWorkbenchProvider({
         ? await updateAffairsLightweightSessionArchiveState(workspaceId, input.session.sessionId, true)
         : await updateSessionArchiveState(input.session.sessionId, true);
       if (input.kind === "lightweight") {
-        setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+        setLightweightConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
       } else {
-        setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+        setAgentConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
       }
       clearSelectedConversationSession({
         kind: input.kind,
         sessionId: nextSession.sessionId
       });
+      await onRefreshNavigation?.();
+    },
+    unarchiveConversationSession: async (input) => {
+      const nextSession = input.kind === "lightweight"
+        ? await updateAffairsLightweightSessionArchiveState(workspaceId, input.session.sessionId, false)
+        : await updateSessionArchiveState(input.session.sessionId, false);
+      if (input.kind === "lightweight") {
+        setLightweightConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+      } else {
+        setAgentConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+      }
       await onRefreshNavigation?.();
     },
     toggleConversationSessionFavorite: async (input) => {
@@ -3063,6 +3079,14 @@ function AffairsSessionExportIcon() {
   );
 }
 
+function AffairsArchiveFolderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 6.25c0-.69.56-1.25 1.25-1.25h9.5c.69 0 1.25.56 1.25 1.25v1.5c0 .69-.56 1.25-1.25 1.25h-9.5C4.56 9 4 8.44 4 7.75zm1.5 4.25h9v3.25A1.25 1.25 0 0 1 14.25 15h-8.5A1.25 1.25 0 0 1 4.5 13.75zm2.25 1.5h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function AffairsSessionDeleteIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -3434,6 +3458,7 @@ export function AffairsSidebarPanel() {
     openConversationCreateModal,
     openTagManagement,
     archiveConversationSession,
+    unarchiveConversationSession,
     documentRecords,
     favoriteEntries,
     folderRecords,
@@ -3457,6 +3482,8 @@ export function AffairsSidebarPanel() {
   } = useAffairsWorkbenchInternal();
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const butlerProfileWorkspacePath = useButlerRuntimeStore(butlerStore, (value) => value.profile?.workspacePath ?? null);
+  const platform = usePlatform();
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const { showToast } = useToast();
   if (activeSection === "conversation" && initGuard.loading) {
     return (
@@ -3509,7 +3536,7 @@ export function AffairsSidebarPanel() {
       && agentConversationSessions.every((session) => session.sessionId !== currentAgentSession.sessionId)
         ? [currentAgentSession, ...agentConversationSessions]
         : agentConversationSessions;
-    const conversationListItems: AffairsConversationListItem[] = [
+    const allConversationListItems: AffairsConversationListItem[] = [
       ...lightweightConversationSessions.map((session) => ({
         id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
         kind: "lightweight" as const,
@@ -3520,14 +3547,14 @@ export function AffairsSidebarPanel() {
         kind: "agent" as const,
         session
       }))
-    ]
-      .filter((item) => item.session.isArchived !== true)
-      .sort((left, right) => {
-        if (left.session.isFavorite !== right.session.isFavorite) {
-          return left.session.isFavorite ? -1 : 1;
-        }
-        return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
-      });
+    ].sort((left, right) => {
+      if (left.session.isFavorite !== right.session.isFavorite) {
+        return left.session.isFavorite ? -1 : 1;
+      }
+      return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
+    });
+    const conversationListItems = allConversationListItems.filter((item) => item.session.isArchived !== true);
+    const archivedConversationListItems = allConversationListItems.filter((item) => item.session.isArchived === true);
     const conversationSessionsLoading = lightweightConversationSessionsLoading || agentConversationSessionsLoading;
     const showConversationBlockingLoading = conversationSessionsLoading && conversationListItems.length === 0;
     const conversationLoadingHint = conversationListItems.length > 0
@@ -3536,89 +3563,171 @@ export function AffairsSidebarPanel() {
           agentLoading: agentConversationSessionsLoading
         })
       : null;
-    return (
-      <section className="workbench-section-block affairs-sidebar-block">
-        <div className="affairs-sidebar-block-header affairs-sidebar-block-header-with-count">
-          <div className="affairs-sidebar-block-header-title-row">
-            <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
-            <span className="affairs-sidebar-block-count">{conversationListItems.length}</span>
-          </div>
-          <AffairsConversationCreateButton compact onClick={openConversationCreateModal} />
-        </div>
-        <div className="affairs-sidebar-groups" role="list">
-          <section className="affairs-sidebar-group">
-            {showConversationBlockingLoading ? (
-              <div className="affairs-sidebar-empty compact">{t("common.loading")}</div>
-            ) : conversationListItems.length === 0 ? (
-              <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
-                {t("shell.affairsConversationCreateHint")}
-              </div>
-            ) : (
-              <>
-                <div className="workbench-session-list affairs-conversation-session-list" role="list">
-                  {conversationListItems.map((item) => (
-                    <AffairsConversationSessionCard
-                      key={item.id}
-                      item={item}
-                      isActive={item.id === state.selectedNodeId}
-                      role="listitem"
-                      onOpen={() => {
-                        markConversationSessionSeen(item.kind, item.session.sessionId);
-                        selectSidebarNode(item.id);
-                      }}
-                      onRename={() => {
-                        openConversationRenameModal({
-                          kind: item.kind,
-                          session: item.session
-                        });
-                      }}
-                      onExport={async (format) => {
-                        try {
-                          await exportConversationSession({
-                            session: item.session,
-                            format
-                          });
-                          showToast({
-                            title:
-                              format === "md"
-                                ? t("conversation.exportMarkdownSuccess")
-                                : format === "pdf"
-                                  ? t("conversation.exportPdfPreparing")
-                                  : t("conversation.exportHtmlSuccess"),
-                            tone: "success"
-                          });
-                        } catch (error) {
-                          showToast({
-                            title: error instanceof Error ? error.message : t("conversation.exportLoadFailed"),
-                            tone: "error"
-                          });
-                        }
-                      }}
-                      onToggleFavorite={() => toggleConversationSessionFavorite({
-                        kind: item.kind,
-                        session: item.session
-                      })}
-                      onArchive={() => archiveConversationSession({
-                        kind: item.kind,
-                        session: item.session
-                      })}
-                      onDelete={async () => {
-                        openConversationDeleteModal({
-                          kind: item.kind,
-                          session: item.session
-                        });
-                      }}
-                    />
-                  ))}
-                </div>
-                {conversationLoadingHint ? (
-                  <div className="affairs-sidebar-empty compact">{conversationLoadingHint}</div>
-                ) : null}
-              </>
+    const archiveList = archivedConversationListItems.length > 0 ? (
+      <ModalList className="workbench-archive-list">
+        {archivedConversationListItems.map((item) => (
+          <ModalListItem
+            key={item.id}
+            className="workbench-archive-item"
+            trailing={(
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  void unarchiveConversationSession({
+                    kind: item.kind,
+                    session: item.session
+                  }).then(() => {
+                    setArchiveModalOpen((current) => (
+                      archivedConversationListItems.length > 1 ? current : false
+                    ));
+                  });
+                }}
+              >
+                {t("shell.unarchiveAction")}
+              </button>
             )}
-          </section>
-        </div>
-      </section>
+          >
+            <div className="workbench-archive-item-main">
+              <strong title={item.session.title}>{item.session.title || t("common.unknown")}</strong>
+              <p>
+                {resolveAffairsConversationKindLabel(item.kind)} · {buildAffairsConversationMeta(item.session)} · {formatAffairsConversationProviderBadge(item.session.provider)}
+              </p>
+            </div>
+          </ModalListItem>
+        ))}
+      </ModalList>
+    ) : (
+      <ModalEmptyState
+        title={t("shell.archiveEmpty")}
+        compact
+        className="workbench-section-empty"
+      />
+    );
+    return (
+      <>
+        <section className="workbench-section-block affairs-sidebar-block">
+          <div className="affairs-sidebar-block-header affairs-sidebar-block-header-with-count">
+            <div className="affairs-sidebar-block-header-title-row">
+              <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
+              <span className="affairs-sidebar-block-count">{conversationListItems.length}</span>
+            </div>
+            <AffairsConversationCreateButton compact onClick={openConversationCreateModal} />
+          </div>
+          <div className="affairs-sidebar-groups" role="list">
+            <section className="affairs-sidebar-group">
+              {showConversationBlockingLoading ? (
+                <div className="affairs-sidebar-empty compact">{t("common.loading")}</div>
+              ) : (
+                <>
+                  {conversationListItems.length === 0 ? (
+                    <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
+                      {archivedConversationListItems.length > 0
+                        ? t("shell.archiveModalDescription")
+                        : t("shell.affairsConversationCreateHint")}
+                    </div>
+                  ) : (
+                    <div className="workbench-session-list affairs-conversation-session-list" role="list">
+                      {conversationListItems.map((item) => (
+                        <AffairsConversationSessionCard
+                          key={item.id}
+                          item={item}
+                          isActive={item.id === state.selectedNodeId}
+                          role="listitem"
+                          onOpen={() => {
+                            markConversationSessionSeen(item.kind, item.session.sessionId);
+                            selectSidebarNode(item.id);
+                          }}
+                          onRename={() => {
+                            openConversationRenameModal({
+                              kind: item.kind,
+                              session: item.session
+                            });
+                          }}
+                          onExport={async (format) => {
+                            try {
+                              await exportConversationSession({
+                                session: item.session,
+                                format
+                              });
+                              showToast({
+                                title:
+                                  format === "md"
+                                    ? t("conversation.exportMarkdownSuccess")
+                                    : format === "pdf"
+                                      ? t("conversation.exportPdfPreparing")
+                                      : t("conversation.exportHtmlSuccess"),
+                                tone: "success"
+                              });
+                            } catch (error) {
+                              showToast({
+                                title: error instanceof Error ? error.message : t("conversation.exportLoadFailed"),
+                                tone: "error"
+                              });
+                            }
+                          }}
+                          onToggleFavorite={() => toggleConversationSessionFavorite({
+                            kind: item.kind,
+                            session: item.session
+                          })}
+                          onArchive={() => archiveConversationSession({
+                            kind: item.kind,
+                            session: item.session
+                          })}
+                          onDelete={async () => {
+                            openConversationDeleteModal({
+                              kind: item.kind,
+                              session: item.session
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {archivedConversationListItems.length > 0 ? (
+                    <button
+                      type="button"
+                      className="workbench-archive-folder"
+                      data-workspace-tone="root"
+                      onClick={() => setArchiveModalOpen(true)}
+                    >
+                      <span className="workbench-archive-folder-main">
+                        <AffairsArchiveFolderIcon />
+                        <span>{t("shell.archiveFolderLabel")}</span>
+                      </span>
+                      <span className="workbench-section-counter">{archivedConversationListItems.length}</span>
+                    </button>
+                  ) : null}
+                  {conversationLoadingHint ? (
+                    <div className="affairs-sidebar-empty compact">{conversationLoadingHint}</div>
+                  ) : null}
+                </>
+              )}
+            </section>
+          </div>
+        </section>
+        {platform.isMobile ? (
+          <MobileSheet
+            open={archiveModalOpen}
+            onClose={() => setArchiveModalOpen(false)}
+            title={t("shell.archiveModalTitle")}
+            description={t("shell.archiveModalDescription")}
+            height="half"
+          >
+            {archiveList}
+          </MobileSheet>
+        ) : (
+          <DesktopModal
+            open={archiveModalOpen}
+            onClose={() => setArchiveModalOpen(false)}
+            title={t("shell.archiveModalTitle")}
+            description={t("shell.archiveModalDescription")}
+            size="regular"
+          >
+            {archiveList}
+          </DesktopModal>
+        )}
+      </>
     );
   }
 
