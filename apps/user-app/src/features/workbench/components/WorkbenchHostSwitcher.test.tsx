@@ -366,9 +366,35 @@ describe("WorkbenchHostSwitcher", () => {
       autoDirect: false,
       probeInProgress: false
     });
-    vi.spyOn(httpClient, "request").mockResolvedValue({
-      hostBaseUrl: "https://demo.channel.codingns.com"
-    } as never);
+    vi.spyOn(httpClient, "request").mockImplementation(async (path: string) => {
+      if (path === "/api/client/runtime-config") {
+        return {
+          hostBaseUrl: "https://demo.channel.codingns.com"
+        } as never;
+      }
+
+      if (path === "/api/system/host/resources") {
+        return {
+          observedAt: "2026-06-03T00:00:00.000Z",
+          cpu: {
+            usedRatio: 0.42,
+            logicalCoreCount: 10
+          },
+          memory: {
+            usedBytes: 8.5 * 1024 ** 3,
+            totalBytes: 16 * 1024 ** 3,
+            freeBytes: 7.5 * 1024 ** 3
+          },
+          disk: {
+            usedBytes: 300 * 1024 ** 3,
+            totalBytes: 500 * 1024 ** 3,
+            freeBytes: 200 * 1024 ** 3
+          }
+        } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
 
     render(
       <ToastProvider>
@@ -379,15 +405,19 @@ describe("WorkbenchHostSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
     await user.click(screen.getByRole("button", { name: "查看 HOST 远程 Host 连接详情" }));
 
-    const detailPopover = await screen.findByRole("dialog", { name: "连接详情" });
+    const detailPanel = await screen.findByRole("region", { name: "连接详情" });
 
-    expect(within(detailPopover).getAllByText("CodingNS Connect")).toHaveLength(2);
-    expect(within(detailPopover).getByText("https://demo.channel.codingns.com")).toBeInTheDocument();
-    expect(within(detailPopover).getByText("2.0 KB")).toBeInTheDocument();
+    expect(within(detailPanel).getAllByText("CodingNS Connect")).toHaveLength(2);
+    expect(within(detailPanel).getByText("https://demo.channel.codingns.com")).toBeInTheDocument();
+    expect(within(detailPanel).getByText("2.0 KB")).toBeInTheDocument();
+    expect(within(detailPanel).getAllByText("42% · 10 核").length).toBeGreaterThan(0);
+    expect(within(detailPanel).getAllByText("8.5 GB / 16.0 GB").length).toBeGreaterThan(0);
+    expect(within(detailPanel).getAllByText("200.0 GB / 500.0 GB").length).toBeGreaterThan(0);
 
     await waitFor(() => {
       expect(httpClient.request).toHaveBeenCalledWith("/api/client/runtime-config");
-      expect(within(detailPopover).getByText(/\d+ ms$/)).toBeInTheDocument();
+      expect(httpClient.request).toHaveBeenCalledWith("/api/system/host/resources");
+      expect(within(detailPanel).getByText(/\d+ ms$/)).toBeInTheDocument();
     });
   });
 });
