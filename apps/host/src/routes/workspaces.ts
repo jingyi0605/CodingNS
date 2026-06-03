@@ -37,6 +37,11 @@ export async function registerWorkspaceRoutes(
     app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/stream", affairsLightweightSessionController.startSessionStream);
     app.get("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId", affairsLightweightSessionController.getSession);
     app.get("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages", affairsLightweightSessionController.readMessages);
+    app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/seen", affairsLightweightSessionController.markSeen);
+    app.patch("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/title", affairsLightweightSessionController.renameTitle);
+    app.patch("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/archive", affairsLightweightSessionController.updateArchiveState);
+    app.patch("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/favorite", affairsLightweightSessionController.updateFavoriteState);
+    app.delete("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId", affairsLightweightSessionController.deleteSession);
     app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages", affairsLightweightSessionController.sendMessage);
     app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages/stream", affairsLightweightSessionController.sendMessageStream);
   }

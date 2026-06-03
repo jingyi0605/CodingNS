@@ -21,6 +21,18 @@ interface AffairsLightweightStartBody {
 }
 
 interface AffairsLightweightSendBody extends AffairsLightweightStartBody {}
+interface AffairsLightweightSeenBody {
+  seenAt?: string | null;
+}
+interface AffairsLightweightTitleBody {
+  title?: string | null;
+}
+interface AffairsLightweightArchiveBody {
+  archived?: boolean;
+}
+interface AffairsLightweightFavoriteBody {
+  favorite?: boolean;
+}
 
 function requireText(value: string | null | undefined, field: string, detail: string): string {
   const normalized = value?.trim() ?? "";
@@ -76,6 +88,78 @@ export class AffairsLightweightSessionController {
         requireUserId(request)
       )
     );
+  };
+
+  readonly markSeen = async (
+    request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightSeenBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    await this.affairsLightweightSessionService.markSessionSeen(
+      request.params.workspaceId,
+      request.params.sessionId,
+      requireUserId(request),
+      request.body?.seenAt ?? null
+    );
+    reply.status(204).send();
+  };
+
+  readonly renameTitle = async (
+    request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightTitleBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const title = requireText(
+      request.body.title,
+      "title",
+      "事务轻量会话标题不能为空"
+    );
+    reply.send(
+      await this.affairsLightweightSessionService.renameSessionTitle(
+        request.params.workspaceId,
+        request.params.sessionId,
+        requireUserId(request),
+        title
+      )
+    );
+  };
+
+  readonly updateArchiveState = async (
+    request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightArchiveBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.affairsLightweightSessionService.updateSessionArchiveState(
+        request.params.workspaceId,
+        request.params.sessionId,
+        requireUserId(request),
+        request.body.archived === true
+      )
+    );
+  };
+
+  readonly updateFavoriteState = async (
+    request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightFavoriteBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.affairsLightweightSessionService.updateSessionFavoriteState(
+        request.params.workspaceId,
+        request.params.sessionId,
+        requireUserId(request),
+        request.body.favorite === true
+      )
+    );
+  };
+
+  readonly deleteSession = async (
+    request: FastifyRequest<{ Params: LightweightSessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    await this.affairsLightweightSessionService.deleteSession(
+      request.params.workspaceId,
+      request.params.sessionId,
+      requireUserId(request)
+    );
+    reply.status(204).send();
   };
 
   readonly startSession = async (

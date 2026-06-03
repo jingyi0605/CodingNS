@@ -55,6 +55,11 @@ describe("affairs lightweight session routes", () => {
       listSessions: vi.fn(async () => []),
       getSession: vi.fn(async () => null),
       readMessages: vi.fn(async () => ({ messages: [], cursor: null, nextCursor: null, total: 0 })),
+      markSessionSeen: vi.fn(async () => undefined),
+      renameSessionTitle: vi.fn(async () => null),
+      updateSessionArchiveState: vi.fn(async () => null),
+      updateSessionFavoriteState: vi.fn(async () => null),
+      deleteSession: vi.fn(async () => undefined),
       startSession: vi.fn(async () => null),
       sendMessage: vi.fn(async () => null),
       ...serviceOverrides
@@ -80,7 +85,12 @@ describe("affairs lightweight session routes", () => {
       startSession: vi.fn(async () => ({ session: { sessionId: "light-1" }, messages: [] })),
       sendMessage: vi.fn(async () => ({ session: { sessionId: "light-1" }, messages: [] })),
       getSession: vi.fn(async () => ({ sessionId: "light-1", title: "轻量对话" })),
-      readMessages: vi.fn(async () => ({ messages: [], cursor: null, nextCursor: null, total: 0 }))
+      readMessages: vi.fn(async () => ({ messages: [], cursor: null, nextCursor: null, total: 0 })),
+      markSessionSeen: vi.fn(async () => undefined),
+      renameSessionTitle: vi.fn(async () => ({ sessionId: "light-1", title: "新标题" })),
+      updateSessionArchiveState: vi.fn(async () => ({ sessionId: "light-1", isArchived: true })),
+      updateSessionFavoriteState: vi.fn(async () => ({ sessionId: "light-1", isFavorite: true })),
+      deleteSession: vi.fn(async () => undefined)
     };
     const { app } = await createApp(service);
 
@@ -121,5 +131,52 @@ describe("affairs lightweight session routes", () => {
       userId: "user-1",
       content: "继续"
     }));
+
+    const seenResponse = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1/seen",
+      payload: {
+        seenAt: "2026-06-03T12:05:00.000Z"
+      }
+    });
+    expect(seenResponse.statusCode).toBe(204);
+    expect(service.markSessionSeen).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", "2026-06-03T12:05:00.000Z");
+
+    const renameResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1/title",
+      payload: {
+        title: "新标题"
+      }
+    });
+    expect(renameResponse.statusCode).toBe(200);
+    expect(service.renameSessionTitle).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", "新标题");
+
+    const archiveResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1/archive",
+      payload: {
+        archived: true
+      }
+    });
+    expect(archiveResponse.statusCode).toBe(200);
+    expect(service.updateSessionArchiveState).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", true);
+
+    const favoriteResponse = await app.inject({
+      method: "PATCH",
+      url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1/favorite",
+      payload: {
+        favorite: true
+      }
+    });
+    expect(favoriteResponse.statusCode).toBe(200);
+    expect(service.updateSessionFavoriteState).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", true);
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1"
+    });
+    expect(deleteResponse.statusCode).toBe(204);
+    expect(service.deleteSession).toHaveBeenCalledWith("workspace-1", "light-1", "user-1");
   });
 });

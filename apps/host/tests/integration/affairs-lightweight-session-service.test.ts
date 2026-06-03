@@ -455,6 +455,69 @@ describe("AffairsLightweightSessionService", () => {
       "completed"
     ]);
   });
+
+  it("事务轻量会话可以单独标记已读、收藏、归档、重命名和删除", async () => {
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const workspaceId = "workspace-1";
+    const userId = "user-1";
+    const sessionId = "light-ops-1";
+    const sessionFilePath = path.join(hostDataRootDir, "affairs-lightweight-sessions", workspaceId, `${sessionId}.json`);
+    await fs.mkdir(path.dirname(sessionFilePath), { recursive: true });
+    await fs.writeFile(sessionFilePath, JSON.stringify({
+      version: 1,
+      userId,
+      session: {
+        sessionId,
+        workspaceId,
+        provider: "codex",
+        providerSessionId: `affairs-lightweight:codex:${sessionId}`,
+        rawStoreRef: sessionFilePath,
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "原始标题",
+        messageCount: 2,
+        lastMessageAt: "2026-06-03T12:00:00.000Z",
+        createdAt: "2026-06-03T11:00:00.000Z",
+        updatedAt: "2026-06-03T12:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-06-03T12:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-03T12:00:00.000Z",
+        completedAt: "2026-06-03T12:00:00.000Z",
+        lastSeenAt: null,
+        activityState: "completed_unread"
+      },
+      messages: []
+    }), "utf8");
+
+    await service.markSessionSeen(workspaceId, sessionId, userId, "2026-06-03T12:05:00.000Z");
+    const favorited = await service.updateSessionFavoriteState(workspaceId, sessionId, userId, true);
+    const archived = await service.updateSessionArchiveState(workspaceId, sessionId, userId, true);
+    const renamed = await service.renameSessionTitle(workspaceId, sessionId, userId, "新标题");
+    const finalSession = await service.getSession(workspaceId, sessionId, userId);
+
+    expect(favorited.isFavorite).toBe(true);
+    expect(archived.isArchived).toBe(true);
+    expect(renamed.title).toBe("新标题");
+    expect(finalSession.lastSeenAt).toBe("2026-06-03T12:05:00.000Z");
+    expect(finalSession.activityState).toBe("idle");
+
+    await service.deleteSession(workspaceId, sessionId, userId);
+    await expect(service.getSession(workspaceId, sessionId, userId)).rejects.toMatchObject({
+      errorCode: "AFFAIRS_LIGHTWEIGHT_SESSION_NOT_FOUND"
+    });
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined) {

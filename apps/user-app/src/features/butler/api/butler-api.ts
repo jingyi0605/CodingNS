@@ -438,6 +438,7 @@ export interface ButlerManagedSessionDto {
   provider: string | null;
   title: string | null;
   isArchived: boolean;
+  isFavorite: boolean;
   role: "patrol" | "execution" | "verification" | "adhoc";
   ownershipMode: "managed" | "observed";
   status: "idle" | "running" | "blocked" | "failed" | "closed";

@@ -18,6 +18,8 @@ const LIGHTWEIGHT_STORAGE_VERSION = 1;
 const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
 const ANTHROPIC_API_VERSION = "2023-06-01";
+const LIGHTWEIGHT_SESSION_TMP_FILE_SUFFIX = ".tmp";
+const LIGHTWEIGHT_SESSION_READ_RETRY_DELAYS_MS = [12, 40] as const;
 const LIGHTWEIGHT_SYSTEM_PROMPT = [
   "你是 CodingNS 的事务轻量会话。",
   "你的职责是快速问答、联网搜索、轻量分析。",
@@ -156,6 +158,7 @@ interface LightweightRuntimeConfigFile {
 
 export class AffairsLightweightSessionService {
   private readonly sessionLocks = new Map<string, Promise<unknown>>();
+  private readonly sessionDocumentCache = new Map<string, AffairsLightweightSessionDocument>();
 
   constructor(private readonly hostDataRootDir: string) {}
 
@@ -191,6 +194,83 @@ export class AffairsLightweightSessionService {
       nextCursor: null,
       total: document.messages.length
     };
+  }
+
+  async markSessionSeen(
+    workspaceId: string,
+    sessionId: string,
+    userId: string,
+    seenAt?: string | null
+  ): Promise<void> {
+    await this.waitForSessionIdle(sessionId);
+    const document = await this.requireSessionDocument(workspaceId, sessionId, userId);
+    const normalizedSeenAt = normalizeOptionalTimestamp(seenAt) ?? new Date().toISOString();
+    const nextActivityState = document.session.activityState === "completed_unread"
+      ? "idle"
+      : document.session.activityState;
+    await this.writeSessionDocument({
+      ...document,
+      session: {
+        ...document.session,
+        lastSeenAt: normalizedSeenAt,
+        activityState: nextActivityState
+      }
+    });
+  }
+
+  async renameSessionTitle(
+    workspaceId: string,
+    sessionId: string,
+    userId: string,
+    title: string
+  ): Promise<AffairsLightweightSessionSummary> {
+    await this.waitForSessionIdle(sessionId);
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "事务轻量会话标题不能为空",
+        field: "title"
+      });
+    }
+    return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
+      ...session,
+      title: normalizedTitle
+    }));
+  }
+
+  async updateSessionArchiveState(
+    workspaceId: string,
+    sessionId: string,
+    userId: string,
+    archived: boolean
+  ): Promise<AffairsLightweightSessionSummary> {
+    await this.waitForSessionIdle(sessionId);
+    return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
+      ...session,
+      isArchived: archived
+    }));
+  }
+
+  async updateSessionFavoriteState(
+    workspaceId: string,
+    sessionId: string,
+    userId: string,
+    favorite: boolean
+  ): Promise<AffairsLightweightSessionSummary> {
+    await this.waitForSessionIdle(sessionId);
+    return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
+      ...session,
+      isFavorite: favorite
+    }));
+  }
+
+  async deleteSession(workspaceId: string, sessionId: string, userId: string): Promise<void> {
+    await this.waitForSessionIdle(sessionId);
+    await this.requireSessionDocument(workspaceId, sessionId, userId);
+    await fs.unlink(this.resolveSessionFilePath(workspaceId, sessionId));
+    this.sessionDocumentCache.delete(sessionId);
   }
 
   async startSession(input: StartAffairsLightweightSessionInput): Promise<AffairsLightweightSessionTurnResult> {
@@ -785,32 +865,89 @@ export class AffairsLightweightSessionService {
     workspaceId: string,
     sessionId: string
   ): Promise<AffairsLightweightSessionDocument | null> {
-    return this.readSessionDocumentByPath(this.resolveSessionFilePath(workspaceId, sessionId));
+    return this.readSessionDocumentByPath(this.resolveSessionFilePath(workspaceId, sessionId), sessionId);
   }
 
-  private async readSessionDocumentByPath(filePath: string): Promise<AffairsLightweightSessionDocument | null> {
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      const parsed = JSON.parse(raw) as AffairsLightweightSessionDocument | null;
-      if (!parsed || typeof parsed !== "object") {
-        return null;
+  private async readSessionDocumentByPath(
+    filePath: string,
+    expectedSessionId: string | null = inferSessionIdFromSessionFilePath(filePath)
+  ): Promise<AffairsLightweightSessionDocument | null> {
+    for (let attemptIndex = 0; attemptIndex <= LIGHTWEIGHT_SESSION_READ_RETRY_DELAYS_MS.length; attemptIndex += 1) {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = JSON.parse(raw) as AffairsLightweightSessionDocument | null;
+        if (!parsed || typeof parsed !== "object") {
+          return this.readCachedSessionDocument(expectedSessionId);
+        }
+        if (!parsed.session || !Array.isArray(parsed.messages)) {
+          return this.readCachedSessionDocument(expectedSessionId);
+        }
+        this.cacheSessionDocument(parsed);
+        return parsed;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return null;
+        }
+        if (!shouldRetrySessionDocumentRead(error) || attemptIndex >= LIGHTWEIGHT_SESSION_READ_RETRY_DELAYS_MS.length) {
+          const cached = this.readCachedSessionDocument(expectedSessionId);
+          if (cached) {
+            return cached;
+          }
+          throw error;
+        }
+        await sleep(LIGHTWEIGHT_SESSION_READ_RETRY_DELAYS_MS[attemptIndex]!);
       }
-      if (!parsed.session || !Array.isArray(parsed.messages)) {
-        return null;
-      }
-      return parsed;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw error;
     }
+
+    return this.readCachedSessionDocument(expectedSessionId);
   }
 
   private async writeSessionDocument(document: AffairsLightweightSessionDocument): Promise<void> {
     const filePath = document.session.rawStoreRef;
+    const tempFilePath = `${filePath}.${process.pid}.${createId()}${LIGHTWEIGHT_SESSION_TMP_FILE_SUFFIX}`;
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(document, null, 2), "utf8");
+    await fs.writeFile(tempFilePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+    await fs.rename(tempFilePath, filePath);
+    this.cacheSessionDocument(document);
+  }
+
+  private async updateSessionSummary(
+    workspaceId: string,
+    sessionId: string,
+    userId: string,
+    updater: (session: AffairsLightweightSessionSummary) => AffairsLightweightSessionSummary
+  ): Promise<AffairsLightweightSessionSummary> {
+    const document = await this.requireSessionDocument(workspaceId, sessionId, userId);
+    const nextSession = updater(document.session);
+    await this.writeSessionDocument({
+      ...document,
+      session: nextSession
+    });
+    return nextSession;
+  }
+
+  private async waitForSessionIdle(sessionId: string): Promise<void> {
+    const inflight = this.sessionLocks.get(sessionId);
+    if (inflight) {
+      await inflight;
+    }
+  }
+
+  private cacheSessionDocument(document: AffairsLightweightSessionDocument): void {
+    const sessionId = document.session.sessionId?.trim();
+    if (!sessionId) {
+      return;
+    }
+    this.sessionDocumentCache.set(sessionId, cloneSessionDocument(document));
+  }
+
+  private readCachedSessionDocument(sessionId: string | null): AffairsLightweightSessionDocument | null {
+    const normalizedSessionId = sessionId?.trim() ?? "";
+    if (!normalizedSessionId) {
+      return null;
+    }
+    const cached = this.sessionDocumentCache.get(normalizedSessionId);
+    return cached ? cloneSessionDocument(cached) : null;
   }
 
   private async readOpenAiRuntimeConfig(modelOverride: string | null): Promise<OpenAiRuntimeConfig> {
@@ -949,6 +1086,15 @@ function validateLightweightProvider(provider: string): asserts provider is Prov
 function normalizeClientRequestId(value: string | null | undefined): string {
   const normalized = value?.trim();
   return normalized || createId();
+}
+
+function normalizeOptionalTimestamp(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 function buildDraftTitle(content: string): string {
@@ -1669,6 +1815,47 @@ function buildRequestUrl(baseUrl: string, candidate: string): string {
   const normalizedBase = normalizeBaseUrl(baseUrl);
   const normalizedPath = candidate.replace(/^\/+/, "");
   return `${normalizedBase}/${normalizedPath}`;
+}
+
+function inferSessionIdFromSessionFilePath(filePath: string): string | null {
+  const baseName = path.basename(filePath);
+  if (!baseName.endsWith(".json")) {
+    return null;
+  }
+  const sessionId = baseName.slice(0, -".json".length).trim();
+  return sessionId || null;
+}
+
+function cloneSessionDocument(
+  document: AffairsLightweightSessionDocument
+): AffairsLightweightSessionDocument {
+  return {
+    ...document,
+    session: {
+      ...document.session
+    },
+    messages: document.messages.map((message) => ({
+      ...message,
+      toolCall: message.toolCall
+        ? {
+            ...message.toolCall
+          }
+        : undefined
+    }))
+  };
+}
+
+function shouldRetrySessionDocumentRead(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error instanceof SyntaxError || /Unexpected end of JSON input/i.test(error.message);
+}
+
+async function sleep(timeoutMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, timeoutMs);
+  });
 }
 
 async function parseJsonResponse(response: Response): Promise<any> {

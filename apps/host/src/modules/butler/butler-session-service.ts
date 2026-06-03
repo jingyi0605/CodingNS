@@ -32,6 +32,7 @@ export interface ButlerProjectSessionView {
   provider: string | null;
   title: string | null;
   isArchived: boolean;
+  isFavorite: boolean;
   role: ButlerSessionRole;
   ownershipMode: ButlerSessionOwnershipMode;
   status: ButlerSessionStatus;
@@ -197,6 +198,7 @@ export class ButlerSessionService {
         provider: binding?.provider ?? null,
         title: index?.title ?? null,
         isArchived,
+        isFavorite: state?.favorite ?? false,
         role: record.role,
         ownershipMode: record.ownershipMode,
         status: record.status,
@@ -285,6 +287,7 @@ export class ButlerSessionService {
       provider: binding.provider,
       title: index?.title ?? null,
       isArchived: index?.isArchived ?? false,
+      isFavorite: state?.favorite ?? false,
       role: created.role,
       ownershipMode: created.ownershipMode,
       status: created.status,
@@ -394,6 +397,7 @@ export class ButlerSessionService {
       provider: binding?.provider ?? null,
       title: index?.title ?? null,
       isArchived: index?.isArchived ?? false,
+      isFavorite: state?.favorite ?? false,
       role: updatedRecord.role,
       ownershipMode: updatedRecord.ownershipMode,
       status: updatedRecord.status,
@@ -579,6 +583,7 @@ export class ButlerSessionService {
       provider: providerId,
       title: null,
       isArchived: false,
+      isFavorite: false,
       role: created.role,
       ownershipMode: created.ownershipMode,
       status: created.status,
@@ -683,6 +688,7 @@ export class ButlerSessionService {
       provider: candidate.provider,
       title: candidate.title,
       isArchived: candidate.isArchived,
+      isFavorite: candidate.isFavorite,
       role: created.role,
       ownershipMode: created.ownershipMode,
       status: created.status,
@@ -747,6 +753,7 @@ export class ButlerSessionService {
       provider: binding?.provider ?? null,
       title: index?.title ?? null,
       isArchived: index?.isArchived ?? false,
+      isFavorite: state?.favorite ?? false,
       role: record.role,
       ownershipMode: record.ownershipMode,
       status: record.status,
