@@ -226,6 +226,29 @@ interface RecentAffairsTagTaskRecord {
   createdAt: number;
 }
 
+interface IndexStatusPopoverRow {
+  label: string;
+  value: string;
+  multiline?: boolean;
+}
+
+interface IndexStatusPopoverMetric {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "danger";
+}
+
+interface IndexStatusPopoverSection {
+  title: string;
+  rows: IndexStatusPopoverRow[];
+}
+
+interface IndexStatusPopoverModel {
+  summaryMetrics: IndexStatusPopoverMetric[];
+  primaryRows: IndexStatusPopoverRow[];
+  technicalSections: IndexStatusPopoverSection[];
+}
+
 interface FullTagRecomputeTaskMonitorState {
   taskId: string;
   snapshot: AffairsTaskSnapshotDto | null;
@@ -8189,6 +8212,7 @@ function AffairsLibraryStageToolbar({
   const statusCloseTimerRef = useRef<number | null>(null);
   const [availableBreadcrumbWidth, setAvailableBreadcrumbWidth] = useState(0);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
+  const [statusTechnicalExpanded, setStatusTechnicalExpanded] = useState(false);
   const rawBreadcrumbItems = useMemo(
     () => buildToolbarBreadcrumbItemsRaw(browseMode, folderBreadcrumbs, tagRecords, selectedTagPath, selectedTagPaths),
     [browseMode, folderBreadcrumbs, selectedTagPath, selectedTagPaths, tagRecords]
@@ -8200,8 +8224,8 @@ function AffairsLibraryStageToolbar({
   const indexStatusLabel = resolveIndexStatusLabel(indexStatus);
   const indexStatusSummaryLabel = t("shell.affairsLibraryStatusIndicatorAction", { status: indexStatusLabel });
   const indexStatusProgressLabel = resolveIndexStatusInlineProgressLabel(indexStatus);
-  const indexStatusDetails = useMemo(
-    () => buildIndexStatusDetails(indexStatus, directoryStatus ?? null),
+  const indexStatusPopoverModel = useMemo(
+    () => buildIndexStatusPopoverModel(indexStatus, directoryStatus ?? null),
     [directoryStatus, indexStatus]
   );
 
@@ -8221,6 +8245,12 @@ function AffairsLibraryStageToolbar({
     observer.observe(rightTools);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!statusPopoverOpen) {
+      setStatusTechnicalExpanded(false);
+    }
+  }, [statusPopoverOpen]);
 
   useEffect(() => {
     if (!statusPopoverOpen) {
@@ -8417,7 +8447,7 @@ function AffairsLibraryStageToolbar({
             popoverRef={statusPopoverRef}
             role="dialog"
             labelledBy="affairs-index-status-popover-title"
-            maxWidth={320}
+            maxWidth={420}
             gap={8}
           >
             <div
@@ -8428,16 +8458,64 @@ function AffairsLibraryStageToolbar({
               <div className="affairs-index-status-popover-header">
                 <strong id="affairs-index-status-popover-title">{t("shell.affairsLibraryStatusPopoverTitle")}</strong>
               </div>
-              <div className="affairs-index-status-popover-grid">
-                {indexStatusDetails.map((item) => (
-                  <div key={item.label} className="affairs-index-status-popover-row">
-                    <span className="affairs-index-status-popover-label">{item.label}</span>
-                    <span className="affairs-index-status-popover-value" data-multiline={item.multiline ? "true" : undefined}>
-                      {item.value}
-                    </span>
-                  </div>
-                ))}
+              {indexStatusPopoverModel.summaryMetrics.length > 0 ? (
+                <div className="affairs-index-status-summary">
+                  {indexStatusPopoverModel.summaryMetrics.map((metric) => (
+                    <div
+                      key={metric.label}
+                      className="affairs-index-status-summary-item"
+                      data-tone={metric.tone ?? "default"}
+                    >
+                      <span className="affairs-index-status-summary-label">{metric.label}</span>
+                      <strong className="affairs-index-status-summary-value">{metric.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="affairs-index-status-primary">
+                <div className="affairs-index-status-section-title">{t("shell.affairsLibraryStatusPrimaryTitle")}</div>
+                <div className="affairs-index-status-popover-grid">
+                  {indexStatusPopoverModel.primaryRows.map((item) => (
+                    <div key={item.label} className="affairs-index-status-popover-row">
+                      <span className="affairs-index-status-popover-label">{item.label}</span>
+                      <span className="affairs-index-status-popover-value" data-multiline={item.multiline ? "true" : undefined}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+              {indexStatusPopoverModel.technicalSections.length > 0 ? (
+                <div className="affairs-index-status-technical">
+                  <button
+                    type="button"
+                    className="secondary-button affairs-index-status-technical-toggle"
+                    aria-expanded={statusTechnicalExpanded}
+                    onClick={() => setStatusTechnicalExpanded((current) => !current)}
+                  >
+                    {t("shell.affairsLibraryStatusTechnicalToggle")}
+                  </button>
+                  {statusTechnicalExpanded ? (
+                    <div className="affairs-index-status-section-list">
+                      {indexStatusPopoverModel.technicalSections.map((section) => (
+                        <section key={section.title} className="affairs-index-status-section">
+                          <div className="affairs-index-status-section-title">{section.title}</div>
+                          <div className="affairs-index-status-popover-grid">
+                            {section.rows.map((item) => (
+                              <div key={item.label} className="affairs-index-status-popover-row">
+                                <span className="affairs-index-status-popover-label">{item.label}</span>
+                                <span className="affairs-index-status-popover-value" data-multiline={item.multiline ? "true" : undefined}>
+                                  {item.value}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </ButlerAnchoredPopover>
         </div>
@@ -13133,29 +13211,59 @@ function resolveIndexStatusLabel(status: AffairsLibraryIndexStatusDto | null) {
   }
 }
 
-function buildIndexStatusDetails(
+function buildIndexStatusPopoverModel(
   status: AffairsLibraryIndexStatusDto | null,
   directoryStatus: AffairsLibraryDocumentListDto["directoryStatus"]
-) {
-  const details: Array<{ label: string; value: string; multiline?: boolean }> = [
+) : IndexStatusPopoverModel {
+  const primaryRows: IndexStatusPopoverRow[] = [
     {
       label: t("shell.affairsLibraryStatusCurrentLabel"),
       value: resolveIndexStatusLabel(status)
     }
   ];
+  const overviewRows: IndexStatusPopoverRow[] = [];
+  const timelineRows: IndexStatusPopoverRow[] = [];
+  const progressRows: IndexStatusPopoverRow[] = [];
+  const directoryRows: IndexStatusPopoverRow[] = [];
+  const workerRows: IndexStatusPopoverRow[] = [];
 
   if (!status) {
-    return details;
+    return {
+      summaryMetrics: [],
+      primaryRows,
+      technicalSections: []
+    };
   }
 
-  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastRequestedAtLabel"), status.lastRequestedAt);
-  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastStartedAtLabel"), status.lastStartedAt);
-  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastCompletedAtLabel"), status.lastCompletedAt);
-  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusLastFailedAtLabel"), status.lastFailedAt);
-  pushIndexStatusDetail(details, t("shell.affairsLibraryStatusNextAllowedAtLabel"), status.nextAllowedAt);
+  const summaryMetrics: IndexStatusPopoverMetric[] = status.progress ? [
+    {
+      label: t("shell.affairsLibraryStatusSummaryTotalLabel"),
+      value: formatIndexStatusMetricValue(status.progress.totalCount)
+    },
+    {
+      label: t("shell.affairsLibraryStatusSummaryScannedLabel"),
+      value: String(status.progress.scannedCount)
+    },
+    {
+      label: t("shell.affairsLibraryStatusSummaryIssueLabel"),
+      value: String(status.progress.failedCount),
+      tone: status.progress.failedCount > 0 ? "danger" : "default"
+    },
+    {
+      label: t("shell.affairsLibraryStatusSummaryUpdatedLabel"),
+      value: String(status.progress.indexedCount),
+      tone: status.progress.indexedCount > 0 ? "success" : "default"
+    }
+  ] : [];
+
+  pushIndexStatusDetail(timelineRows, t("shell.affairsLibraryStatusLastRequestedAtLabel"), status.lastRequestedAt);
+  pushIndexStatusDetail(timelineRows, t("shell.affairsLibraryStatusLastStartedAtLabel"), status.lastStartedAt);
+  pushIndexStatusDetail(timelineRows, t("shell.affairsLibraryStatusLastCompletedAtLabel"), status.lastCompletedAt);
+  pushIndexStatusDetail(timelineRows, t("shell.affairsLibraryStatusLastFailedAtLabel"), status.lastFailedAt);
+  pushIndexStatusDetail(timelineRows, t("shell.affairsLibraryStatusNextAllowedAtLabel"), status.nextAllowedAt);
 
   if (status.runningTaskId?.trim()) {
-    details.push({
+    overviewRows.push({
       label: t("shell.affairsLibraryStatusRunningTaskIdLabel"),
       value: status.runningTaskId.trim(),
       multiline: true
@@ -13163,43 +13271,29 @@ function buildIndexStatusDetails(
   }
 
   if (status.runningStage?.trim()) {
-    details.push({
+    primaryRows.push({
       label: t("shell.affairsLibraryStatusRunningStageLabel"),
       value: resolveIndexStatusStageLabel(status.runningStage.trim())
     });
   }
 
   if (status.progress) {
-    details.push({
-      label: t("shell.affairsLibraryStatusProgressScannedLabel"),
-      value: String(status.progress.scannedCount)
-    });
-    details.push({
-      label: t("shell.affairsLibraryStatusProgressIndexedLabel"),
-      value: String(status.progress.indexedCount)
-    });
-    details.push({
+    progressRows.push({
       label: t("shell.affairsLibraryStatusProgressUnchangedLabel"),
       value: String(status.progress.unchangedCount)
     });
-    details.push({
+    progressRows.push({
       label: t("shell.affairsLibraryStatusProgressSkippedLabel"),
       value: String(status.progress.skippedCount)
     });
-    details.push({
+    progressRows.push({
       label: t("shell.affairsLibraryStatusProgressFailedLabel"),
       value: String(status.progress.failedCount)
     });
-    if (status.progress.totalCount !== null) {
-      details.push({
-        label: t("shell.affairsLibraryStatusProgressTotalLabel"),
-        value: String(status.progress.totalCount)
-      });
-    }
   }
 
   if (status.dirtyReasons.length > 0) {
-    details.push({
+    overviewRows.push({
       label: t("shell.affairsLibraryStatusDirtyReasonsLabel"),
       value: status.dirtyReasons.join("、"),
       multiline: true
@@ -13207,7 +13301,7 @@ function buildIndexStatusDetails(
   }
 
   if (status.errorSummary?.trim()) {
-    details.push({
+    primaryRows.push({
       label: t("shell.affairsLibraryStatusErrorSummaryLabel"),
       value: status.errorSummary.trim(),
       multiline: true
@@ -13215,59 +13309,59 @@ function buildIndexStatusDetails(
   }
 
   if (directoryStatus?.path?.trim()) {
-    details.push({
+    primaryRows.push({
       label: t("shell.affairsLibraryDirectoryStatusPathLabel"),
       value: directoryStatus.path === "." ? t("shell.affairsLibraryDirectoryStatusRootPath") : directoryStatus.path
     });
-    details.push({
+    primaryRows.push({
       label: t("shell.affairsLibraryDirectoryStatusStateLabel"),
       value: resolveDirectoryStatusLabel(directoryStatus.state)
     });
-    details.push({
+    directoryRows.push({
       label: t("shell.affairsLibraryDirectoryStatusSourceLabel"),
       value: resolveDirectoryStatusSourceLabel(directoryStatus.source)
     });
     pushIndexStatusDetail(
-      details,
+      directoryRows,
       t("shell.affairsLibraryDirectoryStatusLastRequestedAtLabel"),
       directoryStatus.lastRequestedAt
     );
     pushIndexStatusDetail(
-      details,
+      directoryRows,
       t("shell.affairsLibraryDirectoryStatusLastCompletedAtLabel"),
       directoryStatus.lastCompletedAt
     );
     pushIndexStatusDetail(
-      details,
+      directoryRows,
       t("shell.affairsLibraryDirectoryStatusLastFailedAtLabel"),
       directoryStatus.lastFailedAt
     );
     if (directoryStatus.runningTaskId?.trim()) {
-      details.push({
+      directoryRows.push({
         label: t("shell.affairsLibraryDirectoryStatusRunningTaskIdLabel"),
         value: directoryStatus.runningTaskId.trim(),
         multiline: true
       });
     }
     if (directoryStatus.errorSummary?.trim()) {
-      details.push({
+      directoryRows.push({
         label: t("shell.affairsLibraryDirectoryStatusErrorSummaryLabel"),
         value: directoryStatus.errorSummary.trim(),
         multiline: true
       });
     }
     pushIndexStatusDetail(
-      details,
+      directoryRows,
       t("shell.affairsLibraryDirectoryStatusGeneratedAtLabel"),
       directoryStatus.generatedAt ?? null
     );
     pushIndexStatusDetail(
-      details,
+      directoryRows,
       t("shell.affairsLibraryDirectoryStatusFilesystemObservedAtLabel"),
       directoryStatus.filesystemObservedAt ?? null
     );
     if (directoryStatus.staleReason?.trim()) {
-      details.push({
+      directoryRows.push({
         label: t("shell.affairsLibraryDirectoryStatusStaleReasonLabel"),
         value: directoryStatus.staleReason.trim(),
         multiline: true
@@ -13277,32 +13371,32 @@ function buildIndexStatusDetails(
 
   if (status.workerHealth) {
     const workerHealth = status.workerHealth;
-    details.push({
+    workerRows.push({
       label: t("shell.affairsLibraryWorkerHealthStateLabel"),
       value: resolveWorkerHealthStateLabel(workerHealth.state)
     });
-    details.push({
+    workerRows.push({
       label: t("shell.affairsLibraryWorkerHealthPidLabel"),
       value: workerHealth.pid === null ? t("common.none") : String(workerHealth.pid)
     });
-    details.push({
+    workerRows.push({
       label: t("shell.affairsLibraryWorkerHealthLocalInflightLabel"),
       value: String(workerHealth.inflightLocalCount)
     });
-    details.push({
+    workerRows.push({
       label: t("shell.affairsLibraryWorkerHealthRemoteInflightLabel"),
       value: String(workerHealth.inflightRemoteRequestCount)
     });
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthStartedAtLabel"), workerHealth.startedAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthHeartbeatLabel"), workerHealth.lastHeartbeatAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastStartedAtLabel"), workerHealth.lastStartedAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastCompletedAtLabel"), workerHealth.lastCompletedAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastFailedAtLabel"), workerHealth.lastFailedAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthSoftCancelAtLabel"), workerHealth.lastSoftCancelRequestedAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthHardKillAtLabel"), workerHealth.lastHardKillAt);
-    pushIndexStatusDetail(details, t("shell.affairsLibraryWorkerHealthLastExitAtLabel"), workerHealth.lastExitAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthStartedAtLabel"), workerHealth.startedAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthHeartbeatLabel"), workerHealth.lastHeartbeatAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthLastStartedAtLabel"), workerHealth.lastStartedAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthLastCompletedAtLabel"), workerHealth.lastCompletedAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthLastFailedAtLabel"), workerHealth.lastFailedAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthSoftCancelAtLabel"), workerHealth.lastSoftCancelRequestedAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthHardKillAtLabel"), workerHealth.lastHardKillAt);
+    pushIndexStatusDetail(workerRows, t("shell.affairsLibraryWorkerHealthLastExitAtLabel"), workerHealth.lastExitAt);
     if (workerHealth.lastTerminationReason?.trim()) {
-      details.push({
+      workerRows.push({
         label: t("shell.affairsLibraryWorkerHealthTerminationReasonLabel"),
         value: workerHealth.lastTerminationReason.trim(),
         multiline: true
@@ -13310,11 +13404,22 @@ function buildIndexStatusDetails(
     }
   }
 
-  return details;
+  const sections: IndexStatusPopoverSection[] = [];
+  pushIndexStatusSection(sections, t("shell.affairsLibraryStatusSectionOverviewTitle"), overviewRows);
+  pushIndexStatusSection(sections, t("shell.affairsLibraryStatusSectionTimelineTitle"), timelineRows);
+  pushIndexStatusSection(sections, t("shell.affairsLibraryStatusSectionProgressTitle"), progressRows);
+  pushIndexStatusSection(sections, t("shell.affairsLibraryStatusSectionDirectoryTitle"), directoryRows);
+  pushIndexStatusSection(sections, t("shell.affairsLibraryStatusSectionWorkerTitle"), workerRows);
+
+  return {
+    summaryMetrics,
+    primaryRows,
+    technicalSections: sections
+  };
 }
 
 function pushIndexStatusDetail(
-  details: Array<{ label: string; value: string; multiline?: boolean }>,
+  details: IndexStatusPopoverRow[],
   label: string,
   value: string | null
 ) {
@@ -13326,6 +13431,28 @@ function pushIndexStatusDetail(
     label,
     value: formatIndexStatusDateTime(value)
   });
+}
+
+function pushIndexStatusSection(
+  sections: IndexStatusPopoverSection[],
+  title: string,
+  rows: IndexStatusPopoverRow[]
+) {
+  if (rows.length === 0) {
+    return;
+  }
+
+  sections.push({
+    title,
+    rows
+  });
+}
+
+function formatIndexStatusMetricValue(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return String(value);
 }
 
 function resolveIndexStatusInlineProgressLabel(status: AffairsLibraryIndexStatusDto | null): string | null {

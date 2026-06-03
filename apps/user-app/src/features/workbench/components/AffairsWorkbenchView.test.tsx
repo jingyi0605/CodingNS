@@ -3884,6 +3884,10 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByText(t("shell.affairsLibraryStatusPopoverTitle"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryStatusCurrentLabel"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsLibraryStatusLastCompletedAtLabel"))).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryStatusTechnicalToggle") }));
+
     expect(screen.getByText(t("shell.affairsLibraryStatusLastCompletedAtLabel"))).toBeInTheDocument();
     const completedAtLabel = new Intl.DateTimeFormat("zh-CN", {
       month: "numeric",
@@ -3931,7 +3935,22 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByText(t("shell.affairsLibraryStatusIndicatorProgress", { scanned: 12 }))).toBeInTheDocument();
     expect(await screen.findByText(t("shell.affairsLibraryStatusRunningStageLabel"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryStatusStageIncrementalIndex"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsLibraryStatusProgressScannedLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusSummaryTotalLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusSummaryScannedLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusSummaryIssueLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusSummaryUpdatedLabel"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsLibraryStatusProgressUnchangedLabel"))).not.toBeInTheDocument();
+
+    const summary = document.querySelector(".affairs-index-status-summary");
+    expect(summary).not.toBeNull();
+    expect(summary?.children).toHaveLength(4);
+
+    const toggle = screen.getByRole("button", { name: t("shell.affairsLibraryStatusTechnicalToggle") });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(t("shell.affairsLibraryStatusProgressUnchangedLabel"))).toBeInTheDocument();
   });
 
