@@ -686,6 +686,7 @@ export interface SessionIndexRecord {
   isSubagent?: boolean;
   subagentLabel?: string | null;
   title: string;
+  isFavorite?: boolean;
   messageCount: number;
   isArchived: boolean;
   lastMessageAt: string | null;

@@ -224,7 +224,7 @@ export class WorkbenchWsHub {
       switch (message.type) {
         case "workbench.subscribe":
           void this.sendWorkbenchSnapshotToClient(client, userId, channel, message.knownRevision);
-          if (this.workbenchService.shouldRefreshSnapshot()) {
+          if (this.workbenchService.shouldRefreshSnapshot(userId)) {
             void this.refreshAndBroadcast(userId, false, {
               awaitDiscovery: true
             }).catch((error) => {
@@ -555,7 +555,7 @@ export class WorkbenchWsHub {
       refreshTask: null
     };
     channel.workbenchTimer = setInterval(() => {
-      if (!this.workbenchService.shouldRefreshSnapshot()) {
+      if (!this.workbenchService.shouldRefreshSnapshot(userId)) {
         return;
       }
 

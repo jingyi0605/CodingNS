@@ -12,6 +12,10 @@ import type { ButlerControlSessionRepository } from "../../storage/repositories/
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
 import { withSnapshotRevision } from "./snapshot-revision.js";
+import type {
+  AffairsAssistantSessionSnapshotService,
+  AffairsAssistantSessionSummary
+} from "./affairs-assistant-session-snapshot-service.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
 const SESSION_TITLE_SYNC_CONCURRENCY = 4;
@@ -27,6 +31,10 @@ export interface WorkbenchSnapshotItem {
   workspace: Workspace;
   sessions: WorkbenchSessionSummary[];
   childWorktrees?: WorkbenchWorktreeNode[];
+  affairsAssistantSessions?: AffairsAssistantSessionSummary[];
+  affairsAssistantProjectId?: string | null;
+  affairsAssistantProjectWorkspaceId?: string | null;
+  affairsAssistantSessionsUpdatedAt?: string | null;
   collapsed: boolean;
 }
 
@@ -52,6 +60,10 @@ export class WorkbenchService {
     private readonly sessionIsolatedWorkspaceRepository?: Pick<
       SessionIsolatedWorkspaceRepository,
       "listByLifecycleStatuses"
+    >,
+    private readonly affairsAssistantSessionSnapshotService?: Pick<
+      AffairsAssistantSessionSnapshotService,
+      "readSnapshot" | "refreshNow" | "scheduleRefresh" | "shouldRefresh"
     >
   ) {
     this.taskManager = taskManager;
@@ -74,30 +86,42 @@ export class WorkbenchService {
     );
 
     return withSnapshotRevision({
-      items: workspaces.map((workspace) => ({
-        workspace: applyWorkspaceNavigationState(workspace, navigationStateByWorkspaceId.get(workspace.id)),
-        sessions: projectWorkbenchSessions(this.filterButlerControlSessions(
-          this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
-        )),
-        childWorktrees: this.buildChildWorktrees(
+      items: workspaces.map((workspace) => {
+        const affairsAssistantSnapshot = this.affairsAssistantSessionSnapshotService?.readSnapshot(workspace.id, userId) ?? null;
+
+        return {
+          workspace: applyWorkspaceNavigationState(workspace, navigationStateByWorkspaceId.get(workspace.id)),
+          sessions: projectWorkbenchSessions(this.filterButlerControlSessions(
+            this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
+          )),
+          childWorktrees: this.buildChildWorktrees(
           workspace.id,
           workspaceById,
           navigationStateByWorkspaceId,
           userId
-        ),
-        collapsed: collapsedWorkspaceIdSet.has(workspace.id)
-      }))
+          ),
+          affairsAssistantSessions: affairsAssistantSnapshot?.sessions ?? [],
+          affairsAssistantProjectId: affairsAssistantSnapshot?.projectId ?? null,
+          affairsAssistantProjectWorkspaceId: affairsAssistantSnapshot?.projectWorkspaceId ?? null,
+          affairsAssistantSessionsUpdatedAt: affairsAssistantSnapshot?.updatedAt ?? null,
+          collapsed: collapsedWorkspaceIdSet.has(workspace.id)
+        };
+      })
     });
   }
 
-  shouldRefreshSnapshot(): boolean {
+  shouldRefreshSnapshot(userId: string): boolean {
     return this.listWorkbenchWorkspaces()
-      .some((workspace) =>
-        this.sessionHistoryService.needsWorkspaceDiscovery(
+      .some((workspace) => {
+        if (this.sessionHistoryService.needsWorkspaceDiscovery(
           workspace.id,
           WORKBENCH_REFRESH_MAX_AGE_MS
-        )
-      );
+        )) {
+          return true;
+        }
+
+        return this.affairsAssistantSessionSnapshotService?.shouldRefresh(workspace.id, userId) ?? false;
+      });
   }
 
   async refreshSnapshot(
@@ -115,6 +139,10 @@ export class WorkbenchService {
       await this.refreshWorkspaceSessions(userId, {
         force,
         refreshStateMode: "deferred"
+      });
+      await this.refreshAffairsAssistantSessions(userId, {
+        force,
+        awaitRefresh: true
       });
     } else {
       this.scheduleSnapshotRefresh(userId, {
@@ -233,17 +261,20 @@ export class WorkbenchService {
       force?: boolean;
     }
   ): void {
-    if (typeof this.sessionHistoryService.requestWorkspaceDiscovery !== "function") {
-      return;
+    if (typeof this.sessionHistoryService.requestWorkspaceDiscovery === "function") {
+      for (const workspace of workspaces) {
+        this.sessionHistoryService.requestWorkspaceDiscovery(workspace.id, userId, {
+          maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS,
+          force: options?.force ?? false,
+          refreshStateMode: "deferred"
+        });
+      }
     }
 
-    for (const workspace of workspaces) {
-      this.sessionHistoryService.requestWorkspaceDiscovery(workspace.id, userId, {
-        maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS,
-        force: options?.force ?? false,
-        refreshStateMode: "deferred"
-      });
-    }
+    this.refreshAffairsAssistantSessions(userId, {
+      force: options?.force ?? false,
+      awaitRefresh: false
+    });
   }
 
   private async refreshWorkspaceSessions(
@@ -263,6 +294,39 @@ export class WorkbenchService {
         })
       )
     );
+  }
+
+  private async refreshAffairsAssistantSessions(
+    userId: string,
+    options?: {
+      force?: boolean;
+      awaitRefresh?: boolean;
+    }
+  ): Promise<void> {
+    if (!this.affairsAssistantSessionSnapshotService) {
+      return;
+    }
+
+    const workspaces = this.listWorkbenchWorkspaces();
+
+    if (options?.awaitRefresh) {
+      await Promise.allSettled(
+        workspaces.map((workspace) =>
+          this.affairsAssistantSessionSnapshotService!.refreshNow(workspace.id, userId, {
+            force: options?.force ?? false,
+            source: "workbench.refresh_snapshot.affairs_assistant_sessions"
+          })
+        )
+      );
+      return;
+    }
+
+    for (const workspace of workspaces) {
+      this.affairsAssistantSessionSnapshotService.scheduleRefresh(workspace.id, userId, {
+        force: options?.force ?? false,
+        source: "workbench.schedule_snapshot_refresh.affairs_assistant_sessions"
+      });
+    }
   }
 
   private filterButlerControlSessions(sessions: SessionListItem[]): SessionListItem[] {

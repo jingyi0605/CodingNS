@@ -24,6 +24,18 @@ export class WorkbenchController {
     request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.workbenchService.getSnapshot(requireUserId(request)));
+    const userId = requireUserId(request);
+    const refresh = request.headers["x-codingns-workbench-refresh"] === "true";
+    const awaitDiscovery = request.headers["x-codingns-workbench-await-discovery"] === "true";
+
+    if (refresh) {
+      reply.send(await this.workbenchService.refreshSnapshot(userId, {
+        force: true,
+        awaitDiscovery
+      }));
+      return;
+    }
+
+    reply.send(this.workbenchService.getSnapshot(userId));
   };
 }
