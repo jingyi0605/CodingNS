@@ -16,6 +16,8 @@ const extensionZhCN = {
     cancel: "\u53d6\u6d88",
     copy: "复制",
     copyFailed: "复制失败",
+    enabled: "已启用",
+    disabled: "已关闭",
     logout: "\u9000\u51fa\u767b\u5f55",
     language: "\u8bed\u8a00",
     none: "\u65e0"
@@ -3126,6 +3128,8 @@ const extensionEnUS = {
     cancel: "Cancel",
     copy: "Copy",
     copyFailed: "Copy failed",
+    enabled: "Enabled",
+    disabled: "Disabled",
     logout: "Log out",
     language: "Language",
     none: "None"
