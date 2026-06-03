@@ -8993,12 +8993,14 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 36%, transparent);
 }
 
-.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field input,
-.affairs-library-settings-modal .affairs-tag-smart-rule-field input {
-  min-height: 30px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 8px;
+.affairs-library-settings-modal .affairs-tag-management-editor input:not([type="checkbox"]):not([type="radio"]),
+.affairs-library-settings-modal .affairs-tag-smart-rule-field input:not([type="checkbox"]):not([type="radio"]) {
+  box-sizing: border-box;
+  min-height: 30px !important;
+  height: 30px !important;
+  max-height: 30px !important;
+  padding: 0 10px !important;
+  border-radius: 8px !important;
   font-size: 13px;
   line-height: 1.2;
   border-color: color-mix(in srgb, var(--border-default) 86%, transparent);
@@ -9009,10 +9011,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-library-settings-modal .affairs-tag-name-input {
-  min-height: 30px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: 8px;
+  box-sizing: border-box;
+  min-height: 30px !important;
+  height: 30px !important;
+  max-height: 30px !important;
+  padding: 0 10px !important;
+  border-radius: 8px !important;
   font-size: 13px;
 }
 
