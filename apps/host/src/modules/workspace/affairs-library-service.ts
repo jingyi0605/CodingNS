@@ -86,6 +86,17 @@ export interface AffairsLibraryIndexStatusDto {
   runningTaskId: string | null;
   runningStage: string | null;
   errorSummary: string | null;
+  progress?: AffairsLibraryIndexProgressDto | null;
+}
+
+export interface AffairsLibraryIndexProgressDto {
+  scannedCount: number;
+  indexedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  unchangedCount: number;
+  totalCount: number | null;
+  maxConcurrency: number | null;
 }
 
 export interface AffairsLibraryDirectoryStatusDto {
@@ -251,6 +262,15 @@ interface RuntimeStatusFilePayload {
   taskId?: string;
   taskType?: string;
   errorSummary?: string | null;
+  progress?: {
+    scannedCount?: number;
+    indexedCount?: number;
+    skippedCount?: number;
+    failedCount?: number;
+    unchangedCount?: number;
+    totalCount?: number | null;
+    maxConcurrency?: number | null;
+  } | null;
 }
 
 interface ParsedRuntimeStatusFile {
@@ -262,6 +282,7 @@ interface ParsedRuntimeStatusFile {
   updatedAt: string | null;
   updatedAtMs: number;
   errorSummary: string | null;
+  progress: AffairsLibraryIndexProgressDto | null;
 }
 
 interface ParsedCommandLockOwnerFile {
@@ -1069,7 +1090,7 @@ export class AffairsLibraryService {
       });
     }
 
-    if (previewKind === "image" || previewKind === "pdf") {
+    if (previewKind === "image" || previewKind === "pdf" || previewKind === "office") {
       return this.buildPreviewResult({
         workspaceId,
         path: resolved.relativePath,
@@ -1077,7 +1098,9 @@ export class AffairsLibraryService {
         kind: previewKind,
         reason: null,
         content: null,
-        version: null,
+        version: previewKind === "office"
+          ? buildOfficeDocumentVersion(fileSize, resolved.stats?.mtime.toISOString() ?? null)
+          : null,
         size: fileSize,
         updatedAt: resolved.stats?.mtime.toISOString() ?? null
       });
@@ -1985,7 +2008,8 @@ export class AffairsLibraryService {
           nextAllowedAt: null,
           runningTaskId: null,
           runningStage: null,
-          errorSummary: orphanedRunningTask.errorSummary
+          errorSummary: orphanedRunningTask.errorSummary,
+          progress: runtimeStatus?.progress ?? null,
         };
       }
 
@@ -1999,7 +2023,8 @@ export class AffairsLibraryService {
         nextAllowedAt: null,
         runningTaskId: taskSnapshot.taskId,
         runningStage: resolveAffairsLibraryRunningStage(workspaceId, taskSnapshot, runtimeStatus),
-        errorSummary: null
+        errorSummary: null,
+        progress: runtimeStatus?.progress ?? null,
       };
     }
 
@@ -2020,7 +2045,8 @@ export class AffairsLibraryService {
           nextAllowedAt: null,
           runningTaskId: null,
           runningStage: null,
-          errorSummary: null
+          errorSummary: null,
+          progress: runtimeStatus?.progress ?? null,
         };
       }
 
@@ -2039,7 +2065,8 @@ export class AffairsLibraryService {
         nextAllowedAt: toIso(nextAllowedAtMs),
         runningTaskId: null,
         runningStage: null,
-        errorSummary: taskSnapshot.errorMessage ?? "最近一次文档库刷新失败"
+        errorSummary: taskSnapshot.errorMessage ?? "最近一次文档库刷新失败",
+        progress: runtimeStatus?.progress ?? null,
       };
     }
 
@@ -2827,11 +2854,6 @@ export class AffairsLibraryService {
         cachePath
       }
     });
-    try {
-      fs.rmSync(cachePath, { force: true });
-    } catch {
-      // 这里只是尽量删掉快照缓存，失败不影响主链路。
-    }
   }
 
   private readExportCacheFile(exportRoot: string, signature: string): AffairsLibraryExportCachePayload | null {
@@ -2861,12 +2883,13 @@ export class AffairsLibraryService {
   }
 
   private buildPreviewResult(
-    input: Omit<FilePreviewResult, "previewPath" | "previewUrl" | "capabilities">
+    input: Omit<FilePreviewResult, "previewPath" | "previewUrl" | "onlyOffice" | "capabilities">
   ): FilePreviewResult {
     return {
       ...input,
       previewPath: null,
       previewUrl: null,
+      onlyOffice: null,
       capabilities: buildPreviewCapabilities(input.kind, {
         supported: input.supported,
         content: input.content,
@@ -3136,6 +3159,14 @@ export class AffairsLibraryService {
       });
     }
   }
+}
+
+function buildOfficeDocumentVersion(fileSize: number, updatedAt: string | null): string | null {
+  if (!updatedAt) {
+    return null;
+  }
+
+  return `${updatedAt}:${fileSize}`;
 }
 
 function hasPendingAutoTasks(state: AffairsLibraryAutoTaskState): boolean {
@@ -3699,6 +3730,22 @@ function readRuntimeStatusFileSafe(rootDir: string): ParsedRuntimeStatusFile | n
     const payload = readJsonFile<RuntimeStatusFilePayload>(filePath);
     const updatedAt = payload.updatedAt?.trim() ?? null;
     const updatedAtMs = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+    const rawProgress = payload.progress;
+    const progress = rawProgress && typeof rawProgress === "object"
+      ? {
+        scannedCount: Number(rawProgress.scannedCount ?? 0),
+        indexedCount: Number(rawProgress.indexedCount ?? 0),
+        skippedCount: Number(rawProgress.skippedCount ?? 0),
+        failedCount: Number(rawProgress.failedCount ?? 0),
+        unchangedCount: Number(rawProgress.unchangedCount ?? 0),
+        totalCount: rawProgress.totalCount === null || rawProgress.totalCount === undefined
+          ? null
+          : Number(rawProgress.totalCount),
+        maxConcurrency: rawProgress.maxConcurrency === null || rawProgress.maxConcurrency === undefined
+          ? null
+          : Number(rawProgress.maxConcurrency),
+      }
+      : null;
     return {
       status: payload.status?.trim() ?? null,
       stage: payload.stage?.trim() ?? null,
@@ -3707,7 +3754,14 @@ function readRuntimeStatusFileSafe(rootDir: string): ParsedRuntimeStatusFile | n
       taskType: payload.taskType?.trim() ?? null,
       updatedAt,
       updatedAtMs,
-      errorSummary: payload.errorSummary?.trim() ?? null
+      errorSummary: payload.errorSummary?.trim() ?? null,
+      progress: progress && Number.isFinite(progress.scannedCount)
+        && Number.isFinite(progress.indexedCount)
+        && Number.isFinite(progress.skippedCount)
+        && Number.isFinite(progress.failedCount)
+        && Number.isFinite(progress.unchangedCount)
+        ? progress
+        : null,
     };
   } catch {
     return null;

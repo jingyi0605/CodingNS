@@ -1447,6 +1447,36 @@ describe("AffairsLibraryService auto tasks", () => {
   });
 });
 
+describe("AffairsLibraryService export cache fallback", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("失效内存缓存时不会删除磁盘快照缓存文件", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-cache-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    const cachePath = path.join(exportDir, SNAPSHOT_CACHE_FILE_NAME);
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      schemaVersion: 2,
+      signature: "demo-signature",
+      generatedAt: "2026-06-03T12:00:00.000Z",
+      documents: [],
+      tags: [],
+      folders: []
+    }));
+
+    try {
+      const service = createService({ rootDir });
+      (service as unknown as { invalidateExportCache(rootDir: string): void }).invalidateExportCache(rootDir);
+      expect(fs.existsSync(cachePath)).toBe(true);
+      service.dispose();
+    } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("AffairsLibraryDirtyWatchService", () => {
   afterEach(() => {
     vi.useRealTimers();
