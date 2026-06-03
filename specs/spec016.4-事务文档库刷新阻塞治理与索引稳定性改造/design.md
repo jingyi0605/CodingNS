@@ -181,6 +181,67 @@
 | `filesystemObservedAt` | `string | null` | 否 | 最近一次真实文件系统观察时间 | 可空 |
 | `staleReason` | `string | null` | 否 | 为什么当前还是旧结果 | 可空 |
 
+#### 3.2.5 状态词和调试词固定表
+
+这一步先把名字定死，后面代码和前端都只能复用这些词，别再各写各的。
+
+**索引状态词**
+
+- `fresh`：结果可信，最近一次导出已经追上
+- `stale`：结果可能旧了，需要补刷新
+- `queued`：任务已经进队列，还没开始
+- `running`：任务已经开始执行
+- `cooldown`：刚完成或刚失败，短时间先别重复打
+- `failed`：最近一次刷新失败
+- `queue_timeout`：任务排队太久，系统已经明确判超时
+
+**目录结果来源词**
+
+- `live`：这次结果主要来自实时目录读取
+- `snapshot`：这次结果主要来自导出快照
+- `mixed`：快照和实时目录结果混着返回
+- `stale_fallback`：实时补新失败，只能先回最近一次旧结果
+
+**索引脏原因词**
+
+- `refresh_requested`
+- `refresh_failed`
+- `binding_required`
+- `library_disabled`
+- `missing_index_artifact`
+- `missing_export_dir`
+- `missing_export_status`
+- `missing_export_manifest`
+- `command_lock_missing`
+- `command_lock_owner_dead`
+- `command_lock_heartbeat_stale`
+- `queue_timeout`
+- `drift_detected`
+- `rebuild_required`
+
+**对账层级和结论词**
+
+- scope：`lightweight`、`periodic_audit`
+- status：`healthy`、`drift_detected`、`rebuild_required`
+
+**调试事件词**
+
+- `lightweight_reconcile_tick`
+- `lightweight_reconcile_skipped`
+- `lightweight_reconcile_drift_detected`
+- `lightweight_reconcile_scheduled_refresh`
+- `periodic_audit_tick`
+- `directory_live_scan_sync`
+- `directory_live_scan_deferred`
+- `export_data_read`
+
+**轻量对账原因前缀**
+
+- `lightweight_reconcile:timer`
+- `lightweight_reconcile:pending_dirty_signal`
+- `lightweight_reconcile:runtime_status_ahead`
+- `lightweight_reconcile:recent_directory_mtime`
+
 ### 3.3 接口契约
 
 覆盖需求：1、2、4、5
