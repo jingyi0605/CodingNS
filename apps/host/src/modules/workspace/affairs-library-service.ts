@@ -1066,7 +1066,11 @@ export class AffairsLibraryService {
     const previewKind = detectPreviewKind(resolved.relativePath);
     const fileSize = resolved.stats?.size ?? 0;
 
-    if (isResourcePreviewKind(previewKind) && fileSize > MAX_RESOURCE_PREVIEW_FILE_BYTES) {
+    if (
+      isResourcePreviewKind(previewKind)
+      && previewKind !== "office"
+      && fileSize > MAX_RESOURCE_PREVIEW_FILE_BYTES
+    ) {
       return this.buildPreviewResult({
         workspaceId,
         path: resolved.relativePath,

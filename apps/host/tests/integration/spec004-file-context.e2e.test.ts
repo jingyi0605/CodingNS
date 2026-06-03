@@ -456,6 +456,34 @@ describe("spec004 文件管理能力", () => {
     expect(previewLargePdfMeta.json().supported).toBe(true);
     expect(previewLargePdfMeta.json().previewUrl).toContain("/preview/files/");
 
+    const saveOnlyOfficeSettings = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/office/onlyoffice/settings",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        enabled: true,
+        serverUrl: "http://127.0.0.1:8088",
+        publicBaseUrl: "http://127.0.0.1:3002"
+      }
+    });
+    expect(saveOnlyOfficeSettings.statusCode).toBe(200);
+
+    const previewLargeOfficeMeta = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("docs/large-preview.pptx")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewLargeOfficeMeta.statusCode).toBe(200);
+    expect(previewLargeOfficeMeta.json().kind).toBe("office");
+    expect(previewLargeOfficeMeta.json().supported).toBe(true);
+    expect(previewLargeOfficeMeta.json().reason).toBeNull();
+    expect(previewLargeOfficeMeta.json().onlyOffice?.documentUrl).toContain("/preview/files/");
+    expect(previewLargeOfficeMeta.json().previewUrl).toContain("/preview/files/");
+
     const recent = await hosted.app.inject({
       method: "GET",
       url: `/api/files/recent?workspaceId=${workspaceId}&limit=10`,
@@ -1037,6 +1065,69 @@ describe("spec004 文件管理能力", () => {
     expect(payload.onlyOffice?.editorConfig.editorConfig?.user?.id).toEqual(expect.any(String));
   });
 
+  it("事务文档库大 Office 文件不会被 CodingNS 预览大小限制拦截", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const affairsRootDir = path.join(fixture.rootDir, "affairs-library-large-office");
+    mkdirSync(path.join(affairsRootDir, "我的应用", "方案"), { recursive: true });
+    writeFileSync(
+      path.join(affairsRootDir, "我的应用", "方案", "超大实施方案.docx"),
+      Buffer.concat([
+        Buffer.from("fake docx header", "utf8"),
+        Buffer.alloc(21 * 1024 * 1024, 0x20)
+      ])
+    );
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const saveOnlyOfficeSettings = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/office/onlyoffice/settings",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        enabled: true,
+        serverUrl: "http://127.0.0.1:8088",
+        publicBaseUrl: "http://127.0.0.1:3002"
+      }
+    });
+    expect(saveOnlyOfficeSettings.statusCode).toBe(200);
+
+    const saveBinding = await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${workspaceId}/affairs/library-binding`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        rootDir: affairsRootDir
+      }
+    });
+    expect(saveBinding.statusCode).toBe(200);
+
+    const preview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/方案/超大实施方案.docx")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().kind).toBe("office");
+    expect(preview.json().supported).toBe(true);
+    expect(preview.json().reason).toBeNull();
+    expect(preview.json().onlyOffice?.documentUrl).toContain("/preview/affairs-files/");
+    expect(preview.json().previewUrl).toContain("/preview/affairs-files/");
+  });
+
   it("事务文档库 Office 阅读态预览会由 Host 直接生成 view 配置并签名", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -1255,6 +1346,13 @@ function seedWorkspaceFiles(workspaceDir: string): void {
       Buffer.from("%PDF-1.4\n", "utf8"),
       Buffer.alloc(1024 * 1024, 0x20),
       Buffer.from("\n%%EOF", "utf8")
+    ])
+  );
+  writeFileSync(
+    path.join(workspaceDir, "docs", "large-preview.pptx"),
+    Buffer.concat([
+      Buffer.from("fake pptx header", "utf8"),
+      Buffer.alloc(21 * 1024 * 1024, 0x20)
     ])
   );
   mkdirSync(path.join(workspaceDir, "化工行业AI培训"), { recursive: true });
