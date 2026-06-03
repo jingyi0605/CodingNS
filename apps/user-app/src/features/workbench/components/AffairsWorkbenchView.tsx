@@ -43,7 +43,6 @@ import {
   listAssistantAutomations,
   listButlerFollowUpTasks,
   listButlerInboxItems,
-  listButlerProjectSessions,
   listRecentAssistantAutomationRuns,
   resumeButlerProjectSession
 } from "../../butler/api/butler-api";
@@ -539,6 +538,7 @@ interface AffairsWorkbenchContextValue {
   workspaceId: string;
   workspaceName: string | null;
   agentWorkspaceId: string | null;
+  agentProjectId: string | null;
   agentWorkspacePath: string | null;
   state: AffairsViewState;
   activeSection: AffairsPrimarySection;
@@ -812,7 +812,6 @@ export function AffairsWorkbenchProvider({
   const butlerActiveProvider = useButlerRuntimeStore(butlerStore, (value) => value.activeProvider);
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const { showToast } = useToast();
-  const [documentSummaryExpanded, setDocumentSummaryExpanded] = useState(false);
   const butlerHostUnavailable =
     butlerBootstrapErrorCode === "NETWORK_ERROR"
     || butlerBootstrapErrorCode === "INVALID_RESPONSE";
@@ -877,6 +876,10 @@ export function AffairsWorkbenchProvider({
     setAgentConversationSessions(initialAgentConversationSessions);
     setLightweightRuntimeBySessionId({});
   }, [initialAgentConversationSessions, initialLightweightConversationSessions, workspaceId]);
+
+  useEffect(() => {
+    setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(current, snapshotAgentConversationSessions));
+  }, [snapshotAgentConversationSessions]);
 
   useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
@@ -963,7 +966,7 @@ export function AffairsWorkbenchProvider({
   }, [activeSection, reloadLightweightConversationSessions]);
 
   const reloadAgentConversationSessions = useCallback(async () => {
-    setAgentConversationSessions(snapshotAgentConversationSessions);
+    setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(current, snapshotAgentConversationSessions));
   }, [snapshotAgentConversationSessions]);
 
   const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
@@ -2033,6 +2036,7 @@ export function AffairsWorkbenchProvider({
     workspaceId,
     workspaceName,
     agentWorkspaceId,
+    agentProjectId,
     agentWorkspacePath,
     state,
     activeSection,
@@ -2604,12 +2608,17 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     activateConversationSession: (input) => {
       const seenAt = new Date().toISOString();
       const nextSession = markAffairsSessionSeen(input.session, seenAt);
-      setLightweightConversationSessions((current) => current.map((item) => (
-        item.sessionId === nextSession.sessionId ? nextSession : item
-      )));
-      setAgentConversationSessions((current) => current.map((item) => (
-        item.sessionId === nextSession.sessionId ? nextSession : item
-      )));
+      if (input.kind === "lightweight") {
+        setLightweightConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+        setAgentConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
+      } else {
+        setLightweightConversationSessions((current) => current.map((item) => (
+          item.sessionId === nextSession.sessionId ? nextSession : item
+        )));
+        setAgentConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+      }
       setConversationRuntimeSeed({
         kind: input.kind,
         session: nextSession,
@@ -2862,6 +2871,44 @@ function resolveConversationSessionSortTime(session: SessionSummaryDto): number 
   const timestamp = session.lastMessageAt ?? session.updatedAt ?? session.createdAt ?? null;
   const parsed = timestamp ? Date.parse(timestamp) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortConversationSessionSummaries(sessions: SessionSummaryDto[]): SessionSummaryDto[] {
+  return [...sessions].sort((left, right) => resolveConversationSessionSortTime(right) - resolveConversationSessionSortTime(left));
+}
+
+function upsertConversationSessionSummary(
+  sessions: SessionSummaryDto[],
+  session: SessionSummaryDto
+): SessionSummaryDto[] {
+  const next = sessions.filter((item) => item.sessionId !== session.sessionId);
+  next.push(session);
+  return sortConversationSessionSummaries(next);
+}
+
+function mergeSnapshotBackedAgentConversationSessions(
+  current: SessionSummaryDto[],
+  snapshot: SessionSummaryDto[]
+): SessionSummaryDto[] {
+  const next = new Map(snapshot.map((item) => [item.sessionId, item] as const));
+  for (const session of current) {
+    if (next.has(session.sessionId)) {
+      continue;
+    }
+    if (!session.rawStoreRef.startsWith("butler://")) {
+      next.set(session.sessionId, session);
+    }
+  }
+  return sortConversationSessionSummaries(Array.from(next.values()));
+}
+
+function extractButlerManagedSessionIdFromRawStoreRef(rawStoreRef: string | null | undefined): string | null {
+  const normalized = rawStoreRef?.trim() ?? "";
+  if (!normalized.startsWith("butler://")) {
+    return null;
+  }
+  const recordId = normalized.slice("butler://".length).trim();
+  return recordId || null;
 }
 
 function formatAffairsConversationProviderBadge(provider: ProviderId) {
@@ -4919,7 +4966,9 @@ function AffairsAgentConversationState(input: {
     assistantContext,
     butlerStore,
     reloadAgentConversationSessions,
-    agentWorkspacePath
+    agentProjectId,
+    agentWorkspacePath,
+    agentConversationSessions
   } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
   const loading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
@@ -4957,6 +5006,13 @@ function AffairsAgentConversationState(input: {
       ? scopedControlSession.session
       : draftSession;
 
+  const currentAgentConversationSession = useMemo(
+    () => input.sessionId
+      ? agentConversationSessions.find((item) => item.sessionId === input.sessionId) ?? null
+      : null,
+    [agentConversationSessions, input.sessionId]
+  );
+
   useEffect(() => {
     if (!input.sessionId || input.draft) {
       restoredHistorySessionIdRef.current = null;
@@ -4976,29 +5032,17 @@ function AffairsAgentConversationState(input: {
       return;
     }
 
+    const butlerSessionId = extractButlerManagedSessionIdFromRawStoreRef(currentAgentConversationSession?.rawStoreRef ?? null);
+    if (!agentProjectId || !butlerSessionId) {
+      return;
+    }
+
     let cancelled = false;
     setRestoringSessionId(requestedSessionId);
 
     void (async () => {
       try {
-        const project = resolveAffairsAgentProject(
-          (await listButlerProjects()).items,
-          {
-            workspacePath: agentWorkspacePath,
-            workspaceIds: []
-          }
-        );
-        if (!project) {
-          return;
-        }
-
-        const sessionsResponse = await listButlerProjectSessions(project.id);
-        const target = sessionsResponse.items.find((item) => item.sessionId === requestedSessionId) ?? null;
-        if (!target) {
-          return;
-        }
-
-        const resumed = await resumeButlerProjectSession(project.id, target.id);
+        const resumed = await resumeButlerProjectSession(agentProjectId, butlerSessionId);
         if (cancelled) {
           return;
         }
@@ -5007,7 +5051,10 @@ function AffairsAgentConversationState(input: {
         await reloadAgentConversationSessions();
         activateConversationSession({
           kind: "agent",
-          session: convertButlerManagedSessionToAffairsSessionSummary(resumed.resumed.session, project.workspaceId),
+          session: convertButlerManagedSessionToAffairsSessionSummary(
+            resumed.resumed.session,
+            currentAgentConversationSession?.workspaceId ?? input.workspaceId
+          ),
           bootstrapMessages: []
         });
       } finally {
@@ -5020,16 +5067,19 @@ function AffairsAgentConversationState(input: {
     return () => {
       cancelled = true;
     };
-    }, [
-      activateConversationSession,
-      butlerStore,
-      scopedControlSession?.session.sessionId,
-      input.draft,
-      input.sessionId,
-      agentWorkspacePath,
-      reloadAgentConversationSessions,
-      restoringSessionId
-    ]);
+  }, [
+    activateConversationSession,
+    agentProjectId,
+    butlerStore,
+    currentAgentConversationSession?.rawStoreRef,
+    currentAgentConversationSession?.workspaceId,
+    scopedControlSession?.session.sessionId,
+    input.draft,
+    input.sessionId,
+    input.workspaceId,
+    reloadAgentConversationSessions,
+    restoringSessionId
+  ]);
 
   return (
     <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
@@ -6031,7 +6081,11 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       libraryClipboard,
       onPreview: target.kind === "document" ? () => openLibraryViewer(target.record) : null,
       onOpen: target.kind === "document" || target.kind === "folder" ? () => handleOpenTarget(target) : null,
+      onLocate: target.kind === "document" || target.kind === "folder" ? () => handleLocateTarget(target) : null,
       onDownload: target.kind === "document" ? () => handleDownload(target) : null,
+      onOpenWithLocalApp: platform.isDesktop && platform.ui.osFamily === "macos" && target.kind === "document"
+        ? () => handleOpenWithLocalApp(target)
+        : null,
       onCopyFile: target.kind === "blank" ? null : () => handleCopyText(getContextTargetRelativePath(target), t("shell.affairsLibraryCopyFileSuccess")),
       onCopyFileName: target.kind === "blank" ? null : () => handleCopyText(getContextTargetTitle(target), t("shell.affairsLibraryCopyFileNameSuccess")),
       onCopyAbsolutePath: target.kind === "blank"
@@ -6171,6 +6225,25 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       throw new Error(t("shell.affairsLibraryAbsolutePathMissing"));
     }
     const result = await getCodingNSDesktopBridge().fs.openFile(absolutePath);
+    if (!result.ok) {
+      throw new Error(result.detail ?? t("shell.affairsLibraryOpenLocalFileFailed"));
+    }
+  }
+
+  function handleLocateTarget(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>) {
+    if (target.kind === "document") {
+      navigateLibraryFolder(getDocumentParentPath(target.record.filePath) || null);
+      return;
+    }
+    navigateLibraryFolder(target.entry.path || null);
+  }
+
+  async function handleOpenWithLocalApp(target: Extract<LibraryContextMenuTarget, { kind: "document" }>) {
+    const localMirrorTarget = resolveLocalMirrorTarget(libraryConfig?.mirrorRoot, target.record.filePath);
+    if (!localMirrorTarget) {
+      throw new Error(t("shell.affairsLibraryMirrorRootEmpty"));
+    }
+    const result = await getCodingNSDesktopBridge().fs.openFile(localMirrorTarget.absolutePath);
     if (!result.ok) {
       throw new Error(result.detail ?? t("shell.affairsLibraryOpenLocalFileFailed"));
     }
@@ -6376,6 +6449,16 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
         {isFileSystemTarget ? (
           <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleOpenTarget(target))}>
             {t("shell.affairsLibraryContextOpen")}
+          </button>
+        ) : null}
+        {isFileSystemTarget ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleLocateTarget(target))}>
+            {t("shell.affairsLibraryContextLocate")}
+          </button>
+        ) : null}
+        {isDocument && platform.isDesktop && platform.ui.osFamily === "macos" && resolveLocalMirrorTarget(libraryConfig?.mirrorRoot, target.record.filePath) ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleOpenWithLocalApp(target))}>
+            {t("shell.affairsLibraryOpenWithLocalAppAction")}
           </button>
         ) : null}
         {isDocument ? (
@@ -7041,13 +7124,17 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     () => buildTagDetailState(tagRecords, filteredDocuments, state.selectedTagPath, selectedTagPaths),
     [filteredDocuments, selectedTagPaths, state.selectedTagPath, tagRecords]
   );
+  const documentRecord = selectedObject.section === "library" ? selectedObject.record : null;
+  const todoRecord = selectedObject.section === "todo" ? selectedObject.record : null;
+  const automationRecord = selectedObject.section === "automation" ? selectedObject.record : null;
   const localMirrorTarget = useMemo(
-    () => selectedObject.section === "library" && selectedObject.record
-      ? resolveLocalMirrorTarget(libraryConfig?.mirrorRoot, selectedObject.record.filePath)
+    () => documentRecord
+      ? resolveLocalMirrorTarget(libraryConfig?.mirrorRoot, documentRecord.filePath)
       : null,
-    [libraryConfig?.mirrorRoot, selectedObject]
+    [documentRecord, libraryConfig?.mirrorRoot]
   );
   const { showToast } = useToast();
+  const [documentSummaryExpanded, setDocumentSummaryExpanded] = useState(false);
 
   useEffect(() => {
     if (
@@ -7143,21 +7230,21 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
           selectedObject.section === "library" ? (
             !binding ? (
               <div className="affairs-stage-empty">{t("shell.affairsAssistantBindingRequired")}</div>
-            ) : selectedObject.record ? (
+            ) : documentRecord ? (
               <div className="affairs-detail-panel">
                 <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
                   <div className="affairs-detail-headline affairs-detail-headline-document">
                     <div className="affairs-detail-headline-main">
                       <span className="affairs-inline-pill">{t("shell.affairsLibraryDocumentDetailTitle")}</span>
-                      <h2>{selectedObject.record.displayName}</h2>
+                      <h2>{documentRecord.displayName}</h2>
                       <div className="affairs-detail-summary-block">
                         <p
                           className="affairs-detail-summary"
                           data-expanded={documentSummaryExpanded ? "true" : undefined}
                         >
-                          {selectedObject.record.summary}
+                          {documentRecord.summary}
                         </p>
-                        {shouldShowDocumentSummaryToggle(selectedObject.record.summary) ? (
+                        {shouldShowDocumentSummaryToggle(documentRecord.summary) ? (
                           <button
                             type="button"
                             className="affairs-detail-summary-toggle"
@@ -7177,7 +7264,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                       <dt>{t("shell.affairsDetailMetaPath")}</dt>
                       <dd>
                         <AffairsDetailPathBreadcrumbs
-                          path={selectedObject.record.filePath}
+                          path={documentRecord.filePath}
                           rootLabel={t("shell.affairsLibraryFolderRootLabel")}
                           onNavigate={navigateLibraryFolder}
                         />
@@ -7185,15 +7272,15 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryDocumentSize")}</dt>
-                      <dd>{formatLibrarySize(selectedObject.record.sizeBytes)}</dd>
+                      <dd>{formatLibrarySize(documentRecord.sizeBytes)}</dd>
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryDocumentCreatedAt")}</dt>
-                      <dd>{formatFullDateTime(selectedObject.record.createdAt)}</dd>
+                      <dd>{formatFullDateTime(documentRecord.createdAt)}</dd>
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryDocumentUpdatedAt")}</dt>
-                      <dd>{formatFullDateTime(selectedObject.record.updatedAt)}</dd>
+                      <dd>{formatFullDateTime(documentRecord.updatedAt)}</dd>
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryMirrorRootLabel")}</dt>
@@ -7203,7 +7290,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                   <div className="affairs-detail-tag-editor">
                     <strong>{t("shell.affairsDocumentTagsSectionTitle")}</strong>
                     <AffairsDocumentTagSelectionPanel
-                      documentId={selectedObject.record.id}
+                      documentId={documentRecord.id}
                       details={documentTagDetails}
                     />
                   </div>
@@ -7211,7 +7298,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => navigateLibraryFolder(getDocumentParentPath(selectedObject.record.filePath) || null)}
+                      onClick={() => navigateLibraryFolder(getDocumentParentPath(documentRecord.filePath) || null)}
                     >
                       {t("shell.affairsLibraryLocateFolderAction")}
                     </button>
@@ -7256,8 +7343,8 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                 <div className="affairs-detail-viewer-shell" data-collapsed={detailViewerCollapsed ? "true" : undefined}>
                   <AffairsLibraryInlineViewer
                     workspaceId={workspaceId}
-                    filePath={selectedObject.record.filePath}
-                    windowTitle={selectedObject.record.title}
+                    filePath={documentRecord.filePath}
+                    windowTitle={documentRecord.displayName}
                     collapsed={detailViewerCollapsed}
                     loading={!viewerReady}
                     onToggleCollapsed={toggleDetailViewerCollapsed}
@@ -7270,27 +7357,27 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
               <AffairsTagDetailPanel detail={tagDetail} />
             )
           ) : selectedObject.section === "todo" ? (
-            selectedObject.record ? (
+            todoRecord ? (
               <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
                 <div className="affairs-detail-headline">
                   <div>
-                    <h2>{selectedObject.record.title}</h2>
-                    <p>{selectedObject.record.summary}</p>
+                    <h2>{todoRecord.title}</h2>
+                    <p>{todoRecord.summary}</p>
                   </div>
-                  <span className="affairs-inline-pill">{selectedObject.record.sourceLabel}</span>
+                  <span className="affairs-inline-pill">{todoRecord.sourceLabel}</span>
                 </div>
                 <dl className="affairs-detail-meta-list">
                   <div>
                     <dt>{t("shell.affairsTodoDetailStatus")}</dt>
-                    <dd>{selectedObject.record.statusLabel}</dd>
+                    <dd>{todoRecord.statusLabel}</dd>
                   </div>
                   <div>
                     <dt>{t("shell.affairsTodoDetailSource")}</dt>
-                    <dd>{selectedObject.record.sourceDescription}</dd>
+                    <dd>{todoRecord.sourceDescription}</dd>
                   </div>
                   <div>
                     <dt>{t("shell.affairsTodoDetailNotes")}</dt>
-                    <dd>{selectedObject.record.detail}</dd>
+                    <dd>{todoRecord.detail}</dd>
                   </div>
                   <div>
                     <dt>{t("shell.affairsTodoDetailTotal")}</dt>
@@ -7301,28 +7388,28 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
             ) : (
               <div className="affairs-stage-empty">{t("shell.affairsTodoEmpty")}</div>
             )
-          ) : selectedObject.record ? (
+          ) : automationRecord ? (
             <div className="affairs-detail-panel">
               <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
                 <div className="affairs-detail-headline">
                   <div>
-                    <h2>{selectedObject.record.title}</h2>
-                    <p>{selectedObject.record.summary}</p>
+                    <h2>{automationRecord.title}</h2>
+                    <p>{automationRecord.summary}</p>
                   </div>
-                  <span className="affairs-inline-pill">{selectedObject.record.statusLabel}</span>
+                  <span className="affairs-inline-pill">{automationRecord.statusLabel}</span>
                 </div>
                 <dl className="affairs-detail-meta-list">
                   <div>
                     <dt>{t("shell.affairsAutomationDetailTrigger")}</dt>
-                    <dd>{selectedObject.record.triggerLabel}</dd>
+                    <dd>{automationRecord.triggerLabel}</dd>
                   </div>
                   <div>
                     <dt>{t("shell.affairsAutomationDetailTarget")}</dt>
-                    <dd>{selectedObject.record.targetSessionLabel}</dd>
+                    <dd>{automationRecord.targetSessionLabel}</dd>
                   </div>
                   <div>
                     <dt>{t("shell.affairsAutomationDetailStatus")}</dt>
-                    <dd>{selectedObject.record.statusLabel}</dd>
+                    <dd>{automationRecord.statusLabel}</dd>
                   </div>
                 </dl>
               </section>
@@ -11140,10 +11227,6 @@ function buildAffairsLightweightConversationSessionsCacheKey(workspaceId: string
   return `affairs.conversation.lightweight.sessions.${workspaceId}`;
 }
 
-function buildAffairsAgentConversationSessionsCacheKey(workspaceId: string) {
-  return `affairs.conversation.agent.sessions.${workspaceId}`;
-}
-
 function buildAffairsLibraryConfigCacheKey(workspaceId: string) {
   return `affairs.library.config.${workspaceId}`;
 }
@@ -11205,17 +11288,6 @@ function readCachedAffairsLightweightConversationSessions(workspaceId: string) {
 
 function writeCachedAffairsLightweightConversationSessions(workspaceId: string, sessions: SessionSummaryDto[]) {
   writeViewSnapshot(buildAffairsLightweightConversationSessionsCacheKey(workspaceId), sessions);
-}
-
-function readCachedAffairsAgentConversationSessions(workspaceId: string) {
-  return readViewSnapshot<SessionSummaryDto[]>(
-    buildAffairsAgentConversationSessionsCacheKey(workspaceId),
-    AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS
-  );
-}
-
-function writeCachedAffairsAgentConversationSessions(workspaceId: string, sessions: SessionSummaryDto[]) {
-  writeViewSnapshot(buildAffairsAgentConversationSessionsCacheKey(workspaceId), sessions);
 }
 
 function mergeDocumentPageItems(
@@ -12227,81 +12299,6 @@ function resolveAffairsAgentWorkspaceId(
   return matches[0]?.workspaceId ?? null;
 }
 
-function resolveAffairsAgentProject(
-  projects: ButlerProjectDto[],
-  input: {
-    workspacePath: string | null | undefined;
-    workspaceIds?: Array<string | null | undefined>;
-  }
-): ButlerProjectDto | null {
-  const matchedByPath = findAffairsAgentProjectByPath(projects, input.workspacePath);
-  if (matchedByPath) {
-    return matchedByPath;
-  }
-  for (const workspaceId of input.workspaceIds ?? []) {
-    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
-    if (!normalizedWorkspaceId) {
-      continue;
-    }
-    const matchedByWorkspaceId = projects.find((project) => project.workspaceId === normalizedWorkspaceId) ?? null;
-    if (matchedByWorkspaceId) {
-      return matchedByWorkspaceId;
-    }
-  }
-  return null;
-}
-
-function buildAffairsAgentProjectCandidates(
-  projects: ButlerProjectDto[],
-  input: {
-    workspacePath: string | null | undefined;
-    workspaceIds?: Array<string | null | undefined>;
-  }
-): ButlerProjectDto[] {
-  const candidates: ButlerProjectDto[] = [];
-  const pushCandidate = (project: ButlerProjectDto | null) => {
-    if (!project || candidates.some((item) => item.id === project.id)) {
-      return;
-    }
-    candidates.push(project);
-  };
-
-  pushCandidate(findAffairsAgentProjectByPath(projects, input.workspacePath));
-  for (const workspaceId of input.workspaceIds ?? []) {
-    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
-    if (!normalizedWorkspaceId) {
-      continue;
-    }
-    pushCandidate(projects.find((project) => project.workspaceId === normalizedWorkspaceId) ?? null);
-  }
-  return candidates;
-}
-
-function findAffairsAgentProjectByPath(
-  projects: ButlerProjectDto[],
-  workspacePath: string | null | undefined
-): ButlerProjectDto | null {
-  const normalizedWorkspacePath = normalizeAffairsWorkspacePath(workspacePath);
-  if (!normalizedWorkspacePath) {
-    return null;
-  }
-  const matches = projects
-    .map((project) => ({
-      project,
-      matchLength: resolveAffairsWorkspacePathMatchLength(project.repoRoot, normalizedWorkspacePath)
-    }))
-    .filter((item) => item.matchLength > 0)
-    .sort((left, right) => right.matchLength - left.matchLength);
-  return matches[0]?.project ?? null;
-}
-
-function isAffairsWorkspacePathMatch(
-  leftPath: string | null | undefined,
-  rightPath: string | null | undefined
-): boolean {
-  return resolveAffairsWorkspacePathMatchLength(leftPath, rightPath) > 0;
-}
-
 function resolveAffairsWorkspacePathMatchLength(
   leftPath: string | null | undefined,
   rightPath: string | null | undefined
@@ -12325,6 +12322,13 @@ function resolveAffairsWorkspacePathMatchLength(
 
 function normalizeAffairsWorkspacePath(input: string | null | undefined): string {
   return input?.trim().replace(/\/+$/g, "") ?? "";
+}
+
+function isAffairsWorkspacePathMatch(
+  leftPath: string | null | undefined,
+  rightPath: string | null | undefined
+): boolean {
+  return resolveAffairsWorkspacePathMatchLength(leftPath, rightPath) > 0;
 }
 
 function buildAffairsConversationDraftSummary(draft: AffairsConversationDraftSelection) {
@@ -12491,8 +12495,7 @@ function shouldShowDocumentSummaryToggle(summary: string | null | undefined) {
   if (!normalized) {
     return false;
   }
-  const lines = normalized.split(/?
-/).filter((line) => line.trim().length > 0);
+  const lines = normalized.split(/\r?\n/).filter((line) => line.trim().length > 0);
   return lines.length > 3 || normalized.length > 120;
 }
 
