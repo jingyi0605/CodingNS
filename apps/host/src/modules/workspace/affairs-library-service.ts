@@ -360,6 +360,7 @@ interface AffairsLibraryDirectoryHintTaskResult {
   source: AffairsLibraryDirectorySourceDto;
   itemCount: number;
   changedPaths: string[];
+  items: AffairsLibraryDocumentRecordDto[];
 }
 
 interface AffairsLibraryHotDirectoryCacheEntry {
@@ -377,6 +378,11 @@ interface AffairsLibraryHotDirectoryCacheEntry {
   lastRefreshFailedAt: string | null;
   lastError: string | null;
   status: AffairsLibraryDirectoryStateDto;
+}
+
+interface AffairsLibraryFolderDocumentsBuildResult {
+  items: AffairsLibraryDocumentRecordDto[];
+  source: AffairsLibraryDirectorySourceDto;
 }
 
 export class AffairsLibraryService {
@@ -739,6 +745,7 @@ export class AffairsLibraryService {
     const browseMode = input.browseMode === "tag" ? "tag" : "folder";
     const offset = Math.max(0, normalizePositiveInt(input.offset, 0, Number.MAX_SAFE_INTEGER));
     const limit = normalizePositiveInt(input.limit, 120, 400);
+    const indexStatus = this.readIndexStatus(workspaceId, binding);
     const selectedFavorite = favorites.find(
       (item) => buildFavoriteNodeId(item.kind, item.path) === (input.selectedFavoriteId?.trim() ?? "")
     ) ?? null;
@@ -748,7 +755,8 @@ export class AffairsLibraryService {
       return this.listLiveFolderDocuments(workspaceId, binding.rootDir, favorites, exportData, selectedFavorite, {
         selectedFolderPath: input.selectedFolderPath,
         offset,
-        limit
+        limit,
+        indexStatus
       });
     }
 
@@ -813,6 +821,7 @@ export class AffairsLibraryService {
       selectedFolderPath?: string | null;
       offset: number;
       limit: number;
+      indexStatus: AffairsLibraryIndexStatusDto;
     }
   ): AffairsLibraryDocumentListDto {
     const folderPath = selectedFavorite?.kind === "folder"
@@ -820,24 +829,30 @@ export class AffairsLibraryService {
       : (input.selectedFolderPath?.trim() ?? "");
     const normalizedFolderPath = normalizeFolderPath(folderPath);
     const normalizedDirectoryPath = normalizedFolderPath || ".";
-    const config = this.readConfig(rootDir);
-    const configuredExtensions = new Set(config.allowedExtensions.map((item) => item.toLowerCase()));
-    const supportedExtensions = new Set(SUPPORTED_INDEX_EXTENSION_LIST);
-    const liveResult = this.buildLiveDirectoryDocuments(
-      rootDir,
-      normalizedFolderPath,
-      exportData,
-      configuredExtensions,
-      supportedExtensions,
-      config.includedHiddenPaths
+    const directoryStatus = this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, "snapshot");
+    const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedDirectoryPath);
+    const cachedDirectoryEntry = this.hotDirectoryCache.get(cacheKey) ?? null;
+    const shouldAvoidLiveScan = this.shouldAvoidLiveDirectoryScan(
+      input.indexStatus,
+      directoryStatus,
+      cachedDirectoryEntry
     );
-    const itemsWithFavorites = liveResult.items.map((item) => ({
+    const fallbackResult = shouldAvoidLiveScan
+      ? this.buildCachedFolderDocuments(
+        workspaceId,
+        rootDir,
+        normalizedFolderPath,
+        exportData,
+        directoryStatus
+      )
+      : null;
+    const directoryResult = fallbackResult ?? this.buildFreshFolderDocuments(rootDir, normalizedFolderPath, exportData);
+    const itemsWithFavorites = directoryResult.items.map((item) => ({
       ...item,
       isFavorite: favorites.some((favorite) =>
         matchesFavorite(favorite, item.path, item.tags, item.derivedTags)
       )
     }));
-    const directoryStatus = this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, liveResult.source);
     const items = [...itemsWithFavorites].sort((left, right) => {
         const rightTime = Date.parse(right.updatedAt);
         const leftTime = Date.parse(left.updatedAt);
@@ -847,22 +862,127 @@ export class AffairsLibraryService {
         return left.path.localeCompare(right.path, "zh-Hans-CN");
       });
 
-    this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, liveResult.source, {
-      preserveStatus: directoryStatus.state === "running" || directoryStatus.state === "queued"
-    });
+    const effectiveSource = shouldAvoidLiveScan && fallbackResult
+      ? fallbackResult.source
+      : directoryResult.source;
+
+    if (!shouldAvoidLiveScan) {
+      this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, directoryResult.source, {
+        preserveStatus: directoryStatus.state === "running" || directoryStatus.state === "queued"
+      });
+    } else {
+      this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
+    }
     this.ensureDirectoryWindow(workspaceId, rootDir, normalizedDirectoryPath);
-    if (directoryStatus.state !== "running" && directoryStatus.state !== "queued") {
+    if (
+      !shouldAvoidLiveScan
+      && directoryStatus.state !== "running"
+      && directoryStatus.state !== "queued"
+    ) {
       this.scheduleDirectoryHintRefresh(workspaceId, normalizedDirectoryPath, "list_documents");
     }
+
+    const resultItems = items.slice(input.offset, input.offset + input.limit);
+    writeAffairsLibraryDebugLog({
+      event: "folder_list_served",
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.folder_list",
+      targetPath: normalizedDirectoryPath,
+      status: "served",
+      details: {
+        resultSource: effectiveSource,
+        usedCachedResult: shouldAvoidLiveScan,
+        indexState: input.indexStatus.state,
+        directoryState: directoryStatus.state,
+        total: items.length,
+        returned: resultItems.length,
+        offset: input.offset,
+        limit: input.limit,
+        cachedItemCount: cachedDirectoryEntry?.items.length ?? 0
+      }
+    });
 
     return {
       total: items.length,
       offset: input.offset,
       limit: input.limit,
-      items: items.slice(input.offset, input.offset + input.limit),
+      items: resultItems,
       tagFacetCounts: {},
-      directoryStatus: this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, liveResult.source)
+      directoryStatus: this.readDirectoryStatus(workspaceId, rootDir, normalizedDirectoryPath, effectiveSource)
     };
+  }
+
+  private shouldAvoidLiveDirectoryScan(
+    indexStatus: AffairsLibraryIndexStatusDto,
+    directoryStatus: AffairsLibraryDirectoryStatusDto | null,
+    cachedDirectoryEntry: AffairsLibraryHotDirectoryCacheEntry | null
+  ): boolean {
+    if (!cachedDirectoryEntry || cachedDirectoryEntry.items.length === 0) {
+      return false;
+    }
+
+    if (indexStatus.state === "running") {
+      return true;
+    }
+
+    if (!directoryStatus) {
+      return false;
+    }
+
+    return directoryStatus.state === "queued" || directoryStatus.state === "running";
+  }
+
+  private buildCachedFolderDocuments(
+    workspaceId: string,
+    rootDir: string,
+    normalizedFolderPath: string,
+    exportData: AffairsLibraryExportData | null,
+    directoryStatus: AffairsLibraryDirectoryStatusDto | null
+  ): AffairsLibraryFolderDocumentsBuildResult {
+    const cacheKey = buildHotDirectoryCacheKey(workspaceId, normalizedFolderPath || ".");
+    const cached = this.hotDirectoryCache.get(cacheKey);
+    if (cached && cached.items.length > 0) {
+      return {
+        items: cached.items,
+        source: cached.source
+      };
+    }
+
+    return this.buildSnapshotFolderDocuments(rootDir, normalizedFolderPath, exportData, directoryStatus);
+  }
+
+  private buildSnapshotFolderDocuments(
+    rootDir: string,
+    normalizedFolderPath: string,
+    exportData: AffairsLibraryExportData | null,
+    directoryStatus: AffairsLibraryDirectoryStatusDto | null
+  ): AffairsLibraryFolderDocumentsBuildResult {
+    const items = (exportData?.documents ?? [])
+      .filter((document) => matchesDirectFolder(document.path, normalizedFolderPath))
+      .map<AffairsLibraryDocumentRecordDto>((document) => ({
+        ...document,
+        isFavorite: false
+      }));
+
+    return {
+      items,
+      source: directoryStatus?.source ?? "snapshot"
+    };
+  }
+
+  private buildFreshFolderDocuments(
+    rootDir: string,
+    normalizedFolderPath: string,
+    exportData: AffairsLibraryExportData | null
+  ): AffairsLibraryFolderDocumentsBuildResult {
+    return buildAffairsFolderDocumentsFromFilesystem(
+      rootDir,
+      normalizedFolderPath,
+      exportData,
+      this.readConfig(rootDir)
+    );
   }
 
   private buildLiveDirectoryDocuments(
@@ -872,94 +992,18 @@ export class AffairsLibraryService {
     configuredExtensions: ReadonlySet<string>,
     supportedExtensions: ReadonlySet<string>,
     includedHiddenPaths: readonly string[]
-  ): {
-    items: AffairsLibraryDocumentRecordDto[];
-    source: AffairsLibraryDirectorySourceDto;
-  } {
-    const targetDir = normalizedFolderPath
-      ? path.resolve(rootDir, normalizedFolderPath)
-      : rootDir;
-    const documentMap = new Map<string, AffairsLibraryDocumentRecordDto>();
-    let hasSnapshotData = false;
-    let hasLiveData = false;
-
-    for (const document of exportData?.documents ?? []) {
-      if (!matchesDirectFolder(document.path, normalizedFolderPath)) {
-        continue;
-      }
-      const extension = path.extname(document.path).toLowerCase();
-      if (!supportedExtensions.has(extension)) {
-        continue;
-      }
-      if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
-        continue;
-      }
-      const stat = readAffairsLibraryStatsSafe(rootDir, document.path);
-      documentMap.set(document.path, {
-        ...document,
-        createdAt: document.createdAt ?? toIsoOrNull(stat?.birthtime),
-        sizeBytes: document.sizeBytes ?? stat?.size ?? null,
-        updatedAt: stat?.mtime.toISOString() ?? document.updatedAt,
-        isFavorite: false
-      });
-      hasSnapshotData = true;
-    }
-
-    if (fs.existsSync(targetDir)) {
-      let targetStats: fs.Stats | null = null;
-      try {
-        targetStats = fs.statSync(targetDir);
-      } catch {
-        targetStats = null;
-      }
-
-      if (targetStats?.isDirectory()) {
-        for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
-          const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
-          if (
-            (entry.name.startsWith(".") || hasHiddenPathSegment(relativePath))
-            && !isIncludedHiddenPath(relativePath, includedHiddenPaths)
-          ) {
-            continue;
-          }
-          if (!entry.isFile()) {
-            continue;
-          }
-          const extension = path.extname(entry.name).toLowerCase();
-          if (!supportedExtensions.has(extension)) {
-            continue;
-          }
-          if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
-            continue;
-          }
-
-          const stat = readAffairsLibraryStatsSafe(rootDir, relativePath);
-          const exported = documentMap.get(relativePath);
-          documentMap.set(relativePath, {
-            documentId: exported?.documentId ?? relativePath,
-            path: relativePath,
-            title: exported?.title?.trim() || path.basename(entry.name, extension) || entry.name,
-            summary: exported?.summary ?? "",
-            updatedAt: stat?.mtime.toISOString() ?? exported?.updatedAt ?? "",
-            createdAt: toIsoOrNull(stat?.birthtime) ?? exported?.createdAt ?? null,
-            sizeBytes: stat?.size ?? exported?.sizeBytes ?? null,
-            tags: exported?.tags ?? [],
-            derivedTags: exported?.derivedTags ?? [],
-            isFavorite: false
-          });
-          hasLiveData = true;
-        }
-      }
-    }
-
-    return {
-      items: [...documentMap.values()],
-      source: hasLiveData && hasSnapshotData
-        ? "mixed"
-        : hasLiveData
-          ? "live"
-          : "snapshot"
-    };
+  ): AffairsLibraryFolderDocumentsBuildResult {
+    return buildAffairsFolderDocumentsFromFilesystem(
+      rootDir,
+      normalizedFolderPath,
+      exportData,
+      {
+        mirrorRoot: null,
+        allowedExtensions: [...configuredExtensions],
+        includedHiddenPaths: [...includedHiddenPaths]
+      },
+      supportedExtensions
+    );
   }
 
   updateFavorites(
@@ -1777,17 +1821,11 @@ export class AffairsLibraryService {
     reason: string;
   }): Promise<AffairsLibraryDirectoryHintTaskResult> {
     const exportData = this.readAvailableExportData(input.rootDir);
-    const config = this.readConfig(input.rootDir);
-    const configuredExtensions = new Set(config.allowedExtensions.map((item) => item.toLowerCase()));
-    const supportedExtensions = new Set(SUPPORTED_INDEX_EXTENSION_LIST);
     const previous = this.getOrCreateHotDirectoryEntry(input.workspaceId, input.rootDir, input.directoryPath).items;
-    const liveResult = this.buildLiveDirectoryDocuments(
+    const liveResult = this.buildFreshFolderDocuments(
       input.rootDir,
       normalizeFolderPath(input.directoryPath),
-      exportData,
-      configuredExtensions,
-      supportedExtensions,
-      config.includedHiddenPaths
+      exportData
     );
     const completedAt = nowIso();
     const previousPathSet = new Set(previous.map((item) => item.path));
@@ -1796,24 +1834,13 @@ export class AffairsLibraryService {
       ...liveResult.items.map((item) => item.path).filter((item) => !previousPathSet.has(item)),
       ...previous.map((item) => item.path).filter((item) => !nextPathSet.has(item))
     ].sort((left, right) => left.localeCompare(right, "zh-CN"));
-    this.updateHotDirectoryCache(
-      input.workspaceId,
-      input.rootDir,
-      input.directoryPath,
-      liveResult.items,
-      liveResult.source,
-      {
-        requestedAt: this.getOrCreateHotDirectoryEntry(input.workspaceId, input.rootDir, input.directoryPath).lastRefreshRequestedAt,
-        completedAt,
-        errorSummary: null
-      }
-    );
     return {
       directoryPath: input.directoryPath,
       refreshedAt: completedAt,
       source: liveResult.source,
       itemCount: liveResult.items.length,
-      changedPaths
+      changedPaths,
+      items: liveResult.items
     };
   }
 
@@ -1846,6 +1873,18 @@ export class AffairsLibraryService {
       status: "queued"
     });
     void handle.promise.then((result) => {
+      this.updateHotDirectoryCache(
+        workspaceId,
+        meta.rootDir,
+        meta.directoryPath,
+        result.items,
+        result.source,
+        {
+          requestedAt: this.getOrCreateHotDirectoryEntry(workspaceId, meta.rootDir, meta.directoryPath).lastRefreshRequestedAt,
+          completedAt: result.refreshedAt,
+          errorSummary: null
+        }
+      );
       writeAffairsLibraryDebugLog({
         event: "task_finished",
         processRole: "host",
@@ -2087,7 +2126,8 @@ export class AffairsLibraryService {
         reason: string;
       }, AffairsLibraryDirectoryHintTaskResult>({
         taskType: HOST_TASK_TYPES.affairsLibraryDirectoryHint,
-        executionLane: "host_background",
+        executionLane: "helper_process",
+        helperProcessHandler: "affairs.library_directory_hint",
         timeoutMs: DIRECTORY_HINT_TASK_TIMEOUT_MS,
         run: async (input) => await this.runDirectoryHintTask(input)
       });
@@ -3408,6 +3448,216 @@ function normalizePositiveInt(input: number | undefined, fallback: number, max: 
     return fallback;
   }
   return Math.max(0, Math.min(Math.trunc(input as number), max));
+}
+
+function readAffairsLibraryExportDataSafe(rootDir: string): AffairsLibraryExportData | null {
+  try {
+    return readAffairsLibraryExportDataFromDisk(rootDir);
+  } catch {
+    return null;
+  }
+}
+
+function readAffairsLibraryExportDataFromDisk(rootDir: string): AffairsLibraryExportData | null {
+  const exportRoot = path.join(rootDir, EXPORT_DIR_RELATIVE_PATH);
+  const manifestPath = path.join(exportRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    return null;
+  }
+
+  const manifest = readJsonFile<IndexManifestPayload>(manifestPath);
+  const documents = (manifest.meta_shards ?? []).flatMap((shard) => {
+    const shardPath = shard.path?.trim();
+    if (!shardPath) {
+      return [];
+    }
+    const payload = readJsonFile<IndexMetaShardPayload>(path.join(exportRoot, shardPath));
+    return (payload.documents ?? []).map<AffairsLibraryDocumentRecordDto>((document) => ({
+      documentId: document.document_id?.trim() || document.path?.trim() || "",
+      path: document.path?.trim() || "",
+      title: document.title?.trim() || document.path?.trim() || "未命名文档",
+      summary: document.summary?.trim() || "",
+      updatedAt: document.mtime?.trim() || "",
+      createdAt: null,
+      sizeBytes: null,
+      tags: Array.isArray(document.direct_tags) ? document.direct_tags.filter(Boolean) : [],
+      derivedTags: Array.isArray(document.derived_tags) ? document.derived_tags.filter(Boolean) : [],
+      isFavorite: false
+    }));
+  });
+
+  const taxonomyEntry = manifest.entries?.taxonomy?.trim() || "taxonomy.json";
+  const taxonomy = readJsonFile<IndexTaxonomyPayload>(path.join(exportRoot, taxonomyEntry));
+  const tags = (taxonomy.nodes ?? []).map<AffairsLibraryTagNodeDto>((node) => ({
+    path: node.path?.trim() ?? "",
+    name: node.name?.trim() || node.path?.trim() || "未命名标签",
+    rootType: node.root_type?.trim() || "unknown",
+    parentPath: node.parent_path?.trim() || null,
+    depth: Number.isFinite(node.depth) ? Number(node.depth) : 0,
+    documentCount: countDocumentsForTag(documents, node.path?.trim() ?? "")
+  })).filter((node) => node.path);
+
+  const bootstrapEntry = manifest.entries?.bootstrap?.trim() || "bootstrap.json";
+  const bootstrap = readJsonFile<IndexBootstrapPayload>(path.join(exportRoot, bootstrapEntry));
+  const folders = (bootstrap.folders ?? []).map<AffairsLibraryFolderNodeDto>((folder) => {
+    const normalizedPath = folder.path?.trim() ?? ".";
+    const folderStats = readAffairsLibraryStatsSafe(rootDir, normalizedPath);
+    return {
+      path: normalizedPath,
+      name: folder.name?.trim() || "资料库",
+      parentPath: folder.parent_path?.trim() || null,
+      directDocumentCount: Number(folder.direct_document_count ?? 0),
+      documentCount: Number(folder.document_count ?? 0),
+      createdAt: toIsoOrNull(folderStats?.birthtime),
+      updatedAt: toIsoOrNull(folderStats?.mtime)
+    };
+  });
+
+  return {
+    documents,
+    tags,
+    folders,
+    generatedAt: manifest.generated_at?.trim() ?? null
+  };
+}
+
+function readAffairsLibraryConfigSafe(rootDir: string): {
+  mirrorRoot: string | null;
+  allowedExtensions: string[];
+  includedHiddenPaths: string[];
+} {
+  const configPath = path.join(rootDir, DEFAULT_CONFIG_RELATIVE_PATH);
+  const payload = fs.existsSync(configPath)
+    ? readJsonFile<AffairsLibraryConfigPayload>(configPath)
+    : {};
+  return {
+    mirrorRoot: normalizeOptionalAbsolutePath(payload.mirrorRoot),
+    allowedExtensions: normalizeAllowedExtensions(payload.allowedExtensions ?? []),
+    includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? [])
+  };
+}
+
+function buildAffairsFolderDocumentsFromFilesystem(
+  rootDir: string,
+  normalizedFolderPath: string,
+  exportData: AffairsLibraryExportData | null,
+  config: {
+    mirrorRoot: string | null;
+    allowedExtensions: string[];
+    includedHiddenPaths: string[];
+  },
+  supportedExtensions: ReadonlySet<string> = new Set(SUPPORTED_INDEX_EXTENSION_LIST)
+): AffairsLibraryFolderDocumentsBuildResult {
+  const targetDir = normalizedFolderPath
+    ? path.resolve(rootDir, normalizedFolderPath)
+    : rootDir;
+  const configuredExtensions = new Set(config.allowedExtensions.map((item) => item.toLowerCase()));
+  const documentMap = new Map<string, AffairsLibraryDocumentRecordDto>();
+  let hasSnapshotData = false;
+  let hasLiveData = false;
+
+  for (const document of exportData?.documents ?? []) {
+    if (!matchesDirectFolder(document.path, normalizedFolderPath)) {
+      continue;
+    }
+    const extension = path.extname(document.path).toLowerCase();
+    if (!supportedExtensions.has(extension)) {
+      continue;
+    }
+    if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
+      continue;
+    }
+    const stat = readAffairsLibraryStatsSafe(rootDir, document.path);
+    documentMap.set(document.path, {
+      ...document,
+      createdAt: document.createdAt ?? toIsoOrNull(stat?.birthtime),
+      sizeBytes: document.sizeBytes ?? stat?.size ?? null,
+      updatedAt: stat?.mtime.toISOString() ?? document.updatedAt,
+      isFavorite: false
+    });
+    hasSnapshotData = true;
+  }
+
+  if (fs.existsSync(targetDir)) {
+    let targetStats: fs.Stats | null = null;
+    try {
+      targetStats = fs.statSync(targetDir);
+    } catch {
+      targetStats = null;
+    }
+
+    if (targetStats?.isDirectory()) {
+      for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
+        const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
+        if (
+          (entry.name.startsWith(".") || hasHiddenPathSegment(relativePath))
+          && !isIncludedHiddenPath(relativePath, config.includedHiddenPaths)
+        ) {
+          continue;
+        }
+        if (!entry.isFile()) {
+          continue;
+        }
+        const extension = path.extname(entry.name).toLowerCase();
+        if (!supportedExtensions.has(extension)) {
+          continue;
+        }
+        if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
+          continue;
+        }
+
+        const stat = readAffairsLibraryStatsSafe(rootDir, relativePath);
+        const exported = documentMap.get(relativePath);
+        documentMap.set(relativePath, {
+          documentId: exported?.documentId ?? relativePath,
+          path: relativePath,
+          title: exported?.title?.trim() || path.basename(entry.name, extension) || entry.name,
+          summary: exported?.summary ?? "",
+          updatedAt: stat?.mtime.toISOString() ?? exported?.updatedAt ?? "",
+          createdAt: toIsoOrNull(stat?.birthtime) ?? exported?.createdAt ?? null,
+          sizeBytes: stat?.size ?? exported?.sizeBytes ?? null,
+          tags: exported?.tags ?? [],
+          derivedTags: exported?.derivedTags ?? [],
+          isFavorite: false
+        });
+        hasLiveData = true;
+      }
+    }
+  }
+
+  return {
+    items: [...documentMap.values()],
+    source: hasLiveData && hasSnapshotData
+      ? "mixed"
+      : hasLiveData
+        ? "live"
+        : "snapshot"
+  };
+}
+
+export async function runAffairsLibraryDirectoryHintInHelper(input: {
+  rootDir: string;
+  directoryPath: string;
+  signal?: AbortSignal;
+}): Promise<AffairsLibraryDirectoryHintTaskResult> {
+  if (input.signal?.aborted) {
+    throw input.signal.reason ?? new Error("helper task aborted");
+  }
+  const exportData = readAffairsLibraryExportDataSafe(input.rootDir);
+  const result = buildAffairsFolderDocumentsFromFilesystem(
+    input.rootDir,
+    normalizeFolderPath(input.directoryPath),
+    exportData,
+    readAffairsLibraryConfigSafe(input.rootDir)
+  );
+  return {
+    directoryPath: input.directoryPath,
+    refreshedAt: nowIso(),
+    source: result.source,
+    itemCount: result.items.length,
+    changedPaths: result.items.map((item) => item.path).sort((left, right) => left.localeCompare(right, "zh-CN")),
+    items: result.items
+  };
 }
 
 function isSameOrDescendantRelativePath(targetPath: string, candidatePath: string): boolean {

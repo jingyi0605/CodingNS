@@ -47,6 +47,14 @@ interface TaskHelperProcessHandlerMap {
     input: { rootDir: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
   ) => AffairsIndexerCommandResult | Promise<AffairsIndexerCommandResult>;
+  "affairs.library_directory_hint": (
+    input: {
+      rootDir: string;
+      directoryPath: string;
+      __taskMeta?: HelperTaskMetaPayload;
+    },
+    signal?: AbortSignal
+  ) => unknown;
 }
 
 const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
@@ -81,7 +89,15 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     runAffairsIndexerCommand(rootDir, "export" satisfies AffairsIndexerCommandName, {
       taskMeta: __taskMeta,
       signal
-    })
+    }),
+  "affairs.library_directory_hint": async ({ rootDir, directoryPath }, signal) => {
+    const module = await import("../workspace/affairs-library-service.js");
+    return module.runAffairsLibraryDirectoryHintInHelper({
+      rootDir,
+      directoryPath,
+      signal
+    });
+  }
 };
 
 export type TaskHelperProcessHandlerName = keyof TaskHelperProcessHandlerMap;

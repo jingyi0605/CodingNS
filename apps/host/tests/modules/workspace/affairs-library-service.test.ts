@@ -8,6 +8,7 @@ import {
   AffairsLibraryDirtyWatchService,
   type AffairsLibraryWatchDirtyEvent
 } from "../../../src/modules/workspace/affairs-library-dirty-watch-service.js";
+import * as affairsLibraryDebugLogModule from "../../../src/modules/workspace/affairs-library-debug-log.js";
 import { AffairsLibraryService } from "../../../src/modules/workspace/affairs-library-service.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../../../src/modules/tasks/task-types.js";
 import type { WorkspaceNavigationStateRecord, Workspace } from "../../../src/types/domain.js";
@@ -1260,6 +1261,68 @@ describe("AffairsLibraryService auto tasks", () => {
       "临时文件/账号_副本.txt",
       "临时文件/账号.txt"
     ]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("目录列表会打出结果来源日志，区分 live cache snapshot", () => {
+    const writeDebugLog = vi.spyOn(affairsLibraryDebugLogModule, "writeAffairsLibraryDebugLog").mockImplementation(() => {});
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-folder-source-log-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(path.join(rootDir, "临时文件"), { recursive: true });
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(exportDir, "status.json"),
+      JSON.stringify({
+        version: 2,
+        format: "static-v2",
+        exported_at: "2026-05-31T10:00:00.000Z",
+        document_count: 1
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T10:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(path.join(exportDir, "taxonomy.json"), JSON.stringify({ nodes: [] }));
+    fs.writeFileSync(path.join(exportDir, "bootstrap.json"), JSON.stringify({ folders: [] }));
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-old",
+            path: "临时文件/账号.txt",
+            title: "账号",
+            summary: "账号",
+            mtime: "2026-05-31T10:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(path.join(rootDir, "临时文件", "账号.txt"), "old\n");
+    const service = createService({ rootDir });
+
+    service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "临时文件"
+    });
+
+    const payloads = writeDebugLog.mock.calls
+      .map(([payload]) => payload)
+      .filter((payload) => payload && typeof payload === "object" && (payload as { event?: string }).event === "folder_list_served");
+    expect(payloads.length).toBeGreaterThan(0);
+    expect((payloads[0] as { details?: { resultSource?: string } }).details?.resultSource).toBe("mixed");
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
