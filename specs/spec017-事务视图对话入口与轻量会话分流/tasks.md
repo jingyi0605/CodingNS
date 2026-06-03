@@ -234,8 +234,8 @@
   - 对应需求：`requirements.md` 需求 4.1、需求 7.1
   - 对应设计：`design.md` §3.2、§4.1、§6.1.1
 
-- [ ] 2.2 把轻量会话限制在事务模式内部
-  - 状态：TODO
+- [x] 2.2 把轻量会话限制在事务模式内部
+  - 状态：DONE
   - 这一步到底做什么：把轻量会话的可见范围锁死在事务模式，避免它出现在代码模式的 provider picker、新建会话和并行会话入口里。
   - 做完你能看到什么：代码模式看不到这个轻量入口，事务模式里才看得到。
   - 先依赖什么：2.1
@@ -251,13 +251,16 @@
     1. 代码模式新建会话入口看不到轻量会话
     2. 事务模式能正常创建和展示轻量会话
   - 怎么验证：
-    - 回归代码模式 provider picker 测试
-    - 事务模式入口测试
+    - 已完成 Host 定向测试：
+      - `pnpm -C apps/host exec vitest run tests/integration/session-routes.test.ts tests/integration/sqlite-bootstrap.test.ts tests/integration/session-live-runtime-service.test.ts`
+    - 已完成前端定向测试：
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+    - 已确认事务轻量会话创建时会带 `sessionVisibility: "affairs_lightweight"`，普通工作区会话列表只返回 `workspace` 可见性，会话仍可按 `sessionId` 进入 live runtime
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` §3.3、§6.1
 
-- [ ] 2.2.1 接通事务模式下的 `Codex / Claude Code` 选择可见性
-  - 状态：TODO
+- [x] 2.2.1 接通事务模式下的 `Codex / Claude Code` 选择可见性
+  - 状态：DONE
   - 这一步到底做什么：让事务模式复用正式 provider 可见性规则，只展示当前真可用的 `Codex` / `Claude Code`，但不把轻量模式注册成新 provider。
   - 做完你能看到什么：事务模式里能选 `Codex` / `Claude Code`，代码模式里不会多出“轻量 Codex / 轻量 Claude Code”。
   - 先依赖什么：2.1.1、2.2
@@ -274,10 +277,52 @@
     2. 轻量和 Agent 两种模式下都能选
     3. 代码模式入口无新增假 provider
   - 怎么验证：
-    - provider 可见性回归测试
-    - 事务模式创建入口测试
+    - 已完成 `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+    - 已补事务新建对话弹窗断言，确认轻量模式与助手模式都只显示 `Codex` / `Claude Code`，不再显示旧的 `Gemini` / `Kimi`
   - 对应需求：`requirements.md` 需求 7.1
   - 对应设计：`design.md` §3.3、§5.3、§6.1.1
+
+- [x] 2.2.2 把事务轻量会话从 CLI runtime 拆成独立 lightweight runtime
+  - 状态：DONE
+  - 这一步到底做什么：轻量模式不再走 `startLiveSession` 和工作区 CLI runtime，而是改成事务专用轻链路，直接调 OpenAI / Anthropic API；配置层优先复用现有 `Codex / Claude Code` CLI 提供商配置，只把独立配置文件当可选覆盖。
+  - 做完你能看到什么：轻量 `Codex / Claude Code` 不再挂工作区目录，不再生成 `workspace-session-runtime`，也不再注入 AGENTS / skills / memory / 本地工具。
+  - 先依赖什么：2.2、2.2.1
+  - 开始前先看：
+    - `requirements.md` 需求 4、需求 7、需求 7.1
+    - `design.md` §3.3、§6.1
+    - 事务轻量会话现状排查记录
+  - 主要改哪里：
+    - `apps/host/src/modules/workspace/affairs-lightweight-session-service.ts`
+    - `apps/host/src/modules/workspace/affairs-lightweight-session-controller.ts`
+    - `apps/host/src/routes/workspaces.ts`
+    - `apps/host/src/server/create-server.ts`
+    - `apps/user-app/src/features/conversation/api/conversation-api.ts`
+    - `apps/user-app/src/features/workbench/components/AffairsWorkbenchView.tsx`
+  - 这一步先不做什么：不把 Agent 模式也一起改成新 runtime，不往代码模式 provider 入口里塞轻量 provider。
+  - 怎么算完成：
+    1. 轻量首条消息和后续消息都走事务专用 lightweight API
+    2. 轻量运行时只保留文本问答和联网搜索，不带本地工具
+    3. 事务对话侧栏能单独列出轻量会话，不再依赖工作区会话列表伪装
+    4. 如果 CLI 提供商配置指向第三方兼容接口，轻量 runtime 也能直接提取 `apiKey/baseUrl/model` 使用，而不是强迫再配一份
+    5. 遇到兼容接口对 `responses + instructions/tools` 支持不完整时，会自动降级到兼容 payload 或 `chat/completions` fallback，不再假装成功后卡在“思考中”
+    6. 轻量会话支持流式增量输出，消息不是一直卡在“思考中”
+    7. 轻量消息区能正常滚动，长对话不会把页面撑死
+    8. 轻量会话触发联网搜索时，会先显示独立的搜索状态条，再继续吐正文，不再长时间整段空白
+  - 怎么验证：
+    - 已完成 Host 定向测试：
+      - `pnpm -C apps/host exec vitest run tests/integration/affairs-lightweight-session-routes.test.ts`
+      - `pnpm -C apps/host exec vitest run tests/integration/affairs-lightweight-session-service.test.ts`
+    - 已完成前端定向测试：
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+      - `pnpm -C apps/user-app exec vitest run src/features/conversation/components/MessageTimeline.test.tsx`
+    - 已完成定向类型检查：
+      - `pnpm -C apps/host exec tsc --noEmit --pretty false 2>&1 | rg "affairs-lightweight-session|routes/workspaces.ts|create-server.ts"`
+      - `pnpm -C apps/user-app exec tsc --noEmit --pretty false 2>&1 | rg "AffairsWorkbenchView.tsx|conversation-api.ts|MessageTimeline.tsx|shared/i18n/index.ts"`
+    - 已确认轻量 `Codex` 流式链路会保留联网搜索工具，不再回退成“无法联网”
+    - 已确认轻量 `Codex` 触发 `web_search` 时会先显示“联网搜索 / 正在联网搜索”独立状态条，再继续输出正文
+    - 已确认轻量联网搜索工具卡片展开后会显示真实搜索结果，包括搜索词和来源链接，不再只显示“联网搜索完成”
+  - 对应需求：`requirements.md` 需求 4、需求 7、需求 7.1
+  - 对应设计：`design.md` §3.3、§6.1
 
 ### 阶段检查
 
@@ -305,8 +350,8 @@
 
 ## 阶段 3：让 Agent 会话正式复用当前助手链路
 
-- [ ] 3.1 把 Agent 会话接到当前事务助手会话状态源
-  - 状态：TODO
+- [x] 3.1 把 Agent 会话接到当前事务助手会话状态源
+  - 状态：DONE
   - 这一步到底做什么：把事务对话页里的 Agent 会话接到现在 `AffairsAssistantPanel` 已经在用的助手会话状态源上，避免长两套消息流。
   - 做完你能看到什么：中间 Agent 对话页和右侧助手面板指向同一条会话，消息和运行态一致。
   - 先依赖什么：2.3
@@ -323,13 +368,13 @@
     1. Agent 对话页和右侧助手面板会话同源
     2. 权限请求、运行态和消息不再各走各的
   - 怎么验证：
-    - Agent 会话集成测试
-    - 人工发消息和切页回放
+    - 已补事务 Agent 草稿发送测试，确认中间对话页与右侧助手面板复用同一个 `ButlerRuntimeStore`
+    - 已完成 `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "事务 Agent 草稿发送首条消息后会复用共享 Butler runtime 并切到 Agent 会话"`
   - 对应需求：`requirements.md` 需求 5、需求 8
   - 对应设计：`design.md` §2.3.3、§2.3.4、§6.2
 
-- [ ] 3.1.1 让 Agent 模式下的 Codex / Claude Code 继续复用完整助手链路
-  - 状态：TODO
+- [x] 3.1.1 让 Agent 模式下的 Codex / Claude Code 继续复用完整助手链路
+  - 状态：DONE
   - 这一步到底做什么：确认事务 Agent 会话里选 `Codex` 或 `Claude Code` 时，继续复用现在完整助手能力，包括 AGENTS.md 注入、完整工具能力和权限流。
   - 做完你能看到什么：事务 Agent 会话只是换了入口，不是换了弱化版运行时。
   - 先依赖什么：3.1
@@ -345,13 +390,13 @@
     2. Agent + Claude Code 走完整助手链路
     3. 轻量模式不会误进这条链路
   - 怎么验证：
-    - Agent 双 provider 集成测试
-    - 人工回放验证
+    - 已补 Agent 首条消息发送断言，确认事务 Agent 草稿不会走 lightweight API，而是直接走共享 Butler runtime
+    - 已完成 `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "事务 Agent 草稿发送首条消息后会复用共享 Butler runtime 并切到 Agent 会话"`
   - 对应需求：`requirements.md` 需求 5、需求 7、需求 7.1
   - 对应设计：`design.md` §2.3.3、§4.1、§6.2
 
-- [ ] 3.2 把 Agent 会话默认绑定到当前文档库和当前对象
-  - 状态：TODO
+- [x] 3.2 把 Agent 会话默认绑定到当前文档库和当前对象
+  - 状态：DONE
   - 这一步到底做什么：创建或恢复 Agent 会话时，默认带入当前工作区文档库绑定和当前事务对象上下文，不再出现代码模式多工作区语义。
   - 做完你能看到什么：事务模式里的 Agent 会话一开口就在当前对象语境里。
   - 先依赖什么：3.1
@@ -368,9 +413,22 @@
     1. Agent 会话默认绑定当前文档库
     2. 选中文档/标签/文件夹时能带入对象上下文
     3. 没选对象时也能保留事务语境
+    4. 新建 Agent 会话时，Butler workspacePath 也会切到文档库绑定工作区，不再继续沿用事务壳自己的 workspace
+    5. 文档库如果同时有 `rootDir` 和 `mirrorRoot`，Agent 会话优先绑定 `mirrorRoot` 对应的 workspace
   - 怎么验证：
-    - 上下文初始化测试
-    - 人工走文档 -> Agent 对话链路
+    - 已补上下文初始化测试，确认从文档库切到事务对话后，Agent 首条消息会带上当前文档对象标题和来源
+    - 已补历史 Agent 会话恢复测试，确认切回历史会话时会恢复对应的 Butler 会话，而不是继续拿 workspace sessions 硬凑
+    - 已补新建 Agent 会话绑定测试，确认会把 Butler runtime / Butler profile 的工作区切到文档库绑定路径
+    - 已把事务 Agent 目标工作区解析规则收口成“优先 `mirrorRoot`，回退 `rootDir`”，覆盖当前文档库实际目录是 `/Users/jackson/SynologyDrive` 的场景
+    - 已把事务 Agent 历史会话和恢复链路改成“先按文档库路径找 Butler project，再按 project.repoRoot 过滤会话”，不再依赖事务壳自己的 workspaceId，也不要求左侧导航必须提前带出这个工作区
+    - 已把 Host 侧 observed session 自动导入补上第二层校验：读取 codex / Claude Code 原始会话里的 `workspacePath` / `cwd`，只有和 Butler project 的 `repoRoot` 一致才允许导入，防止脏 binding 把别的目录会话混进来
+    - 已完成：
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "事务 Agent 首条消息会默认带上当前事务对象上下文"`
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "事务对话页切回历史 Agent 会话时会自动恢复对应的 Butler 会话"`
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "新建 Agent 会话会切到文档库绑定工作区并同步 Butler workspacePath"`
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "历史 Agent 会话列表只显示当前文档库绑定工作区的 CLI 会话|事务对话侧栏会把轻量会话和 Agent 会话合并到同一份列表里|事务会话列表收藏操作会更新卡片标记|事务会话列表归档操作后会从主列表移除会话"`
+      - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "新建 Agent 会话会切到文档库绑定工作区并同步 Butler workspacePath|事务对话页切回历史 Agent 会话时会自动恢复对应的 Butler 会话|历史 Agent 会话列表只显示当前文档库绑定工作区的 CLI 会话|事务对话侧栏会把轻量会话和 Agent 会话合并到同一份列表里" --reporter=dot`
+      - `pnpm -C apps/host exec vitest run tests/integration/butler-session-service.test.ts --reporter=dot`
   - 对应需求：`requirements.md` 需求 6
   - 对应设计：`design.md` §3.2、§4.1、§6.3
 

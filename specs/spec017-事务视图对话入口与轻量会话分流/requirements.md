@@ -26,8 +26,8 @@
 
 - **轻量会话**：偏网页端风格，主要做快速问答、联网搜索和轻分析
 - **Agent 会话**：直接复用当前助手会话逻辑，绑定当前事务文档库和当前对象上下文
-- **轻量 provider 选择**：轻量会话下显示轻能力 LLM provider，第一版先按现有轻量入口展示 `Gemini`、`Kimi`
-- **Agent provider 选择**：Agent 会话下显示完整 CLI provider，第一版先继续复用 `Codex`、`Claude Code`、`OpenCode`、`Legna Code`
+- **轻量 provider 选择**：轻量会话下显示轻能力 provider，第一版先提供 `Codex`、`Claude Code` 的轻量会话入口
+- **Agent provider 选择**：Agent 会话下显示完整 CLI provider，第一版继续复用 `Codex`、`Claude Code`
 
 ## 术语表
 
