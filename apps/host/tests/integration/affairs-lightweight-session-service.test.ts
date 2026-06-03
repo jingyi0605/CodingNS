@@ -218,6 +218,161 @@ describe("AffairsLightweightSessionService", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("轻量 Codex 会把联网搜索工具消息持久化到历史里，并保留 query 和 sources", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    global.fetch = vi.fn(async () => new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            [
+              "event: response.web_search_call.searching",
+              'data: {"type":"response.web_search_call.searching","item_id":"search-1","action":{"query":"OpenAI news today"}}',
+              "",
+              "event: response.web_search_call.completed",
+              'data: {"type":"response.web_search_call.completed","item_id":"search-1","action":{"query":"OpenAI news today","sources":[{"title":"OpenAI official","url":"https://openai.com/index/example"},{"title":"AP News","url":"https://apnews.com/example"}]}}',
+              "",
+              "event: response.output_text.delta",
+              'data: {"type":"response.output_text.delta","delta":"hello"}',
+              "",
+              "data: [DONE]",
+              ""
+            ].join("\n")
+          ));
+          controller.close();
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream"
+        }
+      }
+    )) as typeof fetch;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    let sessionId: string | null = null;
+    await service.startSessionStream({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    }, (event) => {
+      if (event.type === "started") {
+        sessionId = event.session.sessionId;
+      }
+    });
+
+    expect(sessionId).toBeTruthy();
+    const history = await service.readMessages("workspace-1", sessionId!, "user-1");
+    expect(history.messages.map((message) => `${message.role}:${message.kind}`)).toEqual([
+      "user:text",
+      "tool:tool_result",
+      "assistant:text"
+    ]);
+    const toolMessage = history.messages[1];
+    expect(toolMessage.toolCall?.name).toBe("web_search");
+    expect(toolMessage.toolCall?.input).toBe("OpenAI news today");
+    expect(toolMessage.toolCall?.status).toBe("completed");
+    expect(toolMessage.toolCall?.output).toContain('"query": "OpenAI news today"');
+    expect(toolMessage.toolCall?.output).toContain('"title": "OpenAI official"');
+    expect(toolMessage.toolCall?.output).toContain('"url": "https://apnews.com/example"');
+    expect(history.messages[1]!.sequence).toBeLessThan(history.messages[2]!.sequence);
+  });
+
+  it("轻量 Codex 能解析代理 responses 在 response.output_item.done 里返回的联网搜索结果", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    global.fetch = vi.fn(async () => new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            [
+              "event: response.output_item.added",
+              'data: {"type":"response.output_item.added","item":{"id":"ws_1","type":"web_search_call","status":"in_progress"},"output_index":0,"sequence_number":2}',
+              "",
+              "event: response.web_search_call.searching",
+              'data: {"type":"response.web_search_call.searching","item_id":"ws_1","output_index":0,"sequence_number":3}',
+              "",
+              "event: response.output_item.done",
+              'data: {"type":"response.output_item.done","item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"OpenAI news today official blog latest 2025","sources":[{"type":"url","url":"https://openai.com/index/example-1"},{"type":"url","url":"https://openai.com/index/example-2"}]}}}',
+              "",
+              "event: response.output_text.delta",
+              'data: {"type":"response.output_text.delta","delta":"hello"}',
+              "",
+              "data: [DONE]",
+              ""
+            ].join("\n")
+          ));
+          controller.close();
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream"
+        }
+      }
+    )) as typeof fetch;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    let sessionId: string | null = null;
+    await service.startSessionStream({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    }, (event) => {
+      if (event.type === "started") {
+        sessionId = event.session.sessionId;
+      }
+    });
+
+    const history = await service.readMessages("workspace-1", sessionId!, "user-1");
+    const toolMessage = history.messages.find((message) => message.role === "tool");
+    expect(toolMessage?.toolCall?.input).toBe("OpenAI news today official blog latest 2025");
+    expect(toolMessage?.toolCall?.output).toContain('"url": "https://openai.com/index/example-1"');
+    expect(toolMessage?.toolCall?.output).toContain('"query": "OpenAI news today official blog latest 2025"');
+  });
+
   it("轻量 Codex 流式发送时会持续产出 delta 并在结束后写回完整结果", async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
     process.env.HOME = homeDir;
@@ -244,6 +399,12 @@ describe("AffairsLightweightSessionService", () => {
         start(controller) {
           controller.enqueue(new TextEncoder().encode(
             [
+              "event: response.web_search_call.searching",
+              "data: {\"type\":\"response.web_search_call.searching\",\"item_id\":\"search-1\"}",
+              "",
+              "event: response.web_search_call.completed",
+              "data: {\"type\":\"response.web_search_call.completed\",\"item_id\":\"search-1\",\"action\":{\"sources\":[{\"title\":\"A\"},{\"title\":\"B\"}]}}",
+              "",
               "event: response.output_text.delta",
               "data: {\"type\":\"response.output_text.delta\",\"delta\":\"he\"}",
               "",
@@ -274,10 +435,25 @@ describe("AffairsLightweightSessionService", () => {
       provider: "codex",
       content: "对话测试"
     }, (event) => {
-      events.push(event.type === "delta" ? event.delta : event.type);
+      if (event.type === "delta") {
+        events.push(event.delta);
+        return;
+      }
+      if (event.type === "tool") {
+        events.push(`${event.toolName}:${event.status}:${event.detail}`);
+        return;
+      }
+      events.push(event.type);
     });
 
-    expect(events).toEqual(["started", "he", "llo", "completed"]);
+    expect(events).toEqual([
+      "started",
+      "web_search:running:正在联网搜索",
+      "web_search:completed:联网搜索完成，找到 2 个来源",
+      "he",
+      "llo",
+      "completed"
+    ]);
   });
 });
 

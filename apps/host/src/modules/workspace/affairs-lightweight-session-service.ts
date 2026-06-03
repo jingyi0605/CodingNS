@@ -95,6 +95,15 @@ export interface AffairsLightweightSessionTurnResult {
   messages: HistoryPage["messages"];
 }
 
+interface LightweightToolLifecycleEvent {
+  toolCallId: string;
+  toolName: string;
+  status: "running" | "completed" | "failed";
+  detail: string | null;
+  input: string | null;
+  output: string | null;
+}
+
 export type AffairsLightweightSessionStreamEvent =
   | {
       type: "started";
@@ -103,6 +112,9 @@ export type AffairsLightweightSessionStreamEvent =
       clientRequestId: string;
       userMessage: HistoryPage["messages"][number];
     }
+  | ({
+      type: "tool";
+    } & LightweightToolLifecycleEvent)
   | {
       type: "delta";
       delta: string;
@@ -387,7 +399,17 @@ export class AffairsLightweightSessionService {
       userMessage
     });
 
+    let workingDocument = runningDocument;
     try {
+      const handleToolEvent = async (event: LightweightToolLifecycleEvent) => {
+        workingDocument = upsertToolLifecycleMessage({
+          document: workingDocument,
+          event,
+          observedAt: new Date().toISOString()
+        });
+        await this.writeSessionDocument(workingDocument);
+        await onEvent?.({ type: "tool", ...event });
+      };
       const assistantContent = provider === "codex"
         ? await this.generateOpenAiResponse(
             runningDocument,
@@ -396,7 +418,8 @@ export class AffairsLightweightSessionService {
               ? async (delta) => {
                   await onEvent({ type: "delta", delta });
                 }
-              : undefined
+              : undefined,
+            handleToolEvent
           )
         : await this.generateAnthropicResponse(
             runningDocument,
@@ -405,22 +428,23 @@ export class AffairsLightweightSessionService {
               ? async (delta) => {
                   await onEvent({ type: "delta", delta });
                 }
-              : undefined
+              : undefined,
+            handleToolEvent
           );
       const completedAt = new Date().toISOString();
       const assistantMessage = createAssistantMessage({
         provider,
-        providerSessionId: runningDocument.session.providerSessionId,
-        sessionId: runningDocument.session.sessionId,
+        providerSessionId: workingDocument.session.providerSessionId,
+        sessionId: workingDocument.session.sessionId,
         content: assistantContent,
-        sequence: runningDocument.messages.length + 1,
+        sequence: workingDocument.messages.length + 1,
         timestamp: completedAt,
-        rawStoreRef: runningDocument.session.rawStoreRef
+        rawStoreRef: workingDocument.session.rawStoreRef
       });
       const completedDocument: AffairsLightweightSessionDocument = {
-        ...runningDocument,
+        ...workingDocument,
         session: {
-          ...runningDocument.session,
+          ...workingDocument.session,
           updatedAt: completedAt,
           lastMessageAt: completedAt,
           lastEventAt: completedAt,
@@ -429,9 +453,9 @@ export class AffairsLightweightSessionService {
           activityState: "completed_unread",
           syncStatus: "idle",
           lastSyncAt: completedAt,
-          messageCount: runningDocument.messages.length + 1
+          messageCount: workingDocument.messages.length + 1
         },
-        messages: [...runningDocument.messages, assistantMessage]
+        messages: [...workingDocument.messages, assistantMessage]
       };
       await this.writeSessionDocument(completedDocument);
       const result = {
@@ -451,9 +475,9 @@ export class AffairsLightweightSessionService {
       const failedAt = new Date().toISOString();
       const failureMessage = getErrorMessage(error);
       const failedDocument: AffairsLightweightSessionDocument = {
-        ...runningDocument,
+        ...workingDocument,
         session: {
-          ...runningDocument.session,
+          ...workingDocument.session,
           updatedAt: failedAt,
           lastEventAt: failedAt,
           completedAt: failedAt,
@@ -463,7 +487,7 @@ export class AffairsLightweightSessionService {
           lastSyncAt: failedAt,
           lastErrorCode: error instanceof AppError ? error.errorCode : "LIGHTWEIGHT_RUNTIME_FAILED",
           lastErrorDetail: failureMessage,
-          messageCount: runningDocument.messages.length
+          messageCount: workingDocument.messages.length
         }
       };
       await this.writeSessionDocument(failedDocument);
@@ -479,10 +503,11 @@ export class AffairsLightweightSessionService {
   private async generateOpenAiResponse(
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput,
-    onDelta?: (delta: string) => Promise<void> | void
+    onDelta?: (delta: string) => Promise<void> | void,
+    onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string> {
     if (onDelta) {
-      const streamed = await this.generateOpenAiResponseStream(document, input, onDelta);
+      const streamed = await this.generateOpenAiResponseStream(document, input, onDelta, onTool);
       if (streamed) {
         return streamed;
       }
@@ -493,10 +518,11 @@ export class AffairsLightweightSessionService {
   private async generateAnthropicResponse(
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput,
-    onDelta?: (delta: string) => Promise<void> | void
+    onDelta?: (delta: string) => Promise<void> | void,
+    onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string> {
     if (onDelta) {
-      const streamed = await this.generateAnthropicResponseStream(document, input, onDelta);
+      const streamed = await this.generateAnthropicResponseStream(document, input, onDelta, onTool);
       if (streamed) {
         return streamed;
       }
@@ -638,7 +664,8 @@ export class AffairsLightweightSessionService {
   private async generateOpenAiResponseStream(
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput,
-    onDelta: (delta: string) => Promise<void> | void
+    onDelta: (delta: string) => Promise<void> | void,
+    onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
     const runtime = await this.readOpenAiRuntimeConfig(input.model?.trim() || null);
     const headers = {
@@ -667,7 +694,7 @@ export class AffairsLightweightSessionService {
       throw createUpstreamError("OPENAI_LIGHTWEIGHT_FAILED", body, response.status);
     }
 
-    const streamedText = await streamOpenAiSseText(response, onDelta);
+    const streamedText = await streamOpenAiSseText(response, onDelta, onTool);
     if (streamedText) {
       return streamedText;
     }
@@ -691,13 +718,14 @@ export class AffairsLightweightSessionService {
       const fallbackBody = await parseJsonResponse(fallbackResponse);
       throw createUpstreamError("OPENAI_LIGHTWEIGHT_FAILED", fallbackBody, fallbackResponse.status);
     }
-    return await streamOpenAiSseText(fallbackResponse, onDelta);
+    return await streamOpenAiSseText(fallbackResponse, onDelta, onTool);
   }
 
   private async generateAnthropicResponseStream(
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput,
-    onDelta: (delta: string) => Promise<void> | void
+    onDelta: (delta: string) => Promise<void> | void,
+    onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
     const runtime = await this.readAnthropicRuntimeConfig(input.model?.trim() || null);
     const response = await postJsonWithFallbacks({
@@ -734,7 +762,7 @@ export class AffairsLightweightSessionService {
       throw createUpstreamError("ANTHROPIC_LIGHTWEIGHT_FAILED", body, response.status);
     }
 
-    return await streamAnthropicSseText(response, onDelta);
+    return await streamAnthropicSseText(response, onDelta, onTool);
   }
 
   private async requireSessionDocument(
@@ -978,6 +1006,120 @@ function createAssistantMessage(input: {
   };
 }
 
+function createToolLifecycleMessage(input: {
+  provider: ProviderId;
+  providerSessionId: string;
+  timestamp: string;
+  rawStoreRef: string;
+  sequence: number;
+  event: LightweightToolLifecycleEvent;
+}): HistoryPage["messages"][number] {
+  const content = normalizeText(input.event.detail)
+    || normalizeText(input.event.output)
+    || normalizeText(input.event.input)
+    || input.event.toolName;
+  return {
+    messageId: `lightweight-tool-${input.event.toolCallId}`,
+    provider: input.provider,
+    providerSessionId: input.providerSessionId,
+    role: "tool",
+    kind: input.event.status === "running" ? "tool_call" : "tool_result",
+    content,
+    toolCall: {
+      callId: input.event.toolCallId,
+      name: input.event.toolName,
+      input: input.event.input ?? "",
+      output: input.event.output,
+      error: input.event.status === "failed"
+        ? (normalizeText(input.event.detail) || normalizeText(input.event.output) || null)
+        : null,
+      status: input.event.status
+    },
+    timestamp: input.timestamp,
+    sequence: input.sequence,
+    rawRef: `${input.rawStoreRef}#tool-${input.event.toolCallId}`
+  };
+}
+
+function upsertToolLifecycleMessage(input: {
+  document: AffairsLightweightSessionDocument;
+  event: LightweightToolLifecycleEvent;
+  observedAt?: string | null;
+}): AffairsLightweightSessionDocument {
+  const timestamp = input.observedAt ?? new Date().toISOString();
+  const existingIndex = input.document.messages.findIndex((message) => {
+    if (message.role !== "tool" || !message.toolCall) {
+      return false;
+    }
+    return message.toolCall.callId === input.event.toolCallId;
+  });
+
+  if (existingIndex >= 0) {
+    const existing = input.document.messages[existingIndex];
+    const nextMessage = createToolLifecycleMessage({
+      provider: input.document.session.provider,
+      providerSessionId: input.document.session.providerSessionId,
+      timestamp,
+      rawStoreRef: input.document.session.rawStoreRef,
+      sequence: existing.sequence,
+      event: input.event
+    });
+    const nextMessages = [...input.document.messages];
+    nextMessages[existingIndex] = {
+      ...nextMessage,
+      timestamp: existing.timestamp,
+      sequence: existing.sequence,
+      rawRef: existing.rawRef,
+      messageId: existing.messageId
+    };
+    return {
+      ...input.document,
+      messages: nextMessages,
+      session: {
+        ...input.document.session,
+        updatedAt: timestamp,
+        lastEventAt: timestamp,
+        messageCount: nextMessages.length
+      }
+    };
+  }
+
+  const assistantIndex = input.document.messages.findIndex((message) => message.role === "assistant");
+  const insertAt = assistantIndex >= 0 ? assistantIndex : input.document.messages.length;
+  const sequence = insertAt > 0
+    ? input.document.messages[insertAt - 1].sequence + 1
+    : 1;
+  const nextMessage = createToolLifecycleMessage({
+    provider: input.document.session.provider,
+    providerSessionId: input.document.session.providerSessionId,
+    timestamp,
+    rawStoreRef: input.document.session.rawStoreRef,
+    sequence,
+    event: input.event
+  });
+  const nextMessages = [
+    ...input.document.messages.slice(0, insertAt),
+    nextMessage,
+    ...input.document.messages.slice(insertAt).map((message) => ({
+      ...message,
+      sequence: message.sequence + 1,
+      rawRef: message.role === "assistant"
+        ? `${input.document.session.rawStoreRef}#assistant-${message.sequence + 1}`
+        : message.rawRef
+    }))
+  ];
+  return {
+    ...input.document,
+    messages: nextMessages,
+    session: {
+      ...input.document.session,
+      updatedAt: timestamp,
+      lastEventAt: timestamp,
+      messageCount: nextMessages.length
+    }
+  };
+}
+
 function normalizeOpenAiReasoning(reasoningLevel: string | null | undefined) {
   const normalized = reasoningLevel?.trim().toLowerCase();
   if (normalized === "low" || normalized === "medium" || normalized === "high") {
@@ -1121,10 +1263,11 @@ function normalizeBaseUrl(value: string): string {
 
 async function streamOpenAiSseText(
   response: Response,
-  onDelta: (delta: string) => Promise<void> | void
+  onDelta: (delta: string) => Promise<void> | void,
+  onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
 ): Promise<string | null> {
   let accumulated = "";
-  await consumeSseResponse(response, async ({ data }) => {
+  await consumeSseResponse(response, async ({ event, data }) => {
     if (!data || data === "[DONE]") {
       return;
     }
@@ -1133,6 +1276,10 @@ async function streamOpenAiSseText(
       payload = JSON.parse(data);
     } catch {
       return;
+    }
+    const toolEvent = extractOpenAiSseToolEvent(event, payload);
+    if (toolEvent) {
+      await onTool?.(toolEvent);
     }
     const chunks = extractOpenAiSseDeltaChunks(payload);
     for (const chunk of chunks) {
@@ -1148,7 +1295,8 @@ async function streamOpenAiSseText(
 
 async function streamAnthropicSseText(
   response: Response,
-  onDelta: (delta: string) => Promise<void> | void
+  onDelta: (delta: string) => Promise<void> | void,
+  onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
 ): Promise<string | null> {
   let accumulated = "";
   await consumeSseResponse(response, async ({ event, data }) => {
@@ -1162,6 +1310,10 @@ async function streamAnthropicSseText(
       return;
     }
     const eventType = event || payload?.type;
+    const toolEvent = extractAnthropicSseToolEvent(eventType, payload);
+    if (toolEvent) {
+      await onTool?.(toolEvent);
+    }
     if (eventType === "content_block_delta" && payload?.delta?.type === "text_delta") {
       const chunk = normalizeText(payload?.delta?.text);
       if (chunk) {
@@ -1266,6 +1418,170 @@ function extractOpenAiSseDeltaChunks(payload: any): string[] {
   }
 
   return chunks;
+}
+
+function extractOpenAiSseToolEvent(
+  eventName: string,
+  payload: any
+): Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }> | null {
+  const payloadType = normalizeText(payload?.type) ?? "";
+  const resolvedEvent = normalizeText(eventName) ?? payloadType;
+  const isDirectWebSearchEvent = resolvedEvent.includes("web_search_call");
+  const isOutputItemWebSearchEvent = resolvedEvent === "response.output_item.done"
+    && normalizeText(payload?.item?.type) === "web_search_call";
+  const isOutputItemAddedWebSearchEvent = resolvedEvent === "response.output_item.added"
+    && normalizeText(payload?.item?.type) === "web_search_call";
+
+  if (!isDirectWebSearchEvent && !isOutputItemWebSearchEvent && !isOutputItemAddedWebSearchEvent) {
+    return null;
+  }
+
+  const toolCallId =
+    normalizeText(payload?.item_id)
+    || normalizeText(payload?.item?.id)
+    || normalizeText(payload?.call_id)
+    || normalizeText(payload?.id)
+    || "web_search";
+  const status = isOutputItemWebSearchEvent
+    ? "completed"
+    : resolvedEvent.endsWith(".completed")
+      ? "completed"
+      : resolvedEvent.endsWith(".failed")
+        ? "failed"
+        : "running";
+  const sources = readWebSearchSources(payload);
+  const sourceCount = sources.length;
+  const input = readWebSearchQuery(payload);
+  const detail =
+    status === "completed"
+      ? (sourceCount > 0 ? `联网搜索完成，找到 ${sourceCount} 个来源` : "联网搜索完成")
+      : status === "failed"
+        ? normalizeText(payload?.error?.message) || "联网搜索失败"
+        : resolvedEvent.endsWith(".searching")
+          ? "正在联网搜索"
+          : "正在准备联网搜索";
+
+  return {
+    type: "tool",
+    toolCallId,
+    toolName: "web_search",
+    status,
+    detail,
+    input,
+    output: status === "completed"
+      ? JSON.stringify({
+          detail,
+          query: input,
+          sources
+        }, null, 2)
+      : status === "failed"
+        ? detail
+        : null
+  };
+}
+
+function extractAnthropicSseToolEvent(
+  eventType: string,
+  payload: any
+): Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }> | null {
+  const block = payload?.content_block;
+  const delta = payload?.delta;
+  const blockType = normalizeText(block?.type) ?? normalizeText(delta?.type) ?? "";
+  const toolName =
+    normalizeText(block?.name)
+    || normalizeText(payload?.name)
+    || normalizeText(delta?.name)
+    || (blockType.includes("web_search") ? "web_search" : null);
+  if (toolName !== "web_search") {
+    return null;
+  }
+
+  const status = eventType === "content_block_stop" || eventType === "message_stop"
+    ? "completed"
+    : eventType === "error"
+      ? "failed"
+      : "running";
+  const input = readWebSearchQuery(payload);
+  const sources = readWebSearchSources(payload);
+  const detail = status === "completed"
+    ? (sources.length > 0 ? `联网搜索完成，找到 ${sources.length} 个来源` : "联网搜索完成")
+    : status === "failed"
+      ? normalizeText(payload?.error?.message) || "联网搜索失败"
+      : "正在联网搜索";
+
+  return {
+    type: "tool",
+    toolCallId: normalizeText(block?.id) || normalizeText(payload?.id) || normalizeText(delta?.id) || "web_search",
+    toolName,
+    status,
+    detail,
+    input,
+    output: status === "completed"
+      ? JSON.stringify({
+          detail,
+          query: input,
+          sources
+        }, null, 2)
+      : status === "failed"
+        ? detail
+        : null
+  };
+}
+
+function readSourceCount(payload: any): number {
+  return readWebSearchSources(payload).length;
+}
+
+function readWebSearchQuery(payload: any): string | null {
+  return pickFirstText(
+    payload?.action?.query,
+    payload?.action?.search_query,
+    payload?.item?.action?.query,
+    payload?.item?.action?.search_query,
+    payload?.item?.query,
+    payload?.query,
+    payload?.search_query,
+    payload?.input,
+    payload?.arguments?.query,
+    payload?.arguments?.search_query,
+    payload?.content_block?.input?.query,
+    payload?.content_block?.input?.search_query,
+    payload?.delta?.partial_json,
+    payload?.result?.query,
+    payload?.web_search?.query
+  );
+}
+
+function flattenWebSearchSourceCandidates(payload: any): any[] {
+  const candidates = [
+    payload?.action?.sources,
+    payload?.item?.action?.sources,
+    payload?.item?.sources,
+    payload?.sources,
+    payload?.result?.sources,
+    payload?.web_search?.sources,
+    payload?.content_block?.results,
+    payload?.content_block?.sources,
+    payload?.results
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function readWebSearchSources(payload: any): Array<{ title: string | null; url: string | null }> {
+  return flattenWebSearchSourceCandidates(payload)
+    .map((item: any) => ({
+      title: pickFirstText(item?.title, item?.name, item?.text),
+      url: pickFirstText(item?.url, item?.link, item?.uri)
+    }))
+    .filter((item) => item.title || item.url)
+    .slice(0, 8);
 }
 
 async function safeReadTextFile(filePath: string): Promise<string | null> {
