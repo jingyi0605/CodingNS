@@ -8171,9 +8171,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-conversation-page-shell {
   position: relative;
+  min-height: 0;
 }
 
 .affairs-conversation-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -8183,13 +8187,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-conversation-timeline-shell {
+  display: flex;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
+.affairs-conversation-timeline-shell .message-list,
 .affairs-conversation-message-list {
-  display: block;
-  padding: 24px;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 .affairs-conversation-empty-state {
@@ -8785,13 +8796,32 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-management-shell {
-  gap: 14px;
+  gap: 8px;
+}
+
+.affairs-library-settings-modal .workbench-modal-header {
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 0;
+}
+
+.affairs-library-settings-modal .workbench-modal-title-wrap h2 {
+  line-height: 1.05;
+}
+
+.affairs-library-settings-modal .workbench-modal-body {
+  gap: 8px;
+}
+
+.affairs-library-settings-modal .modal-section {
+  padding: 0;
+  border-top: 0;
 }
 
 .affairs-tag-management-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
@@ -8801,112 +8831,293 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-management-editor-column {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .affairs-tag-management-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
-.affairs-tag-management-selection-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.affairs-tag-management-tree-panel > .modal-section-header,
+.affairs-tag-management-editor > .modal-section-header,
+.affairs-tag-management-danger > .modal-section-header {
   gap: 8px;
 }
 
 .affairs-tag-management-tree {
   min-height: 180px;
+  max-height: min(58vh, 720px);
+  overflow: auto;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .affairs-tag-management-tree-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+.affairs-tag-management-tree-node {
+  position: relative;
+  min-width: 0;
+}
+
+.affairs-tag-management-tree-node[data-depth]:not([data-depth="0"])::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: -12px;
+  width: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 68%, transparent);
+}
+
 .affairs-tag-management-tree-node > .affairs-tag-management-tree-list {
-  margin-top: 6px;
+  position: relative;
+  margin-top: 1px;
+  margin-left: 10px;
   padding-left: 14px;
-  border-left: 1px solid color-mix(in srgb, var(--border-default) 85%, transparent);
+}
+
+.affairs-tag-management-tree-node > .affairs-tag-management-tree-list::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 13px;
+  left: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-default) 68%, transparent);
 }
 
 .affairs-tag-management-tree-button {
-  display: flex;
+  display: block;
   width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
+  appearance: none;
 }
 
 .affairs-tag-management-tree-button:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-default));
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel));
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface-panel));
 }
 
 .affairs-tag-management-tree-button.active {
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--border-default));
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
 }
 
-.affairs-tag-management-tree-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.affairs-tag-management-tree-check input {
-  width: 16px;
-  height: 16px;
+.affairs-tag-management-tree-button.active:hover {
+  background: color-mix(in srgb, var(--accent) 92%, black);
 }
 
 .affairs-tag-management-tree-button-main {
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
+  min-width: 0;
 }
 
-.affairs-tag-management-tree-main,
-.affairs-tag-management-tree-meta {
+.affairs-tag-management-tree-main {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 4px;
   min-width: 0;
 }
 
-.affairs-tag-management-tree-meta {
-  align-items: flex-end;
-  flex-shrink: 0;
-}
-
 .affairs-tag-management-tree-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-weight: 540;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
-.affairs-tag-management-tree-path {
+.affairs-tag-management-tree-button.active .affairs-tag-management-tree-name {
+  color: #ffffff;
+}
+
+.affairs-tag-management-editor-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(120px, auto);
+  gap: 10px 12px;
+  padding: 2px 0 4px;
+}
+
+.affairs-tag-management-editor-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.affairs-tag-management-editor-summary-label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.affairs-tag-management-editor-summary-value {
+  color: var(--text-primary);
   font-size: 12px;
-  color: var(--text-secondary);
-  word-break: break-all;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.affairs-tag-management-editor .workbench-modal-field {
+  gap: 6px;
+}
+
+.affairs-tag-management-editor .modal-field-label {
+  font-size: 12px;
+}
+
+.affairs-tag-management-editor input,
+.affairs-tag-management-editor select {
+  min-height: 36px;
+  padding: 7px 11px;
+  border-radius: 11px;
+  border-color: color-mix(in srgb, var(--border-default) 92%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 97%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 36%, transparent);
+}
+
+.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field input,
+.affairs-library-settings-modal .affairs-tag-smart-rule-field input {
+  min-height: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.2;
+  border-color: color-mix(in srgb, var(--border-default) 86%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 32%, transparent),
+    0 0 0 0 transparent;
+}
+
+.affairs-library-settings-modal .affairs-tag-name-input {
+  min-height: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.affairs-tag-management-editor select,
+.affairs-tag-smart-rule-field select {
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 30px 4px 10px;
+  border-radius: 8px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.14)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23606b7b' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right 10px center;
+  background-size: auto, 10px 6px;
+}
+
+.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field select,
+.affairs-library-settings-modal .affairs-tag-smart-rule-field select {
+  min-height: 30px;
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.2;
+  border: 1px solid color-mix(in srgb, var(--border-default) 78%, transparent);
+  background-color: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 32%, transparent),
+    0 0 0 0 transparent;
+  outline: none;
+}
+
+.affairs-library-settings-modal .affairs-tag-parent-select {
+  min-height: 31px;
+  height: 31px;
+  padding-inline-end: 30px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.affairs-library-settings-modal .affairs-tag-smart-rule-relation-select {
+  min-height: 28px;
+  height: 28px;
+  padding-inline-end: 26px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.affairs-library-settings-modal .affairs-tag-smart-rule-type-select {
+  min-height: 30px;
+  height: 30px;
+  padding-inline-end: 30px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field select:hover,
+.affairs-library-settings-modal .affairs-tag-smart-rule-field select:hover,
+.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field select:focus,
+.affairs-library-settings-modal .affairs-tag-smart-rule-field select:focus,
+.affairs-library-settings-modal .affairs-tag-management-editor .workbench-modal-field select:focus-visible,
+.affairs-library-settings-modal .affairs-tag-smart-rule-field select:focus-visible {
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border-default));
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 36%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.affairs-tag-management-editor input:focus,
+.affairs-tag-management-editor select:focus {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-default));
+}
+
+.affairs-tag-management-toolbar .secondary-button,
+.affairs-tag-management-editor > .secondary-button,
+.affairs-tag-management-batch-actions .secondary-button,
+.affairs-tag-management-danger > .secondary-button {
+  min-height: 30px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.affairs-tag-management-editor > .secondary-button,
+.affairs-tag-management-danger > .secondary-button {
+  align-self: flex-start;
+}
+
+.affairs-library-settings-actions .secondary-button {
+  min-height: 31px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.affairs-tag-management-empty-note {
+  padding: 12px 0 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .affairs-tag-management-editor textarea,
@@ -8917,58 +9128,29 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-smart-rule-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.affairs-tag-management-batch-list {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
 .affairs-tag-management-batch-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.affairs-tag-recovery-binding-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.affairs-tag-recovery-binding-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
-}
-
-.affairs-tag-recovery-binding-label {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.affairs-tag-recovery-binding-value {
-  color: var(--text-primary);
-  font-size: 18px;
-  line-height: 1.2;
+  gap: 6px;
 }
 
 .affairs-tag-recovery-status {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding: 8px 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .affairs-tag-recovery-status-grid {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 8px 10px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 5px 10px;
 }
 
 .affairs-tag-recovery-status-label {
@@ -8986,34 +9168,100 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   margin-top: 2px;
 }
 
-@media (max-width: 980px) {
-  .affairs-tag-recovery-binding-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 .affairs-tag-smart-rule-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  padding: 4px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.affairs-tag-smart-rule-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.affairs-tag-smart-rule-card:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
-.affairs-tag-smart-rule-actions {
+.affairs-tag-smart-rule-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
+}
+
+.affairs-tag-smart-rule-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.affairs-tag-smart-rule-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.affairs-tag-smart-rule-top-row {
+  display: grid;
+  grid-template-columns: minmax(0, 112px) minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: start;
+}
+
+.affairs-tag-smart-rule-value-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.affairs-tag-smart-rule-field {
+  gap: 4px;
+}
+
+.affairs-tag-smart-rule-field .modal-field-label {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.affairs-tag-smart-rule-field .modal-field-description {
+  display: none;
+}
+
+.affairs-tag-smart-rule-field .modal-field-copy,
+.affairs-tag-smart-rule-field input,
+.affairs-tag-smart-rule-field select {
+  min-width: 0;
+}
+
+.affairs-tag-smart-rule-top-row .workbench-modal-field,
+.affairs-tag-smart-rule-value-row .workbench-modal-field {
+  gap: 4px;
+}
+
+.affairs-tag-smart-rule-top-row input,
+.affairs-tag-smart-rule-top-row select,
+.affairs-tag-smart-rule-value-row input,
+.affairs-tag-smart-rule-value-row select {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+.affairs-tag-smart-rule-top-row select,
+.affairs-tag-smart-rule-value-row select {
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 30px 4px 10px;
+  border-radius: 8px;
+}
+
+.affairs-tag-smart-rule-value-row input::placeholder,
+.affairs-tag-management-editor input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .affairs-tag-smart-rule-toggle {
@@ -9022,17 +9270,115 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 8px;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
 }
 
-.affairs-tag-smart-rule-toggle input {
-  width: 16px;
-  height: 16px;
+.affairs-tag-smart-rule-toggle[data-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.affairs-tag-smart-rule-toggle-switch {
+  position: relative;
+  display: inline-flex;
+  width: 40px;
+  height: 24px;
+  flex: 0 0 40px;
+}
+
+.affairs-tag-smart-rule-toggle-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+  z-index: 2;
+}
+
+.affairs-tag-smart-rule-toggle-track {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-hover) 82%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.affairs-tag-smart-rule-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, 0.2),
+    0 0 0 0.5px rgba(15, 23, 42, 0.08);
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.affairs-tag-smart-rule-toggle-input:checked + .affairs-tag-smart-rule-toggle-track {
+  background: color-mix(in srgb, var(--accent) 88%, white 12%);
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.affairs-tag-smart-rule-toggle-input:checked + .affairs-tag-smart-rule-toggle-track .affairs-tag-smart-rule-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.affairs-tag-smart-rule-toggle-input:focus-visible + .affairs-tag-smart-rule-toggle-track {
+  box-shadow:
+    inset 0 1px 2px rgba(15, 23, 42, 0.08),
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.affairs-tag-smart-rule-toggle-label {
+  color: var(--text-secondary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.affairs-tag-smart-rule-header-actions .secondary-button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  font-size: 12px;
 }
 
 .affairs-tag-management-danger {
-  padding-top: 6px;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 980px) {
+  .affairs-tag-management-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .affairs-tag-management-editor-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .affairs-tag-smart-rule-top-row,
+  .affairs-tag-smart-rule-value-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .affairs-tag-management-tree {
+    max-height: none;
+  }
 }
 
 .affairs-extension-chip-badge {
@@ -9261,7 +9607,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-tag-tree-row > .affairs-favorite-toggle {
   align-self: center;
-  flex: 0 0 auto;
 }
 
 .affairs-tag-tree-toggle {

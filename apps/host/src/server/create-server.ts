@@ -180,6 +180,8 @@ import { WorkspaceController } from "../modules/workspace/workspace-controller.j
 import { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
 import { getAffairsLibraryDebugLogPath } from "../modules/workspace/affairs-library-debug-log.js";
 import { AffairsLibraryDirtyWatchService } from "../modules/workspace/affairs-library-dirty-watch-service.js";
+import { AffairsLightweightSessionController } from "../modules/workspace/affairs-lightweight-session-controller.js";
+import { AffairsLightweightSessionService } from "../modules/workspace/affairs-lightweight-session-service.js";
 import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
 import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
 import { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
@@ -1401,6 +1403,9 @@ export function createServer(config: HostConfig) {
     affairsLibraryService,
     config.filePreviewTokenSecret
   );
+  const affairsLightweightSessionService = new AffairsLightweightSessionService(
+    path.dirname(config.databasePath)
+  );
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
@@ -1432,9 +1437,11 @@ export function createServer(config: HostConfig) {
       workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
     }
   );
+  const affairsLightweightSessionController = new AffairsLightweightSessionController(
+    affairsLightweightSessionService
+  );
   const affairsTagService = new AffairsTagService(
     workspaceService,
-    repositories.workspaceNavigationStateRepository,
     affairsLibraryService,
     taskManager
   );
@@ -1729,7 +1736,13 @@ export function createServer(config: HostConfig) {
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
   void registerOpsRuntimeRoutes(app, opsRuntimeController);
   void registerAffairsRoutes(app, affairsLibraryController);
-  void registerWorkspaceRoutes(app, workspaceController, affairsLibraryController, affairsTagController);
+  void registerWorkspaceRoutes(
+    app,
+    workspaceController,
+    affairsLibraryController,
+    affairsLightweightSessionController,
+    affairsTagController
+  );
   void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);

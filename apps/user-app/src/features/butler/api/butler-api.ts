@@ -610,6 +610,20 @@ export interface ButlerSearchResultDto {
   items: ButlerSearchHitDto[];
 }
 
+export interface ResumeButlerProjectSessionActionResultDto {
+  result: {
+    event: ButlerControlEventDto;
+    resumed: ResumeButlerSessionResultDto;
+  };
+}
+
+export interface ResumeButlerSessionResultDto {
+  session: ButlerManagedSessionDto;
+  resumedAt: string;
+  provider: ButlerProviderId;
+  providerSessionId: string;
+}
+
 export interface ButlerControlRelatedRefDto {
   kind: "project" | "butler-session" | "session" | "patrol-run" | "verification-run" | "workspace";
   id: string;
@@ -1034,6 +1048,21 @@ export function listButlerControlEvents() {
 
 export function getButlerOverview() {
   return httpClient.request<{ overview: ButlerOverviewDto }>("/api/butler/overview");
+}
+
+export function listButlerProjectSessions(projectId: string) {
+  return httpClient.request<{ items: ButlerManagedSessionDto[] }>(
+    `/api/butler/projects/${encodeURIComponent(projectId)}/sessions`
+  );
+}
+
+export function resumeButlerProjectSession(projectId: string, butlerSessionId: string) {
+  return httpClient.request<{ resumed: ResumeButlerSessionResultDto }>(
+    `/api/butler/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(butlerSessionId)}/resume`,
+    {
+      method: "POST"
+    }
+  );
 }
 
 export function listButlerProjects(payload: {

@@ -1,0 +1,290 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AffairsLightweightSessionService } from "../../src/modules/workspace/affairs-lightweight-session-service.js";
+
+describe("AffairsLightweightSessionService", () => {
+  const originalHome = process.env.HOME;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalLightweightOpenAiKey = process.env.CODINGNS_LIGHTWEIGHT_OPENAI_API_KEY;
+  const originalOpenAiModel = process.env.OPENAI_MODEL;
+  const originalLightweightOpenAiModel = process.env.CODINGNS_LIGHTWEIGHT_OPENAI_MODEL;
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CODINGNS_LIGHTWEIGHT_OPENAI_API_KEY;
+    delete process.env.OPENAI_MODEL;
+    delete process.env.CODINGNS_LIGHTWEIGHT_OPENAI_MODEL;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    restoreEnv("OPENAI_API_KEY", originalOpenAiKey);
+    restoreEnv("CODINGNS_LIGHTWEIGHT_OPENAI_API_KEY", originalLightweightOpenAiKey);
+    restoreEnv("OPENAI_MODEL", originalOpenAiModel);
+    restoreEnv("CODINGNS_LIGHTWEIGHT_OPENAI_MODEL", originalLightweightOpenAiModel);
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("会优先复用现有 Codex CLI provider 配置，并在第三方代理下走轻量 runtime", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    global.fetch = vi.fn(async (input, init) => {
+      expect(String(input)).toBe("https://api.glor-ai.top:1443/responses");
+      const payload = JSON.parse(String(init?.body ?? "{}"));
+      expect(payload.tools).toEqual([
+        expect.objectContaining({
+          type: "web_search"
+        })
+      ]);
+      expect(payload.input?.[0]).toEqual(expect.objectContaining({
+        role: "system"
+      }));
+      return new Response(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: "hello"
+                }
+              ]
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const result = await service.startSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    });
+
+    expect(result.assistantMessage.content).toBe("hello");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("优先使用独立 lightweight-runtime.json 里的 OpenAI 官方 key", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    await fs.writeFile(
+      path.join(hostDataRootDir, "lightweight-runtime.json"),
+      JSON.stringify({
+        openai: {
+          apiKey: "official-key",
+          model: "gpt-5.4"
+        }
+      }),
+      "utf8"
+    );
+
+    global.fetch = vi.fn(async (input) => {
+      expect(String(input)).toBe("https://api.openai.com/v1/responses");
+      return new Response(
+        JSON.stringify({
+          output_text: "hello"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const result = await service.startSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    });
+
+    expect(result.assistantMessage.content).toBe("hello");
+    expect(result.session.runningState).toBe("completed");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("responses 没返回正文时，会自动 fallback 到 chat completions", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    global.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/responses")) {
+        return new Response(
+          JSON.stringify({
+            output: []
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        );
+      }
+      if (url.endsWith("/v1/chat/completions")) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "fallback hello"
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        );
+      }
+      throw new Error(`unexpected url: ${url}`);
+    }) as typeof fetch;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const result = await service.startSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    });
+
+    expect(result.assistantMessage.content).toBe("fallback hello");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("轻量 Codex 流式发送时会持续产出 delta 并在结束后写回完整结果", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    global.fetch = vi.fn(async () => new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            [
+              "event: response.output_text.delta",
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\"he\"}",
+              "",
+              "event: response.output_text.delta",
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\"llo\"}",
+              "",
+              "data: [DONE]",
+              ""
+            ].join("\n")
+          ));
+          controller.close();
+        }
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream"
+        }
+      }
+    )) as typeof fetch;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const events: string[] = [];
+    await service.startSessionStream({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "对话测试"
+    }, (event) => {
+      events.push(event.type === "delta" ? event.delta : event.type);
+    });
+
+    expect(events).toEqual(["started", "he", "llo", "completed"]);
+  });
+});
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}

@@ -1122,6 +1122,28 @@ export interface AffairsLightweightSessionTurnResponseDto {
   messages: HistoryMessageDto[];
 }
 
+export type AffairsLightweightSessionStreamEventDto =
+  | {
+      type: "started";
+      session: SessionSummaryDto;
+      acceptedAt: string;
+      clientRequestId: string;
+      userMessage: HistoryMessageDto;
+    }
+  | {
+      type: "delta";
+      delta: string;
+    }
+  | {
+      type: "completed";
+      result: AffairsLightweightSessionTurnResponseDto;
+    }
+  | {
+      type: "error";
+      errorCode: string;
+      detail: string;
+    };
+
 export interface StartSessionPayload {
   workspaceId: string;
   provider: ProviderId;
@@ -2227,6 +2249,21 @@ export function startAffairsLightweightSession(
   );
 }
 
+export async function startAffairsLightweightSessionStream(
+  workspaceId: string,
+  payload: StartAffairsLightweightSessionPayload,
+  onEvent: (event: AffairsLightweightSessionStreamEventDto) => void | Promise<void>
+) {
+  const response = await httpClient.requestRaw(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/stream`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+  return consumeAffairsLightweightSessionStream(response, onEvent);
+}
+
 export function sendAffairsLightweightSessionMessage(
   workspaceId: string,
   sessionId: string,
@@ -2239,6 +2276,22 @@ export function sendAffairsLightweightSessionMessage(
       body: JSON.stringify(payload)
     }
   );
+}
+
+export async function sendAffairsLightweightSessionMessageStream(
+  workspaceId: string,
+  sessionId: string,
+  payload: SendAffairsLightweightSessionMessagePayload,
+  onEvent: (event: AffairsLightweightSessionStreamEventDto) => void | Promise<void>
+) {
+  const response = await httpClient.requestRaw(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages/stream`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+  return consumeAffairsLightweightSessionStream(response, onEvent);
 }
 
 export function sendLiveMessage(
@@ -2318,4 +2371,79 @@ export function replySessionPermissionRequest(
       body: JSON.stringify(payload)
     }
   );
+}
+
+async function consumeAffairsLightweightSessionStream(
+  response: Response,
+  onEvent: (event: AffairsLightweightSessionStreamEventDto) => void | Promise<void>
+): Promise<AffairsLightweightSessionTurnResponseDto> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError(0, {
+      detail: "轻量会话流式响应为空",
+      error_code: "INVALID_RESPONSE"
+    });
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: AffairsLightweightSessionTurnResponseDto | null = null;
+
+  const consumeLine = async (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+    let parsed: AffairsLightweightSessionStreamEventDto;
+    try {
+      parsed = JSON.parse(trimmed) as AffairsLightweightSessionStreamEventDto;
+    } catch (error) {
+      const detail = error instanceof Error ? `：${error.message}` : "";
+      throw new ApiError(0, {
+        detail: `轻量会话流式响应不是合法 JSON${detail}`,
+        error_code: "INVALID_RESPONSE"
+      });
+    }
+
+    if (parsed.type === "error") {
+      throw new ApiError(502, {
+        detail: parsed.detail,
+        error_code: parsed.errorCode
+      });
+    }
+
+    if (parsed.type === "completed") {
+      completed = parsed.result;
+    }
+
+    await onEvent(parsed);
+  };
+
+  while (true) {
+    const next = await reader.read();
+    buffer += decoder.decode(next.value ?? new Uint8Array(), { stream: !next.done });
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      await consumeLine(line);
+      newlineIndex = buffer.indexOf("\n");
+    }
+    if (next.done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    await consumeLine(buffer);
+  }
+
+  if (!completed) {
+    throw new ApiError(0, {
+      detail: "轻量会话流式响应提前结束，缺少 completed 事件",
+      error_code: "INVALID_RESPONSE"
+    });
+  }
+
+  return completed;
 }

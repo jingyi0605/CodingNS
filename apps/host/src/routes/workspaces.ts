@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import type { AffairsLibraryController } from "../modules/workspace/affairs-library-controller.js";
+import type { AffairsLightweightSessionController } from "../modules/workspace/affairs-lightweight-session-controller.js";
 import type { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
 import type { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 
@@ -8,6 +9,7 @@ export async function registerWorkspaceRoutes(
   app: FastifyInstance,
   workspaceController: WorkspaceController,
   affairsLibraryController: AffairsLibraryController,
+  affairsLightweightSessionController?: AffairsLightweightSessionController,
   affairsTagController?: AffairsTagController,
 ): Promise<void> {
   app.get("/api/workspaces", workspaceController.list);
@@ -29,6 +31,15 @@ export async function registerWorkspaceRoutes(
   app.post("/api/workspaces/:workspaceId/affairs/library-ops", affairsLibraryController.operateFile);
   app.post("/api/workspaces/:workspaceId/affairs/library-refresh", affairsLibraryController.requestRefresh);
   app.put("/api/workspaces/:workspaceId/affairs/library-favorites", affairsLibraryController.updateFavorites);
+  if (affairsLightweightSessionController) {
+    app.get("/api/workspaces/:workspaceId/affairs/lightweight-sessions", affairsLightweightSessionController.listSessions);
+    app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions", affairsLightweightSessionController.startSession);
+    app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/stream", affairsLightweightSessionController.startSessionStream);
+    app.get("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId", affairsLightweightSessionController.getSession);
+    app.get("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages", affairsLightweightSessionController.readMessages);
+    app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages", affairsLightweightSessionController.sendMessage);
+    app.post("/api/workspaces/:workspaceId/affairs/lightweight-sessions/:sessionId/messages/stream", affairsLightweightSessionController.sendMessageStream);
+  }
   if (affairsTagController) {
     app.get("/api/workspaces/:workspaceId/affairs/tags", affairsTagController.listTags);
     app.post("/api/workspaces/:workspaceId/affairs/tags", affairsTagController.createTag);

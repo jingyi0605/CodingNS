@@ -18,7 +18,6 @@ import { createPortal } from "react-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
-import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -27,15 +26,20 @@ import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
+  ButlerManagedSessionDto,
   ButlerProfilePayload,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto
 } from "../../butler/api/butler-api";
 import {
+  getButlerSessionTarget,
   listAssistantAutomations,
   listButlerFollowUpTasks,
   listButlerInboxItems,
-  listRecentAssistantAutomationRuns
+  listButlerProjectSessions,
+  listButlerProjects,
+  listRecentAssistantAutomationRuns,
+  resumeButlerProjectSession
 } from "../../butler/api/butler-api";
 import { ButlerAnchoredPopover } from "../../butler/components/ButlerAnchoredPopover";
 import {
@@ -71,6 +75,8 @@ import {
   createAffairsTag,
   createWorkspaceDirectory,
   deleteAffairsTag,
+  getAffairsLightweightSession,
+  getAffairsLightweightSessionMessages,
   getAffairsDocumentTagDetails,
   getAffairsDocumentTagTask,
   getAffairsTagRecoveryStatus,
@@ -78,8 +84,8 @@ import {
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
   getGlobalAffairsLibraryBinding,
-  getProviderCapabilities,
   listAffairsTags,
+  listAffairsLightweightSessions,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
   getAffairsLibrarySnapshot,
@@ -94,8 +100,11 @@ import {
   saveAffairsFolderTagsWithCreate,
   saveGlobalAffairsLibraryBinding,
   saveAffairsLibraryConfig,
+  sendAffairsLightweightSessionMessage,
+  sendAffairsLightweightSessionMessageStream,
   setGlobalAffairsLibraryEnabled,
-  startLiveSession,
+  startAffairsLightweightSession,
+  startAffairsLightweightSessionStream,
   updateAffairsTag,
   updateGlobalAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
@@ -108,7 +117,6 @@ import { SessionHeader } from "../../conversation/components/SessionHeader";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
 import {
-  createDraftCapabilities,
   getDraftTitle,
   getProviderDisplayName,
   isDraftProviderSupported
@@ -120,7 +128,6 @@ import {
   markPendingAsFailed,
   type SessionMessageViewModel
 } from "../../conversation/runtime/session-runtime-machine";
-import { useLiveSessionController } from "../../conversation/runtime/use-live-session-controller";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   showDesktopContextMenu,
@@ -254,7 +261,7 @@ type AffairsSidebarNode = {
   label: string;
   summary?: string;
   count?: number;
-  tone?: "default" | "favorite" | "tag" | "source" | "automation";
+  tone?: "default" | "favorite" | "tag" | "source" | "automation" | "conversation";
 };
 
 type DocumentRecord = {
@@ -559,10 +566,17 @@ interface AffairsWorkbenchContextValue {
   conversationCreateModalOpen: boolean;
   openConversationCreateModal: () => void;
   closeConversationCreateModal: () => void;
+  butlerStore: ButlerRuntimeStore;
   selectedConversationDraft: AffairsConversationDraftSelection | null;
   selectConversationDraft: (draft: AffairsConversationDraftSelection) => void;
   selectedConversationSession: AffairsConversationSessionSelection | null;
   conversationRuntimeSeed: AffairsConversationRuntimeSeed;
+  lightweightConversationSessions: SessionSummaryDto[];
+  lightweightConversationSessionsLoading: boolean;
+  reloadLightweightConversationSessions: () => Promise<void>;
+  agentConversationSessions: SessionSummaryDto[];
+  agentConversationSessionsLoading: boolean;
+  reloadAgentConversationSessions: () => Promise<void>;
   activateConversationSession: (input: {
     kind: AffairsConversationKind;
     session: SessionSummaryDto;
@@ -570,8 +584,8 @@ interface AffairsWorkbenchContextValue {
   }) => void;
 }
 
-const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["gemini", "kimi"];
-const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code", "opencode", "legna-code"];
+const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
+const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
 
@@ -608,6 +622,11 @@ export function AffairsWorkbenchProvider({
   const [selectedConversationDraft, setSelectedConversationDraft] = useState<AffairsConversationDraftSelection | null>(null);
   const [selectedConversationSession, setSelectedConversationSession] = useState<AffairsConversationSessionSelection | null>(null);
   const [conversationRuntimeSeed, setConversationRuntimeSeed] = useState<AffairsConversationRuntimeSeed>(null);
+  const [lightweightConversationSessions, setLightweightConversationSessions] = useState<SessionSummaryDto[]>([]);
+  const [lightweightConversationSessionsLoading, setLightweightConversationSessionsLoading] = useState(false);
+  const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>([]);
+  const [agentConversationSessionsLoading, setAgentConversationSessionsLoading] = useState(false);
+  const [lastObjectAssistantContext, setLastObjectAssistantContext] = useState<AffairsObjectContext | null>(null);
   const initialLibrarySnapshot = useMemo(
     () => readCachedLibrarySnapshot(workspaceId),
     [workspaceId]
@@ -655,6 +674,8 @@ export function AffairsWorkbenchProvider({
   );
   const butlerInitError = useButlerRuntimeStore(butlerStore, (value) => value.error);
   const butlerProfile = useButlerRuntimeStore(butlerStore, (value) => value.profile);
+  const butlerActiveProvider = useButlerRuntimeStore(butlerStore, (value) => value.activeProvider);
+  const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const { showToast } = useToast();
   const butlerHostUnavailable =
     butlerBootstrapErrorCode === "NETWORK_ERROR"
@@ -691,6 +712,10 @@ export function AffairsWorkbenchProvider({
   }, [butlerStore]);
 
   useEffect(() => {
+    setLastObjectAssistantContext(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
 
@@ -711,6 +736,66 @@ export function AffairsWorkbenchProvider({
       return null;
     });
   }, [selectedConversationSession]);
+
+  const reloadLightweightConversationSessions = useCallback(async () => {
+    setLightweightConversationSessionsLoading(true);
+    try {
+      const response = await listAffairsLightweightSessions(workspaceId);
+      setLightweightConversationSessions(response.items);
+    } catch (error) {
+      showToast({
+        tone: "error",
+        title: t("shell.affairsConversationLightweightLoadFailed"),
+        description: getErrorMessage(error, t("shell.affairsConversationLightweightLoadFailed"))
+      });
+    } finally {
+      setLightweightConversationSessionsLoading(false);
+    }
+  }, [showToast, workspaceId]);
+
+  useEffect(() => {
+    void reloadLightweightConversationSessions();
+  }, [reloadLightweightConversationSessions]);
+
+  const reloadAgentConversationSessions = useCallback(async () => {
+    setAgentConversationSessionsLoading(true);
+    try {
+      const projectResponse = await listButlerProjects({ workspaceId });
+      const project = projectResponse.items.find((item) => item.workspaceId === workspaceId) ?? null;
+      if (!project) {
+        setAgentConversationSessions([]);
+        return;
+      }
+
+      const sessionsResponse = await listButlerProjectSessions(project.id);
+      const items = await Promise.all(
+        sessionsResponse.items.map(async (item) => {
+          try {
+            const targetResponse = await getButlerSessionTarget(item.sessionId);
+            if (targetResponse.target.workspaceId !== workspaceId) {
+              return null;
+            }
+            return convertButlerManagedSessionToAffairsSessionSummary(item, targetResponse.target.workspaceId);
+          } catch {
+            return convertButlerManagedSessionToAffairsSessionSummary(item, workspaceId);
+          }
+        })
+      );
+      setAgentConversationSessions(items.filter((item): item is SessionSummaryDto => Boolean(item)));
+    } catch (error) {
+      showToast({
+        tone: "error",
+        title: t("shell.affairsConversationAgentLoadFailed"),
+        description: getErrorMessage(error, t("shell.affairsConversationAgentLoadFailed"))
+      });
+    } finally {
+      setAgentConversationSessionsLoading(false);
+    }
+  }, [showToast, workspaceId]);
+
+  useEffect(() => {
+    void reloadAgentConversationSessions();
+  }, [reloadAgentConversationSessions]);
 
   const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
     setRecentTagTasks((previous) => {
@@ -866,7 +951,7 @@ export function AffairsWorkbenchProvider({
     };
   }, [documentTagTaskMonitor?.documentId, documentTagTaskMonitor?.taskId, syncDocumentTaskRecord, workspaceId]);
 
-useEffect(() => {
+  useEffect(() => {
     if (!fullTagRecomputeTaskMonitor) {
       return;
     }
@@ -920,7 +1005,7 @@ useEffect(() => {
     };
   }, [fullTagRecomputeTaskMonitor?.taskId, workspaceId]);
 
-    useEffect(() => {
+  useEffect(() => {
     if (!folderTagTaskMonitor?.snapshot || !isTerminalAffairsTaskStatus(folderTagTaskMonitor.snapshot.status)) {
       return;
     }
@@ -1642,7 +1727,7 @@ useEffect(() => {
     onStateChange(nextState);
   }, [activeSection, automationRecords, binding, onStateChange, selectedObject.record, state]);
 
-  const assistantContext = useMemo<AffairsObjectContext | null>(() => {
+  const currentObjectAssistantContext = useMemo<AffairsObjectContext | null>(() => {
     if (selectedObject.section === "library") {
       const record = selectedObject.record;
       return record
@@ -1651,7 +1736,7 @@ useEffect(() => {
             objectId: record.id,
             title: record.displayName,
             summary: record.summary,
-            sourceRef: record.fullPath ?? record.filePath,
+            sourceRef: record.filePath,
             assistantScope: `workspace:${workspaceId}:document:${record.id}`
           }
         : null;
@@ -1688,13 +1773,50 @@ useEffect(() => {
       : null;
   }, [selectedObject, workspaceId]);
 
+  useEffect(() => {
+    if (!currentObjectAssistantContext) {
+      return;
+    }
+    setLastObjectAssistantContext((previous) => areAffairsObjectContextsEqual(previous, currentObjectAssistantContext) ? previous : currentObjectAssistantContext);
+  }, [currentObjectAssistantContext]);
+
+  const assistantContext = activeSection === "conversation"
+    ? (currentObjectAssistantContext ?? lastObjectAssistantContext)
+    : currentObjectAssistantContext;
+
   const sidebarNodes = useMemo<AffairsSidebarNode[]>(() => {
     if (activeSection === "library") {
       return [];
     }
 
     if (activeSection === "conversation") {
-      return [];
+      const lightweightNodes = lightweightConversationSessions.map<AffairsSidebarNode>((session) => ({
+        id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
+        label: session.title,
+        summary: [
+          resolveAffairsConversationKindLabel("lightweight"),
+          resolveAffairsConversationProviderLabel(session.provider),
+          session.lastMessageAt ? formatRelativeMeta(session.lastMessageAt) : null
+        ].filter(Boolean).join(" · "),
+        tone: "conversation"
+      }));
+      const currentAgentSession = butlerControlSession?.session?.workspaceId === workspaceId
+        ? butlerControlSession.session
+        : null;
+      const agentItems = currentAgentSession
+        ? [currentAgentSession, ...agentConversationSessions.filter((session) => session.sessionId !== currentAgentSession.sessionId)]
+        : agentConversationSessions;
+      const agentNodes = agentItems.map<AffairsSidebarNode>((session) => ({
+        id: buildAffairsConversationSessionNodeId("agent", session.sessionId),
+        label: session.title,
+        summary: [
+          resolveAffairsConversationKindLabel("agent"),
+          resolveAffairsConversationProviderLabel(session.provider),
+          session.lastMessageAt ? formatRelativeMeta(session.lastMessageAt) : null
+        ].filter(Boolean).join(" · "),
+        tone: "conversation"
+      }));
+      return [...lightweightNodes, ...agentNodes];
     }
 
     if (activeSection === "todo") {
@@ -1729,7 +1851,18 @@ useEffect(() => {
       summary: `${record.triggerLabel} · ${record.statusLabel}`,
       tone: "automation"
     }));
-  }, [activeSection, automationRecords, documentRecords.length, favoriteEntries, folderRecords, state.browseMode, tagRecords, todoRecords]);
+  }, [
+    activeSection,
+    automationRecords,
+    documentRecords.length,
+    favoriteEntries,
+    folderRecords,
+    lightweightConversationSessions,
+    state.browseMode,
+    tagRecords,
+    todoRecords,
+    workspaceSessions
+  ]);
 
   const contextValue = useMemo<AffairsWorkbenchContextValue>(() => ({
     workspaceId,
@@ -2136,6 +2269,7 @@ useEffect(() => {
     conversationCreateModalOpen,
     openConversationCreateModal: () => setConversationCreateModalOpen(true),
     closeConversationCreateModal: () => setConversationCreateModalOpen(false),
+    butlerStore,
     selectedConversationDraft,
     selectConversationDraft: (draft) => {
       setConversationRuntimeSeed(null);
@@ -2150,6 +2284,12 @@ useEffect(() => {
     },
     selectedConversationSession,
     conversationRuntimeSeed,
+    lightweightConversationSessions,
+    lightweightConversationSessionsLoading,
+    reloadLightweightConversationSessions,
+    agentConversationSessions,
+    agentConversationSessionsLoading,
+    reloadAgentConversationSessions,
     activateConversationSession: (input) => {
       setConversationRuntimeSeed({
         kind: input.kind,
@@ -2175,6 +2315,9 @@ useEffect(() => {
     automationRecords,
     automationRuns,
     binding,
+    butlerActiveProvider,
+    butlerControlSession,
+    butlerStore,
     libraryConfig,
     documentRecords,
     error,
@@ -2202,6 +2345,12 @@ useEffect(() => {
     selectedConversationDraft,
     selectedConversationSession,
     conversationRuntimeSeed,
+    lightweightConversationSessions,
+    lightweightConversationSessionsLoading,
+    reloadLightweightConversationSessions,
+    agentConversationSessions,
+    agentConversationSessionsLoading,
+    reloadAgentConversationSessions,
     selectedObject,
     sidebarNodes,
     selectedTagPaths,
@@ -2215,7 +2364,11 @@ useEffect(() => {
     recentTagTasks,
     fullTagRecomputeTaskMonitor,
     tagRecoveryStatus,
+    documentTagTaskMonitor,
     refreshLibraryNow,
+    reloadTagManagement,
+    syncDocumentTaskRecord,
+    syncFolderTaskRecord,
     viewerState,
     showToast,
     workspaceId,
@@ -2296,6 +2449,7 @@ export function AffairsSidebarPanel() {
     activeSection,
     binding,
     initGuard,
+    lightweightConversationSessionsLoading,
     openConversationCreateModal,
     openTagManagement,
     documentRecords,
@@ -2358,6 +2512,8 @@ export function AffairsSidebarPanel() {
   }
 
   if (activeSection === "conversation") {
+    const lightweightNodes = sidebarNodes.filter((node) => node.id.startsWith("conversation:lightweight:"));
+    const agentNodes = sidebarNodes.filter((node) => node.id.startsWith("conversation:agent:"));
     return (
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -2374,9 +2530,70 @@ export function AffairsSidebarPanel() {
             </header>
             <AffairsConversationDraftPreview compact />
           </section>
-          <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
-            {t("shell.affairsConversationCreateHint")}
-          </div>
+          <section className="affairs-sidebar-group">
+            <header className="affairs-sidebar-group-header">
+              <span>{t("shell.affairsConversationKindLightweight")}</span>
+              <span>{lightweightNodes.length}</span>
+            </header>
+            {lightweightConversationSessionsLoading ? (
+              <div className="affairs-sidebar-empty compact">{t("common.loading")}</div>
+            ) : lightweightNodes.length === 0 ? (
+              <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
+                {t("shell.affairsConversationCreateHint")}
+              </div>
+            ) : (
+              <div className="affairs-sidebar-list" role="list">
+                {lightweightNodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className={node.id === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
+                    data-tone={node.tone ?? "default"}
+                    role="listitem"
+                  >
+                    <button
+                      type="button"
+                      className="affairs-sidebar-item-button affairs-sidebar-item-button-content"
+                      onClick={() => selectSidebarNode(node.id)}
+                    >
+                      <span className="affairs-sidebar-item-label">{node.label}</span>
+                      {node.summary ? <span className="affairs-sidebar-item-summary">{node.summary}</span> : null}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="affairs-sidebar-group">
+            <header className="affairs-sidebar-group-header">
+              <span>{t("shell.affairsConversationKindAgent")}</span>
+              <span>{agentNodes.length}</span>
+            </header>
+            {agentNodes.length === 0 ? (
+              <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
+                {t("shell.affairsConversationAgentSessionHint")}
+              </div>
+            ) : (
+              <div className="affairs-sidebar-list" role="list">
+                {agentNodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className={node.id === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
+                    data-tone={node.tone ?? "default"}
+                    role="listitem"
+                  >
+                    <button
+                      type="button"
+                      className="affairs-sidebar-item-button affairs-sidebar-item-button-content"
+                      onClick={() => selectSidebarNode(node.id)}
+                    >
+                      <span className="affairs-sidebar-item-label">{node.label}</span>
+                      {node.summary ? <span className="affairs-sidebar-item-summary">{node.summary}</span> : null}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       </section>
     );
@@ -2793,7 +3010,7 @@ function AffairsConversationCreateProviderSection({
         <p>{description}</p>
       </div>
       <SessionProviderPicker
-        workspaceId={workspaceId}
+        workspaceId={kind === "agent" ? workspaceId : null}
         providers={providers}
         onSelect={(provider) => {
           selectConversationDraft({ kind, provider });
@@ -2905,53 +3122,36 @@ function AffairsLightweightConversationDraftState(input: {
   workspaceId: string;
   draft: AffairsConversationDraftSelection;
 }) {
-  const { activateConversationSession } = useAffairsWorkbenchInternal();
+  const {
+    activateConversationSession,
+    reloadLightweightConversationSessions
+  } = useAffairsWorkbenchInternal();
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
   const [sending, setSending] = useState(false);
-  const fallbackCapabilities = useMemo(
-    () => createDraftCapabilities(input.draft.provider),
+  const capabilities = useMemo(
+    () => createAffairsLightweightCapabilities(input.draft.provider),
     [input.draft.provider]
   );
-  const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
   const session = useMemo(
     () => createAffairsConversationDraftSessionSummary(input.workspaceId, input.draft),
     [input.draft, input.workspaceId]
   );
-
-  useEffect(() => {
-    setCapabilities(fallbackCapabilities);
-    let disposed = false;
-
-    void getProviderCapabilities(input.draft.provider, input.workspaceId)
-      .then((resolvedCapabilities) => {
-        if (!disposed) {
-          setCapabilities(resolvedCapabilities);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      disposed = true;
-    };
-  }, [fallbackCapabilities, input.draft.provider, input.workspaceId]);
 
   return (
     <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
       <div className="conversation-main affairs-conversation-main">
         <SessionHeader session={session} />
         <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
-          <div className="message-list affairs-conversation-message-list">
-            <MessageTimeline
-              sessionId={session.sessionId}
-              sessionSummary={session}
-              workspaceId={session.workspaceId}
-              workspacePath={null}
-              items={buildConversationTimelineSourceItems({ messages: draftMessages })}
-              historyState="ready"
-              provider={input.draft.provider}
-              onRetryMessage={() => {}}
-            />
-          </div>
+          <MessageTimeline
+            sessionId={session.sessionId}
+            sessionSummary={session}
+            workspaceId={session.workspaceId}
+            workspacePath={null}
+            items={buildConversationTimelineSourceItems({ messages: draftMessages })}
+            historyState="ready"
+            provider={input.draft.provider}
+            onRetryMessage={() => {}}
+          />
         </div>
         <ComposerPanel
           capabilities={capabilities}
@@ -2972,42 +3172,30 @@ function AffairsLightweightConversationDraftState(input: {
                 clientRequestId,
                 options?.attachmentMeta ?? [],
                 options?.attachments ?? []
-              )
+              ),
+              createLightweightStreamingAssistantPlaceholder(session.sessionId, clientRequestId)
             ]);
             setSending(true);
 
             try {
-              const created = await startLiveSession({
-                workspaceId: input.workspaceId,
+              const created = await startAffairsLightweightSessionStream(input.workspaceId, {
                 provider: input.draft.provider,
                 content,
                 clientRequestId,
-                sessionVisibility: "affairs_lightweight",
                 model: options?.model ?? null,
-                reasoningLevel: options?.reasoningLevel ?? null,
-                permissionMode: getDefaultSessionPermissionMode(),
-                attachments: options?.attachments ?? [],
-                providerConfigMode: options?.providerConfigMode ?? "global-default",
-                providerPresetId: options?.providerPresetId ?? null
+                reasoningLevel: options?.reasoningLevel ?? null
+              }, (event) => {
+                if (event.type === "delta") {
+                  setDraftMessages((current) => appendLightweightStreamingAssistantDelta(current, session.sessionId, clientRequestId, event.delta));
+                }
               });
 
-              const liveSession = createAffairsConversationStartedSessionSummary(
-                created,
-                input.workspaceId,
-                input.draft.provider
-              );
+              const liveSession = created.session;
+              await reloadLightweightConversationSessions();
               activateConversationSession({
                 kind: "lightweight",
                 session: liveSession,
-                bootstrapMessages: [
-                  createAffairsConversationBootstrapMessage({
-                    created,
-                    provider: input.draft.provider,
-                    content,
-                    clientRequestId,
-                    attachments: options?.attachmentMeta ?? []
-                  })
-                ]
+                bootstrapMessages: created.messages
               });
             } catch (error) {
               setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
@@ -3026,7 +3214,7 @@ function AffairsLightweightConversationLiveState(input: {
   sessionId: string;
   runtimeSeed: AffairsConversationRuntimeSeed;
 }) {
-  const runtime = useLiveSessionController({
+  const runtime = useAffairsLightweightSessionController({
     sessionId: input.sessionId,
     externalSession:
       input.runtimeSeed?.session.sessionId === input.sessionId
@@ -3049,52 +3237,488 @@ function AffairsLightweightConversationLiveState(input: {
           onReply={runtime.replyPermissionRequest}
         />
         <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
-          <div className="message-list affairs-conversation-message-list">
-            <MessageTimeline
-              sessionId={input.sessionId}
-              sessionSummary={session}
-              workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
-              workspacePath={null}
-              items={runtime.timelineItems}
-              historyState={runtime.historyState}
-              loadingOlderMessages={runtime.loadingOlderMessages}
-              hasOlderMessages={runtime.hasOlderMessages}
-              provider={session?.provider ?? input.runtimeSeed?.session.provider ?? null}
-              interruptedSource={runtime.runtimeInterruptSource}
-              onLoadOlderMessages={runtime.loadOlderMessages}
-              onRetryMessage={runtime.retryMessage}
-            />
-          </div>
+          <MessageTimeline
+            sessionId={input.sessionId}
+            sessionSummary={session}
+            workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
+            workspacePath={null}
+            items={runtime.timelineItems}
+            historyState={runtime.historyState}
+            loadingOlderMessages={runtime.loadingOlderMessages}
+            hasOlderMessages={runtime.hasOlderMessages}
+            provider={session?.provider ?? input.runtimeSeed?.session.provider ?? null}
+            interruptedSource={runtime.runtimeInterruptSource}
+            onLoadOlderMessages={runtime.loadOlderMessages}
+            onRetryMessage={runtime.retryMessage}
+          />
         </div>
         <ComposerPanel
           capabilities={runtime.capabilities}
           draftStorageId={input.sessionId}
           workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
-          initialProviderConfigMode={
-            session?.providerConfigMode
-            ?? input.runtimeSeed?.session.providerConfigMode
-            ?? "global-default"
-          }
-          initialProviderPresetId={
-            session?.providerPresetId
-            ?? input.runtimeSeed?.session.providerPresetId
-            ?? null
-          }
-          hasActiveRun={runtime.composerHasActiveRun}
-          canInterrupt={runtime.composerCanInterrupt}
-          contextUsage={runtime.contextUsage}
+          initialProviderConfigMode={"global-default"}
+          initialProviderPresetId={null}
+          hasActiveRun={false}
+          canInterrupt={false}
+          contextUsage={null}
           taskProvider={session?.provider ?? input.runtimeSeed?.session.provider ?? null}
           taskMessages={runtime.messages}
-          hasPendingQueuedMessages={runtime.hasPendingQueuedMessages}
           isSubmitting={runtime.sending}
-          isRunning={runtime.composerIsRunning}
-          onInterrupt={runtime.interrupt}
+          isRunning={false}
           onSend={runtime.send}
-          onQueueSend={runtime.queue}
         />
       </div>
     </main>
   );
+}
+
+function AffairsAgentConversationState(input: {
+  workspaceId: string;
+  draft?: AffairsConversationDraftSelection | null;
+  sessionId?: string | null;
+}) {
+  const {
+    activateConversationSession,
+    assistantContext,
+    butlerStore,
+    reloadAgentConversationSessions
+  } = useAffairsWorkbenchInternal();
+  const initialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
+  const loading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
+  const profile = useButlerRuntimeStore(butlerStore, (value) => value.profile);
+  const activeProvider = useButlerRuntimeStore(butlerStore, (value) => value.activeProvider);
+  const controlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
+  const capabilities = useButlerRuntimeStore(butlerStore, (value) => value.capabilities);
+  const messages = useButlerRuntimeStore(butlerStore, (value) => value.messages);
+  const historyState = useButlerRuntimeStore(butlerStore, (value) => value.historyState);
+  const loadingOlderMessages = useButlerRuntimeStore(butlerStore, (value) => value.loadingOlderMessages);
+  const hasOlderMessages = useButlerRuntimeStore(butlerStore, (value) => value.hasOlderMessages);
+  const runtimeHasActiveRun = useButlerRuntimeStore(butlerStore, (value) => value.runtimeHasActiveRun);
+  const runtimeCanInterrupt = useButlerRuntimeStore(butlerStore, (value) => value.runtimeCanInterrupt);
+  const contextUsage = useButlerRuntimeStore(butlerStore, (value) => value.contextUsage);
+  const permissionRequests = useButlerRuntimeStore(butlerStore, (value) => value.permissionRequests);
+  const sending = useButlerRuntimeStore(butlerStore, (value) => value.sending);
+  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
+  const requestedProvider = input.draft?.provider ?? null;
+  const scopedControlSession = controlSession?.session.workspaceId === input.workspaceId
+    ? controlSession
+    : null;
+  const effectiveProvider = scopedControlSession?.session.provider ?? requestedProvider ?? activeProvider;
+  const fallbackCapabilities = useMemo(
+    () => createAffairsAgentFallbackCapabilities(effectiveProvider ?? "codex"),
+    [effectiveProvider]
+  );
+  const draftSession = useMemo(
+    () => input.draft ? createAffairsConversationDraftSessionSummary(input.workspaceId, input.draft) : null,
+    [input.draft, input.workspaceId]
+  );
+  const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
+  const restoredHistorySessionIdRef = useRef<string | null>(null);
+  const session = scopedControlSession?.session
+    && (!input.sessionId || scopedControlSession.session.sessionId === input.sessionId)
+      ? scopedControlSession.session
+      : draftSession;
+
+  useEffect(() => {
+    if (!input.sessionId || input.draft) {
+      restoredHistorySessionIdRef.current = null;
+      return;
+    }
+    const requestedSessionId = input.sessionId;
+
+    if (scopedControlSession?.session.sessionId === requestedSessionId) {
+      restoredHistorySessionIdRef.current = requestedSessionId;
+      if (restoringSessionId === requestedSessionId) {
+        setRestoringSessionId(null);
+      }
+      return;
+    }
+
+    if (restoredHistorySessionIdRef.current === requestedSessionId) {
+      return;
+    }
+
+    let cancelled = false;
+    setRestoringSessionId(requestedSessionId);
+
+    void (async () => {
+      try {
+        const projectResponse = await listButlerProjects({ workspaceId: input.workspaceId });
+        const project = projectResponse.items.find((item) => item.workspaceId === input.workspaceId) ?? null;
+        if (!project) {
+          return;
+        }
+
+        const sessionsResponse = await listButlerProjectSessions(project.id);
+        const target = sessionsResponse.items.find((item) => item.sessionId === requestedSessionId) ?? null;
+        if (!target) {
+          return;
+        }
+
+        const resumed = await resumeButlerProjectSession(project.id, target.id);
+        if (cancelled) {
+          return;
+        }
+        restoredHistorySessionIdRef.current = requestedSessionId;
+        await butlerStore.initialize();
+        await reloadAgentConversationSessions();
+        activateConversationSession({
+          kind: "agent",
+          session: convertButlerManagedSessionToAffairsSessionSummary(resumed.resumed.session, input.workspaceId),
+          bootstrapMessages: []
+        });
+      } finally {
+        if (!cancelled) {
+          setRestoringSessionId(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    }, [
+      activateConversationSession,
+      butlerStore,
+      scopedControlSession?.session.sessionId,
+      input.draft,
+      input.sessionId,
+      input.workspaceId,
+      reloadAgentConversationSessions,
+      restoringSessionId
+    ]);
+
+  return (
+    <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
+      <div className="conversation-main affairs-conversation-main">
+        <SessionHeader session={session} />
+        <PermissionRequestList
+          requests={permissionRequests}
+          replyingRequestId={replyingPermissionRequestId}
+          onReply={async (requestId, payload) => {
+            setReplyingPermissionRequestId(requestId);
+            try {
+              await butlerStore.replyPermissionRequest(requestId, payload);
+            } finally {
+              setReplyingPermissionRequestId(null);
+            }
+          }}
+        />
+        <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
+          <MessageTimeline
+            sessionId={scopedControlSession?.session.sessionId ?? input.sessionId ?? draftSession?.sessionId}
+            sessionSummary={session}
+            workspaceId={session?.workspaceId ?? input.workspaceId}
+            workspacePath={profile?.workspacePath ?? null}
+            items={buildConversationTimelineSourceItems({ messages })}
+            historyState={historyState}
+            loadingOlderMessages={loadingOlderMessages}
+            hasOlderMessages={hasOlderMessages}
+            provider={effectiveProvider}
+            onLoadOlderMessages={() => {
+              void butlerStore.loadOlderMessages();
+            }}
+            onRetryMessage={(clientRequestId) => {
+              void butlerStore.retryMessage(clientRequestId);
+            }}
+          />
+        </div>
+        <ComposerPanel
+          capabilities={requestedProvider && activeProvider !== requestedProvider ? fallbackCapabilities : (capabilities ?? fallbackCapabilities)}
+          draftStorageId={input.sessionId ?? draftSession?.sessionId ?? `affairs-agent:${input.workspaceId}`}
+          workspaceId={input.workspaceId}
+          initialProviderConfigMode={"global-default"}
+          initialProviderPresetId={null}
+          hasActiveRun={Boolean(runtimeHasActiveRun) || sending}
+          canInterrupt={runtimeCanInterrupt ?? false}
+          contextUsage={contextUsage}
+          taskProvider={effectiveProvider}
+          taskMessages={messages}
+          isSubmitting={sending || loading || !initialized || restoringSessionId === input.sessionId}
+          isRunning={Boolean(runtimeHasActiveRun) || sending || restoringSessionId === input.sessionId}
+          onInterrupt={async () => {
+            await butlerStore.interrupt();
+          }}
+          onSend={async (content, options) => {
+            const targetProvider = isAffairsAssistantProvider(requestedProvider)
+              ? requestedProvider
+              : activeProvider;
+            const currentSessionId = butlerStore.getState().controlSession?.session.sessionId ?? null;
+            const shouldSwitchProvider = Boolean(targetProvider) && activeProvider !== targetProvider;
+            const shouldResetDraftSession = Boolean(input.draft) && Boolean(currentSessionId);
+
+            if (targetProvider && shouldSwitchProvider) {
+              await butlerStore.switchProvider(targetProvider);
+            } else if (shouldResetDraftSession) {
+              await butlerStore.startFreshSession();
+            }
+
+            await butlerStore.sendMessage(`${buildAffairsAssistantPrefix(assistantContext)}${content}`, {
+              model: options?.model ?? null,
+              reasoningLevel: options?.reasoningLevel ?? null,
+              permissionMode: null
+            });
+
+            await reloadAgentConversationSessions();
+            const nextSession = butlerStore.getState().controlSession?.session ?? null;
+            if (nextSession) {
+              activateConversationSession({
+                kind: "agent",
+                session: nextSession,
+                bootstrapMessages: []
+              });
+            }
+          }}
+        />
+      </div>
+    </main>
+  );
+}
+
+function useAffairsLightweightSessionController(input: {
+  sessionId: string;
+  externalSession: SessionSummaryDto | null;
+  bootstrapMessages: HistoryMessageDto[];
+}) {
+  const { workspaceId, reloadLightweightConversationSessions } = useAffairsWorkbenchInternal();
+  const [session, setSession] = useState<SessionSummaryDto | null>(input.externalSession);
+  const [messages, setMessages] = useState<SessionMessageViewModel[]>(
+    input.bootstrapMessages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId))
+  );
+  const [historyState, setHistoryState] = useState<"loading" | "ready">(
+    input.bootstrapMessages.length > 0 ? "ready" : "loading"
+  );
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (input.externalSession) {
+      setSession(input.externalSession);
+    }
+  }, [input.externalSession]);
+
+  useEffect(() => {
+    if (input.bootstrapMessages.length > 0) {
+      setMessages(input.bootstrapMessages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
+      setHistoryState("ready");
+    }
+  }, [input.bootstrapMessages]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void Promise.all([
+      getAffairsLightweightSession(workspaceId, input.sessionId),
+      getAffairsLightweightSessionMessages(workspaceId, input.sessionId)
+    ]).then(([nextSession, nextMessages]) => {
+      if (cancelled) {
+        return;
+      }
+      setSession(nextSession);
+      setMessages(nextMessages.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
+      setHistoryState("ready");
+    }).catch(() => {
+      if (!cancelled) {
+        setHistoryState("ready");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [input.sessionId, workspaceId]);
+
+  return {
+    session,
+    messages,
+    timelineItems: buildConversationTimelineSourceItems({ messages }),
+    historyState,
+    sending,
+    capabilities: createAffairsLightweightCapabilities(
+      session?.provider ?? input.externalSession?.provider ?? "codex"
+    ),
+    send: async (
+      content: string,
+      options?: {
+        clientRequestId?: string;
+        model?: string;
+        reasoningLevel?: string;
+        attachmentMeta?: HistoryMessageDto["attachments"];
+      }
+    ) => {
+      const clientRequestId = options?.clientRequestId ?? createAffairsConversationClientRequestId();
+      setMessages((current) => [
+        ...current,
+        createPendingMessage(
+          input.sessionId,
+          content,
+          clientRequestId,
+          options?.attachmentMeta ?? [],
+          []
+        ),
+        createLightweightStreamingAssistantPlaceholder(input.sessionId, clientRequestId)
+      ]);
+      setSending(true);
+      try {
+        const response = await sendAffairsLightweightSessionMessageStream(workspaceId, input.sessionId, {
+          content,
+          clientRequestId,
+          model: options?.model ?? null,
+          reasoningLevel: options?.reasoningLevel ?? null
+        }, (event) => {
+          if (event.type === "started") {
+            setSession(event.session);
+            return;
+          }
+          if (event.type === "delta") {
+            setMessages((current) => appendLightweightStreamingAssistantDelta(current, input.sessionId, clientRequestId, event.delta));
+          }
+        });
+        setSession(response.session);
+        setMessages(response.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
+        await reloadLightweightConversationSessions();
+      } catch (error) {
+        setMessages((current) => markPendingAsFailed(current, clientRequestId));
+        throw error;
+      } finally {
+        setSending(false);
+      }
+    },
+    retryMessage: () => {},
+    loadingOlderMessages: false,
+    hasOlderMessages: false,
+    permissionRequests: [],
+    replyingPermissionRequestId: null,
+    replyPermissionRequest: async () => undefined,
+    runtimeInterruptSource: null,
+    loadOlderMessages: async () => undefined
+  };
+}
+
+function isAffairsAssistantProvider(provider: ProviderId | null | undefined): provider is "codex" | "claude-code" {
+  return provider === "codex" || provider === "claude-code";
+}
+
+function createAffairsLightweightCapabilities(provider: ProviderId): ProviderCapabilitiesDto {
+  return {
+    provider,
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: "none",
+    supportsSubagents: false,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: false,
+    supportsTokenUsage: false,
+    supportsAttachments: false,
+    supportsPermissionPrompt: false,
+    supportsCheckpoint: false,
+    supportsSlashMenu: false,
+    supportsReasoningSelector: false,
+    supportsRunSteering: false,
+    supportsQueueWhileRunning: false,
+    limitations: [t("shell.affairsConversationLightweightCapabilityHint")]
+  };
+}
+
+function createAffairsAgentFallbackCapabilities(provider: ProviderId): ProviderCapabilitiesDto {
+  return {
+    provider,
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: provider === "claude-code" ? "streaming_guidance" : "none",
+    supportsSubagents: false,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: false,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    supportsSlashMenu: false,
+    supportsReasoningSelector: false,
+    supportsRunSteering: false,
+    supportsQueueWhileRunning: false,
+    limitations: []
+  };
+}
+
+function convertHistoryMessageToViewModel(
+  message: HistoryMessageDto,
+  sessionId: string
+): SessionMessageViewModel {
+  return {
+    id: message.messageId,
+    sessionId,
+    role: message.role,
+    kind: message.kind ?? "text",
+    content: message.content,
+    toolCall: message.toolCall ?? null,
+    attachments: message.attachments,
+    attachmentPayloads: null,
+    origin: message.origin ?? null,
+    originRef: message.originRef ?? null,
+    timestamp: message.timestamp,
+    sequence: message.sequence,
+    rawRef: message.rawRef,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
+function createLightweightStreamingAssistantPlaceholder(
+  sessionId: string,
+  clientRequestId: string
+): SessionMessageViewModel {
+  return {
+    id: `lightweight-streaming-assistant-${clientRequestId}`,
+    sessionId,
+    role: "assistant",
+    kind: "text",
+    content: "",
+    toolCall: null,
+    attachments: [],
+    attachmentPayloads: null,
+    origin: null,
+    originRef: null,
+    timestamp: new Date().toISOString(),
+    sequence: Number.MAX_SAFE_INTEGER,
+    rawRef: `pending://assistant/${clientRequestId}`,
+    deliveryState: "sending",
+    clientRequestId
+  };
+}
+
+function appendLightweightStreamingAssistantDelta(
+  current: SessionMessageViewModel[],
+  sessionId: string,
+  clientRequestId: string,
+  delta: string
+): SessionMessageViewModel[] {
+  if (!delta) {
+    return current;
+  }
+  const placeholderId = `lightweight-streaming-assistant-${clientRequestId}`;
+  let found = false;
+  const next = current.map((message) => {
+    if (message.id !== placeholderId) {
+      return message;
+    }
+    found = true;
+    return {
+      ...message,
+      content: `${message.content}${delta}`
+    };
+  });
+  if (found) {
+    return next;
+  }
+  return [
+    ...current,
+    {
+      ...createLightweightStreamingAssistantPlaceholder(sessionId, clientRequestId),
+      content: delta
+    }
+  ];
 }
 
 function AffairsHostUnavailableState({
@@ -3246,9 +3870,27 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
       );
     }
 
+    if (selectedConversationSession?.kind === "agent") {
+      return (
+        <AffairsAgentConversationState
+          workspaceId={workspaceId}
+          sessionId={selectedConversationSession.sessionId}
+        />
+      );
+    }
+
     if (selectedConversationDraft?.kind === "lightweight") {
       return (
         <AffairsLightweightConversationDraftState
+          workspaceId={workspaceId}
+          draft={selectedConversationDraft}
+        />
+      );
+    }
+
+    if (selectedConversationDraft?.kind === "agent") {
+      return (
+        <AffairsAgentConversationState
           workspaceId={workspaceId}
           draft={selectedConversationDraft}
         />
@@ -3401,7 +4043,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     saveFolderTagSelection,
     documentTagDetails,
     folderTagDetails,
-    folderTagTaskMonitor,
+    recentTagTasks,
     selectObject,
     navigateLibraryFolder,
     navigateLibraryTag,
@@ -3917,6 +4559,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       tone: "success"
     });
   }
+
   async function submitPendingLibraryDelete() {
     if (!pendingLibraryDeleteTarget) {
       return;
@@ -3935,7 +4578,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       setPendingLibraryDeleteSubmitting(false);
     }
   }
-
 
   function handleRequestCreate(target: LibraryContextMenuTarget, kind: PendingLibraryCreateKind) {
     setContextMenu(null);
@@ -5176,7 +5818,13 @@ function AffairsDocumentTagSelectionPanel({
       emptyText={t("shell.affairsDocumentTagsEmpty")}
       inputLabel={t("shell.affairsDocumentTagAddLabel")}
       suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-      onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(documentId, nextTagIds, createTagPaths)}
+      onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
+        documentId,
+        nextTagIds,
+        createTagPaths,
+        details.manualTagIds,
+        details.title,
+      )}
     />
   );
 }
@@ -6485,26 +7133,6 @@ function resolveSmartRuleTypeLabel(ruleType: AffairsTagRuleDto["ruleType"]): str
   }
 }
 
-function resolveBatchManagedTagRoots(tags: AffairsTagNodeDto[]): AffairsTagNodeDto[] {
-  const sorted = [...tags].sort((left, right) => left.path.length - right.path.length);
-  const roots: AffairsTagNodeDto[] = [];
-  sorted.forEach((tag) => {
-    const covered = roots.some((root) => tag.path === root.path || tag.path.startsWith(`${root.path}/`));
-    if (!covered) {
-      roots.push(tag);
-    }
-  });
-  return roots;
-}
-
-function isSelectableBatchParentTag(candidate: AffairsTagNodeDto, selectedTags: AffairsTagNodeDto[]): boolean {
-  return !selectedTags.some((tag) => (
-    tag.id === candidate.id
-    || candidate.path === tag.path
-    || candidate.path.startsWith(`${tag.path}/`)
-  ));
-}
-
 function AffairsTagManagementModal() {
   const {
     workspaceId,
@@ -6517,8 +7145,6 @@ function AffairsTagManagementModal() {
     deleteManagedTag,
     requestFullTagRecompute,
     fullTagRecomputeTaskMonitor,
-    tagRecoveryStatus,
-    reloadTagManagement,
   } = useAffairsWorkbenchInternal();
   const platform = usePlatform();
   const { showToast } = useToast();
@@ -6526,9 +7152,6 @@ function AffairsTagManagementModal() {
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<string>("");
   const [smartRules, setSmartRules] = useState<EditableSmartTagRule[]>([]);
-  const [selectedBatchTagIds, setSelectedBatchTagIds] = useState<string[]>([]);
-  const [batchParentId, setBatchParentId] = useState<string>("__unchanged__");
-  const [batchStatus, setBatchStatus] = useState<"unchanged" | "active" | "disabled">("unchanged");
   const [recomputeSubmitting, setRecomputeSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -6539,24 +7162,15 @@ function AffairsTagManagementModal() {
   const treeNodes = useMemo(() => buildManagedTagTree(visibleManagedTags), [visibleManagedTags]);
   const flattenedTags = useMemo(() => flattenManagedTagTree(treeNodes), [treeNodes]);
   const selectedEditableTag = selectedManagedTag && isAssignableManagedTag(selectedManagedTag) ? selectedManagedTag : null;
+  const selectedTreeTag = useMemo(
+    () => visibleManagedTags.find((tag) => tag.id === selectedEditableTag?.id) ?? null,
+    [selectedEditableTag?.id, visibleManagedTags],
+  );
   const currentEditTagId = editorMode === "edit" ? selectedEditableTag?.id ?? null : null;
   const parentOptions = useMemo(
     () => flattenedTags.filter(({ tag }) => isSelectableParentTag(tag, selectedEditableTag)),
     [flattenedTags, selectedEditableTag],
   );
-  const selectedBatchTags = useMemo(
-    () => visibleManagedTags.filter((tag) => selectedBatchTagIds.includes(tag.id)),
-    [selectedBatchTagIds, visibleManagedTags],
-  );
-  const batchParentOptions = useMemo(
-    () => flattenedTags.filter(({ tag }) => isSelectableBatchParentTag(tag, selectedBatchTags)),
-    [flattenedTags, selectedBatchTags],
-  );
-  const batchDeleteTargets = useMemo(
-    () => resolveBatchManagedTagRoots(selectedBatchTags),
-    [selectedBatchTags],
-  );
-  const hasBatchSelection = selectedBatchTags.length > 0;
   const fullRecomputeSnapshot = fullTagRecomputeTaskMonitor?.snapshot ?? null;
   const fullRecomputeStatusLabel = fullRecomputeSnapshot
     ? resolveAffairsTaskStatusLabel(fullRecomputeSnapshot.status)
@@ -6568,13 +7182,6 @@ function AffairsTagManagementModal() {
     ? t("shell.affairsFolderTagTaskProgressCount", { current: fullRecomputeProgress.current, total: fullRecomputeProgress.total })
     : t("shell.affairsTagRecoveryProgressIdle");
   const fullRecomputeTaskRunning = fullRecomputeSnapshot ? !isTerminalAffairsTaskStatus(fullRecomputeSnapshot.status) : false;
-  const recoveryBindingStats = tagRecoveryStatus?.bindingStats ?? {
-    identityBindingCount: 0,
-    legacyBindingCount: 0,
-    legacyFallbackBindingCount: 0,
-    legacyFallbackDocumentCount: 0,
-  };
-
   const resetEditor = (nextMode: TagManagementEditorMode, parentTag?: AffairsTagDetailWithRulesDto | AffairsTagNodeDto | null) => {
     setEditorMode(nextMode);
     setError(null);
@@ -6622,9 +7229,6 @@ function AffairsTagManagementModal() {
 
   useEffect(() => {
     if (!tagManagementOpen) {
-      setSelectedBatchTagIds([]);
-      setBatchParentId("__unchanged__");
-      setBatchStatus("unchanged");
       return;
     }
     if (selectedEditableTag) {
@@ -6639,11 +7243,13 @@ function AffairsTagManagementModal() {
     : editorMode === "create-child"
       ? t("shell.affairsTagEditorCreateChildTitle")
       : t("shell.affairsTagEditorCreateRootTitle");
-  const editorDescription = editorMode === "edit"
-    ? t("shell.affairsTagEditorEditDescription")
-    : editorMode === "create-child" && selectedEditableTag
-      ? t("shell.affairsTagEditorCreateChildDescription", { tag: selectedEditableTag.path })
-      : t("shell.affairsTagEditorCreateRootDescription");
+  const editorDescription = editorMode === "create-child" && selectedEditableTag
+    ? t("shell.affairsTagEditorCreateChildDescription", { tag: selectedEditableTag.path })
+    : null;
+  const currentTagDocumentCountValue = selectedTreeTag?.documentCount ?? selectedEditableTag?.documentCount ?? 0;
+  const currentTagDocumentCount = selectedEditableTag
+    ? t("shell.affairsTagTreeDocumentCount", { count: currentTagDocumentCountValue })
+    : null;
   const saveActionLabel = editorMode === "edit"
     ? t("shell.affairsTagUpdateSubmitAction")
     : t("shell.affairsTagCreateSubmitAction");
@@ -6653,86 +7259,6 @@ function AffairsTagManagementModal() {
     priority: index,
     matcher: normalizeSmartTagRuleMatcher(rule),
   }));
-
-  const toggleBatchSelection = (tagId: string) => {
-    setSelectedBatchTagIds((current) => current.includes(tagId)
-      ? current.filter((item) => item !== tagId)
-      : [...current, tagId]);
-  };
-
-  const applyBatchUpdate = async () => {
-    if (!hasBatchSelection) {
-      return;
-    }
-    if (batchParentId === "__unchanged__" && batchStatus === "unchanged") {
-      setError(t("shell.affairsTagBatchUpdateNoop"));
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      for (const tag of selectedBatchTags) {
-        const detail = await getAffairsTagDetail(workspaceId, tag.id);
-        await updateAffairsTag(workspaceId, tag.id, {
-          name: detail.name,
-          parentId: batchParentId === "__unchanged__" ? detail.parentId : (batchParentId || null),
-          status: batchStatus === "unchanged" ? detail.status : batchStatus,
-          smartRules: detail.smartRules,
-        });
-      }
-      await reloadTagManagement();
-      if (selectedManagedTag?.id && selectedBatchTagIds.includes(selectedManagedTag.id)) {
-        await selectManagedTag(selectedManagedTag.id);
-      }
-      showToast({
-        title: t("shell.affairsTagBatchUpdateSuccess"),
-        description: t("shell.affairsTagBatchUpdateSuccessDescription", { count: selectedBatchTags.length }),
-        tone: "success",
-      });
-      setBatchParentId("__unchanged__");
-      setBatchStatus("unchanged");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagBatchUpdateFailed"));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const applyBatchDelete = async () => {
-    if (!hasBatchSelection) {
-      return;
-    }
-    const confirmed = typeof window === "undefined"
-      ? true
-      : window.confirm(t("shell.affairsTagBatchDeleteConfirm", { count: batchDeleteTargets.length }));
-    if (!confirmed) {
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      for (const tag of batchDeleteTargets) {
-        await deleteAffairsTag(workspaceId, tag.id);
-      }
-      setSelectedBatchTagIds([]);
-      setBatchParentId("__unchanged__");
-      setBatchStatus("unchanged");
-      await reloadTagManagement();
-      if (selectedManagedTag && batchDeleteTargets.some((tag) => selectedManagedTag.path === tag.path || selectedManagedTag.path.startsWith(`${tag.path}/`))) {
-        await selectManagedTag(null);
-        beginCreateRoot();
-      }
-      showToast({
-        title: t("shell.affairsTagBatchDeleteSuccess"),
-        description: t("shell.affairsTagBatchDeleteSuccessDescription", { count: batchDeleteTargets.length }),
-        tone: "success",
-      });
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : t("shell.affairsTagBatchDeleteFailed"));
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const requestRecoveryRecompute = async () => {
     setRecomputeSubmitting(true);
@@ -6759,7 +7285,6 @@ function AffairsTagManagementModal() {
         <ModalSection
           className="affairs-tag-management-tree-panel"
           heading={t("shell.affairsTagTreeSectionTitle")}
-          description={t("shell.affairsTagTreeSectionDescription")}
         >
           <div className="affairs-tag-management-toolbar">
             <button
@@ -6778,27 +7303,6 @@ function AffairsTagManagementModal() {
             >
               {t("shell.affairsTagCreateChildAction")}
             </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={submitting || visibleManagedTags.length === 0}
-              onClick={() => setSelectedBatchTagIds(visibleManagedTags.map((tag) => tag.id))}
-            >
-              {t("shell.affairsTagBatchSelectAllAction")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={submitting || selectedBatchTagIds.length === 0}
-              onClick={() => setSelectedBatchTagIds([])}
-            >
-              {t("shell.affairsTagBatchClearSelectionAction")}
-            </button>
-          </div>
-          <div className="affairs-tag-management-selection-summary">
-            <span className="affairs-binding-hint">
-              {t("shell.affairsTagBatchSelectionSummary", { count: selectedBatchTagIds.length })}
-            </span>
           </div>
           {treeNodes.length === 0 ? (
             <ModalEmptyState
@@ -6811,13 +7315,11 @@ function AffairsTagManagementModal() {
               <AffairsTagManagementTreeNodes
                 nodes={treeNodes}
                 selectedTagId={currentEditTagId}
-                selectedBatchTagIds={selectedBatchTagIds}
                 onSelect={(tagId) => {
                   setEditorMode("edit");
                   setError(null);
                   void selectManagedTag(tagId);
                 }}
-                onToggleBatchSelect={toggleBatchSelection}
               />
             </div>
           )}
@@ -6826,145 +7328,36 @@ function AffairsTagManagementModal() {
         <div className="affairs-tag-management-editor-column">
           <ModalSection
             className="affairs-tag-management-editor"
-            heading={t("shell.affairsTagBatchSectionTitle")}
-            description={t("shell.affairsTagBatchSectionDescription")}
-          >
-            {!hasBatchSelection ? (
-              <ModalEmptyState
-                compact
-                title={t("shell.affairsTagBatchEmpty")}
-                description={t("shell.affairsTagBatchEmptyDescription")}
-              />
-            ) : (
-              <>
-                <div className="affairs-tag-management-batch-list">
-                  {selectedBatchTags.map((tag) => (
-                    <AffairsColorTag key={tag.id} label={tag.path} path={tag.path} />
-                  ))}
-                </div>
-                <ModalField label={t("shell.affairsTagBatchParentLabel")}>
-                  <select
-                    aria-label={t("shell.affairsTagBatchParentLabel")}
-                    value={batchParentId}
-                    onChange={(event) => setBatchParentId(event.target.value)}
-                    disabled={submitting}
-                  >
-                    <option value="__unchanged__">{t("shell.affairsTagBatchParentKeepOption")}</option>
-                    <option value="">{t("shell.affairsTagParentRootOption")}</option>
-                    {batchParentOptions.map(({ tag, depth }) => (
-                      <option key={tag.id} value={tag.id}>
-                        {`${"　".repeat(depth)}${tag.path}`}
-                      </option>
-                    ))}
-                  </select>
-                </ModalField>
-                <ModalField label={t("shell.affairsTagBatchStatusLabel")}>
-                  <select
-                    aria-label={t("shell.affairsTagBatchStatusLabel")}
-                    value={batchStatus}
-                    onChange={(event) => setBatchStatus(event.target.value as "unchanged" | "active" | "disabled")}
-                    disabled={submitting}
-                  >
-                    <option value="unchanged">{t("shell.affairsTagBatchStatusKeepOption")}</option>
-                    <option value="active">{t("shell.affairsTagBatchStatusActiveOption")}</option>
-                    <option value="disabled">{t("shell.affairsTagBatchStatusDisabledOption")}</option>
-                  </select>
-                </ModalField>
-                <div className="affairs-tag-management-batch-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={submitting}
-                    onClick={() => void applyBatchUpdate()}
-                  >
-                    {t("shell.affairsTagBatchUpdateAction")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button workbench-danger-button"
-                    disabled={submitting}
-                    onClick={() => void applyBatchDelete()}
-                  >
-                    {t("shell.affairsTagBatchDeleteAction")}
-                  </button>
-                </div>
-                <span className="affairs-binding-hint">{t("shell.affairsTagBatchHint")}</span>
-              </>
-            )}
-          </ModalSection>
-
-          <ModalSection
-            className="affairs-tag-management-editor"
-            heading={t("shell.affairsTagRecoverySectionTitle")}
-            description={t("shell.affairsTagRecoverySectionDescription")}
-          >
-            <div className="affairs-tag-recovery-binding-grid">
-              <div className="affairs-tag-recovery-binding-card">
-                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryIdentityBindingLabel")}</span>
-                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.identityBindingCount}</strong>
-              </div>
-              <div className="affairs-tag-recovery-binding-card">
-                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryLegacyBindingLabel")}</span>
-                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.legacyBindingCount}</strong>
-              </div>
-              <div className="affairs-tag-recovery-binding-card">
-                <span className="affairs-tag-recovery-binding-label">{t("shell.affairsTagRecoveryLegacyFallbackLabel")}</span>
-                <strong className="affairs-tag-recovery-binding-value">{recoveryBindingStats.legacyFallbackBindingCount}</strong>
-              </div>
-            </div>
-            <span className="affairs-binding-hint">
-              {t("shell.affairsTagRecoveryCompatibilityHint", {
-                count: recoveryBindingStats.legacyFallbackBindingCount,
-                documents: recoveryBindingStats.legacyFallbackDocumentCount,
-              })}
-            </span>
-            <div className="affairs-tag-recovery-status">
-              <div className="affairs-tag-recovery-status-grid">
-                <span className="affairs-tag-recovery-status-label">{t("shell.affairsTagRecoveryStatusLabel")}</span>
-                <span className="affairs-tag-recovery-status-value">{fullRecomputeStatusLabel}</span>
-                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
-                <span className="affairs-tag-recovery-status-value">
-                  {fullRecomputeProgress?.label ?? t("shell.affairsTagRecoveryPhaseIdle")}
-                </span>
-                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
-                <span className="affairs-tag-recovery-status-value">{fullRecomputeProgressCount}</span>
-              </div>
-              <div className="affairs-folder-tag-task-progress-track affairs-tag-recovery-progress-track" aria-hidden="true">
-                <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${fullRecomputePercent}%` }} />
-              </div>
-              <span className="affairs-binding-hint">
-                {fullRecomputeProgress?.detail?.trim()
-                  || (fullRecomputeTaskRunning
-                    ? t("shell.affairsTagRecoveryRunningHint")
-                    : t("shell.affairsTagRecoveryHint"))}
-              </span>
-            </div>
-            <div className="affairs-tag-management-batch-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={submitting || recomputeSubmitting || fullRecomputeTaskRunning}
-                onClick={() => void requestRecoveryRecompute()}
-              >
-                {recomputeSubmitting || fullRecomputeTaskRunning ? t("shell.affairsTagRecoveryRunningAction") : t("shell.affairsTagRecoveryAction")}
-              </button>
-            </div>
-            {fullRecomputeSnapshot?.errorMessage ? (
-              <span className="affairs-binding-error">{fullRecomputeSnapshot.errorMessage}</span>
-            ) : null}
-          </ModalSection>
-
-          <ModalSection
-            className="affairs-tag-management-editor"
             heading={editorTitle}
-            description={editorDescription}
+            description={editorDescription ?? undefined}
           >
+            {editorMode === "edit" && selectedEditableTag ? (
+              <div className="affairs-tag-management-editor-summary">
+                <div className="affairs-tag-management-editor-summary-item">
+                  <span className="affairs-tag-management-editor-summary-label">{t("shell.affairsTagEditorPathLabel")}</span>
+                  <strong className="affairs-tag-management-editor-summary-value">{selectedEditableTag.path}</strong>
+                </div>
+                <div className="affairs-tag-management-editor-summary-item">
+                  <span className="affairs-tag-management-editor-summary-label">{t("shell.affairsTagEditorDocumentCountLabel")}</span>
+                  <strong className="affairs-tag-management-editor-summary-value">{currentTagDocumentCount}</strong>
+                </div>
+              </div>
+            ) : null}
             <ModalField label={t("shell.affairsTagNameLabel")}>
-              <input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("shell.affairsTagNamePlaceholder")} />
+              <input
+                className="affairs-tag-name-input"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder={t("shell.affairsTagNamePlaceholder")}
+              />
             </ModalField>
             {showParentField ? (
               <ModalField label={t("shell.affairsTagParentLabel")}>
-                <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+                <select
+                  className="affairs-tag-parent-select"
+                  value={parentId}
+                  onChange={(event) => setParentId(event.target.value)}
+                >
                   <option value="">{t("shell.affairsTagParentRootOption")}</option>
                   {parentOptions.map(({ tag, depth }) => (
                     <option key={tag.id} value={tag.id}>
@@ -6979,21 +7372,50 @@ function AffairsTagManagementModal() {
           <ModalSection
             className="affairs-tag-management-editor"
             heading={t("shell.affairsTagSmartRulesSectionTitle")}
-            description={t("shell.affairsTagSmartRulesSectionDescription")}
           >
             {smartRules.length === 0 ? (
-              <ModalEmptyState
-                compact
-                title={t("shell.affairsTagSmartRulesEmpty")}
-                description={t("shell.affairsTagSmartRulesEmptyDescription")}
-              />
+              <div className="affairs-tag-management-empty-note">{t("shell.affairsTagSmartRulesEmpty")}</div>
             ) : (
               <div className="affairs-tag-smart-rule-list">
                 {smartRules.map((rule, index) => (
                   <div key={rule.id} className="affairs-tag-smart-rule-card">
-                    <div className="affairs-tag-smart-rule-row">
-                      <ModalField label={t("shell.affairsTagSmartRuleRelationLabel")}>
+                    <div className="affairs-tag-smart-rule-header">
+                      <strong className="affairs-tag-smart-rule-title">{t("shell.affairsTagSmartRuleOrderHint", { index: index + 1 })}</strong>
+                      <div className="affairs-tag-smart-rule-header-actions">
+                        <label className="affairs-tag-smart-rule-toggle" data-disabled={submitting ? "true" : undefined}>
+                          <span className="affairs-tag-smart-rule-toggle-switch">
+                            <input
+                              className="affairs-tag-smart-rule-toggle-input"
+                              type="checkbox"
+                              checked={rule.enabled !== false}
+                              disabled={submitting}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                setSmartRules((current) => current.map((item) => item.id === rule.id ? { ...item, enabled } : item));
+                              }}
+                            />
+                            <span className="affairs-tag-smart-rule-toggle-track" aria-hidden="true">
+                              <span className="affairs-tag-smart-rule-toggle-thumb" />
+                            </span>
+                          </span>
+                          <span className="affairs-tag-smart-rule-toggle-label">{t("shell.affairsTagSmartRuleEnabledLabel")}</span>
+                        </label>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={submitting}
+                          onClick={() => {
+                            setSmartRules((current) => current.filter((item) => item.id !== rule.id).map((item, currentIndex) => ({ ...item, priority: currentIndex })));
+                          }}
+                        >
+                          {t("shell.affairsTagSmartRuleRemoveAction")}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="affairs-tag-smart-rule-top-row">
+                      <ModalField label={t("shell.affairsTagSmartRuleRelationLabel")} className="affairs-tag-smart-rule-field">
                         <select
+                          className="affairs-tag-smart-rule-relation-select"
                           value={rule.relation}
                           disabled={submitting}
                           onChange={(event) => {
@@ -7006,8 +7428,9 @@ function AffairsTagManagementModal() {
                           ))}
                         </select>
                       </ModalField>
-                      <ModalField label={t("shell.affairsTagSmartRuleTypeLabel")}>
+                      <ModalField label={t("shell.affairsTagSmartRuleTypeLabel")} className="affairs-tag-smart-rule-field">
                         <select
+                          className="affairs-tag-smart-rule-type-select"
                           value={rule.ruleType}
                           disabled={submitting}
                           onChange={(event) => {
@@ -7023,9 +7446,9 @@ function AffairsTagManagementModal() {
                         </select>
                       </ModalField>
                     </div>
-                    <div className="affairs-tag-smart-rule-row">
+                    <div className="affairs-tag-smart-rule-value-row">
                       {rule.ruleType === "file_name_contains" || rule.ruleType === "file_content_contains" ? (
-                        <ModalField label={t("shell.affairsTagSmartRuleKeywordLabel")}>
+                        <ModalField label={t("shell.affairsTagSmartRuleKeywordLabel")} className="affairs-tag-smart-rule-field">
                           <input
                             value={String((rule.matcher as { keyword?: string }).keyword ?? "")}
                             disabled={submitting}
@@ -7040,7 +7463,7 @@ function AffairsTagManagementModal() {
                         </ModalField>
                       ) : null}
                       {rule.ruleType === "file_extension_in" ? (
-                        <ModalField label={t("shell.affairsTagSmartRuleExtensionsLabel")}>
+                        <ModalField label={t("shell.affairsTagSmartRuleExtensionsLabel")} className="affairs-tag-smart-rule-field">
                           <input
                             value={Array.isArray((rule.matcher as { extensions?: string[] }).extensions)
                               ? ((rule.matcher as { extensions?: string[] }).extensions ?? []).join(", ")
@@ -7061,7 +7484,7 @@ function AffairsTagManagementModal() {
                       ) : null}
                       {rule.ruleType === "modified_time_between" ? (
                         <>
-                          <ModalField label={t("shell.affairsTagSmartRuleModifiedStartLabel")}>
+                          <ModalField label={t("shell.affairsTagSmartRuleModifiedStartLabel")} className="affairs-tag-smart-rule-field">
                             <input
                               type="datetime-local"
                               value={String((rule.matcher as { start?: string }).start ?? "")}
@@ -7074,7 +7497,7 @@ function AffairsTagManagementModal() {
                               }}
                             />
                           </ModalField>
-                          <ModalField label={t("shell.affairsTagSmartRuleModifiedEndLabel")}>
+                          <ModalField label={t("shell.affairsTagSmartRuleModifiedEndLabel")} className="affairs-tag-smart-rule-field">
                             <input
                               type="datetime-local"
                               value={String((rule.matcher as { end?: string }).end ?? "")}
@@ -7090,7 +7513,7 @@ function AffairsTagManagementModal() {
                         </>
                       ) : null}
                       {rule.ruleType === "document_path_in_folder" ? (
-                        <ModalField label={t("shell.affairsTagSmartRuleFolderPathLabel")}>
+                        <ModalField label={t("shell.affairsTagSmartRuleFolderPathLabel")} className="affairs-tag-smart-rule-field">
                           <input
                             value={String((rule.matcher as { folderPath?: string | null }).folderPath ?? ".")}
                             disabled={submitting}
@@ -7105,31 +7528,6 @@ function AffairsTagManagementModal() {
                         </ModalField>
                       ) : null}
                     </div>
-                    <div className="affairs-tag-smart-rule-actions">
-                      <label className="affairs-tag-smart-rule-toggle">
-                        <input
-                          type="checkbox"
-                          checked={rule.enabled !== false}
-                          disabled={submitting}
-                          onChange={(event) => {
-                            const enabled = event.target.checked;
-                            setSmartRules((current) => current.map((item) => item.id === rule.id ? { ...item, enabled } : item));
-                          }}
-                        />
-                        <span>{t("shell.affairsTagSmartRuleEnabledLabel")}</span>
-                      </label>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={submitting}
-                        onClick={() => {
-                          setSmartRules((current) => current.filter((item) => item.id !== rule.id).map((item, currentIndex) => ({ ...item, priority: currentIndex })));
-                        }}
-                      >
-                        {t("shell.affairsTagSmartRuleRemoveAction")}
-                      </button>
-                    </div>
-                    <span className="affairs-binding-hint">{t("shell.affairsTagSmartRuleOrderHint", { index: index + 1 })}</span>
                   </div>
                 ))}
               </div>
@@ -7144,6 +7542,40 @@ function AffairsTagManagementModal() {
             >
               {t("shell.affairsTagSmartRuleAddAction")}
             </button>
+          </ModalSection>
+
+          <ModalSection
+            className="affairs-tag-management-editor"
+            heading={t("shell.affairsTagRecoverySectionTitle")}
+          >
+            <div className="affairs-tag-recovery-status">
+              <div className="affairs-tag-recovery-status-grid">
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsTagRecoveryStatusLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">{fullRecomputeStatusLabel}</span>
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskPhaseLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">
+                  {fullRecomputeProgress?.label ?? t("shell.affairsTagRecoveryPhaseIdle")}
+                </span>
+                <span className="affairs-tag-recovery-status-label">{t("shell.affairsFolderTagTaskProgressLabel")}</span>
+                <span className="affairs-tag-recovery-status-value">{fullRecomputeProgressCount}</span>
+              </div>
+              <div className="affairs-folder-tag-task-progress-track affairs-tag-recovery-progress-track" aria-hidden="true">
+                <span className="affairs-folder-tag-task-progress-fill" style={{ width: `${fullRecomputePercent}%` }} />
+              </div>
+            </div>
+            <div className="affairs-tag-management-batch-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={submitting || recomputeSubmitting || fullRecomputeTaskRunning}
+                onClick={() => void requestRecoveryRecompute()}
+              >
+                {recomputeSubmitting || fullRecomputeTaskRunning ? t("shell.affairsTagRecoveryRunningAction") : t("shell.affairsTagRecoveryAction")}
+              </button>
+            </div>
+            {fullRecomputeSnapshot?.errorMessage ? (
+              <span className="affairs-binding-error">{fullRecomputeSnapshot.errorMessage}</span>
+            ) : null}
           </ModalSection>
 
           {editorMode === "edit" && selectedEditableTag ? (
@@ -7248,7 +7680,6 @@ function AffairsTagManagementModal() {
       <MobileSheet
         open={tagManagementOpen}
         title={t("shell.affairsTagManagerTitle")}
-        description={t("shell.affairsTagManagerDescription")}
         height="three-quarter"
         kind="form"
         onClose={closeTagManagement}
@@ -7262,7 +7693,6 @@ function AffairsTagManagementModal() {
     <DesktopModal
       open={tagManagementOpen}
       title={t("shell.affairsTagManagerTitle")}
-      description={t("shell.affairsTagManagerDescription")}
       size="wide"
       layout="form"
       className="affairs-library-settings-modal"
@@ -7276,50 +7706,42 @@ function AffairsTagManagementModal() {
 function AffairsTagManagementTreeNodes({
   nodes,
   selectedTagId,
-  selectedBatchTagIds,
+  depth = 0,
   onSelect,
-  onToggleBatchSelect,
 }: {
   nodes: ManagedTagTreeNode[];
   selectedTagId: string | null;
-  selectedBatchTagIds: string[];
+  depth?: number;
   onSelect: (tagId: string) => void;
-  onToggleBatchSelect: (tagId: string) => void;
 }) {
   return (
     <ul className="affairs-tag-management-tree-list">
       {nodes.map((node) => (
-        <li key={node.tag.id} className="affairs-tag-management-tree-node" role="treeitem" aria-selected={selectedTagId === node.tag.id}>
-          <div className={selectedTagId === node.tag.id ? "affairs-tag-management-tree-button active" : "affairs-tag-management-tree-button"}>
-            <label className="affairs-tag-management-tree-check">
-              <input
-                type="checkbox"
-                aria-label={t("shell.affairsTagBatchCheckboxLabel", { tag: node.tag.path })}
-                checked={selectedBatchTagIds.includes(node.tag.id)}
-                onChange={() => onToggleBatchSelect(node.tag.id)}
-              />
-            </label>
-            <button
-              type="button"
-              className="affairs-tag-management-tree-button-main"
-              onClick={() => onSelect(node.tag.id)}
-            >
+        <li
+          key={node.tag.id}
+          className="affairs-tag-management-tree-node"
+          role="treeitem"
+          aria-selected={selectedTagId === node.tag.id}
+          data-depth={depth}
+        >
+          <button
+            type="button"
+            className={selectedTagId === node.tag.id ? "affairs-tag-management-tree-button active" : "affairs-tag-management-tree-button"}
+            aria-label={node.tag.path}
+            onClick={() => onSelect(node.tag.id)}
+          >
+            <span className="affairs-tag-management-tree-button-main">
               <span className="affairs-tag-management-tree-main">
                 <span className="affairs-tag-management-tree-name">{node.tag.name}</span>
-                <span className="affairs-tag-management-tree-path">{node.tag.path}</span>
               </span>
-              <span className="affairs-tag-management-tree-meta">
-                {node.tag.documentCount > 0 ? <span className="affairs-binding-hint">{t("shell.affairsTagTreeDocumentCount", { count: node.tag.documentCount })}</span> : null}
-              </span>
-            </button>
-          </div>
+            </span>
+          </button>
           {node.children.length > 0 ? (
             <AffairsTagManagementTreeNodes
               nodes={node.children}
               selectedTagId={selectedTagId}
-              selectedBatchTagIds={selectedBatchTagIds}
+              depth={depth + 1}
               onSelect={onSelect}
-              onToggleBatchSelect={onToggleBatchSelect}
             />
           ) : null}
         </li>
@@ -8079,6 +8501,8 @@ function AffairsLibraryFileViewerSurface({
       saveDisabledReason={t("shell.affairsLibraryViewerEditDisabled")}
     />
   );
+}
+
 function AffairsLibraryDeleteConfirmModal({
   mobile,
   target,
@@ -8153,8 +8577,6 @@ function AffairsLibraryDeleteConfirmModal({
   );
 }
 
-}
-
 function UniversalAssistantBridge({
   workspaceId,
   context
@@ -8162,7 +8584,7 @@ function UniversalAssistantBridge({
   workspaceId: string;
   context: AffairsObjectContext | null;
 }) {
-  const [store] = useState(() => new ButlerRuntimeStore(workspaceId));
+  const { butlerStore: store } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(store, (value) => value.initialized);
   const loading = useButlerRuntimeStore(store, (value) => value.loading);
   const profile = useButlerRuntimeStore(store, (value) => value.profile);
@@ -8179,10 +8601,6 @@ function UniversalAssistantBridge({
   const permissionRequests = useButlerRuntimeStore(store, (value) => value.permissionRequests);
   const sending = useButlerRuntimeStore(store, (value) => value.sending);
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void store.initialize();
-  }, [store]);
 
   const placeholder = context
     ? t("shell.affairsAssistantPlaceholder", { title: context.title ?? t("common.unknown") })
@@ -9176,6 +9594,26 @@ function areLibraryConfigsEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function areAffairsObjectContextsEqual(
+  left: AffairsObjectContext | null,
+  right: AffairsObjectContext | null
+) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.objectType === right.objectType
+    && left.objectId === right.objectId
+    && left.title === right.title
+    && left.summary === right.summary
+    && left.sourceRef === right.sourceRef
+    && left.assistantScope === right.assistantScope
+  );
+}
+
 function sortIncludedHiddenPaths(input: readonly string[]): string[] {
   return [...new Set(
     input
@@ -9671,6 +10109,60 @@ function buildAffairsAssistantPrefix(context: AffairsObjectContext | null) {
   })}\n\n`;
 }
 
+function convertButlerManagedSessionToAffairsSessionSummary(
+  session: ButlerManagedSessionDto,
+  workspaceId: string
+): SessionSummaryDto {
+  return {
+    sessionId: session.sessionId,
+    workspaceId,
+    provider: (session.provider ?? "codex") as ProviderId,
+    providerSessionId: session.sessionId,
+    rawStoreRef: `butler://${session.id}`,
+    providerConfigMode: "global-default",
+    providerPresetId: null,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: session.isArchived,
+    isFavorite: false,
+    title: session.title?.trim() || session.sessionId,
+    messageCount: 0,
+    lastMessageAt: session.updatedAt,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: session.updatedAt,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: normalizeAffairsRunningState(session.runningState),
+    activitySource: "inferred",
+    lastEventAt: session.updatedAt,
+    completedAt: session.status === "closed" ? session.updatedAt : null,
+    lastSeenAt: null,
+    activityState: session.status === "running" ? "running" : "completed_unread"
+  };
+}
+
+function normalizeAffairsRunningState(runningState: string | null | undefined): SessionSummaryDto["runningState"] {
+  switch (runningState) {
+    case "idle":
+    case "starting":
+    case "running":
+    case "reconnecting":
+    case "stale":
+    case "unknown":
+    case "completed":
+    case "interrupted":
+    case "failed":
+      return runningState;
+    default:
+      return "idle";
+  }
+}
+
 function resolveAffairsSectionTitle(section: AffairsPrimarySection) {
   switch (section) {
     case "conversation":
@@ -9987,96 +10479,6 @@ function createAffairsConversationDraftSessionSummary(
   };
 }
 
-function createAffairsConversationStartedSessionSummary(
-  created: {
-    sessionId: string;
-    provider: ProviderId;
-    providerSessionId: string;
-    acceptedAt: string;
-    session?: SessionSummaryDto;
-  },
-  workspaceId: string,
-  provider: ProviderId
-): SessionSummaryDto {
-  if (created.session) {
-    return created.session;
-  }
-
-  const timestamp = created.acceptedAt?.trim() || new Date().toISOString();
-
-  return {
-    sessionId: created.sessionId,
-    workspaceId,
-    provider,
-    providerSessionId: created.providerSessionId,
-    rawStoreRef: `synthetic://${provider}/${created.sessionId}`,
-    providerConfigMode: "global-default",
-    providerPresetId: null,
-    parentSessionId: null,
-    isSubagent: false,
-    subagentLabel: null,
-    isArchived: false,
-    isFavorite: false,
-    title: getDraftTitle(provider),
-    messageCount: 1,
-    lastMessageAt: timestamp,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    syncStatus: "idle",
-    syncCursor: null,
-    lastSyncAt: null,
-    lastErrorCode: null,
-    lastErrorDetail: null,
-    resumedAt: null,
-    runningState: "starting",
-    activitySource: "runtime",
-    lastEventAt: timestamp,
-    completedAt: null,
-    lastSeenAt: null,
-    activityState: "running"
-  };
-}
-
-function createAffairsConversationBootstrapMessage(input: {
-  created: {
-    sessionId: string;
-    provider: ProviderId;
-    providerSessionId: string;
-    acceptedAt: string;
-    message?: HistoryMessageDto;
-  };
-  provider: ProviderId;
-  content: string;
-  clientRequestId: string;
-  attachments: NonNullable<HistoryMessageDto["attachments"]>;
-}): HistoryMessageDto {
-  const providerSessionId =
-    input.created.message?.providerSessionId?.trim()
-    || input.created.providerSessionId.trim()
-    || `draft-bootstrap-${input.created.sessionId}`;
-  const messageId = `synthetic-user-${input.clientRequestId}`;
-  const normalizedSequence = Number.isFinite(input.created.message?.sequence)
-    ? Math.max(1, input.created.message?.sequence ?? 1)
-    : 1;
-  const timestamp =
-    input.created.message?.timestamp?.trim()
-    || input.created.acceptedAt.trim()
-    || new Date().toISOString();
-
-  return {
-    messageId,
-    provider: input.provider,
-    providerSessionId,
-    role: "user",
-    kind: "text",
-    content: input.content,
-    attachments: input.attachments,
-    timestamp,
-    sequence: normalizedSequence,
-    rawRef: `synthetic://${input.provider}/${input.created.sessionId}/${input.clientRequestId}`
-  };
-}
-
 function createAffairsConversationClientRequestId(): string {
   const nativeCrypto = globalThis.crypto;
 
@@ -10085,6 +10487,16 @@ function createAffairsConversationClientRequestId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return error.message || fallback;
+  }
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+  return fallback;
 }
 
 function resolveDefaultNodeId(
@@ -10626,6 +11038,14 @@ function resolveIndexStatusStageLabel(stage: string) {
       return t("shell.affairsLibraryStatusStageRecomputeTags");
     case "export":
       return t("shell.affairsLibraryStatusStageExport");
+    case "export_meta_detail":
+      return t("shell.affairsLibraryStatusStageExportMetaDetail");
+    case "export_tag":
+      return t("shell.affairsLibraryStatusStageExportTag");
+    case "export_relation":
+      return t("shell.affairsLibraryStatusStageExportRelation");
+    case "export_search":
+      return t("shell.affairsLibraryStatusStageExportSearch");
     case "sqlite":
       return t("shell.affairsLibraryStatusStageSqlite");
     case "queued":
