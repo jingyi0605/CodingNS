@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 
+import type { HostResourceController } from "../modules/system/host-resource-controller.js";
 import type { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
 import type { RelayTunnelController } from "../modules/relay-tunnel/relay-tunnel-controller.js";
 import type { TailscaleController } from "../modules/tailscale/tailscale-controller.js";
@@ -8,7 +9,8 @@ export async function registerSystemRoutes(
   app: FastifyInstance,
   tailscaleController: TailscaleController,
   relayTunnelController: RelayTunnelController,
-  modelSwitchController: ModelSwitchController
+  modelSwitchController: ModelSwitchController,
+  hostResourceController: HostResourceController
 ): Promise<void> {
   app.get("/api/system/tailscale/status", tailscaleController.getStatus);
   app.put("/api/system/tailscale/config", tailscaleController.updateConfig);
@@ -33,4 +35,5 @@ export async function registerSystemRoutes(
   app.post("/api/system/relay-tunnel/disable", relayTunnelController.disable);
   app.get("/api/system/model-switch", modelSwitchController.getSnapshot);
   app.post("/api/system/model-switch", modelSwitchController.switchPreset);
+  app.get("/api/system/host/resources", hostResourceController.getSnapshot);
 }

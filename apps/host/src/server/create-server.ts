@@ -117,6 +117,8 @@ import { RelayTunnelService } from "../modules/relay-tunnel/relay-tunnel-service
 import { CcSwitchAdapter } from "../modules/model-switch/cc-switch-adapter.js";
 import { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
 import { ModelSwitchService } from "../modules/model-switch/model-switch-service.js";
+import { HostResourceController } from "../modules/system/host-resource-controller.js";
+import { HostResourceService } from "../modules/system/host-resource-service.js";
 import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
 import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
 import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
@@ -1491,6 +1493,9 @@ export function createServer(config: HostConfig) {
   const tailscaleController = new TailscaleController(tailscaleService);
   const relayTunnelController = new RelayTunnelController(relayTunnelService);
   const modelSwitchController = new ModelSwitchController(modelSwitchService);
+  const hostResourceController = new HostResourceController(
+    new HostResourceService(path.dirname(config.databasePath))
+  );
   const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const profileController = new ProfileController(preferenceProfileService);
   const officeService = new OfficeService(
@@ -1753,7 +1758,13 @@ export function createServer(config: HostConfig) {
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
   void registerOpenCliRoutes(app, openCliController);
-  void registerSystemRoutes(app, tailscaleController, relayTunnelController, modelSwitchController);
+  void registerSystemRoutes(
+    app,
+    tailscaleController,
+    relayTunnelController,
+    modelSwitchController,
+    hostResourceController
+  );
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
   void registerTerminalRoutes(app, terminalController);
