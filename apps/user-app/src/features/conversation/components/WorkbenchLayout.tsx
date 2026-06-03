@@ -222,6 +222,7 @@ import { AffairsAuxiliaryPanel, AffairsSectionMenu, AffairsSidebarPanel, Affairs
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
 import {
   createDefaultAffairsViewState,
+  createDefaultAffairsLibraryLandingState,
   readAffairsViewState,
   readWorkbenchModeLastPath,
   readWorkspaceWorkbenchMode,
@@ -984,6 +985,10 @@ export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
   childWorktrees: WorkbenchWorktreeNodeDto[];
+  affairsAssistantSessions?: SessionSummaryDto[];
+  affairsAssistantProjectId?: string | null;
+  affairsAssistantProjectWorkspaceId?: string | null;
+  affairsAssistantSessionsUpdatedAt?: string | null;
 }
 
 interface NavigationSessionEntry {
@@ -9416,7 +9421,10 @@ export function WorkbenchLayout({
     });
 
     try {
-      const snapshot = await getWorkbenchSnapshot();
+      const snapshot = await getWorkbenchSnapshot({
+        refresh: true,
+        awaitDiscovery: true
+      });
 
       if (requestId !== requestIdRef.current) {
         logPerfDebug("workbench.refresh_navigation.stale", { requestId });
@@ -10987,7 +10995,12 @@ export function WorkbenchLayout({
       return;
     }
 
-    setAffairsViewState(readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId));
+    setAffairsViewState(
+      createDefaultAffairsLibraryLandingState(
+        currentWorkspaceId,
+        readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
+      )
+    );
   }, [currentWorkspaceId]);
 
   useEffect(() => {
@@ -11347,6 +11360,16 @@ export function WorkbenchLayout({
     }
 
     writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
+    if (nextMode === "affairs") {
+      flushSync(() => {
+        setAffairsViewState((current) =>
+          createDefaultAffairsLibraryLandingState(
+            currentWorkspaceId,
+            current ?? readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
+          )
+        );
+      });
+    }
     const targetPath = resolveValidWorkbenchModeLastPath(currentWorkspaceId, nextMode)
       ?? (nextMode === "affairs"
         ? buildWorkspaceAffairsPath(currentWorkspaceId)
@@ -12190,6 +12213,7 @@ export function WorkbenchLayout({
                 navigationGroups={navigationGroups}
                 state={effectiveAffairsViewState!}
                 onStateChange={setAffairsViewState}
+                onRefreshNavigation={refreshNavigation}
               >
                 <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
                   <SidebarContent

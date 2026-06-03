@@ -11,6 +11,10 @@ export interface WorkbenchNavigationGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
   childWorktrees?: WorkbenchWorktreeNodeDto[];
+  affairsAssistantSessions?: SessionSummaryDto[];
+  affairsAssistantProjectId?: string | null;
+  affairsAssistantProjectWorkspaceId?: string | null;
+  affairsAssistantSessionsUpdatedAt?: string | null;
 }
 
 export interface WorkbenchNavigationEntry {

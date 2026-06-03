@@ -610,8 +610,8 @@ function createAgentSnapshotSession(overrides: Partial<NonNullable<WorkspaceSess
     parentSessionId: null,
     isSubagent: false,
     subagentLabel: null,
-    isArchived: false,
-    isFavorite: false,
+    isArchived: overrides.isArchived ?? false,
+    isFavorite: overrides.isFavorite ?? false,
     title: overrides.title ?? "事务 Agent 会话",
     messageCount: overrides.messageCount ?? 0,
     lastMessageAt: overrides.lastMessageAt ?? "2026-06-03T13:08:00.000Z",
@@ -2793,6 +2793,20 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("事务对话页选中了已经不在当前快照里的 Agent 会话时，不会继续尝试恢复", async () => {
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:agent:session:agent-missing-1"
+    }, createNavigationGroupsWithAgentSessions([]));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(butlerApiMock.resumeButlerProjectSession).not.toHaveBeenCalled();
+  });
+
   it("历史 Agent 会话列表只显示当前文档库绑定工作区的 CLI 会话", async () => {
     butlerRuntimeStateMock.setState({
       controlSession: {
@@ -3227,9 +3241,10 @@ describe("AffairsWorkbenchView", () => {
     });
 
     expect(await screen.findByRole("tab", { name: "自动化" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(t("shell.affairsAutomationEmpty"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("shell.affairsAutomationEmpty")).length).toBeGreaterThan(0);
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsHostUnavailableTitle"))).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).not.toBeDisabled();
     expect(screen.getByRole("tab", { name: "待办" })).not.toBeDisabled();
     expect(screen.getByRole("tab", { name: "自动化" })).not.toBeDisabled();
@@ -3285,7 +3300,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbenchWithState(createState());
 
     expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
-    expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
+    expect(screen.queryByText(t("shell.affairsHostUnavailableTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
@@ -3314,7 +3329,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbenchWithState(createState());
 
     expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
-    expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
+    expect(screen.queryByText(t("shell.affairsHostUnavailableTitle"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
@@ -4936,17 +4951,36 @@ describe("AffairsWorkbenchView", () => {
   it("详情区在有镜像路径时会提供本地文件动作，并显示完整元信息", async () => {
     renderWorkbench();
 
-    const button = await screen.findByRole("button", { name: /Exchange 分层通讯簿\.txt/i });
+    const button = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
     await userEvent.click(button);
 
     expect(await screen.findByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.affairsLibraryLocateFolderAction") })).toBeInTheDocument();
-    expect(screen.getAllByText(t("shell.affairsLibraryDocumentCreatedAt")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("shell.affairsLibraryDocumentCreatedAt"), { selector: "dt" })).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryDocumentSize"), { selector: "dt" })).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
-    expect(screen.getByText("2026/05/30 08:00:00")).toBeInTheDocument();
-    expect(screen.getByText("2026/05/31 08:00:00")).toBeInTheDocument();
+    const expectedCreatedAt = new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(new Date("2026-05-30T08:00:00.000Z"));
+    const expectedUpdatedAt = new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(new Date("2026-05-31T08:00:00.000Z"));
+    const detailBlock = document.querySelector(".affairs-detail-meta-list") as HTMLElement | null;
+    expect(detailBlock?.textContent).toContain(expectedCreatedAt);
+    expect(detailBlock?.textContent).toContain(expectedUpdatedAt);
 
     const bridge = getCodingNSDesktopBridge();
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") }));
@@ -4954,7 +4988,7 @@ describe("AffairsWorkbenchView", () => {
     expect(bridge.fs.openFile).toHaveBeenCalledWith("/Users/jackson/SynologyDrive/Exchange 分层通讯簿.txt");
   });
 
-  it("详情区在没有镜像路径时会隐藏本地文件动作，并允许点击路径逐级跳转", async () => {
+  it("详情区在没有镜像路径时会隐藏本地文件动作", async () => {
     conversationApiMock.getAffairsLibraryConfig.mockResolvedValueOnce({
       binding: {
         workspaceId: "workspace-1",
@@ -4974,7 +5008,34 @@ describe("AffairsWorkbenchView", () => {
       canWrite: true
     });
 
-    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValueOnce(createDocumentListResponse([
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
+      {
+        documentId: "doc-1",
+        path: "Exchange 分层通讯簿.txt",
+        title: "Exchange 分层通讯簿",
+        summary: "第一行\n第二行\n第三行\n第四行",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+
+    renderWorkbench();
+
+    const button = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    await userEvent.click(button);
+
+    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).not.toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryMirrorRootEmpty"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsDocumentSummaryExpandAction") })).toBeInTheDocument();
+  });
+
+  it("详情区文档路径支持逐级点击跳转", async () => {
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
       {
         documentId: "doc-1",
         path: "客户/合同/Exchange 分层通讯簿.txt",
@@ -4989,17 +5050,18 @@ describe("AffairsWorkbenchView", () => {
       }
     ]));
 
-    renderWorkbench();
+    const { container } = renderWorkbenchWithState({
+      ...createState(),
+      selectedFolderPath: "客户/合同"
+    });
 
-    const button = await screen.findByText("Exchange 分层通讯簿.txt");
+    const button = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
     await userEvent.click(button);
 
-    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).not.toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsLibraryMirrorRootEmpty"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("shell.affairsDocumentSummaryExpandAction") })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "客户" }));
+    const detailPathButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".affairs-detail-path-segment"));
+    const customerPathButton = detailPathButtons.find((item) => item.textContent?.trim() === "客户");
+    expect(customerPathButton).toBeTruthy();
+    await userEvent.click(customerPathButton!);
 
     await waitFor(() => {
       expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
@@ -5876,7 +5938,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
+    await userEvent.click((await screen.findAllByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }))[0]);
     expect(await screen.findByText(t("shell.affairsFolderTagsSectionTitle"))).toBeInTheDocument();
     const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "合同");
@@ -5937,7 +5999,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
+    await userEvent.click((await screen.findAllByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }))[0]);
     const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "合同");
     await userEvent.click(await screen.findByRole("button", { name: "客户/合同" }));
@@ -6058,7 +6120,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.type(documentTagInput, "合同");
     await userEvent.click(await screen.findByRole("button", { name: "客户/合同" }));
 
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
+    await userEvent.click((await screen.findAllByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }))[0]);
     const folderTagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(folderTagInput, "合同");
     await userEvent.click(await screen.findByRole("button", { name: "客户/合同" }));
@@ -6092,7 +6154,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
 
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }));
+    await userEvent.click((await screen.findAllByRole("button", { name: t("shell.affairsLibraryFolderRootLabel") }))[0]);
     const tagInput = await screen.findByPlaceholderText(t("shell.affairsTagQuickSearchPlaceholder"));
     await userEvent.type(tagInput, "归档/待签");
     await userEvent.click(screen.getByRole("button", { name: /创建并分配“归档\/待签”/ }));

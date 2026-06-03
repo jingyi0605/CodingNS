@@ -1355,9 +1355,21 @@ export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
 }
 
-export async function getWorkbenchSnapshot() {
+export async function getWorkbenchSnapshot(options?: {
+  refresh?: boolean;
+  awaitDiscovery?: boolean;
+}) {
+  const headers = new Headers();
+  if (options?.refresh) {
+    headers.set("X-CodingNS-Workbench-Refresh", "true");
+  }
+  if (options?.awaitDiscovery) {
+    headers.set("X-CodingNS-Workbench-Await-Discovery", "true");
+  }
   try {
-    return await httpClient.request<WorkbenchSnapshotDto>("/api/workbench");
+    return await httpClient.request<WorkbenchSnapshotDto>("/api/workbench", {
+      headers
+    });
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) {
       throw error;
