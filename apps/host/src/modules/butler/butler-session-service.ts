@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
@@ -781,6 +784,10 @@ export class ButlerSessionService {
         continue;
       }
 
+      if (!shouldImportObservedSessionIntoProject(project, session)) {
+        continue;
+      }
+
       const created = this.createObservedSession(project, session, userId);
 
       if (created) {
@@ -985,6 +992,135 @@ function normalizeRunningState(
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function shouldImportObservedSessionIntoProject(
+  project: ButlerProject,
+  session: Pick<SessionListItem, "provider" | "providerSessionId" | "rawStoreRef">
+): boolean {
+  const observedWorkspacePath = resolveObservedSessionWorkspacePath(session);
+
+  if (!observedWorkspacePath) {
+    return true;
+  }
+
+  return normalizeComparablePath(observedWorkspacePath) === normalizeComparablePath(project.repoRoot);
+}
+
+function resolveObservedSessionWorkspacePath(
+  session: Pick<SessionListItem, "provider" | "providerSessionId" | "rawStoreRef">
+): string | null {
+  const rawStoreRef = session.rawStoreRef?.trim() ?? "";
+
+  if (!rawStoreRef || !existsSync(rawStoreRef)) {
+    return null;
+  }
+
+  try {
+    switch (session.provider) {
+      case "codex":
+        return readCodexObservedWorkspacePath(rawStoreRef, session.providerSessionId);
+      case "claude-code":
+        return readClaudeObservedWorkspacePath(rawStoreRef);
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function readCodexObservedWorkspacePath(
+  rawStoreRef: string,
+  providerSessionId: string
+): string | null {
+  const lines = readLimitedJsonLines(rawStoreRef, 80);
+  const sessionMetaRecord = lines.find((record) => record?.type === "session_meta");
+  const metaPayload = isRecord(sessionMetaRecord?.payload) ? sessionMetaRecord.payload : null;
+  const metaCwd = ensureNonEmptyText(metaPayload?.cwd);
+
+  if (metaCwd) {
+    return metaCwd;
+  }
+
+  const matchingCodexSessionRecord = lines.find((record) => {
+    const payload = isRecord(record?.payload) ? record.payload : null;
+    return record?.type === "session_meta"
+      && ensureNonEmptyText(payload?.id) === providerSessionId;
+  });
+  const matchingPayload = isRecord(matchingCodexSessionRecord?.payload)
+    ? matchingCodexSessionRecord.payload
+    : null;
+  const matchingCwd = ensureNonEmptyText(matchingPayload?.cwd);
+
+  if (matchingCwd) {
+    return matchingCwd;
+  }
+
+  for (const record of lines) {
+    if (record?.type !== "event_msg") {
+      continue;
+    }
+    const payload = isRecord(record.payload) ? record.payload : null;
+    const cwd = ensureNonEmptyText(payload?.cwd);
+
+    if (cwd) {
+      return cwd;
+    }
+  }
+
+  return null;
+}
+
+function readClaudeObservedWorkspacePath(rawStoreRef: string): string | null {
+  const lines = readLimitedJsonLines(rawStoreRef, 80);
+
+  for (const record of lines) {
+    const cwd = ensureNonEmptyText(record?.cwd);
+
+    if (cwd) {
+      return cwd;
+    }
+  }
+
+  return null;
+}
+
+function readLimitedJsonLines(rawStoreRef: string, maxLines: number): Array<Record<string, unknown>> {
+  const content = readFileSync(rawStoreRef, "utf8");
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, Math.max(1, maxLines));
+
+  const records: Array<Record<string, unknown>> = [];
+
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+
+      if (isRecord(parsed)) {
+        records.push(parsed);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return records;
+}
+
+function normalizeComparablePath(value: string): string {
+  return path.resolve(value).replace(/[\\/]+$/g, "");
+}
+
+function ensureNonEmptyText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function buildManagedSessionTitle(content: string): string {

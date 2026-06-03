@@ -124,6 +124,12 @@ export class ButlerRuntimeStore {
     };
   }
 
+  dispose(): void {
+    this.clearPendingRun();
+    this.teardownRealtime();
+    this.listeners.clear();
+  }
+
   subscribe = (listener: ButlerRuntimeListener) => {
     this.listeners.add(listener);
     return () => {

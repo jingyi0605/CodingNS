@@ -56,9 +56,11 @@ const liveSessionControllerMock = vi.hoisted(() => ({
 }));
 
 const butlerRuntimeCallsMock = vi.hoisted(() => ({
+  constructedWorkspaceIds: [] as string[],
   switchProvider: vi.fn(),
   startFreshSession: vi.fn(),
   sendMessage: vi.fn(),
+  updateProfile: vi.fn(),
   replyPermissionRequest: vi.fn(),
   interrupt: vi.fn(),
   loadOlderMessages: vi.fn(),
@@ -73,6 +75,7 @@ const butlerRuntimeStateMock = vi.hoisted(() => {
     profile: null as null | {
       displayName: string;
       providerId: string;
+      workspacePath?: string;
       persona: {
         tone: string;
       };
@@ -128,10 +131,12 @@ const butlerRuntimeStateMock = vi.hoisted(() => {
       butlerRuntimeCallsMock.switchProvider.mockReset();
       butlerRuntimeCallsMock.startFreshSession.mockReset();
       butlerRuntimeCallsMock.sendMessage.mockReset();
+      butlerRuntimeCallsMock.updateProfile.mockReset();
       butlerRuntimeCallsMock.replyPermissionRequest.mockReset();
       butlerRuntimeCallsMock.interrupt.mockReset();
       butlerRuntimeCallsMock.loadOlderMessages.mockReset();
       butlerRuntimeCallsMock.retryMessage.mockReset();
+      butlerRuntimeCallsMock.constructedWorkspaceIds.splice(0, butlerRuntimeCallsMock.constructedWorkspaceIds.length);
     },
     setState: (nextState: Partial<typeof state>) => {
       state = {
@@ -179,9 +184,12 @@ const conversationApiMock = vi.hoisted(() => ({
   saveAffairsLibraryConfig: vi.fn(),
   sendAffairsLightweightSessionMessage: vi.fn(),
   sendAffairsLightweightSessionMessageStream: vi.fn(),
+  markSessionSeen: vi.fn(),
   setGlobalAffairsLibraryEnabled: vi.fn(),
   startAffairsLightweightSession: vi.fn(),
   startAffairsLightweightSessionStream: vi.fn(),
+  updateSessionArchiveState: vi.fn(),
+  updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
   updateGlobalAffairsLibraryFavorites: vi.fn()
 }));
@@ -225,9 +233,12 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
     sendAffairsLightweightSessionMessage: conversationApiMock.sendAffairsLightweightSessionMessage,
     sendAffairsLightweightSessionMessageStream: conversationApiMock.sendAffairsLightweightSessionMessageStream,
+    markSessionSeen: conversationApiMock.markSessionSeen,
     setGlobalAffairsLibraryEnabled: conversationApiMock.setGlobalAffairsLibraryEnabled,
     startAffairsLightweightSession: conversationApiMock.startAffairsLightweightSession,
     startAffairsLightweightSessionStream: conversationApiMock.startAffairsLightweightSessionStream,
+    updateSessionArchiveState: conversationApiMock.updateSessionArchiveState,
+    updateSessionFavoriteState: conversationApiMock.updateSessionFavoriteState,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
     updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites
   };
@@ -257,7 +268,9 @@ vi.mock("../../butler/api/butler-api", () => ({
 
 vi.mock("../../butler/runtime/butler-runtime-store", () => ({
   ButlerRuntimeStore: class {
-    constructor(_workspaceId: string) {}
+    constructor(workspaceId: string) {
+      butlerRuntimeCallsMock.constructedWorkspaceIds.push(workspaceId);
+    }
 
     getState() {
       return butlerRuntimeStateMock.getState();
@@ -287,10 +300,25 @@ vi.mock("../../butler/runtime/butler-runtime-store", () => ({
         profile: {
           displayName: payload.displayName ?? "事务助手",
           providerId: payload.providerId ?? "codex",
+          workspacePath: payload.workspacePath ?? "/tmp/butler",
           persona: {
             tone: payload.persona?.tone ?? "direct"
           }
         }
+      });
+    }
+
+    async updateProfile(payload: { workspacePath?: string; providerId?: string }) {
+      butlerRuntimeCallsMock.updateProfile(payload);
+      const current = butlerRuntimeStateMock.getState();
+      butlerRuntimeStateMock.setState({
+        profile: current.profile
+          ? {
+              ...current.profile,
+              providerId: payload.providerId ?? current.profile.providerId,
+              workspacePath: payload.workspacePath ?? current.profile.workspacePath
+            }
+          : current.profile
       });
     }
 
@@ -425,6 +453,10 @@ vi.mock("../../butler/runtime/butler-runtime-store", () => ({
     async retryMessage(clientRequestId: string) {
       butlerRuntimeCallsMock.retryMessage(clientRequestId);
     }
+
+    dispose() {
+      return undefined;
+    }
   },
   useButlerRuntimeStore: vi.fn((store, selector) => selector(store.getState()))
 }));
@@ -504,6 +536,20 @@ const navigationGroups: WorkspaceSessionGroup[] = [
     sessions: []
   }
 ];
+
+const navigationGroupsWithBoundLibraryWorkspace: WorkspaceSessionGroup[] = [
+  ...navigationGroups,
+  {
+    workspace: {
+      id: "workspace-2",
+      name: "事务文档库",
+      path: "/Users/jackson/SynologyDrive",
+      repoRoot: "/Users/jackson/SynologyDrive"
+    },
+    sessions: [],
+    childWorktrees: []
+  }
+];
 const initialPreferenceState = userPreferenceStore.getState();
 
 function createState(): AffairsViewState {
@@ -545,6 +591,7 @@ function baseLibrarySnapshot() {
     binding: {
       workspaceId: "workspace-1",
       rootDir: "/Users/jackson/WorkFile",
+      mirrorRoot: "/Users/jackson/SynologyDrive",
       enabled: true,
       configRelativePath: ".ai-index/doc-semantic-index.config.json",
       exportMode: "v2",
@@ -718,6 +765,10 @@ function renderWorkbenchWithSectionMenu() {
 }
 
 function renderWorkbenchWithState(initialState: AffairsViewState) {
+  return renderWorkbenchWithCustomNavigationGroups(initialState, navigationGroups);
+}
+
+function renderWorkbenchWithCustomNavigationGroups(initialState: AffairsViewState, groups: WorkspaceSessionGroup[]) {
   function TestHarness(): ReactElement {
     const [state, setState] = useState(initialState);
 
@@ -725,7 +776,7 @@ function renderWorkbenchWithState(initialState: AffairsViewState) {
       <AffairsWorkbenchProvider
         workspaceId="workspace-1"
         workspaceName="事务工作区"
-        navigationGroups={navigationGroups}
+        navigationGroups={groups}
         state={state}
         onStateChange={setState}
       >
@@ -746,6 +797,106 @@ function findTagTreeNode(label: string) {
   const tree = screen.getByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
   const labelNode = within(tree).queryAllByText(label).find((node) => node.classList.contains("affairs-sidebar-item-title"));
   return labelNode?.closest(".affairs-tag-tree-node") ?? null;
+}
+
+function mockAffairsConversationSidebarSessions() {
+  const lightweightSession = {
+    sessionId: "light-session-1",
+    workspaceId: "workspace-1",
+    provider: "codex" as const,
+    providerSessionId: "provider://codex/light-session-1",
+    rawStoreRef: "raw://codex/light-session-1",
+    providerConfigMode: "global-default" as const,
+    providerPresetId: null,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    isFavorite: false,
+    title: "事务轻量会话",
+    messageCount: 3,
+    lastMessageAt: "2026-06-03T12:48:00.000Z",
+    createdAt: "2026-06-03T12:30:00.000Z",
+    updatedAt: "2026-06-03T12:48:00.000Z",
+    syncStatus: "idle" as const,
+    syncCursor: null,
+    lastSyncAt: "2026-06-03T12:48:00.000Z",
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "completed" as const,
+    activitySource: "runtime" as const,
+    lastEventAt: "2026-06-03T12:48:00.000Z",
+    completedAt: "2026-06-03T12:48:00.000Z",
+    lastSeenAt: null,
+    activityState: "completed_unread" as const
+  };
+  const managedAgentSession = {
+    id: "butler-session-merged-1",
+    projectId: "project-2",
+    sessionId: "agent-session-merged-1",
+    provider: "claude-code" as const,
+    title: "事务 Agent 会话",
+    isArchived: false,
+    role: "adhoc" as const,
+    ownershipMode: "managed" as const,
+    status: "idle" as const,
+    runningState: "completed" as const,
+    lastSummary: null,
+    lastCheckpointAt: null,
+    createdAt: "2026-06-03T09:00:00.000Z",
+    updatedAt: "2026-06-03T09:16:00.000Z"
+  };
+  const agentSessionTarget = {
+    workspaceId: "workspace-2",
+    project: {
+      id: "project-2",
+      workspaceId: "workspace-2",
+      name: "事务文档库",
+      repoRoot: "/Users/jackson/SynologyDrive",
+      lifecycleStatus: "active" as const,
+      riskLevel: "low" as const
+    },
+    session: {
+      ...managedAgentSession
+    }
+  };
+
+  conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+    items: [lightweightSession]
+  });
+  butlerApiMock.listButlerProjectSessions.mockResolvedValue({
+    items: [managedAgentSession]
+  });
+  butlerApiMock.getButlerSessionTarget.mockResolvedValue({
+    target: agentSessionTarget
+  });
+  butlerApiMock.listButlerProjects.mockResolvedValue({
+    items: [
+      {
+        id: "project-2",
+        workspaceId: "workspace-2",
+        name: "事务文档库",
+        repoRoot: "/Users/jackson/SynologyDrive",
+        defaultProvider: null,
+        instructionProfileId: null,
+        approvalMode: "controlled",
+        lifecycleStatus: "active",
+        riskLevel: "low",
+        config: {},
+        lastPatrolAt: null,
+        lastVerificationAt: null,
+        createdAt: "2026-06-03T10:00:00.000Z",
+        updatedAt: "2026-06-03T10:00:00.000Z",
+        archivedAt: null
+      }
+    ]
+  });
+
+  return {
+    lightweightSession,
+    managedAgentSession
+  };
 }
 
 describe("AffairsWorkbenchView", () => {
@@ -807,9 +958,12 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
     conversationApiMock.sendAffairsLightweightSessionMessage.mockReset();
     conversationApiMock.sendAffairsLightweightSessionMessageStream.mockReset();
+    conversationApiMock.markSessionSeen.mockReset();
     conversationApiMock.setGlobalAffairsLibraryEnabled.mockReset();
     conversationApiMock.startAffairsLightweightSession.mockReset();
     conversationApiMock.startAffairsLightweightSessionStream.mockReset();
+    conversationApiMock.updateSessionArchiveState.mockReset();
+    conversationApiMock.updateSessionFavoriteState.mockReset();
     conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
     liveSessionControllerMock.useLiveSessionController.mockReset();
 
@@ -1200,6 +1354,15 @@ describe("AffairsWorkbenchView", () => {
         userMessage: lightweightStartResponse.userMessage
       });
       await onEvent({
+        type: "tool",
+        toolCallId: "search-1",
+        toolName: "web_search",
+        status: "running",
+        detail: "正在联网搜索",
+        input: null,
+        output: null
+      });
+      await onEvent({
         type: "delta",
         delta: "这是轻量回复"
       });
@@ -1216,6 +1379,15 @@ describe("AffairsWorkbenchView", () => {
         acceptedAt: lightweightStartResponse.acceptedAt,
         clientRequestId: lightweightStartResponse.clientRequestId,
         userMessage: lightweightStartResponse.userMessage
+      });
+      await onEvent({
+        type: "tool",
+        toolCallId: "search-1",
+        toolName: "web_search",
+        status: "running",
+        detail: "正在联网搜索",
+        input: null,
+        output: null
       });
       await onEvent({
         type: "delta",
@@ -1509,6 +1681,20 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("button", { name: ".pdf" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("打开文档库设置后切换到其他事务分区时会关闭设置弹层", async () => {
+    renderWorkbenchWithSectionMenu();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
+    expect(await screen.findByRole("dialog", { name: t("shell.affairsLibraryConfigTitle") })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.affairsConversationNav") }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.affairsLibraryConfigTitle") })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("tab", { name: t("shell.affairsConversationNav") })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("文档库左侧栏不再显示旧的说明头和浏览模式切换", async () => {
     renderWorkbench();
 
@@ -1581,6 +1767,493 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("事务轻量会话联网搜索时会把工具调用和结果写进时间线", async () => {
+    const user = userEvent.setup();
+    conversationApiMock.startAffairsLightweightSessionStream.mockImplementation(async (_workspaceId, _payload, onEvent) => {
+      await onEvent({
+        type: "started",
+        session: {
+          sessionId: "session-light-tool-result",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-tool-result",
+          rawStoreRef: "session-light-tool-result.json",
+          title: "轻量搜索结果",
+          messageCount: 1,
+          lastMessageAt: "2026-06-02T10:00:00.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:00.000Z",
+          syncStatus: "syncing",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "running",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "running"
+        },
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-tool-result",
+        userMessage: {
+          messageId: "message-user-tool-result",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-tool-result",
+          role: "user",
+          kind: "text",
+          content: "搜索今天关于 openai 的热点新闻",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-tool-result.json#client-request-tool-result"
+        }
+      });
+      await onEvent({
+        type: "tool",
+        toolCallId: "search-tool-result",
+        toolName: "web_search",
+        status: "running",
+        detail: "正在联网搜索",
+        input: "今天关于 openai 的热点新闻",
+        output: null
+      });
+      await onEvent({
+        type: "tool",
+        toolCallId: "search-tool-result",
+        toolName: "web_search",
+        status: "completed",
+        detail: "已找到 2 条结果",
+        input: "今天关于 openai 的热点新闻",
+        output: JSON.stringify({
+          detail: "已整理 2 条热点结果",
+          query: "今天关于 openai 的热点新闻",
+          sources: [
+            { title: "OpenAI News 1", url: "https://example.com/openai-1" },
+            { title: "OpenAI News 2", url: "https://example.com/openai-2" }
+          ]
+        })
+      });
+      await onEvent({
+        type: "delta",
+        delta: "这是整理后的摘要。"
+      });
+
+      return {
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-tool-result",
+        userMessage: {
+          messageId: "message-user-tool-result",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-tool-result",
+          role: "user",
+          kind: "text",
+          content: "搜索今天关于 openai 的热点新闻",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-tool-result.json#client-request-tool-result"
+        },
+        assistantMessage: {
+          messageId: "message-assistant-tool-result",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-tool-result",
+          role: "assistant",
+          kind: "text",
+          content: "这是整理后的摘要。",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:05.000Z",
+          sequence: 3,
+          rawRef: "session-light-tool-result.json#assistant-3"
+        },
+        session: {
+          sessionId: "session-light-tool-result",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-tool-result",
+          rawStoreRef: "session-light-tool-result.json",
+          title: "轻量搜索结果",
+          messageCount: 3,
+          lastMessageAt: "2026-06-02T10:00:05.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:05.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:05.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:05.000Z",
+          completedAt: "2026-06-02T10:00:05.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        },
+        messages: []
+      };
+    });
+
+    renderWorkbenchWithSectionMenu();
+
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+    await user.click(screen.getByTestId("affairs-composer-send"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("联网搜索");
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-tool-result:3");
+    });
+  });
+
+  it("事务轻量会话联网搜索时会显示明显的实时状态条", async () => {
+    const user = userEvent.setup();
+    let releaseCompletion: (() => void) | null = null;
+    conversationApiMock.startAffairsLightweightSessionStream.mockImplementation(async (_workspaceId, _payload, onEvent) => {
+      await onEvent({
+        type: "started",
+        session: {
+          sessionId: "session-light-pending",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-pending",
+          rawStoreRef: "session-light-pending.json",
+          title: "轻量对话",
+          messageCount: 1,
+          lastMessageAt: "2026-06-02T10:00:00.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:00.000Z",
+          syncStatus: "syncing",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "running",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "running"
+        },
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-pending",
+        userMessage: {
+          messageId: "message-user-pending",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-pending",
+          role: "user",
+          kind: "text",
+          content: "请帮我查一下今天的事务重点",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-pending.json#client-request-pending"
+        }
+      });
+      await onEvent({
+        type: "tool",
+        toolCallId: "search-pending",
+        toolName: "web_search",
+        status: "running",
+        detail: "正在联网搜索",
+        input: null,
+        output: null
+      });
+
+      await new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+
+      return {
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-pending",
+        userMessage: {
+          messageId: "message-user-pending",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-pending",
+          role: "user",
+          kind: "text",
+          content: "请帮我查一下今天的事务重点",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-pending.json#client-request-pending"
+        },
+        assistantMessage: {
+          messageId: "message-assistant-pending",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-pending",
+          role: "assistant",
+          kind: "text",
+          content: "这是轻量回复",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:05.000Z",
+          sequence: 2,
+          rawRef: "session-light-pending.json#assistant-2"
+        },
+        session: {
+          sessionId: "session-light-pending",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-pending",
+          rawStoreRef: "session-light-pending.json",
+          title: "轻量对话",
+          messageCount: 2,
+          lastMessageAt: "2026-06-02T10:00:05.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:05.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:05.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:05.000Z",
+          completedAt: "2026-06-02T10:00:05.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        },
+        messages: []
+      };
+    });
+    renderWorkbenchWithSectionMenu();
+
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+
+    await user.click(screen.getByTestId("affairs-composer-send"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("联网搜索");
+    expect(screen.getByRole("status")).toHaveTextContent("正在联网搜索");
+    releaseCompletion?.();
+  });
+
+  it("事务轻量会话切到别的分区再切回时，仍保留流式状态和消息", async () => {
+    const user = userEvent.setup();
+    let releaseCompletion: (() => void) | null = null;
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-light-switching",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          rawStoreRef: "session-light-switching.json",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: false,
+          isFavorite: false,
+          title: "切页中的轻量对话",
+          messageCount: 2,
+          lastMessageAt: "2026-06-02T10:00:05.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:05.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:05.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:05.000Z",
+          completedAt: "2026-06-02T10:00:05.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+    conversationApiMock.startAffairsLightweightSessionStream.mockImplementation(async (_workspaceId, _payload, onEvent) => {
+      await onEvent({
+        type: "started",
+        session: {
+          sessionId: "session-light-switching",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          rawStoreRef: "session-light-switching.json",
+          title: "切页中的轻量对话",
+          messageCount: 1,
+          lastMessageAt: "2026-06-02T10:00:00.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:00.000Z",
+          syncStatus: "syncing",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "running",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "running"
+        },
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-switching",
+        userMessage: {
+          messageId: "message-user-switching",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          role: "user",
+          kind: "text",
+          content: "请帮我查一下今天的事务重点",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-switching.json#client-request-switching"
+        }
+      });
+      await onEvent({
+        type: "tool",
+        toolCallId: "search-switching",
+        toolName: "web_search",
+        status: "running",
+        detail: "正在联网搜索",
+        input: "今天的热点新闻",
+        output: null
+      });
+      await onEvent({
+        type: "delta",
+        delta: "先给你整理中。"
+      });
+
+      await new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
+      });
+
+      return {
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-switching",
+        userMessage: {
+          messageId: "message-user-switching",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          role: "user",
+          kind: "text",
+          content: "请帮我查一下今天的事务重点",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-switching.json#client-request-switching"
+        },
+        assistantMessage: {
+          messageId: "message-assistant-switching",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          role: "assistant",
+          kind: "text",
+          content: "先给你整理中。",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:05.000Z",
+          sequence: 2,
+          rawRef: "session-light-switching.json#assistant-2"
+        },
+        session: {
+          sessionId: "session-light-switching",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switching",
+          rawStoreRef: "session-light-switching.json",
+          title: "切页中的轻量对话",
+          messageCount: 2,
+          lastMessageAt: "2026-06-02T10:00:05.000Z",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          updatedAt: "2026-06-02T10:00:05.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-02T10:00:05.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-02T10:00:05.000Z",
+          completedAt: "2026-06-02T10:00:05.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        },
+        messages: [
+          {
+            messageId: "message-user-switching",
+            provider: "codex",
+            providerSessionId: "affairs-lightweight:codex:session-light-switching",
+            role: "user",
+            kind: "text",
+            content: "请帮我查一下今天的事务重点",
+            attachments: [],
+            timestamp: "2026-06-02T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "session-light-switching.json#client-request-switching"
+          },
+          {
+            messageId: "message-assistant-switching",
+            provider: "codex",
+            providerSessionId: "affairs-lightweight:codex:session-light-switching",
+            role: "assistant",
+            kind: "text",
+            content: "先给你整理中。",
+            attachments: [],
+            timestamp: "2026-06-02T10:00:05.000Z",
+            sequence: 2,
+            rawRef: "session-light-switching.json#assistant-2"
+          }
+        ]
+      };
+    });
+
+    renderWorkbenchWithSectionMenu();
+
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+    await user.click(screen.getByTestId("affairs-composer-send"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("正在联网搜索");
+    expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
+    await screen.findByText("Exchange 分层通讯簿.txt");
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("正在联网搜索");
+    expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
+
+    releaseCompletion?.();
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-switching:");
+    });
+  });
+
 
   it("事务 Agent 草稿发送首条消息后会复用共享 Butler runtime 并切到 Agent 会话", async () => {
     const user = userEvent.setup();
@@ -1615,6 +2288,84 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("新建 Agent 会话会切到文档库绑定工作区并同步 Butler workspacePath", async () => {
+    const user = userEvent.setup();
+    butlerRuntimeStateMock.setState({
+      profile: {
+        displayName: "事务助手",
+        providerId: "codex",
+        workspacePath: "/tmp/workspace-1",
+        persona: {
+          tone: "direct"
+        }
+      },
+      activeProvider: "codex"
+    });
+    butlerApiMock.listButlerProjects.mockResolvedValue({
+      items: [
+        {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "事务工作区",
+          repoRoot: "/tmp/workspace-1",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        },
+        {
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        }
+      ]
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: null
+    }, navigationGroups);
+
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const assistantSection = within(dialog).getByText("助手模式").closest("section");
+    expect(assistantSection).not.toBeNull();
+    await user.click(within(assistantSection as HTMLElement).getByRole("button", { name: "Codex" }));
+
+    await user.click(await screen.findByTestId("affairs-composer-send"));
+
+    await waitFor(() => {
+      expect(butlerRuntimeCallsMock.constructedWorkspaceIds).toContain("workspace-2");
+      expect(butlerRuntimeCallsMock.updateProfile).toHaveBeenCalledWith({
+        workspacePath: "/Users/jackson/SynologyDrive"
+      });
+      expect(butlerRuntimeCallsMock.sendMessage).toHaveBeenCalled();
+    });
+  });
+
   it("事务 Agent 首条消息会默认带上当前事务对象上下文", async () => {
     const user = userEvent.setup();
     renderWorkbenchWithSectionMenu();
@@ -1644,11 +2395,49 @@ describe("AffairsWorkbenchView", () => {
   });
 
   it("事务对话页切回历史 Agent 会话时会自动恢复对应的 Butler 会话", async () => {
+    butlerApiMock.listButlerProjects.mockResolvedValue({
+      items: [
+        {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "事务工作区",
+          repoRoot: "/tmp/workspace-1",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        },
+        {
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        }
+      ]
+    });
     butlerApiMock.listButlerProjectSessions.mockResolvedValue({
       items: [
         {
           id: "butler-session-history-1",
-          projectId: "project-1",
+          projectId: "project-2",
           sessionId: "agent-history-1",
           provider: "claude-code",
           title: "历史 Agent 会话",
@@ -1666,18 +2455,18 @@ describe("AffairsWorkbenchView", () => {
     });
     butlerApiMock.getButlerSessionTarget.mockResolvedValue({
       target: {
-        workspaceId: "workspace-1",
+        workspaceId: "workspace-2",
         project: {
-          id: "project-1",
-          workspaceId: "workspace-1",
-          name: "事务工作区",
-          repoRoot: "/tmp/workspace-1",
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
           lifecycleStatus: "active",
           riskLevel: "low"
         },
         session: {
           id: "butler-session-history-1",
-          projectId: "project-1",
+          projectId: "project-2",
           sessionId: "agent-history-1",
           provider: "claude-code",
           title: "历史 Agent 会话",
@@ -1696,7 +2485,7 @@ describe("AffairsWorkbenchView", () => {
       resumed: {
         session: {
           id: "butler-session-history-1",
-          projectId: "project-1",
+          projectId: "project-2",
           sessionId: "agent-history-1",
           provider: "claude-code",
           title: "历史 Agent 会话",
@@ -1716,14 +2505,14 @@ describe("AffairsWorkbenchView", () => {
       }
     });
 
-    renderWorkbenchWithState({
+    renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:agent:session:agent-history-1"
-    });
+    }, navigationGroups);
 
     await waitFor(() => {
-      expect(butlerApiMock.resumeButlerProjectSession).toHaveBeenCalledWith("project-1", "butler-session-history-1");
+      expect(butlerApiMock.resumeButlerProjectSession).toHaveBeenCalledWith("project-2", "butler-session-history-1");
     });
   });
 
@@ -1732,7 +2521,7 @@ describe("AffairsWorkbenchView", () => {
       items: [
         {
           id: "butler-session-current-1",
-          projectId: "project-1",
+          projectId: "project-2",
           sessionId: "agent-current-1",
           provider: "codex",
           title: "当前工作区 Agent 会话",
@@ -1768,18 +2557,18 @@ describe("AffairsWorkbenchView", () => {
       if (sessionId === "agent-other-1") {
         return {
           target: {
-            workspaceId: "workspace-2",
+            workspaceId: "workspace-1",
             project: {
-              id: "project-2",
-              workspaceId: "workspace-2",
+              id: "project-1",
+              workspaceId: "workspace-1",
               name: "其他工作区",
-              repoRoot: "/tmp/workspace-2",
+              repoRoot: "/tmp/workspace-1",
               lifecycleStatus: "active",
               riskLevel: "low"
             },
             session: {
               id: "butler-session-other-1",
-              projectId: "project-2",
+              projectId: "project-1",
               sessionId: "agent-other-1",
               provider: "claude-code",
               title: "其他工作区 Agent 会话",
@@ -1798,18 +2587,18 @@ describe("AffairsWorkbenchView", () => {
 
       return {
         target: {
-          workspaceId: "workspace-1",
+          workspaceId: "workspace-2",
           project: {
-            id: "project-1",
-            workspaceId: "workspace-1",
-            name: "事务工作区",
-            repoRoot: "/tmp/workspace-1",
+            id: "project-2",
+            workspaceId: "workspace-2",
+            name: "事务文档库",
+            repoRoot: "/Users/jackson/SynologyDrive",
             lifecycleStatus: "active",
             riskLevel: "low"
           },
           session: {
             id: "butler-session-current-1",
-            projectId: "project-1",
+            projectId: "project-2",
             sessionId: "agent-current-1",
             provider: "codex",
             title: "当前工作区 Agent 会话",
@@ -1840,7 +2629,7 @@ describe("AffairsWorkbenchView", () => {
         updatedAt: "2026-06-03T12:00:05.000Z",
         session: {
           sessionId: "agent-live-other",
-          workspaceId: "workspace-2",
+          workspaceId: "workspace-1",
           provider: "claude-code",
           providerSessionId: "provider://claude-code/agent-live-other",
           rawStoreRef: "raw://claude-code/agent-live-other",
@@ -1872,15 +2661,314 @@ describe("AffairsWorkbenchView", () => {
       }
     });
 
-    renderWorkbenchWithState({
+    butlerApiMock.listButlerProjects.mockResolvedValue({
+      items: [
+        {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "事务工作区",
+          repoRoot: "/tmp/workspace-1",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        },
+        {
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        }
+      ]
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       primarySection: "conversation",
       selectedNodeId: "conversation:draft:agent:codex"
+    }, navigationGroups);
+
+    const conversationSidebar = await screen.findByRole("heading", { name: "对话" });
+    const sidebarSection = conversationSidebar.closest(".affairs-sidebar-block");
+    expect(sidebarSection).not.toBeNull();
+    await waitFor(() => {
+      expect(within(sidebarSection as HTMLElement).getByText("当前工作区 Agent 会话")).toBeInTheDocument();
+    });
+    expect(within(sidebarSection as HTMLElement).queryByText("其他工作区 Agent 会话")).not.toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).queryByText("其他工作区当前会话")).not.toBeInTheDocument();
+  });
+
+  it("事务对话侧栏会把轻量会话和 Agent 会话合并到同一份列表里", async () => {
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+      items: [
+        {
+          sessionId: "light-session-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider://codex/light-session-1",
+          rawStoreRef: "raw://codex/light-session-1",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: false,
+          isFavorite: false,
+          title: "事务轻量会话",
+          messageCount: 3,
+          lastMessageAt: "2026-06-03T12:48:00.000Z",
+          createdAt: "2026-06-03T12:30:00.000Z",
+          updatedAt: "2026-06-03T12:48:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-03T12:48:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-03T12:48:00.000Z",
+          completedAt: "2026-06-03T12:48:00.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+    butlerApiMock.listButlerProjectSessions.mockResolvedValue({
+      items: [
+        {
+          id: "butler-session-merged-1",
+          projectId: "project-1",
+          sessionId: "agent-session-merged-1",
+          provider: "claude-code",
+          title: "事务 Agent 会话",
+          isArchived: false,
+          role: "adhoc",
+          ownershipMode: "managed",
+          status: "idle",
+          runningState: "completed",
+          lastSummary: null,
+          lastCheckpointAt: null,
+          createdAt: "2026-06-03T09:00:00.000Z",
+          updatedAt: "2026-06-03T09:16:00.000Z"
+        }
+      ]
+    });
+    butlerApiMock.getButlerSessionTarget.mockResolvedValue({
+      target: {
+        workspaceId: "workspace-2",
+        project: {
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
+          lifecycleStatus: "active",
+          riskLevel: "low"
+        },
+        session: {
+          id: "butler-session-merged-1",
+          projectId: "project-2",
+          sessionId: "agent-session-merged-1",
+          provider: "claude-code",
+          title: "事务 Agent 会话",
+          role: "adhoc",
+          ownershipMode: "managed",
+          status: "idle",
+          runningState: "completed",
+          lastSummary: null,
+          lastCheckpointAt: null,
+          createdAt: "2026-06-03T09:00:00.000Z",
+          updatedAt: "2026-06-03T09:16:00.000Z"
+        }
+      }
+    });
+    butlerApiMock.listButlerProjects.mockResolvedValue({
+      items: [
+        {
+          id: "project-2",
+          workspaceId: "workspace-2",
+          name: "事务文档库",
+          repoRoot: "/Users/jackson/SynologyDrive",
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {},
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z",
+          archivedAt: null
+        }
+      ]
     });
 
-    expect(await screen.findByText("当前工作区 Agent 会话")).toBeInTheDocument();
-    expect(screen.queryByText("其他工作区 Agent 会话")).not.toBeInTheDocument();
-    expect(screen.queryByText("其他工作区当前会话")).not.toBeInTheDocument();
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(await screen.findByText("事务轻量会话")).toBeInTheDocument();
+    expect(await screen.findByText("事务 Agent 会话")).toBeInTheDocument();
+
+    const sidebar = document.querySelector(".affairs-sidebar-block");
+    expect(sidebar).not.toBeNull();
+
+    const groupTitles = Array.from(
+      sidebar?.querySelectorAll(".affairs-sidebar-group-header > span:first-child") ?? []
+    ).map((node) => node.textContent?.trim());
+
+    expect(groupTitles).toEqual(expect.arrayContaining(["会话列表"]));
+    expect(groupTitles).not.toContain("当前准备创建的会话");
+    expect(groupTitles).not.toContain("轻量会话");
+    expect(groupTitles).not.toContain("Agent 会话");
+    expect(sidebar?.querySelectorAll(".affairs-conversation-session-card")).toHaveLength(2);
+  });
+
+  it("事务会话列表在网页端会显示更多菜单，并包含收藏和归档操作", async () => {
+    mockAffairsConversationSidebarSessions();
+    platformStateMock.platform = "web";
+    platformStateMock.isDesktop = false;
+    platformStateMock.isWeb = true;
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    const moreButton = within(sessionCard as HTMLElement).getByRole("button", { name: t("shell.sessionMoreAction") });
+    await userEvent.click(moreButton);
+
+    const menu = await screen.findByRole("menu", { name: t("shell.sessionMoreAction") });
+    expect(within(menu).getByRole("button", { name: t("shell.favoriteAction") })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: t("shell.archiveAction") })).toBeInTheDocument();
+  });
+
+  it("事务会话列表桌面端右键菜单会包含收藏和归档操作", async () => {
+    mockAffairsConversationSidebarSessions();
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: t("shell.favoriteAction") }),
+      expect.objectContaining({ label: t("shell.archiveAction") })
+    ]));
+  });
+
+  it("事务会话列表收藏操作会更新卡片标记", async () => {
+    const { lightweightSession } = mockAffairsConversationSidebarSessions();
+    conversationApiMock.updateSessionFavoriteState.mockResolvedValue({
+      ...lightweightSession,
+      isFavorite: true
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const favoriteItem = items.find((entry: { label?: string }) => entry.label === t("shell.favoriteAction"));
+    expect(favoriteItem).toBeTruthy();
+    if (!favoriteItem || !("onSelect" in favoriteItem)) {
+      throw new Error("未找到收藏菜单项");
+    }
+
+    await act(async () => {
+      await favoriteItem.onSelect();
+    });
+
+    expect(conversationApiMock.updateSessionFavoriteState).toHaveBeenCalledWith("light-session-1", true);
+    await waitFor(() => {
+      expect((sessionCard as HTMLElement).querySelector(".affairs-conversation-favorite-badge")).not.toBeNull();
+    });
+  });
+
+  it("事务会话列表归档操作后会从主列表移除会话", async () => {
+    const { lightweightSession } = mockAffairsConversationSidebarSessions();
+    conversationApiMock.updateSessionArchiveState.mockResolvedValue({
+      ...lightweightSession,
+      isArchived: true
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const archiveItem = items.find((entry: { label?: string }) => entry.label === t("shell.archiveAction"));
+    expect(archiveItem).toBeTruthy();
+    if (!archiveItem || !("onSelect" in archiveItem)) {
+      throw new Error("未找到归档菜单项");
+    }
+
+    await act(async () => {
+      await archiveItem.onSelect();
+    });
+
+    expect(conversationApiMock.updateSessionArchiveState).toHaveBeenCalledWith("light-session-1", true);
+    await waitFor(() => {
+      expect(screen.queryByText("事务轻量会话")).not.toBeInTheDocument();
+    });
   });
 
   it("事务模式未初始化时会强制回到初始化页，并禁用其他事务分区", async () => {
@@ -1912,7 +3000,7 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByText(t("shell.affairsInitRouteGuardSidebarEmpty"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsInitRouteGuardAuxiliaryEmpty"))).toBeInTheDocument();
 
-    expect(screen.getByRole("tab", { name: "文档库" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeDisabled();
     expect(screen.getByRole("tab", { name: "待办" })).toBeDisabled();
     expect(screen.getByRole("tab", { name: "自动化" })).toBeDisabled();
     expect(screen.getByRole("tab", { name: "对话" })).not.toBeDisabled();
@@ -2137,7 +3225,7 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "文档库" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toHaveAttribute("aria-selected", "true");
   });
 
   it("没有收藏内容时会自动隐藏收藏夹分组", async () => {
@@ -2224,7 +3312,16 @@ describe("AffairsWorkbenchView", () => {
         nextAllowedAt: null,
         runningTaskId: "task-refresh-stage",
         runningStage: "incremental_index",
-        errorSummary: null
+        errorSummary: null,
+        progress: {
+          scannedCount: 12,
+          indexedCount: 3,
+          unchangedCount: 8,
+          skippedCount: 1,
+          failedCount: 0,
+          totalCount: null,
+          maxConcurrency: 1
+        }
       }
     }));
 
@@ -2236,8 +3333,11 @@ describe("AffairsWorkbenchView", () => {
 
     await userEvent.hover(indicator);
 
+    expect(screen.getByText(t("shell.affairsLibraryStatusIndicatorProgress", { scanned: 12 }))).toBeInTheDocument();
     expect(await screen.findByText(t("shell.affairsLibraryStatusRunningStageLabel"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryStatusStageIncrementalIndex"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusProgressScannedLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryStatusProgressUnchangedLabel"))).toBeInTheDocument();
   });
 
   it("索引状态指示灯会显示细分导出阶段", async () => {

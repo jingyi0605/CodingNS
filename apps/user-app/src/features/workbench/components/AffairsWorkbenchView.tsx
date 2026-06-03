@@ -15,6 +15,12 @@ import {
   type ReactNode
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  UNSAFE_LocationContext,
+  UNSAFE_NavigationContext,
+  type Location,
+  type Navigator
+} from "react-router-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
@@ -23,10 +29,12 @@ import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { buildWorkspaceAffairsPath } from "../utils/workbench-navigation";
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
   ButlerManagedSessionDto,
+  ButlerProjectDto,
   ButlerProfilePayload,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto
@@ -72,6 +80,7 @@ import type {
   SessionSummaryDto,
 } from "../../conversation/api/conversation-api";
 import {
+  deleteSession,
   createAffairsTag,
   createWorkspaceDirectory,
   deleteAffairsTag,
@@ -94,6 +103,7 @@ import {
   operateAffairsLibraryFile,
   requestAffairsLibraryRefresh,
   requestAffairsTagRecoveryRecompute,
+  renameSessionTitle,
   saveAffairsDocumentTags,
   saveAffairsDocumentTagsWithCreate,
   saveAffairsFolderTags,
@@ -102,9 +112,12 @@ import {
   saveAffairsLibraryConfig,
   sendAffairsLightweightSessionMessage,
   sendAffairsLightweightSessionMessageStream,
+  markSessionSeen,
   setGlobalAffairsLibraryEnabled,
   startAffairsLightweightSession,
   startAffairsLightweightSessionStream,
+  updateSessionArchiveState,
+  updateSessionFavoriteState,
   updateAffairsTag,
   updateGlobalAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
@@ -116,6 +129,15 @@ import { SessionProviderPicker } from "../../conversation/components/SessionProv
 import { SessionHeader } from "../../conversation/components/SessionHeader";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
+import { resolveSessionActivityBadgeClassName, resolveSessionActivityBadgeLabel, resolveSessionIndicatorClassName } from "../../conversation/session-activity-display";
+import {
+  buildSessionExportFileName,
+  buildSessionMarkdownExport,
+  buildSessionPdfExport,
+  downloadBinaryFile,
+  downloadTextFile,
+  loadSessionExportSnapshot
+} from "../../conversation/session-export";
 import {
   getDraftTitle,
   getProviderDisplayName,
@@ -444,6 +466,36 @@ type AffairsConversationRuntimeSeed = {
   bootstrapMessages: HistoryMessageDto[];
 } | null;
 
+type AffairsLightweightStreamingToolStatus = {
+  label: string;
+  detail: string | null;
+  phase: "running" | "completed" | "failed";
+};
+
+type AffairsLightweightRuntimeSnapshot = {
+  session: SessionSummaryDto | null;
+  messages: SessionMessageViewModel[];
+  historyState: "loading" | "ready";
+  sending: boolean;
+  streamingToolStatus: AffairsLightweightStreamingToolStatus | null;
+};
+
+type AffairsConversationListItem = {
+  id: string;
+  kind: AffairsConversationKind;
+  session: SessionSummaryDto;
+};
+
+type AffairsConversationRenameTarget = {
+  kind: AffairsConversationKind;
+  session: SessionSummaryDto;
+} | null;
+
+type AffairsConversationDeleteTarget = {
+  kind: AffairsConversationKind;
+  session: SessionSummaryDto;
+} | null;
+
 type AffairsInitGuardSnapshot = {
   loading: boolean;
   initialized: boolean;
@@ -477,6 +529,8 @@ type AffairsSelectedObject =
 interface AffairsWorkbenchContextValue {
   workspaceId: string;
   workspaceName: string | null;
+  agentWorkspaceId: string | null;
+  agentWorkspacePath: string | null;
   state: AffairsViewState;
   activeSection: AffairsPrimarySection;
   initGuard: AffairsInitGuardSnapshot;
@@ -568,10 +622,21 @@ interface AffairsWorkbenchContextValue {
   openConversationCreateModal: () => void;
   closeConversationCreateModal: () => void;
   butlerStore: ButlerRuntimeStore;
+  archiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
+  toggleConversationSessionFavorite: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
+  markConversationSessionSeen: (sessionId: string, seenAt?: string) => void;
+  renameConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto; title: string }) => Promise<SessionSummaryDto>;
+  deleteConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
+  exportConversationSession: (input: { session: SessionSummaryDto; format: "md" | "pdf" | "html" }) => Promise<void>;
   selectedConversationDraft: AffairsConversationDraftSelection | null;
   selectConversationDraft: (draft: AffairsConversationDraftSelection) => void;
   selectedConversationSession: AffairsConversationSessionSelection | null;
   conversationRuntimeSeed: AffairsConversationRuntimeSeed;
+  lightweightRuntimeBySessionId: Record<string, AffairsLightweightRuntimeSnapshot>;
+  setLightweightRuntimeSnapshot: (
+    sessionId: string,
+    updater: AffairsLightweightRuntimeSnapshot | null | ((current: AffairsLightweightRuntimeSnapshot | null) => AffairsLightweightRuntimeSnapshot | null)
+  ) => void;
   lightweightConversationSessions: SessionSummaryDto[];
   lightweightConversationSessionsLoading: boolean;
   reloadLightweightConversationSessions: () => Promise<void>;
@@ -587,6 +652,13 @@ interface AffairsWorkbenchContextValue {
 
 const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
 const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
+const FALLBACK_ROUTER_LOCATION: Location = {
+  pathname: "",
+  search: "",
+  hash: "",
+  state: null,
+  key: "affairs-workbench-fallback"
+};
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
 
@@ -598,6 +670,12 @@ export function AffairsWorkbenchProvider({
   onStateChange,
   children
 }: AffairsWorkbenchProviderProps) {
+  const navigationContext = useContext(UNSAFE_NavigationContext) as { navigator?: Navigator } | null;
+  const locationContext = useContext(UNSAFE_LocationContext) as { location?: Location } | null;
+  const navigate = useCallback((to: string) => {
+    navigationContext?.navigator?.push(to);
+  }, [navigationContext]);
+  const location = locationContext?.location ?? FALLBACK_ROUTER_LOCATION;
   const workspaceGroup = useMemo(
     () => navigationGroups.find((item) => item.workspace.id === workspaceId) ?? null,
     [navigationGroups, workspaceId]
@@ -623,6 +701,13 @@ export function AffairsWorkbenchProvider({
   const [selectedConversationDraft, setSelectedConversationDraft] = useState<AffairsConversationDraftSelection | null>(null);
   const [selectedConversationSession, setSelectedConversationSession] = useState<AffairsConversationSessionSelection | null>(null);
   const [conversationRuntimeSeed, setConversationRuntimeSeed] = useState<AffairsConversationRuntimeSeed>(null);
+  const [conversationRenameTarget, setConversationRenameTarget] = useState<AffairsConversationRenameTarget>(null);
+  const [conversationRenameValue, setConversationRenameValue] = useState("");
+  const [conversationRenamingSessionId, setConversationRenamingSessionId] = useState<string | null>(null);
+  const [conversationDeleteTarget, setConversationDeleteTarget] = useState<AffairsConversationDeleteTarget>(null);
+  const [conversationDeletingSessionId, setConversationDeletingSessionId] = useState<string | null>(null);
+  const [conversationExportingSessionId, setConversationExportingSessionId] = useState<string | null>(null);
+  const [lightweightRuntimeBySessionId, setLightweightRuntimeBySessionId] = useState<Record<string, AffairsLightweightRuntimeSnapshot>>({});
   const [lightweightConversationSessions, setLightweightConversationSessions] = useState<SessionSummaryDto[]>([]);
   const [lightweightConversationSessionsLoading, setLightweightConversationSessionsLoading] = useState(false);
   const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>([]);
@@ -666,7 +751,47 @@ export function AffairsWorkbenchProvider({
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
-  const [butlerStore] = useState(() => new ButlerRuntimeStore(workspaceId));
+  const binding = librarySnapshot?.binding ?? null;
+  const agentWorkspacePath = useMemo(
+    () => resolveAffairsAgentWorkspacePath(binding),
+    [binding]
+  );
+  const fallbackAgentWorkspaceId = useMemo(
+    () => resolveAffairsAgentWorkspaceId(agentWorkspacePath, navigationGroups),
+    [agentWorkspacePath, navigationGroups]
+  );
+  const [agentProject, setAgentProject] = useState<ButlerProjectDto | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void listButlerProjects()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const nextProject = resolveAffairsAgentProject(response.items, {
+          workspacePath: agentWorkspacePath,
+          workspaceIds: fallbackAgentWorkspaceId ? [fallbackAgentWorkspaceId] : []
+        });
+        setAgentProject((current) => current?.id === nextProject?.id ? current : nextProject);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAgentProject((current) => current === null ? current : null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentWorkspacePath, fallbackAgentWorkspaceId]);
+  const agentWorkspaceId = useMemo(
+    () => agentProject?.workspaceId ?? fallbackAgentWorkspaceId ?? null,
+    [agentProject?.workspaceId, fallbackAgentWorkspaceId]
+  );
+  const butlerStore = useMemo(
+    () => new ButlerRuntimeStore(agentWorkspaceId ?? workspaceId),
+    [agentWorkspaceId, workspaceId]
+  );
   const butlerInitLoading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
   const butlerInitialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
   const butlerBootstrapErrorCode = useButlerRuntimeStore(
@@ -681,7 +806,6 @@ export function AffairsWorkbenchProvider({
   const butlerHostUnavailable =
     butlerBootstrapErrorCode === "NETWORK_ERROR"
     || butlerBootstrapErrorCode === "INVALID_RESPONSE";
-  const binding = librarySnapshot?.binding ?? null;
   const indexStatus = librarySnapshot?.status ?? null;
   const currentDirectoryStatus = libraryDocumentPage?.directoryStatus ?? null;
   const initGuard = useMemo<AffairsInitGuardSnapshot>(() => ({
@@ -699,8 +823,14 @@ export function AffairsWorkbenchProvider({
   }), [butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
   const affairsUnavailable = initGuard.unavailable;
   const affairsInitGuardActive = initGuard.loading || (!initGuard.initialized && !affairsUnavailable);
-  const activeSection =
-    affairsUnavailable || affairsInitGuardActive ? "conversation" : normalizeSection(state.primarySection);
+  const activeSection = normalizeSection(state.primarySection);
+  const isAffairsRoute = location.pathname === buildWorkspaceAffairsPath(workspaceId);
+  const ensureAffairsRoute = useCallback(() => {
+    if (isAffairsRoute) {
+      return;
+    }
+    navigate(buildWorkspaceAffairsPath(workspaceId));
+  }, [isAffairsRoute, navigate, workspaceId]);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
   const directoryHintKeyRef = useRef<string | null>(null);
@@ -711,6 +841,21 @@ export function AffairsWorkbenchProvider({
       void butlerStore.initialize();
     }
   }, [butlerStore]);
+
+  useEffect(() => () => {
+    butlerStore.dispose();
+  }, [butlerStore]);
+
+  useEffect(() => {
+    const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
+    const normalizedProfileWorkspacePath = butlerProfile?.workspacePath?.trim() ?? "";
+    if (!butlerInitialized || !normalizedAgentWorkspacePath || normalizedAgentWorkspacePath === normalizedProfileWorkspacePath) {
+      return;
+    }
+    void butlerStore.updateProfile({
+      workspacePath: normalizedAgentWorkspacePath
+    }).catch(() => undefined);
+  }, [agentWorkspacePath, butlerInitialized, butlerProfile?.workspacePath, butlerStore]);
 
   useEffect(() => {
     setLastObjectAssistantContext(null);
@@ -738,6 +883,31 @@ export function AffairsWorkbenchProvider({
     });
   }, [selectedConversationSession]);
 
+  const setLightweightRuntimeSnapshot = useCallback((
+    sessionId: string,
+    updater: AffairsLightweightRuntimeSnapshot | null | ((current: AffairsLightweightRuntimeSnapshot | null) => AffairsLightweightRuntimeSnapshot | null)
+  ) => {
+    setLightweightRuntimeBySessionId((current) => {
+      const currentSnapshot = current[sessionId] ?? null;
+      const nextSnapshot = typeof updater === "function"
+        ? updater(currentSnapshot)
+        : updater;
+
+      if (!nextSnapshot) {
+        if (!(sessionId in current)) {
+          return current;
+        }
+        const { [sessionId]: _removed, ...rest } = current;
+        return rest;
+      }
+
+      return {
+        ...current,
+        [sessionId]: nextSnapshot
+      };
+    });
+  }, []);
+
   const reloadLightweightConversationSessions = useCallback(async () => {
     setLightweightConversationSessionsLoading(true);
     try {
@@ -761,24 +931,53 @@ export function AffairsWorkbenchProvider({
   const reloadAgentConversationSessions = useCallback(async () => {
     setAgentConversationSessionsLoading(true);
     try {
-      const projectResponse = await listButlerProjects({ workspaceId });
-      const project = projectResponse.items.find((item) => item.workspaceId === workspaceId) ?? null;
-      if (!project) {
+      const normalizedAgentWorkspacePath = normalizeAffairsWorkspacePath(agentWorkspacePath);
+      const projectCandidates = buildAffairsAgentProjectCandidates(
+        (await listButlerProjects()).items,
+        {
+          workspacePath: normalizedAgentWorkspacePath,
+          workspaceIds: fallbackAgentWorkspaceId ? [fallbackAgentWorkspaceId] : []
+        }
+      );
+      if (projectCandidates.length === 0) {
         setAgentConversationSessions([]);
         return;
       }
 
-      const sessionsResponse = await listButlerProjectSessions(project.id);
+      let project: ButlerProjectDto | null = null;
+      let sessionItems: ButlerManagedSessionDto[] = [];
+      for (const candidate of projectCandidates) {
+        const sessionsResponse = await listButlerProjectSessions(candidate.id);
+        if (!project || sessionsResponse.items.length > 0) {
+          project = candidate;
+          sessionItems = sessionsResponse.items;
+        }
+        if (sessionsResponse.items.length > 0) {
+          break;
+        }
+      }
+      if (!project) {
+        setAgentConversationSessions([]);
+        return;
+      }
+      if (project.id !== agentProject?.id) {
+        setAgentProject(project);
+      }
+
       const items = await Promise.all(
-        sessionsResponse.items.map(async (item) => {
+        sessionItems.map(async (item) => {
           try {
             const targetResponse = await getButlerSessionTarget(item.sessionId);
-            if (targetResponse.target.workspaceId !== workspaceId) {
-              return null;
+            const sameProject = targetResponse.target.project.id === project.id;
+            const sameWorkspacePath =
+              normalizedAgentWorkspacePath.length > 0
+              && isAffairsWorkspacePathMatch(targetResponse.target.project.repoRoot, normalizedAgentWorkspacePath);
+            if (!sameProject && !sameWorkspacePath) {
+              return convertButlerManagedSessionToAffairsSessionSummary(item, project.workspaceId);
             }
             return convertButlerManagedSessionToAffairsSessionSummary(item, targetResponse.target.workspaceId);
           } catch {
-            return convertButlerManagedSessionToAffairsSessionSummary(item, workspaceId);
+            return convertButlerManagedSessionToAffairsSessionSummary(item, project.workspaceId);
           }
         })
       );
@@ -792,7 +991,7 @@ export function AffairsWorkbenchProvider({
     } finally {
       setAgentConversationSessionsLoading(false);
     }
-  }, [showToast, workspaceId]);
+  }, [agentProject?.id, agentWorkspacePath, fallbackAgentWorkspaceId, showToast]);
 
   useEffect(() => {
     void reloadAgentConversationSessions();
@@ -1623,27 +1822,6 @@ export function AffairsWorkbenchProvider({
     () => buildAutomationRecords(automations, sessionTitleById),
     [automations, sessionTitleById]
   );
-  const affairsRouteBlocked = affairsInitGuardActive || affairsUnavailable;
-
-  useEffect(() => {
-    if (!affairsRouteBlocked) {
-      return;
-    }
-    const nextSelectedNodeId = state.selectedNodeId?.startsWith("conversation:")
-      ? state.selectedNodeId
-      : resolveDefaultNodeId("conversation", automationRecords, binding);
-    const nextState: AffairsViewState = {
-      ...state,
-      primarySection: "conversation",
-      selectedNodeId: nextSelectedNodeId,
-      selectedObjectId: null,
-      selectedDocumentId: null
-    };
-    if (JSON.stringify(nextState) === JSON.stringify(state)) {
-      return;
-    }
-    onStateChange(nextState);
-  }, [affairsRouteBlocked, automationRecords, binding, onStateChange, state]);
   const loading =
     activeSection === "library"
       ? libraryLoading
@@ -1804,7 +1982,7 @@ export function AffairsWorkbenchProvider({
     }
 
     if (activeSection === "conversation") {
-      const lightweightNodes = lightweightConversationSessions.map<AffairsSidebarNode>((session) => ({
+      const lightweightNodes = (Array.isArray(lightweightConversationSessions) ? lightweightConversationSessions : []).map<AffairsSidebarNode>((session) => ({
         id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
         label: session.title,
         summary: [
@@ -1814,12 +1992,13 @@ export function AffairsWorkbenchProvider({
         ].filter(Boolean).join(" · "),
         tone: "conversation"
       }));
-      const currentAgentSession = butlerControlSession?.session?.workspaceId === workspaceId
-        ? butlerControlSession.session
+      const currentAgentSession = isAffairsWorkspacePathMatch(butlerProfile?.workspacePath, agentWorkspacePath)
+        ? (butlerControlSession?.session ?? null)
         : null;
+      const safeAgentConversationSessions = Array.isArray(agentConversationSessions) ? agentConversationSessions : [];
       const agentItems = currentAgentSession
-        ? [currentAgentSession, ...agentConversationSessions.filter((session) => session.sessionId !== currentAgentSession.sessionId)]
-        : agentConversationSessions;
+        ? [currentAgentSession, ...safeAgentConversationSessions.filter((session) => session.sessionId !== currentAgentSession.sessionId)]
+        : safeAgentConversationSessions;
       const agentNodes = agentItems.map<AffairsSidebarNode>((session) => ({
         id: buildAffairsConversationSessionNodeId("agent", session.sessionId),
         label: session.title,
@@ -1866,8 +2045,11 @@ export function AffairsWorkbenchProvider({
       tone: "automation"
     }));
   }, [
+    agentWorkspacePath,
     activeSection,
     automationRecords,
+    butlerControlSession,
+    butlerProfile?.workspacePath,
     documentRecords.length,
     favoriteEntries,
     folderRecords,
@@ -1881,6 +2063,8 @@ export function AffairsWorkbenchProvider({
   const contextValue = useMemo<AffairsWorkbenchContextValue>(() => ({
     workspaceId,
     workspaceName,
+    agentWorkspaceId,
+    agentWorkspacePath,
     state,
     activeSection,
     initGuard,
@@ -1914,11 +2098,15 @@ export function AffairsWorkbenchProvider({
     toolbarExpanded: state.toolbarExpanded,
     detailViewerCollapsed: state.detailViewerCollapsed,
     selectSection: (section) => {
+      ensureAffairsRoute();
+      const preservedConversationNodeId = section === "conversation" && state.selectedNodeId?.startsWith("conversation:")
+        ? state.selectedNodeId
+        : null;
       if (affairsInitGuardActive) {
         onStateChange({
           ...state,
           primarySection: "conversation",
-          selectedNodeId: resolveDefaultNodeId("conversation", automationRecords, binding),
+          selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId("conversation", automationRecords, binding),
           selectedObjectId: null,
           selectedDocumentId: null
         });
@@ -1927,16 +2115,20 @@ export function AffairsWorkbenchProvider({
       onStateChange({
         ...state,
         primarySection: section,
-        selectedNodeId: resolveDefaultNodeId(section, automationRecords, binding),
+        selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId(section, automationRecords, binding),
         selectedObjectId: null,
         selectedDocumentId: section === "library" ? null : state.selectedDocumentId
       });
     },
     openInitializedSection: (section) => {
+      ensureAffairsRoute();
+      const preservedConversationNodeId = section === "conversation" && state.selectedNodeId?.startsWith("conversation:")
+        ? state.selectedNodeId
+        : null;
       onStateChange({
         ...state,
         primarySection: section,
-        selectedNodeId: resolveDefaultNodeId(section, automationRecords, binding),
+        selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId(section, automationRecords, binding),
         selectedObjectId: null,
         selectedDocumentId: section === "library" ? null : state.selectedDocumentId
       });
@@ -2284,6 +2476,100 @@ export function AffairsWorkbenchProvider({
     openConversationCreateModal: () => setConversationCreateModalOpen(true),
     closeConversationCreateModal: () => setConversationCreateModalOpen(false),
     butlerStore,
+    archiveConversationSession: async (input) => {
+      const nextSession = await updateSessionArchiveState(input.session.sessionId, true);
+      setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+      setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== nextSession.sessionId));
+    },
+    toggleConversationSessionFavorite: async (input) => {
+      const nextSession = await updateSessionFavoriteState(input.session.sessionId, input.session.isFavorite !== true);
+      setLightweightConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
+      setAgentConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
+    },
+    markConversationSessionSeen: (sessionId, seenAt) => {
+      const nextSeenAt = seenAt ?? new Date().toISOString();
+      setLightweightConversationSessions((current) => current.map((item) => (
+        item.sessionId === sessionId ? markAffairsSessionSeen(item, nextSeenAt) : item
+      )));
+      setAgentConversationSessions((current) => current.map((item) => (
+        item.sessionId === sessionId ? markAffairsSessionSeen(item, nextSeenAt) : item
+      )));
+      setConversationRuntimeSeed((current) => (
+        current && current.session.sessionId === sessionId
+          ? {
+              ...current,
+              session: markAffairsSessionSeen(current.session, nextSeenAt)
+            }
+          : current
+      ));
+      void markSessionSeen(sessionId).catch(() => undefined);
+    },
+    renameConversationSession: async (input) => {
+      const renamedSession = await renameSessionTitle(input.session.sessionId, input.title.trim());
+      setLightweightConversationSessions((current) => current.map((item) => (
+        item.sessionId === renamedSession.sessionId ? renamedSession : item
+      )));
+      setAgentConversationSessions((current) => current.map((item) => (
+        item.sessionId === renamedSession.sessionId ? renamedSession : item
+      )));
+      setConversationRuntimeSeed((current) => (
+        current && current.session.sessionId === renamedSession.sessionId
+          ? {
+              ...current,
+              session: renamedSession
+            }
+          : current
+      ));
+      return renamedSession;
+    },
+    deleteConversationSession: async (input) => {
+      await deleteSession(input.session.sessionId);
+      setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
+      setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
+      setLightweightRuntimeSnapshot(input.session.sessionId, null);
+      setConversationRuntimeSeed((current) => (
+        current?.session.sessionId === input.session.sessionId ? null : current
+      ));
+      if (selectedConversationSession?.sessionId === input.session.sessionId) {
+        setSelectedConversationSession(null);
+        onStateChange({
+          ...state,
+          primarySection: "conversation",
+          selectedNodeId: null,
+          selectedObjectId: null,
+          selectedDocumentId: null
+        });
+      }
+    },
+    exportConversationSession: async ({ session, format }) => {
+      const snapshot = await loadSessionExportSnapshot(session.sessionId);
+      if (format === "md") {
+        downloadTextFile(
+          buildSessionExportFileName(session, "md"),
+          buildSessionMarkdownExport(session, snapshot.messages),
+          "text/markdown;charset=utf-8"
+        );
+        return;
+      }
+      if (format === "html") {
+        const html = buildSessionMarkdownExport(session, snapshot.messages);
+        downloadTextFile(
+          buildSessionExportFileName(session, "html"),
+          html,
+          "text/markdown;charset=utf-8"
+        );
+        return;
+      }
+      downloadBinaryFile(
+        buildSessionExportFileName(session, "pdf"),
+        buildSessionPdfExport(session, snapshot.messages),
+        "application/pdf"
+      );
+    },
     selectedConversationDraft,
     selectConversationDraft: (draft) => {
       setConversationRuntimeSeed(null);
@@ -2298,6 +2584,8 @@ export function AffairsWorkbenchProvider({
     },
     selectedConversationSession,
     conversationRuntimeSeed,
+    lightweightRuntimeBySessionId,
+    setLightweightRuntimeSnapshot,
     lightweightConversationSessions,
     lightweightConversationSessionsLoading,
     reloadLightweightConversationSessions,
@@ -2305,19 +2593,28 @@ export function AffairsWorkbenchProvider({
     agentConversationSessionsLoading,
     reloadAgentConversationSessions,
     activateConversationSession: (input) => {
+      const seenAt = new Date().toISOString();
+      const nextSession = markAffairsSessionSeen(input.session, seenAt);
+      setLightweightConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
+      setAgentConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
       setConversationRuntimeSeed({
         kind: input.kind,
-        session: input.session,
+        session: nextSession,
         bootstrapMessages: input.bootstrapMessages
       });
       setSelectedConversationSession({
         kind: input.kind,
-        sessionId: input.session.sessionId
+        sessionId: nextSession.sessionId
       });
+      void markSessionSeen(nextSession.sessionId).catch(() => undefined);
       onStateChange({
         ...state,
         primarySection: "conversation",
-        selectedNodeId: buildAffairsConversationSessionNodeId(input.kind, input.session.sessionId),
+        selectedNodeId: buildAffairsConversationSessionNodeId(input.kind, nextSession.sessionId),
         selectedObjectId: null,
         selectedDocumentId: null
       });
@@ -2325,6 +2622,8 @@ export function AffairsWorkbenchProvider({
   }), [
     affairsInitGuardActive,
     activeSection,
+    agentWorkspaceId,
+    agentWorkspacePath,
     assistantContext,
     automationRecords,
     automationRuns,
@@ -2359,6 +2658,8 @@ export function AffairsWorkbenchProvider({
     selectedConversationDraft,
     selectedConversationSession,
     conversationRuntimeSeed,
+    lightweightRuntimeBySessionId,
+    setLightweightRuntimeSnapshot,
     lightweightConversationSessions,
     lightweightConversationSessionsLoading,
     reloadLightweightConversationSessions,
@@ -2458,14 +2759,308 @@ export function AffairsSectionMenu() {
   );
 }
 
+function resolveConversationSessionSortTime(session: SessionSummaryDto): number {
+  const timestamp = session.lastMessageAt ?? session.updatedAt ?? session.createdAt ?? null;
+  const parsed = timestamp ? Date.parse(timestamp) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatAffairsConversationProviderBadge(provider: ProviderId) {
+  return getProviderDisplayName(provider, "compact");
+}
+
+function buildAffairsConversationMeta(session: SessionSummaryDto) {
+  const date = session.lastMessageAt ?? session.updatedAt ?? session.createdAt;
+  return date ? formatRelativeMeta(date) : "";
+}
+
+function markAffairsSessionSeen<T extends SessionSummaryDto>(session: T, seenAt: string): T {
+  return {
+    ...session,
+    lastSeenAt:
+      session.lastSeenAt && session.lastSeenAt > seenAt
+        ? session.lastSeenAt
+        : seenAt,
+    activityState: session.activityState === "completed_unread" ? "idle" : session.activityState
+  };
+}
+
+function buildAffairsConversationIndicatorClassName(
+  session: SessionSummaryDto,
+  options?: { isActive?: boolean }
+) {
+  return resolveSessionIndicatorClassName("session-state-indicator", session, {
+    isActive: options?.isActive
+  });
+}
+
+function AffairsSessionStarIcon({ active = false }: { active?: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill={active ? "currentColor" : "none"} aria-hidden="true">
+      <path d="m10 2.9 2.18 4.41 4.87.71-3.52 3.43.83 4.85L10 14.02 5.64 16.3l.83-4.85L2.95 8.02l4.87-.71L10 2.9Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsSessionArchiveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M3.5 5.5h13v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 15.5z" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M2.75 3.25h14.5v2.5H2.75zM7 9.25h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsConversationSessionCard({
+  item,
+  isActive,
+  role,
+  onOpen,
+  onToggleFavorite,
+  onArchive
+}: {
+  item: AffairsConversationListItem;
+  isActive: boolean;
+  role?: string;
+  onOpen: () => void;
+  onToggleFavorite: () => Promise<void>;
+  onArchive: () => Promise<void>;
+}) {
+  const platform = usePlatform();
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number } | null>(null);
+  const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const sessionActivityBadgeLabel = resolveSessionActivityBadgeLabel(item.session);
+  const sessionActivityBadgeClassName =
+    resolveSessionActivityBadgeClassName("session-activity-badge", item.session);
+  const sessionMeta = buildAffairsConversationMeta(item.session);
+
+  useEffect(() => {
+    if (!menuOpen || platform.isDesktop) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setMenuOpen(false);
+      setMenuAnchorPoint(null);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        setMenuAnchorPoint(null);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen, platform.isDesktop]);
+
+  useLayoutEffect(() => {
+    if (platform.isDesktop || !menuOpen || !menuAnchorPoint || typeof window === "undefined") {
+      setMenuPositionStyle(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const nextPosition = resolveContextMenuPosition(
+        menuAnchorPoint,
+        {
+          width: menuRef.current?.offsetWidth ?? 0,
+          height: menuRef.current?.offsetHeight ?? 0
+        },
+        {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        {
+          estimatedHeightPx: 132
+        }
+      );
+      setMenuPositionStyle({
+        position: "fixed",
+        top: `${Math.round(nextPosition.top)}px`,
+        left: `${Math.round(nextPosition.left)}px`,
+        width: `${Math.round(nextPosition.width)}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: `${Math.round(nextPosition.maxHeight)}px`,
+        transformOrigin: nextPosition.transformOrigin
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [menuAnchorPoint, menuOpen, platform.isDesktop]);
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setMenuAnchorPoint(null);
+  }, []);
+
+  const openMenuAt = useCallback((anchorPoint: { x: number; y: number }) => {
+    setMenuAnchorPoint(anchorPoint);
+    setMenuOpen(true);
+  }, []);
+
+  const openDesktopSessionMenu = useCallback(async () => {
+    await showDesktopContextMenu([
+      {
+        id: `favorite:${item.session.sessionId}`,
+        label: item.session.isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction"),
+        onSelect: onToggleFavorite
+      },
+      {
+        id: `archive:${item.session.sessionId}`,
+        label: t("shell.archiveAction"),
+        onSelect: onArchive
+      }
+    ]);
+  }, [item.session.isFavorite, item.session.sessionId, onArchive, onToggleFavorite]);
+
+  const sessionMenu =
+    !platform.isDesktop && menuOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            className="workbench-session-menu"
+            role="menu"
+            aria-label={t("shell.sessionMoreAction")}
+            onClick={(event) => event.stopPropagation()}
+            style={
+              menuPositionStyle ?? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                visibility: "hidden"
+              }
+            }
+          >
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void onToggleFavorite().finally(closeMenu);
+              }}
+            >
+              <AffairsSessionStarIcon active={item.session.isFavorite} />
+              <span>{item.session.isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void onArchive().finally(closeMenu);
+              }}
+            >
+              <AffairsSessionArchiveIcon />
+              <span>{t("shell.archiveAction")}</span>
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
+
+  return (
+    <article
+      role={role}
+      className="workbench-session-card affairs-conversation-session-card"
+      data-active={isActive}
+      data-kind={item.kind}
+      data-workspace-tone="root"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (platform.isDesktop) {
+          void openDesktopSessionMenu();
+          return;
+        }
+        openMenuAt({
+          x: event.clientX,
+          y: event.clientY
+        });
+      }}
+    >
+      <div className="workbench-session-main">
+        <span
+          className={buildAffairsConversationIndicatorClassName(item.session, { isActive })}
+          data-activity-source={item.session.activitySource}
+          aria-hidden="true"
+        />
+        <button
+          type="button"
+          className="workbench-session-link"
+          data-active={isActive}
+          onClick={onOpen}
+          onKeyDown={(event) => {
+            if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            if (platform.isDesktop) {
+              void openDesktopSessionMenu();
+              return;
+            }
+            const rect = event.currentTarget.getBoundingClientRect();
+            openMenuAt({
+              x: rect.right,
+              y: rect.bottom
+            });
+          }}
+        >
+          <div className="workbench-session-link-copy">
+            <div className="session-title-row">
+              <span className="session-title" title={item.session.title}>{item.session.title}</span>
+              {item.session.isFavorite ? (
+                <span className="affairs-conversation-favorite-badge" aria-hidden="true">
+                  <AffairsSessionStarIcon active />
+                </span>
+              ) : null}
+            </div>
+            <div className="session-meta-row">
+              <span className="session-meta">
+                {[resolveAffairsConversationKindLabel(item.kind), sessionMeta].filter(Boolean).join(" · ")}
+              </span>
+              {sessionActivityBadgeLabel && sessionActivityBadgeClassName ? (
+                <span className={sessionActivityBadgeClassName}>{sessionActivityBadgeLabel}</span>
+              ) : null}
+              <span className={`session-provider-badge ${item.session.provider}`}>{formatAffairsConversationProviderBadge(item.session.provider)}</span>
+            </div>
+          </div>
+        </button>
+      </div>
+      {sessionMenu}
+    </article>
+  );
+}
+
 export function AffairsSidebarPanel() {
   const {
     activeSection,
+    agentWorkspacePath,
+    agentConversationSessions,
+    agentConversationSessionsLoading,
     binding,
+    butlerStore,
     initGuard,
+    lightweightConversationSessions,
     lightweightConversationSessionsLoading,
+    markConversationSessionSeen,
     openConversationCreateModal,
     openTagManagement,
+    archiveConversationSession,
     documentRecords,
     favoriteEntries,
     folderRecords,
@@ -2475,6 +3070,7 @@ export function AffairsSidebarPanel() {
     tagRecords,
     libraryTagFacetCounts,
     toggleFavorite,
+    toggleConversationSessionFavorite,
     todoRecords,
     automationRecords,
     selectSidebarNode,
@@ -2483,6 +3079,8 @@ export function AffairsSidebarPanel() {
     error,
     libraryDocumentTotal
   } = useAffairsWorkbenchInternal();
+  const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
+  const butlerProfileWorkspacePath = useButlerRuntimeStore(butlerStore, (value) => value.profile?.workspacePath ?? null);
   if (initGuard.loading) {
     return (
       <section className="workbench-section-block affairs-sidebar-block">
@@ -2526,84 +3124,72 @@ export function AffairsSidebarPanel() {
   }
 
   if (activeSection === "conversation") {
-    const lightweightNodes = sidebarNodes.filter((node) => node.id.startsWith("conversation:lightweight:"));
-    const agentNodes = sidebarNodes.filter((node) => node.id.startsWith("conversation:agent:"));
+    const currentAgentSession = isAffairsWorkspacePathMatch(butlerProfileWorkspacePath, agentWorkspacePath)
+      ? (butlerControlSession?.session ?? null)
+      : null;
+    const agentItems =
+      currentAgentSession
+      && agentConversationSessions.every((session) => session.sessionId !== currentAgentSession.sessionId)
+        ? [currentAgentSession, ...agentConversationSessions]
+        : agentConversationSessions;
+    const conversationListItems: AffairsConversationListItem[] = [
+      ...lightweightConversationSessions.map((session) => ({
+        id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
+        kind: "lightweight" as const,
+        session
+      })),
+      ...agentItems.map((session) => ({
+        id: buildAffairsConversationSessionNodeId("agent", session.sessionId),
+        kind: "agent" as const,
+        session
+      }))
+    ]
+      .filter((item) => item.session.isArchived !== true)
+      .sort((left, right) => {
+        if (left.session.isFavorite !== right.session.isFavorite) {
+          return left.session.isFavorite ? -1 : 1;
+        }
+        return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
+      });
+    const conversationSessionsLoading = lightweightConversationSessionsLoading || agentConversationSessionsLoading;
     return (
       <section className="workbench-section-block affairs-sidebar-block">
-        <div className="affairs-sidebar-block-header">
-          <div>
+        <div className="affairs-sidebar-block-header affairs-sidebar-block-header-with-count">
+          <div className="affairs-sidebar-block-header-title-row">
             <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
-            <p>{t("shell.affairsConversationSidebarDescription")}</p>
+            <span className="affairs-sidebar-block-count">{conversationListItems.length}</span>
           </div>
           <AffairsConversationCreateButton compact onClick={openConversationCreateModal} />
         </div>
         <div className="affairs-sidebar-groups" role="list">
-          <section className="affairs-sidebar-group affairs-sidebar-group-plain">
-            <header className="affairs-sidebar-group-header">
-              <span>{t("shell.affairsConversationSelectedDraftSectionTitle")}</span>
-            </header>
-            <AffairsConversationDraftPreview compact />
-          </section>
           <section className="affairs-sidebar-group">
-            <header className="affairs-sidebar-group-header">
-              <span>{t("shell.affairsConversationKindLightweight")}</span>
-              <span>{lightweightNodes.length}</span>
-            </header>
-            {lightweightConversationSessionsLoading ? (
+            {conversationSessionsLoading ? (
               <div className="affairs-sidebar-empty compact">{t("common.loading")}</div>
-            ) : lightweightNodes.length === 0 ? (
+            ) : conversationListItems.length === 0 ? (
               <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
                 {t("shell.affairsConversationCreateHint")}
               </div>
             ) : (
-              <div className="affairs-sidebar-list" role="list">
-                {lightweightNodes.map((node) => (
-                  <div
-                    key={node.id}
-                    className={node.id === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
-                    data-tone={node.tone ?? "default"}
+              <div className="workbench-session-list affairs-conversation-session-list" role="list">
+                {conversationListItems.map((item) => (
+                  <AffairsConversationSessionCard
+                    key={item.id}
+                    item={item}
+                    isActive={item.id === state.selectedNodeId}
                     role="listitem"
-                  >
-                    <button
-                      type="button"
-                      className="affairs-sidebar-item-button affairs-sidebar-item-button-content"
-                      onClick={() => selectSidebarNode(node.id)}
-                    >
-                      <span className="affairs-sidebar-item-label">{node.label}</span>
-                      {node.summary ? <span className="affairs-sidebar-item-summary">{node.summary}</span> : null}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-          <section className="affairs-sidebar-group">
-            <header className="affairs-sidebar-group-header">
-              <span>{t("shell.affairsConversationKindAgent")}</span>
-              <span>{agentNodes.length}</span>
-            </header>
-            {agentNodes.length === 0 ? (
-              <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
-                {t("shell.affairsConversationAgentSessionHint")}
-              </div>
-            ) : (
-              <div className="affairs-sidebar-list" role="list">
-                {agentNodes.map((node) => (
-                  <div
-                    key={node.id}
-                    className={node.id === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
-                    data-tone={node.tone ?? "default"}
-                    role="listitem"
-                  >
-                    <button
-                      type="button"
-                      className="affairs-sidebar-item-button affairs-sidebar-item-button-content"
-                      onClick={() => selectSidebarNode(node.id)}
-                    >
-                      <span className="affairs-sidebar-item-label">{node.label}</span>
-                      {node.summary ? <span className="affairs-sidebar-item-summary">{node.summary}</span> : null}
-                    </button>
-                  </div>
+                    onOpen={() => {
+                      markConversationSessionSeen(item.session.sessionId);
+                      selectSidebarNode(item.id);
+                    }}
+                    onToggleFavorite={() => toggleConversationSessionFavorite({
+                      kind: item.kind,
+                      session: item.session
+                    })}
+                    onArchive={() => archiveConversationSession({
+                      kind: item.kind,
+                      session: item.session
+                    })}
+                  />
                 ))}
               </div>
             )}
@@ -3015,7 +3601,7 @@ function AffairsConversationCreateProviderSection({
   description: string;
   providers: ProviderId[];
 }) {
-  const { workspaceId, closeConversationCreateModal, selectConversationDraft } = useAffairsWorkbenchInternal();
+  const { agentWorkspaceId, closeConversationCreateModal, selectConversationDraft } = useAffairsWorkbenchInternal();
 
   return (
     <section className="create-session-modal-section affairs-conversation-create-modal-section">
@@ -3024,7 +3610,7 @@ function AffairsConversationCreateProviderSection({
         <p>{description}</p>
       </div>
       <SessionProviderPicker
-        workspaceId={kind === "agent" ? workspaceId : null}
+        workspaceId={kind === "agent" ? agentWorkspaceId : null}
         providers={providers}
         onSelect={(provider) => {
           selectConversationDraft({ kind, provider });
@@ -3138,10 +3724,10 @@ function AffairsLightweightConversationDraftState(input: {
 }) {
   const {
     activateConversationSession,
-    reloadLightweightConversationSessions
+    reloadLightweightConversationSessions,
+    lightweightRuntimeBySessionId,
+    setLightweightRuntimeSnapshot
   } = useAffairsWorkbenchInternal();
-  const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
-  const [sending, setSending] = useState(false);
   const capabilities = useMemo(
     () => createAffairsLightweightCapabilities(input.draft.provider),
     [input.draft.provider]
@@ -3150,19 +3736,25 @@ function AffairsLightweightConversationDraftState(input: {
     () => createAffairsConversationDraftSessionSummary(input.workspaceId, input.draft),
     [input.draft, input.workspaceId]
   );
+  const runtimeSnapshot = lightweightRuntimeBySessionId[session.sessionId]
+    ?? createAffairsLightweightRuntimeSnapshot({
+      session,
+      historyState: "ready"
+    });
 
   return (
     <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
       <div className="conversation-main affairs-conversation-main">
         <SessionHeader session={session} />
+        <AffairsLightweightStreamingStatusBar status={runtimeSnapshot.streamingToolStatus} />
         <div className="conversation-timeline-shell affairs-conversation-timeline-shell">
           <MessageTimeline
             sessionId={session.sessionId}
             sessionSummary={session}
             workspaceId={session.workspaceId}
             workspacePath={null}
-            items={buildConversationTimelineSourceItems({ messages: draftMessages })}
-            historyState="ready"
+            items={buildConversationTimelineSourceItems({ messages: runtimeSnapshot.messages })}
+            historyState={runtimeSnapshot.historyState}
             provider={input.draft.provider}
             onRetryMessage={() => {}}
           />
@@ -3173,13 +3765,13 @@ function AffairsLightweightConversationDraftState(input: {
           workspaceId={input.workspaceId}
           contextUsage={null}
           taskProvider={input.draft.provider}
-          taskMessages={draftMessages}
-          isSubmitting={sending}
+          taskMessages={runtimeSnapshot.messages}
+          isSubmitting={runtimeSnapshot.sending}
           isRunning={false}
           onSend={async (content, options) => {
             const clientRequestId = createAffairsConversationClientRequestId();
-            setDraftMessages((current) => [
-              ...current,
+            const initialMessages = [
+              ...runtimeSnapshot.messages,
               createPendingMessage(
                 session.sessionId,
                 content,
@@ -3188,8 +3780,16 @@ function AffairsLightweightConversationDraftState(input: {
                 options?.attachments ?? []
               ),
               createLightweightStreamingAssistantPlaceholder(session.sessionId, clientRequestId)
-            ]);
-            setSending(true);
+            ];
+            setLightweightRuntimeSnapshot(session.sessionId, createAffairsLightweightRuntimeSnapshot({
+              session,
+              messages: initialMessages,
+              historyState: "ready",
+              sending: true,
+              streamingToolStatus: null
+            }));
+
+            let activeSessionId: string | null = null;
 
             try {
               const created = await startAffairsLightweightSessionStream(input.workspaceId, {
@@ -3199,12 +3799,86 @@ function AffairsLightweightConversationDraftState(input: {
                 model: options?.model ?? null,
                 reasoningLevel: options?.reasoningLevel ?? null
               }, (event) => {
+                if (event.type === "started") {
+                  activeSessionId = event.session.sessionId;
+                  const liveMessages = initialMessages.map((message) => ({
+                    ...message,
+                    sessionId: event.session.sessionId
+                  }));
+                  setLightweightRuntimeSnapshot(event.session.sessionId, createAffairsLightweightRuntimeSnapshot({
+                    session: event.session,
+                    messages: liveMessages,
+                    historyState: "ready",
+                    sending: true,
+                    streamingToolStatus: null
+                  }));
+                  setLightweightRuntimeSnapshot(session.sessionId, null);
+                  activateConversationSession({
+                    kind: "lightweight",
+                    session: event.session,
+                    bootstrapMessages: []
+                  });
+                  return;
+                }
+
+                const targetSessionId = resolveAffairsLightweightRuntimeSessionId({
+                  fallbackSessionId: session.sessionId,
+                  activeSessionId,
+                  eventSessionId: null
+                });
+
                 if (event.type === "delta") {
-                  setDraftMessages((current) => appendLightweightStreamingAssistantDelta(current, session.sessionId, clientRequestId, event.delta));
+                  setLightweightRuntimeSnapshot(targetSessionId, (current) => {
+                    const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+                      session: targetSessionId === session.sessionId ? session : null,
+                      historyState: "ready"
+                    });
+                    return {
+                      ...snapshot,
+                      messages: appendLightweightStreamingAssistantDelta(snapshot.messages, targetSessionId, clientRequestId, event.delta)
+                    };
+                  });
+                  return;
+                }
+
+                if (event.type === "tool") {
+                  setLightweightRuntimeSnapshot(targetSessionId, (current) => {
+                    const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+                      session: targetSessionId === session.sessionId ? session : null,
+                      historyState: "ready"
+                    });
+                    return {
+                      ...snapshot,
+                      messages: upsertAffairsLightweightToolMessage(snapshot.messages, {
+                        sessionId: targetSessionId,
+                        toolCallId: event.toolCallId,
+                        toolName: event.toolName,
+                        status: event.status,
+                        detail: event.detail ?? null,
+                        toolInput: event.input ?? null,
+                        toolOutput: event.output ?? null
+                      }),
+                      streamingToolStatus: createAffairsLightweightToolStatus(event.toolName, event.detail ?? null, event.status)
+                    };
+                  });
                 }
               });
 
               const liveSession = created.session;
+              setLightweightRuntimeSnapshot(liveSession.sessionId, (current) => createAffairsLightweightRuntimeSnapshot({
+                session: liveSession,
+                messages: created.messages.length > 0
+                  ? created.messages.map((message) => convertHistoryMessageToViewModel(message, liveSession.sessionId))
+                  : (current?.messages
+                    ?? lightweightRuntimeBySessionId[liveSession.sessionId]?.messages
+                    ?? initialMessages.map((message) => ({
+                      ...message,
+                      sessionId: liveSession.sessionId
+                    }))),
+                historyState: "ready",
+                sending: false,
+                streamingToolStatus: null
+              }));
               await reloadLightweightConversationSessions();
               activateConversationSession({
                 kind: "lightweight",
@@ -3212,10 +3886,33 @@ function AffairsLightweightConversationDraftState(input: {
                 bootstrapMessages: created.messages
               });
             } catch (error) {
-              setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
+              const failedSessionId = activeSessionId ?? session.sessionId;
+              setLightweightRuntimeSnapshot(failedSessionId, (current) => {
+                const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+                  session: failedSessionId === session.sessionId ? session : null,
+                  historyState: "ready"
+                });
+                return {
+                  ...snapshot,
+                  messages: markPendingAsFailed(snapshot.messages, clientRequestId),
+                  sending: false,
+                  streamingToolStatus: snapshot.streamingToolStatus
+                    ? { ...snapshot.streamingToolStatus, phase: "failed" }
+                    : null
+                };
+              });
               throw error;
             } finally {
-              setSending(false);
+              const finalSessionId = activeSessionId ?? session.sessionId;
+              setLightweightRuntimeSnapshot(finalSessionId, (current) => {
+                if (!current) {
+                  return current;
+                }
+                return {
+                  ...current,
+                  sending: false
+                };
+              });
             }
           }}
         />
@@ -3245,6 +3942,7 @@ function AffairsLightweightConversationLiveState(input: {
     <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
       <div className="conversation-main affairs-conversation-main">
         <SessionHeader session={session} />
+        <AffairsLightweightStreamingStatusBar status={runtime.streamingToolStatus} />
         <PermissionRequestList
           requests={runtime.permissionRequests}
           replyingRequestId={runtime.replyingPermissionRequestId}
@@ -3286,6 +3984,252 @@ function AffairsLightweightConversationLiveState(input: {
   );
 }
 
+function useAffairsLightweightSessionController(input: {
+  sessionId: string;
+  externalSession: SessionSummaryDto | null;
+  bootstrapMessages: HistoryMessageDto[];
+}) {
+  const {
+    workspaceId,
+    reloadLightweightConversationSessions,
+    lightweightRuntimeBySessionId,
+    setLightweightRuntimeSnapshot
+  } = useAffairsWorkbenchInternal();
+  const runtimeSnapshot = lightweightRuntimeBySessionId[input.sessionId] ?? null;
+  const bootstrapViewMessages = useMemo(
+    () => input.bootstrapMessages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)),
+    [input.bootstrapMessages, input.sessionId]
+  );
+
+  useEffect(() => {
+    if (!runtimeSnapshot && input.externalSession) {
+      setLightweightRuntimeSnapshot(input.sessionId, createAffairsLightweightRuntimeSnapshot({
+        session: input.externalSession,
+        messages: bootstrapViewMessages,
+        historyState: input.bootstrapMessages.length > 0 ? "ready" : "loading",
+        sending: false,
+        streamingToolStatus: null
+      }));
+      return;
+    }
+
+    if (!input.externalSession) {
+      return;
+    }
+
+    const externalSession = input.externalSession;
+    setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+      if (!current || current.session?.sessionId === externalSession.sessionId) {
+        return current;
+      }
+      return {
+        ...current,
+        session: externalSession
+      };
+    });
+  }, [bootstrapViewMessages, input.bootstrapMessages.length, input.externalSession, input.sessionId, runtimeSnapshot, setLightweightRuntimeSnapshot]);
+
+  useEffect(() => {
+    if (input.bootstrapMessages.length === 0) {
+      return;
+    }
+
+    setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+      const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+        session: input.externalSession,
+        historyState: "ready"
+      });
+      if (snapshot.messages.length > 0) {
+        return snapshot;
+      }
+      return {
+        ...snapshot,
+        messages: bootstrapViewMessages,
+        historyState: "ready"
+      };
+    });
+  }, [bootstrapViewMessages, input.bootstrapMessages.length, input.externalSession, input.sessionId, setLightweightRuntimeSnapshot]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void Promise.all([
+      getAffairsLightweightSession(workspaceId, input.sessionId),
+      getAffairsLightweightSessionMessages(workspaceId, input.sessionId)
+    ]).then(([nextSession, nextMessages]) => {
+      if (cancelled) {
+        return;
+      }
+      setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+        const authoritativeMessages = nextMessages.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId));
+        const nextMessagesList = authoritativeMessages.length > 0
+          ? authoritativeMessages
+          : (current?.messages ?? []);
+        const shouldKeepStreamingStatus = (current?.sending ?? false) || nextMessagesList.some((message) => message.toolCall?.status === "running");
+        return {
+          ...(current ?? createAffairsLightweightRuntimeSnapshot()),
+          session: nextSession,
+          messages: nextMessagesList,
+          historyState: "ready",
+          sending: current?.sending ?? false,
+          streamingToolStatus: shouldKeepStreamingStatus ? (current?.streamingToolStatus ?? null) : null
+        };
+      });
+    }).catch(() => {
+      if (!cancelled) {
+        setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
+          ...(current ?? createAffairsLightweightRuntimeSnapshot()),
+          historyState: "ready"
+        }));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [input.sessionId, setLightweightRuntimeSnapshot, workspaceId]);
+
+  const effectiveSnapshot = runtimeSnapshot ?? createAffairsLightweightRuntimeSnapshot({
+    session: input.externalSession,
+    messages: bootstrapViewMessages,
+    historyState: input.bootstrapMessages.length > 0 ? "ready" : "loading"
+  });
+  const session = effectiveSnapshot.session ?? input.externalSession;
+  const messages = effectiveSnapshot.messages;
+
+  return {
+    session,
+    messages,
+    timelineItems: buildConversationTimelineSourceItems({ messages }),
+    historyState: effectiveSnapshot.historyState,
+    sending: effectiveSnapshot.sending,
+    streamingToolStatus: effectiveSnapshot.streamingToolStatus,
+    capabilities: createAffairsLightweightCapabilities(
+      session?.provider ?? input.externalSession?.provider ?? "codex"
+    ),
+    send: async (
+      content: string,
+      options?: {
+        clientRequestId?: string;
+        model?: string;
+        reasoningLevel?: string;
+        attachmentMeta?: HistoryMessageDto["attachments"];
+      }
+    ) => {
+      const clientRequestId = options?.clientRequestId ?? createAffairsConversationClientRequestId();
+      const optimisticMessages = [
+        ...messages,
+        createPendingMessage(
+          input.sessionId,
+          content,
+          clientRequestId,
+          options?.attachmentMeta ?? [],
+          []
+        ),
+        createLightweightStreamingAssistantPlaceholder(input.sessionId, clientRequestId)
+      ];
+      setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
+        ...(current ?? createAffairsLightweightRuntimeSnapshot({ session })),
+        session: current?.session ?? session,
+        messages: optimisticMessages,
+        historyState: "ready",
+        sending: true,
+        streamingToolStatus: null
+      }));
+
+      try {
+        const response = await sendAffairsLightweightSessionMessageStream(workspaceId, input.sessionId, {
+          content,
+          clientRequestId,
+          model: options?.model ?? null,
+          reasoningLevel: options?.reasoningLevel ?? null
+        }, (event) => {
+          if (event.type === "started") {
+            setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
+              ...(current ?? createAffairsLightweightRuntimeSnapshot()),
+              session: event.session,
+              messages: current?.messages ?? optimisticMessages,
+              historyState: "ready",
+              sending: true,
+              streamingToolStatus: current?.streamingToolStatus ?? null
+            }));
+            return;
+          }
+          if (event.type === "delta") {
+            setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+              const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+                session,
+                historyState: "ready"
+              });
+              return {
+                ...snapshot,
+                messages: appendLightweightStreamingAssistantDelta(snapshot.messages, input.sessionId, clientRequestId, event.delta)
+              };
+            });
+            return;
+          }
+          if (event.type === "tool") {
+            setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+              const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+                session,
+                historyState: "ready"
+              });
+              return {
+                ...snapshot,
+                messages: upsertAffairsLightweightToolMessage(snapshot.messages, {
+                  sessionId: input.sessionId,
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  status: event.status,
+                  detail: event.detail ?? null,
+                  toolInput: event.input ?? null,
+                  toolOutput: event.output ?? null
+                }),
+                streamingToolStatus: createAffairsLightweightToolStatus(event.toolName, event.detail ?? null, event.status)
+              };
+            });
+          }
+        });
+        setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+          const authoritativeMessages = response.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId));
+          return createAffairsLightweightRuntimeSnapshot({
+            session: response.session,
+            messages: authoritativeMessages.length > 0 ? authoritativeMessages : (current?.messages ?? []),
+            historyState: "ready",
+            sending: false,
+            streamingToolStatus: null
+          });
+        });
+        await reloadLightweightConversationSessions();
+      } catch (error) {
+        setLightweightRuntimeSnapshot(input.sessionId, (current) => {
+          const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
+            session,
+            historyState: "ready"
+          });
+          return {
+            ...snapshot,
+            messages: markPendingAsFailed(snapshot.messages, clientRequestId),
+            sending: false,
+            streamingToolStatus: snapshot.streamingToolStatus
+              ? { ...snapshot.streamingToolStatus, phase: "failed" }
+              : null
+          };
+        });
+        throw error;
+      }
+    },
+    retryMessage: () => {},
+    loadingOlderMessages: false,
+    hasOlderMessages: false,
+    permissionRequests: [],
+    replyingPermissionRequestId: null,
+    replyPermissionRequest: async () => undefined,
+    runtimeInterruptSource: null,
+    loadOlderMessages: async () => undefined
+  };
+}
+
 function AffairsAgentConversationState(input: {
   workspaceId: string;
   draft?: AffairsConversationDraftSelection | null;
@@ -3295,7 +4239,8 @@ function AffairsAgentConversationState(input: {
     activateConversationSession,
     assistantContext,
     butlerStore,
-    reloadAgentConversationSessions
+    reloadAgentConversationSessions,
+    agentWorkspacePath
   } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
   const loading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
@@ -3314,7 +4259,7 @@ function AffairsAgentConversationState(input: {
   const sending = useButlerRuntimeStore(butlerStore, (value) => value.sending);
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const requestedProvider = input.draft?.provider ?? null;
-  const scopedControlSession = controlSession?.session.workspaceId === input.workspaceId
+  const scopedControlSession = isAffairsWorkspacePathMatch(profile?.workspacePath, agentWorkspacePath)
     ? controlSession
     : null;
   const effectiveProvider = scopedControlSession?.session.provider ?? requestedProvider ?? activeProvider;
@@ -3357,8 +4302,13 @@ function AffairsAgentConversationState(input: {
 
     void (async () => {
       try {
-        const projectResponse = await listButlerProjects({ workspaceId: input.workspaceId });
-        const project = projectResponse.items.find((item) => item.workspaceId === input.workspaceId) ?? null;
+        const project = resolveAffairsAgentProject(
+          (await listButlerProjects()).items,
+          {
+            workspacePath: agentWorkspacePath,
+            workspaceIds: []
+          }
+        );
         if (!project) {
           return;
         }
@@ -3378,7 +4328,7 @@ function AffairsAgentConversationState(input: {
         await reloadAgentConversationSessions();
         activateConversationSession({
           kind: "agent",
-          session: convertButlerManagedSessionToAffairsSessionSummary(resumed.resumed.session, input.workspaceId),
+          session: convertButlerManagedSessionToAffairsSessionSummary(resumed.resumed.session, project.workspaceId),
           bootstrapMessages: []
         });
       } finally {
@@ -3397,7 +4347,7 @@ function AffairsAgentConversationState(input: {
       scopedControlSession?.session.sessionId,
       input.draft,
       input.sessionId,
-      input.workspaceId,
+      agentWorkspacePath,
       reloadAgentConversationSessions,
       restoringSessionId
     ]);
@@ -3467,6 +4417,14 @@ function AffairsAgentConversationState(input: {
               await butlerStore.startFreshSession();
             }
 
+            const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
+            const normalizedProfileWorkspacePath = butlerStore.getState().profile?.workspacePath?.trim() ?? "";
+            if (normalizedAgentWorkspacePath && normalizedAgentWorkspacePath !== normalizedProfileWorkspacePath) {
+              await butlerStore.updateProfile({
+                workspacePath: normalizedAgentWorkspacePath
+              });
+            }
+
             await butlerStore.sendMessage(`${buildAffairsAssistantPrefix(assistantContext)}${content}`, {
               model: options?.model ?? null,
               reasoningLevel: options?.reasoningLevel ?? null,
@@ -3487,125 +4445,6 @@ function AffairsAgentConversationState(input: {
       </div>
     </main>
   );
-}
-
-function useAffairsLightweightSessionController(input: {
-  sessionId: string;
-  externalSession: SessionSummaryDto | null;
-  bootstrapMessages: HistoryMessageDto[];
-}) {
-  const { workspaceId, reloadLightweightConversationSessions } = useAffairsWorkbenchInternal();
-  const [session, setSession] = useState<SessionSummaryDto | null>(input.externalSession);
-  const [messages, setMessages] = useState<SessionMessageViewModel[]>(
-    input.bootstrapMessages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId))
-  );
-  const [historyState, setHistoryState] = useState<"loading" | "ready">(
-    input.bootstrapMessages.length > 0 ? "ready" : "loading"
-  );
-  const [sending, setSending] = useState(false);
-
-  useEffect(() => {
-    if (input.externalSession) {
-      setSession(input.externalSession);
-    }
-  }, [input.externalSession]);
-
-  useEffect(() => {
-    if (input.bootstrapMessages.length > 0) {
-      setMessages(input.bootstrapMessages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
-      setHistoryState("ready");
-    }
-  }, [input.bootstrapMessages]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void Promise.all([
-      getAffairsLightweightSession(workspaceId, input.sessionId),
-      getAffairsLightweightSessionMessages(workspaceId, input.sessionId)
-    ]).then(([nextSession, nextMessages]) => {
-      if (cancelled) {
-        return;
-      }
-      setSession(nextSession);
-      setMessages(nextMessages.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
-      setHistoryState("ready");
-    }).catch(() => {
-      if (!cancelled) {
-        setHistoryState("ready");
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [input.sessionId, workspaceId]);
-
-  return {
-    session,
-    messages,
-    timelineItems: buildConversationTimelineSourceItems({ messages }),
-    historyState,
-    sending,
-    capabilities: createAffairsLightweightCapabilities(
-      session?.provider ?? input.externalSession?.provider ?? "codex"
-    ),
-    send: async (
-      content: string,
-      options?: {
-        clientRequestId?: string;
-        model?: string;
-        reasoningLevel?: string;
-        attachmentMeta?: HistoryMessageDto["attachments"];
-      }
-    ) => {
-      const clientRequestId = options?.clientRequestId ?? createAffairsConversationClientRequestId();
-      setMessages((current) => [
-        ...current,
-        createPendingMessage(
-          input.sessionId,
-          content,
-          clientRequestId,
-          options?.attachmentMeta ?? [],
-          []
-        ),
-        createLightweightStreamingAssistantPlaceholder(input.sessionId, clientRequestId)
-      ]);
-      setSending(true);
-      try {
-        const response = await sendAffairsLightweightSessionMessageStream(workspaceId, input.sessionId, {
-          content,
-          clientRequestId,
-          model: options?.model ?? null,
-          reasoningLevel: options?.reasoningLevel ?? null
-        }, (event) => {
-          if (event.type === "started") {
-            setSession(event.session);
-            return;
-          }
-          if (event.type === "delta") {
-            setMessages((current) => appendLightweightStreamingAssistantDelta(current, input.sessionId, clientRequestId, event.delta));
-          }
-        });
-        setSession(response.session);
-        setMessages(response.messages.map((message) => convertHistoryMessageToViewModel(message, input.sessionId)));
-        await reloadLightweightConversationSessions();
-      } catch (error) {
-        setMessages((current) => markPendingAsFailed(current, clientRequestId));
-        throw error;
-      } finally {
-        setSending(false);
-      }
-    },
-    retryMessage: () => {},
-    loadingOlderMessages: false,
-    hasOlderMessages: false,
-    permissionRequests: [],
-    replyingPermissionRequestId: null,
-    replyPermissionRequest: async () => undefined,
-    runtimeInterruptSource: null,
-    loadOlderMessages: async () => undefined
-  };
 }
 
 function isAffairsAssistantProvider(provider: ProviderId | null | undefined): provider is "codex" | "claude-code" {
@@ -3700,6 +4539,122 @@ function createLightweightStreamingAssistantPlaceholder(
     deliveryState: "sending",
     clientRequestId
   };
+}
+
+function AffairsLightweightStreamingStatusBar({
+  status
+}: {
+  status: AffairsLightweightStreamingToolStatus | null;
+}) {
+  if (!status) {
+    return null;
+  }
+
+  return (
+    <div className="affairs-lightweight-status-bar" role="status" aria-live="polite" data-phase={status.phase}>
+      <span className="affairs-lightweight-status-dot" aria-hidden="true" />
+      <span className="affairs-lightweight-status-label">{status.label}</span>
+      {status.detail?.trim() ? (
+        <span className="affairs-lightweight-status-detail">{status.detail.trim()}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function createAffairsLightweightRuntimeSnapshot(input?: {
+  session?: SessionSummaryDto | null;
+  messages?: SessionMessageViewModel[];
+  historyState?: "loading" | "ready";
+  sending?: boolean;
+  streamingToolStatus?: AffairsLightweightStreamingToolStatus | null;
+}): AffairsLightweightRuntimeSnapshot {
+  return {
+    session: input?.session ?? null,
+    messages: input?.messages ?? [],
+    historyState: input?.historyState ?? "loading",
+    sending: input?.sending ?? false,
+    streamingToolStatus: input?.streamingToolStatus ?? null
+  };
+}
+
+function createAffairsLightweightToolStatus(toolName: string, detail: string | null, status: string): AffairsLightweightStreamingToolStatus {
+  return {
+    label: toolName === "web_search" ? t("conversation.toolWebSearch") : toolName,
+    detail,
+    phase: status === "completed" ? "completed" : status === "failed" ? "failed" : "running"
+  };
+}
+
+function resolveAffairsLightweightRuntimeSessionId(input: {
+  fallbackSessionId: string;
+  activeSessionId: string | null;
+  eventSessionId?: string | null;
+}): string {
+  return input.eventSessionId?.trim() || input.activeSessionId?.trim() || input.fallbackSessionId;
+}
+
+function upsertAffairsLightweightToolMessage(
+  current: SessionMessageViewModel[],
+  input: {
+    sessionId: string;
+    toolCallId: string;
+    toolName: string;
+    status: "running" | "completed" | "failed";
+    detail: string | null;
+    toolInput: string | null;
+    toolOutput: string | null;
+  }
+): SessionMessageViewModel[] {
+  const messageId = `lightweight-tool-${input.toolCallId}`;
+  const assistantIndex = current.findIndex((message) => message.id.startsWith("lightweight-streaming-assistant-"));
+  const insertIndex = assistantIndex >= 0 ? assistantIndex : current.length;
+  const previousSequence = insertIndex > 0 ? current[insertIndex - 1]?.sequence ?? 0 : 0;
+  const nextMessage: SessionMessageViewModel = {
+    id: messageId,
+    sessionId: input.sessionId,
+    role: "tool",
+    kind: input.status === "running" ? "tool_call" : "tool_result",
+    content: input.detail?.trim() || input.toolOutput?.trim() || input.toolInput?.trim() || input.toolName,
+    toolCall: {
+      callId: input.toolCallId,
+      name: input.toolName,
+      input: input.toolInput ?? "",
+      output: input.toolOutput,
+      error: input.status === "failed" ? (input.detail ?? input.toolOutput ?? null) : null,
+      status: input.status
+    },
+    attachments: [],
+    attachmentPayloads: null,
+    origin: null,
+    originRef: null,
+    timestamp: new Date().toISOString(),
+    sequence: previousSequence + 1,
+    rawRef: `lightweight-tool://${input.toolCallId}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+
+  const index = current.findIndex((message) => message.toolCall?.callId === input.toolCallId || message.id === messageId);
+  if (index < 0) {
+    return [
+      ...current.slice(0, insertIndex),
+      nextMessage,
+      ...current.slice(insertIndex).map((message) => ({
+        ...message,
+        sequence: message.sequence >= nextMessage.sequence ? message.sequence + 1 : message.sequence
+      }))
+    ];
+  }
+
+  const next = [...current];
+  next[index] = {
+    ...next[index],
+    ...nextMessage,
+    timestamp: next[index].timestamp,
+    sequence: next[index].sequence,
+    rawRef: next[index].rawRef
+  };
+  return next;
 }
 
 function appendLightweightStreamingAssistantDelta(
@@ -3814,7 +4769,9 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     reloadButlerProfile,
     selectedConversationDraft,
     selectedConversationSession,
-    conversationRuntimeSeed
+    conversationRuntimeSeed,
+    agentWorkspaceId,
+    agentWorkspacePath
   } = useAffairsWorkbenchInternal();
   const initialized = initGuard.initialized;
   const loading = initGuard.loading;
@@ -3885,9 +4842,12 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     }
 
     if (selectedConversationSession?.kind === "agent") {
+      if (!agentWorkspaceId) {
+        return <AffairsConversationEmptyState />;
+      }
       return (
         <AffairsAgentConversationState
-          workspaceId={workspaceId}
+          workspaceId={agentWorkspaceId}
           sessionId={selectedConversationSession.sessionId}
         />
       );
@@ -3903,9 +4863,12 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     }
 
     if (selectedConversationDraft?.kind === "agent") {
+      if (!agentWorkspaceId) {
+        return <AffairsConversationEmptyState />;
+      }
       return (
         <AffairsAgentConversationState
-          workspaceId={workspaceId}
+          workspaceId={agentWorkspaceId}
           draft={selectedConversationDraft}
         />
       );
@@ -3964,6 +4927,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     const payload: ButlerProfilePayload = {
       displayName,
       providerId: initForm.providerId,
+      workspacePath: agentWorkspacePath?.trim() || libraryInit.rootDir.trim() || undefined,
       agentsMode: initForm.agentsMode,
       persona: {
         tone: initForm.personaTone,
@@ -4036,6 +5000,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
 export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps) {
   const {
     activeSection,
+    initGuard,
     binding,
     documentRecords,
     favoriteEntries,
@@ -4071,6 +5036,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   } = useAffairsWorkbenchInternal();
   const stageScrollRef = useRef<HTMLDivElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    if (settingsOpen && activeSection !== "library") {
+      setSettingsOpen(false);
+    }
+  }, [activeSection, settingsOpen]);
   const [stageViewportHeight, setStageViewportHeight] = useState(0);
   const [stageViewportWidth, setStageViewportWidth] = useState(0);
   const [stageScrollTop, setStageScrollTop] = useState(0);
@@ -4099,6 +5070,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const { showToast } = useToast();
   const platform = usePlatform();
   const createNameInputId = useId();
+  const shouldRenderGuardStage = !initGuard.initialized || initGuard.loading || initGuard.unavailable;
 
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
@@ -4836,7 +5808,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     return createPortal(content, document.body);
   };
 
-  if (activeSection === "conversation") {
+  if (shouldRenderGuardStage || activeSection === "conversation") {
     return <AffairsConversationInitState workspaceId={workspaceId} />;
   }
 
@@ -6202,6 +7174,7 @@ function AffairsLibraryStageToolbar({
   );
   const indexStatusLabel = resolveIndexStatusLabel(indexStatus);
   const indexStatusSummaryLabel = t("shell.affairsLibraryStatusIndicatorAction", { status: indexStatusLabel });
+  const indexStatusProgressLabel = resolveIndexStatusInlineProgressLabel(indexStatus);
   const indexStatusDetails = useMemo(
     () => buildIndexStatusDetails(indexStatus, directoryStatus ?? null),
     [directoryStatus, indexStatus]
@@ -6408,6 +7381,9 @@ function AffairsLibraryStageToolbar({
             onBlur={scheduleCloseStatusPopover}
           >
             <span className={`affairs-stage-status-dot state-${indexStatus?.state ?? "stale"}`} />
+            {indexStatusProgressLabel ? (
+              <span className="affairs-stage-status-text">{indexStatusProgressLabel}</span>
+            ) : null}
           </button>
           <ButlerAnchoredPopover
             open={statusPopoverOpen && statusTriggerRef.current !== null}
@@ -8411,6 +9387,7 @@ function AffairsLibraryFileViewerModal({
       filePath={viewerState.filePath}
       windowTitle={viewerState.title}
       chrome="modal"
+      officeDisplayMode="default"
       open={true}
       onClose={onClose}
     />
@@ -8457,6 +9434,7 @@ function AffairsLibraryInlineViewer({
               filePath={filePath}
               windowTitle={windowTitle}
               chrome="window"
+              officeDisplayMode="reading"
               open={true}
               onClose={() => undefined}
             />
@@ -8492,6 +9470,7 @@ function AffairsLibraryFileViewerSurface({
   filePath,
   windowTitle,
   chrome,
+  officeDisplayMode,
   open,
   onClose
 }: {
@@ -8499,6 +9478,7 @@ function AffairsLibraryFileViewerSurface({
   filePath: string;
   windowTitle: string;
   chrome: "modal" | "window";
+  officeDisplayMode?: "default" | "reading";
   open: boolean;
   onClose: () => void;
 }) {
@@ -8513,6 +9493,7 @@ function AffairsLibraryFileViewerSurface({
       onSaved={() => undefined}
       previewLoader={getAffairsLibraryPreview}
       saveDisabledReason={t("shell.affairsLibraryViewerEditDisabled")}
+      officeDisplayMode={officeDisplayMode}
     />
   );
 }
@@ -10442,6 +11423,141 @@ function parseAffairsConversationSessionSelection(
   };
 }
 
+function resolveAffairsAgentWorkspacePath(binding: AffairsLibraryBindingDto | null): string | null {
+  const mirrorRoot = binding?.mirrorRoot?.trim() ?? "";
+  if (mirrorRoot) {
+    return mirrorRoot;
+  }
+  const rootDir = binding?.rootDir?.trim() ?? "";
+  return rootDir || null;
+}
+
+function resolveAffairsAgentWorkspaceId(
+  workspacePath: string | null,
+  navigationGroups: WorkspaceSessionGroup[]
+): string | null {
+  const normalizedWorkspacePath = normalizeAffairsWorkspacePath(workspacePath);
+  if (!normalizedWorkspacePath) {
+    return null;
+  }
+  const matches = navigationGroups
+    .map((group) => {
+      const normalizedPath = normalizeAffairsWorkspacePath(group.workspace.path);
+      const normalizedRepoRoot = normalizeAffairsWorkspacePath(group.workspace.repoRoot ?? null);
+      const matchLength = Math.max(
+        resolveAffairsWorkspacePathMatchLength(normalizedPath, normalizedWorkspacePath),
+        resolveAffairsWorkspacePathMatchLength(normalizedRepoRoot, normalizedWorkspacePath)
+      );
+      return {
+        workspaceId: group.workspace.id,
+        matchLength
+      };
+    })
+    .filter((item) => item.matchLength > 0)
+    .sort((left, right) => right.matchLength - left.matchLength);
+  return matches[0]?.workspaceId ?? null;
+}
+
+function resolveAffairsAgentProject(
+  projects: ButlerProjectDto[],
+  input: {
+    workspacePath: string | null | undefined;
+    workspaceIds?: Array<string | null | undefined>;
+  }
+): ButlerProjectDto | null {
+  const matchedByPath = findAffairsAgentProjectByPath(projects, input.workspacePath);
+  if (matchedByPath) {
+    return matchedByPath;
+  }
+  for (const workspaceId of input.workspaceIds ?? []) {
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!normalizedWorkspaceId) {
+      continue;
+    }
+    const matchedByWorkspaceId = projects.find((project) => project.workspaceId === normalizedWorkspaceId) ?? null;
+    if (matchedByWorkspaceId) {
+      return matchedByWorkspaceId;
+    }
+  }
+  return null;
+}
+
+function buildAffairsAgentProjectCandidates(
+  projects: ButlerProjectDto[],
+  input: {
+    workspacePath: string | null | undefined;
+    workspaceIds?: Array<string | null | undefined>;
+  }
+): ButlerProjectDto[] {
+  const candidates: ButlerProjectDto[] = [];
+  const pushCandidate = (project: ButlerProjectDto | null) => {
+    if (!project || candidates.some((item) => item.id === project.id)) {
+      return;
+    }
+    candidates.push(project);
+  };
+
+  pushCandidate(findAffairsAgentProjectByPath(projects, input.workspacePath));
+  for (const workspaceId of input.workspaceIds ?? []) {
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!normalizedWorkspaceId) {
+      continue;
+    }
+    pushCandidate(projects.find((project) => project.workspaceId === normalizedWorkspaceId) ?? null);
+  }
+  return candidates;
+}
+
+function findAffairsAgentProjectByPath(
+  projects: ButlerProjectDto[],
+  workspacePath: string | null | undefined
+): ButlerProjectDto | null {
+  const normalizedWorkspacePath = normalizeAffairsWorkspacePath(workspacePath);
+  if (!normalizedWorkspacePath) {
+    return null;
+  }
+  const matches = projects
+    .map((project) => ({
+      project,
+      matchLength: resolveAffairsWorkspacePathMatchLength(project.repoRoot, normalizedWorkspacePath)
+    }))
+    .filter((item) => item.matchLength > 0)
+    .sort((left, right) => right.matchLength - left.matchLength);
+  return matches[0]?.project ?? null;
+}
+
+function isAffairsWorkspacePathMatch(
+  leftPath: string | null | undefined,
+  rightPath: string | null | undefined
+): boolean {
+  return resolveAffairsWorkspacePathMatchLength(leftPath, rightPath) > 0;
+}
+
+function resolveAffairsWorkspacePathMatchLength(
+  leftPath: string | null | undefined,
+  rightPath: string | null | undefined
+): number {
+  const normalizedLeftPath = normalizeAffairsWorkspacePath(leftPath);
+  const normalizedRightPath = normalizeAffairsWorkspacePath(rightPath);
+  if (!normalizedLeftPath || !normalizedRightPath) {
+    return 0;
+  }
+  if (normalizedLeftPath === normalizedRightPath) {
+    return normalizedLeftPath.length;
+  }
+  if (normalizedRightPath.startsWith(`${normalizedLeftPath}/`)) {
+    return normalizedLeftPath.length;
+  }
+  if (normalizedLeftPath.startsWith(`${normalizedRightPath}/`)) {
+    return normalizedRightPath.length;
+  }
+  return 0;
+}
+
+function normalizeAffairsWorkspacePath(input: string | null | undefined): string {
+  return input?.trim().replace(/\/+$/g, "") ?? "";
+}
+
 function buildAffairsConversationDraftSummary(draft: AffairsConversationDraftSelection) {
   if (draft.kind === "agent") {
     return t("shell.affairsConversationOptionSummaryAgent", {
@@ -10960,6 +12076,35 @@ function buildIndexStatusDetails(
     });
   }
 
+  if (status.progress) {
+    details.push({
+      label: t("shell.affairsLibraryStatusProgressScannedLabel"),
+      value: String(status.progress.scannedCount)
+    });
+    details.push({
+      label: t("shell.affairsLibraryStatusProgressIndexedLabel"),
+      value: String(status.progress.indexedCount)
+    });
+    details.push({
+      label: t("shell.affairsLibraryStatusProgressUnchangedLabel"),
+      value: String(status.progress.unchangedCount)
+    });
+    details.push({
+      label: t("shell.affairsLibraryStatusProgressSkippedLabel"),
+      value: String(status.progress.skippedCount)
+    });
+    details.push({
+      label: t("shell.affairsLibraryStatusProgressFailedLabel"),
+      value: String(status.progress.failedCount)
+    });
+    if (status.progress.totalCount !== null) {
+      details.push({
+        label: t("shell.affairsLibraryStatusProgressTotalLabel"),
+        value: String(status.progress.totalCount)
+      });
+    }
+  }
+
   if (status.dirtyReasons.length > 0) {
     details.push({
       label: t("shell.affairsLibraryStatusDirtyReasonsLabel"),
@@ -11035,6 +12180,15 @@ function pushIndexStatusDetail(
   details.push({
     label,
     value: formatIndexStatusDateTime(value)
+  });
+}
+
+function resolveIndexStatusInlineProgressLabel(status: AffairsLibraryIndexStatusDto | null): string | null {
+  if (status?.state !== "running" || !status.progress) {
+    return null;
+  }
+  return t("shell.affairsLibraryStatusIndicatorProgress", {
+    scanned: status.progress.scannedCount,
   });
 }
 

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../src/shared/errors/app-error.js";
@@ -1043,6 +1047,226 @@ describe("ButlerSessionService", () => {
 
     await expect(service.ensureProjectSessionsSynced(project.id, "user-1")).resolves.toBeUndefined();
     expect(createdCheckpoints).toHaveLength(0);
+  });
+
+  it("自动导入 observed codex 会话时，如果 raw session 的 workspacePath 不等于项目 repoRoot，会直接跳过", async () => {
+    const project: ButlerProject = {
+      id: "project-path-guard-codex",
+      workspaceId: "workspace-path-guard-codex",
+      name: "repo-path-guard-codex",
+      repoRoot: "/Users/jackson/SynologyDrive",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const tempDir = mkdtempSync(path.join(tmpdir(), "butler-session-codex-"));
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, `${JSON.stringify({
+      type: "session_meta",
+      payload: {
+        id: "provider-session-path-guard-codex",
+        cwd: "/Users/jackson/Code/头脑风暴"
+      }
+    })}\n`, "utf8");
+
+    const workspaceSession: SessionListItem = {
+      sessionId: "session-path-guard-codex",
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      providerSessionId: "provider-session-path-guard-codex",
+      rawStoreRef,
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "错误路径 codex 会话",
+      messageCount: 1,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-02T00:10:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+    const createdSessions: ButlerSession[] = [];
+
+    try {
+      const service = new ButlerSessionService(
+        {
+          findById: vi.fn(() => project)
+        } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+        {
+          listByProject: vi.fn(() => createdSessions),
+          findBySessionId: vi.fn(() => null),
+          create: vi.fn((record: ButlerSession) => {
+            createdSessions.push(record);
+            return record;
+          })
+        } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create"> as ButlerSessionRepository,
+        {
+          getLatestSeq: vi.fn(() => 0),
+          create: vi.fn()
+        } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+        {
+          findBySessionId: vi.fn(() => null)
+        } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+        {
+          findIndexRecordBySessionId: vi.fn(() => null)
+        } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+        {
+          findBySessionAndUser: vi.fn(() => null)
+        } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+        undefined,
+        {
+          discoverWorkspaceSessions: vi.fn(async () => [workspaceSession]),
+          listWorkspaceSessions: vi.fn(() => [workspaceSession]),
+          resumeSession: vi.fn()
+        }
+      );
+
+      await service.ensureProjectSessionsSynced(project.id, "user-1");
+      expect(service.listByProject(project.id, "user-1")).toHaveLength(0);
+      expect(createdSessions).toHaveLength(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("自动导入 observed claude 会话时，如果 raw session 的 cwd 不等于项目 repoRoot，会直接跳过", async () => {
+    const project: ButlerProject = {
+      id: "project-path-guard-claude",
+      workspaceId: "workspace-path-guard-claude",
+      name: "repo-path-guard-claude",
+      repoRoot: "/Users/jackson/SynologyDrive",
+      defaultProvider: "claude-code",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const tempDir = mkdtempSync(path.join(tmpdir(), "butler-session-claude-"));
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, `${JSON.stringify({
+      parentUuid: null,
+      isSidechain: false,
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hello" }]
+      },
+      uuid: "uuid-1",
+      timestamp: "2026-04-02T00:00:00.000Z",
+      cwd: "/Users/jackson/Code/头脑风暴",
+      sessionId: "provider-session-path-guard-claude"
+    })}\n`, "utf8");
+
+    const workspaceSession: SessionListItem = {
+      sessionId: "session-path-guard-claude",
+      workspaceId: project.workspaceId,
+      provider: "claude-code",
+      providerSessionId: "provider-session-path-guard-claude",
+      rawStoreRef,
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "错误路径 claude 会话",
+      messageCount: 1,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-02T00:10:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+    const createdSessions: ButlerSession[] = [];
+
+    try {
+      const service = new ButlerSessionService(
+        {
+          findById: vi.fn(() => project)
+        } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+        {
+          listByProject: vi.fn(() => createdSessions),
+          findBySessionId: vi.fn(() => null),
+          create: vi.fn((record: ButlerSession) => {
+            createdSessions.push(record);
+            return record;
+          })
+        } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create"> as ButlerSessionRepository,
+        {
+          getLatestSeq: vi.fn(() => 0),
+          create: vi.fn()
+        } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+        {
+          findBySessionId: vi.fn(() => null)
+        } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+        {
+          findIndexRecordBySessionId: vi.fn(() => null)
+        } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+        {
+          findBySessionAndUser: vi.fn(() => null)
+        } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+        undefined,
+        {
+          discoverWorkspaceSessions: vi.fn(async () => [workspaceSession]),
+          listWorkspaceSessions: vi.fn(() => [workspaceSession]),
+          resumeSession: vi.fn()
+        }
+      );
+
+      await service.ensureProjectSessionsSynced(project.id, "user-1");
+      expect(service.listByProject(project.id, "user-1")).toHaveLength(0);
+      expect(createdSessions).toHaveLength(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("默认不会返回归档会话，显式开启后才会包含", () => {
