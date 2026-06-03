@@ -932,6 +932,229 @@ describe("spec004 文件管理能力", () => {
     expect(publicPreview.body).toContain("<title>事务预览</title>");
     expect(publicPreview.body).toContain(`"workspaceId":"${workspaceId}"`);
   });
+
+  it("事务文档库 Office 预览会自动带入当前登录用户，并关闭匿名初始化", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const affairsRootDir = path.join(fixture.rootDir, "affairs-library-office");
+    mkdirSync(path.join(affairsRootDir, "我的应用", "方案"), { recursive: true });
+    writeFileSync(
+      path.join(affairsRootDir, "我的应用", "方案", "实施方案.docx"),
+      "fake docx content",
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const saveOnlyOfficeSettings = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/office/onlyoffice/settings",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        enabled: true,
+        serverUrl: "http://127.0.0.1:8088",
+        publicBaseUrl: "http://127.0.0.1:3002",
+        userDisplayName: "文档协作者",
+        userAvatarUrl: "https://example.com/avatar.png"
+      }
+    });
+    expect(saveOnlyOfficeSettings.statusCode).toBe(200);
+
+    const saveBinding = await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${workspaceId}/affairs/library-binding`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        rootDir: affairsRootDir
+      }
+    });
+    expect(saveBinding.statusCode).toBe(200);
+
+    const preview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/方案/实施方案.docx")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(preview.statusCode).toBe(200);
+
+    const payload = preview.json() as {
+      kind: string;
+      onlyOffice: {
+        editorMode: string;
+        editorConfig: {
+          editorConfig?: {
+            mode?: string;
+            user?: {
+              id?: string;
+              name?: string;
+              image?: string;
+            };
+            customization?: {
+              features?: {
+                spellcheck?: boolean;
+              };
+              anonymous?: {
+                request?: boolean;
+              };
+            };
+          };
+        };
+      } | null;
+    };
+
+    expect(payload.kind).toBe("office");
+    expect(payload.onlyOffice?.editorMode).toBe("edit");
+    expect(payload.onlyOffice?.editorConfig).toMatchObject({
+      editorConfig: {
+        mode: "edit",
+        user: {
+          name: "文档协作者",
+          image: "https://example.com/avatar.png"
+        },
+        customization: {
+          features: {
+            spellcheck: false
+          },
+          anonymous: {
+            request: false
+          }
+        }
+      }
+    });
+    expect(payload.onlyOffice?.editorConfig.editorConfig?.user?.id).toEqual(expect.any(String));
+  });
+
+  it("事务文档库 Office 阅读态预览会由 Host 直接生成 view 配置并签名", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    seedWorkspaceFiles(fixture.workspaceDir);
+
+    const affairsRootDir = path.join(fixture.rootDir, "affairs-library-office-reading");
+    mkdirSync(path.join(affairsRootDir, "我的应用", "方案"), { recursive: true });
+    writeFileSync(
+      path.join(affairsRootDir, "我的应用", "方案", "阅读态方案.docx"),
+      "fake docx content",
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const saveOnlyOfficeSettings = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/office/onlyoffice/settings",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        enabled: true,
+        serverUrl: "http://127.0.0.1:8088",
+        publicBaseUrl: "http://127.0.0.1:3002",
+        jwtSecret: "onlyoffice-secret"
+      }
+    });
+    expect(saveOnlyOfficeSettings.statusCode).toBe(200);
+
+    const saveBinding = await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${workspaceId}/affairs/library-binding`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        rootDir: affairsRootDir
+      }
+    });
+    expect(saveBinding.statusCode).toBe(200);
+
+    const preview = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/方案/阅读态方案.docx")}&displayMode=reading`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(preview.statusCode).toBe(200);
+
+    const payload = preview.json() as {
+      kind: string;
+      onlyOffice: {
+        editorMode: string;
+        editorConfig: {
+          type?: string;
+          token?: string;
+          document?: {
+            permissions?: {
+              edit?: boolean;
+              review?: boolean;
+              comment?: boolean;
+            };
+          };
+          editorConfig?: {
+            mode?: string;
+            coEditing?: {
+              mode?: string;
+              change?: boolean;
+            };
+            customization?: {
+              features?: {
+                spellcheck?: boolean;
+              };
+              anonymous?: {
+                request?: boolean;
+              };
+            };
+          };
+        };
+      } | null;
+    };
+
+    expect(payload.kind).toBe("office");
+    expect(payload.onlyOffice?.editorMode).toBe("view");
+    expect(payload.onlyOffice?.editorConfig).toMatchObject({
+      type: "embedded",
+      token: expect.any(String),
+      document: {
+        permissions: {
+          edit: false,
+          review: false,
+          comment: false
+        }
+      },
+      editorConfig: {
+        mode: "view",
+        coEditing: {
+          mode: "strict",
+          change: false
+        },
+        customization: {
+          features: {
+            spellcheck: false
+          },
+          anonymous: {
+            request: false
+          }
+        }
+      }
+    });
+  }, 20_000);
 });
 
 function seedWorkspaceFiles(workspaceDir: string): void {
