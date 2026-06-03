@@ -895,6 +895,77 @@ describe("FileViewerModal", () => {
     );
   });
 
+  it("Office 文件预览模态框默认铺满，并隐藏默认模式按钮", async () => {
+    const destroyEditor = vi.fn();
+    const docEditor = vi.fn(() => ({
+      destroyEditor
+    }));
+    window.DocsAPI = {
+      DocEditor: docEditor
+    };
+
+    const script = document.createElement("script");
+    script.dataset.onlyofficeSrc = "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js";
+    script.dataset.loaded = "true";
+    document.head.appendChild(script);
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/layout.docx",
+        kind: "office",
+        content: null,
+        version: "doc-layout-v1",
+        previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/docs/layout.docx",
+        onlyOffice: {
+          apiScriptUrl: "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js",
+          editorMode: "edit",
+          documentUrl: "http://127.0.0.1:3002/preview/files/preview-token/docs/layout.docx",
+          callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+          editorConfig: {
+            documentType: "word",
+            type: "desktop",
+            document: {
+              fileType: "docx",
+              key: "doc-layout-v1",
+              title: "layout.docx",
+              url: "http://127.0.0.1:3002/preview/files/preview-token/docs/layout.docx"
+            },
+            editorConfig: {
+              callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+              mode: "edit"
+            }
+          }
+        },
+        capabilities: {
+          canEdit: false,
+          canRefresh: true,
+          canResize: true,
+          canZoom: false,
+          canPaginate: false
+        }
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/layout.docx"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "docs/layout.docx" });
+
+    expect(await screen.findByTestId("file-viewer-office-preview")).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("data-size", "full");
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeDefault") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.fileViewerSizeFull") })).not.toBeInTheDocument();
+  });
+
   it("Tools 目录下的 HTML 工具页即使含有 slide 结构，也只走普通预览链路", async () => {
     fileApiMock.getFilePreview.mockResolvedValue(
       createPreviewResponse({

@@ -389,7 +389,9 @@ export function FileViewerPanel({
   const isInlineViewer = chrome === "inline";
   const shouldRenderModalChrome = chrome === "modal";
   const isPresentationMode = mode === "presentation" && previewKind === "html";
-  const useForcedFullSize = !isWindowViewer && !isMobileViewer && previewKind === "html";
+  const useForcedFullSize = !isWindowViewer && !isMobileViewer && (
+    previewKind === "html" || previewKind === "office"
+  );
   const activeModalSizePreset = isMobileViewer || useForcedFullSize ? "full" : modalSizePreset;
   const effectiveMode: ViewerMode = isInlineViewer && canShowPreviewTab ? "preview" : mode;
   const resolvedWindowAriaLabel = windowTitle ?? filePath ?? t("conversation.fileViewerWindowTitle");
