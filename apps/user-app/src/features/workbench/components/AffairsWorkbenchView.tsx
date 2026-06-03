@@ -75,7 +75,7 @@ import {
   getAffairsFolderTagTask,
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
-  getAffairsLibraryBinding,
+  getGlobalAffairsLibraryBinding,
   getProviderCapabilities,
   listAffairsTags,
   getAffairsLibraryConfig,
@@ -90,12 +90,12 @@ import {
   saveAffairsDocumentTagsWithCreate,
   saveAffairsFolderTags,
   saveAffairsFolderTagsWithCreate,
-  saveAffairsLibraryBinding,
+  saveGlobalAffairsLibraryBinding,
   saveAffairsLibraryConfig,
-  setAffairsLibraryEnabled,
+  setGlobalAffairsLibraryEnabled,
   startLiveSession,
   updateAffairsTag,
-  updateAffairsLibraryFavorites
+  updateGlobalAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileViewerPanel } from "../../conversation/components/FileViewerModal";
@@ -1808,7 +1808,7 @@ export function AffairsWorkbenchProvider({
       });
     },
     saveLibraryBinding: async (rootDir) => {
-      await saveAffairsLibraryBinding(workspaceId, { rootDir });
+      await saveGlobalAffairsLibraryBinding({ rootDir });
       const [snapshot, config] = await Promise.all([
         getAffairsLibrarySnapshot(workspaceId),
         getAffairsLibraryConfig(workspaceId)
@@ -1819,7 +1819,7 @@ export function AffairsWorkbenchProvider({
       writeCachedLibraryConfig(workspaceId, config);
     },
     setLibraryEnabled: async (enabled) => {
-      await setAffairsLibraryEnabled(workspaceId, { enabled });
+      await setGlobalAffairsLibraryEnabled({ enabled });
       const [snapshot, config] = await Promise.all([
         getAffairsLibrarySnapshot(workspaceId),
         getAffairsLibraryConfig(workspaceId)
@@ -1846,7 +1846,7 @@ export function AffairsWorkbenchProvider({
       const nextFavorites = exists
         ? currentFavorites.filter((item) => !(item.kind === favorite.kind && item.path === favorite.path))
         : [...currentFavorites, favorite];
-      const response = await updateAffairsLibraryFavorites(workspaceId, {
+      const response = await updateGlobalAffairsLibraryFavorites({
         favorites: nextFavorites
       });
       setLibrarySnapshot((previous) => {
@@ -3026,7 +3026,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     if (initialized) {
       return;
     }
-    void getAffairsLibraryBinding(workspaceId)
+    void getGlobalAffairsLibraryBinding()
       .then((binding) => {
         setLibraryInit({
           enabled: binding?.enabled ?? true,
@@ -3141,8 +3141,8 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     try {
       await initializeButlerProfile(payload);
       if (libraryInit.rootDir.trim()) {
-        await saveAffairsLibraryBinding(workspaceId, { rootDir: libraryInit.rootDir.trim() });
-        await setAffairsLibraryEnabled(workspaceId, { enabled: libraryInit.enabled });
+        await saveGlobalAffairsLibraryBinding({ rootDir: libraryInit.rootDir.trim() });
+        await setGlobalAffairsLibraryEnabled({ enabled: libraryInit.enabled });
       }
       setPendingOpenLibrary(true);
       showToast({

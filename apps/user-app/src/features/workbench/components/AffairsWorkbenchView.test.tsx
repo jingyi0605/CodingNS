@@ -130,7 +130,7 @@ const conversationApiMock = vi.hoisted(() => ({
   createAffairsTag: vi.fn(),
   createWorkspaceDirectory: vi.fn(),
   deleteAffairsTag: vi.fn(),
-  getAffairsLibraryBinding: vi.fn(),
+  getGlobalAffairsLibraryBinding: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getProviderCapabilities: vi.fn(),
   getAffairsTagRecomputeTask: vi.fn(),
@@ -154,12 +154,12 @@ const conversationApiMock = vi.hoisted(() => ({
   saveAffairsDocumentTagsWithCreate: vi.fn(),
   saveAffairsFolderTags: vi.fn(),
   saveAffairsFolderTagsWithCreate: vi.fn(),
-  saveAffairsLibraryBinding: vi.fn(),
+  saveGlobalAffairsLibraryBinding: vi.fn(),
   saveAffairsLibraryConfig: vi.fn(),
-  setAffairsLibraryEnabled: vi.fn(),
+  setGlobalAffairsLibraryEnabled: vi.fn(),
   startLiveSession: vi.fn(),
   updateAffairsTag: vi.fn(),
-  updateAffairsLibraryFavorites: vi.fn()
+  updateGlobalAffairsLibraryFavorites: vi.fn()
 }));
 
 vi.mock("../../conversation/api/conversation-api", async () => {
@@ -169,7 +169,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     createAffairsTag: conversationApiMock.createAffairsTag,
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
-    getAffairsLibraryBinding: conversationApiMock.getAffairsLibraryBinding,
+    getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getProviderCapabilities: conversationApiMock.getProviderCapabilities,
     getAffairsTagRecomputeTask: conversationApiMock.getAffairsTagRecomputeTask,
@@ -193,12 +193,12 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     saveAffairsDocumentTagsWithCreate: conversationApiMock.saveAffairsDocumentTagsWithCreate,
     saveAffairsFolderTags: conversationApiMock.saveAffairsFolderTags,
     saveAffairsFolderTagsWithCreate: conversationApiMock.saveAffairsFolderTagsWithCreate,
-    saveAffairsLibraryBinding: conversationApiMock.saveAffairsLibraryBinding,
+    saveGlobalAffairsLibraryBinding: conversationApiMock.saveGlobalAffairsLibraryBinding,
     saveAffairsLibraryConfig: conversationApiMock.saveAffairsLibraryConfig,
-    setAffairsLibraryEnabled: conversationApiMock.setAffairsLibraryEnabled,
+    setGlobalAffairsLibraryEnabled: conversationApiMock.setGlobalAffairsLibraryEnabled,
     startLiveSession: conversationApiMock.startLiveSession,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
-    updateAffairsLibraryFavorites: conversationApiMock.updateAffairsLibraryFavorites
+    updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites
   };
 });
 
@@ -594,7 +594,7 @@ describe("AffairsWorkbenchView", () => {
     clearSessionProviderPickerCapabilityCache();
 
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
-    conversationApiMock.getAffairsLibraryBinding.mockReset();
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
     conversationApiMock.getProviderCapabilities.mockReset();
     conversationApiMock.listAffairsLibraryDocuments.mockReset();
     conversationApiMock.getAffairsLibraryPreview.mockReset();
@@ -620,11 +620,11 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.saveAffairsFolderTags.mockReset();
     conversationApiMock.saveAffairsFolderTagsWithCreate.mockReset();
     conversationApiMock.requestAffairsLibraryRefresh.mockReset();
-    conversationApiMock.saveAffairsLibraryBinding.mockReset();
+    conversationApiMock.saveGlobalAffairsLibraryBinding.mockReset();
     conversationApiMock.saveAffairsLibraryConfig.mockReset();
-    conversationApiMock.setAffairsLibraryEnabled.mockReset();
+    conversationApiMock.setGlobalAffairsLibraryEnabled.mockReset();
     conversationApiMock.startLiveSession.mockReset();
-    conversationApiMock.updateAffairsLibraryFavorites.mockReset();
+    conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
     liveSessionControllerMock.useLiveSessionController.mockReset();
 
     desktopBridgeMock.fs.openFile.mockClear();
@@ -643,7 +643,7 @@ describe("AffairsWorkbenchView", () => {
     useButlerRuntimeStoreMock.mockImplementation((store, selector) => selector(store.getState()));
 
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot());
-    conversationApiMock.getAffairsLibraryBinding.mockResolvedValue(baseLibrarySnapshot().binding);
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(baseLibrarySnapshot().binding);
     conversationApiMock.getProviderCapabilities.mockResolvedValue({
       provider: "gemini",
       canStartSession: true,
@@ -727,7 +727,7 @@ describe("AffairsWorkbenchView", () => {
       refreshTask: null
     });
 
-    conversationApiMock.setAffairsLibraryEnabled.mockImplementation(async (_workspaceId, payload) => ({
+    conversationApiMock.setGlobalAffairsLibraryEnabled.mockImplementation(async (payload) => ({
       workspaceId: "workspace-1",
       rootDir: "/Users/jackson/WorkFile",
       enabled: payload.enabled,
@@ -1497,12 +1497,12 @@ describe("AffairsWorkbenchView", () => {
     await user.click(submitButton);
 
     await waitFor(() => {
-      expect(conversationApiMock.saveAffairsLibraryBinding).toHaveBeenCalledWith("workspace-1", {
+      expect(conversationApiMock.saveGlobalAffairsLibraryBinding).toHaveBeenCalledWith({
         rootDir: "/Users/jackson/WorkFile"
       });
     });
     await waitFor(() => {
-      expect(conversationApiMock.setAffairsLibraryEnabled).toHaveBeenCalledWith("workspace-1", {
+      expect(conversationApiMock.setGlobalAffairsLibraryEnabled).toHaveBeenCalledWith({
         enabled: true
       });
     });
@@ -1532,7 +1532,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(toggleButton);
 
     await waitFor(() => {
-      expect(conversationApiMock.setAffairsLibraryEnabled).toHaveBeenCalledWith("workspace-1", {
+      expect(conversationApiMock.setGlobalAffairsLibraryEnabled).toHaveBeenCalledWith({
         enabled: false
       });
     });
