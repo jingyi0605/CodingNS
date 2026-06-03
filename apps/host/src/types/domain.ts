@@ -925,6 +925,16 @@ export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
   updatedAt: string;
 }
 
+export interface UserAffairsLibrarySettingRecord {
+  userId: string;
+  rootDir: string | null;
+  enabled: boolean;
+  favoritesJson: string | null;
+  lastWorkspaceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProviderControlRecord {
   providerId: ProviderId;
   enabled: boolean;

@@ -912,6 +912,17 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_affairs_library_settings (
+  user_id TEXT PRIMARY KEY,
+  root_dir TEXT,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  favorites_json TEXT,
+  last_workspace_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
 CREATE TABLE IF NOT EXISTS provider_control_profiles (
   provider_id TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),

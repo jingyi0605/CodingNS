@@ -56,6 +56,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplateDebugSchema(db);
   ensureTerminalInstanceDebugSchema(db);
   ensureUserPreferenceProfileSchema(db);
+  ensureUserAffairsLibrarySettingsSchema(db);
   ensureButlerProfileSchema(db);
   ensureButlerControlSessionSchema(db);
   ensureButlerControlTimerSchema(db);
@@ -773,6 +774,87 @@ function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
     db.exec(`ALTER TABLE user_preference_profiles
       ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"start":43000,"end":47999}'`);
   }
+}
+
+function ensureUserAffairsLibrarySettingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_affairs_library_settings")) {
+    db.exec(`
+      CREATE TABLE user_affairs_library_settings (
+        user_id TEXT PRIMARY KEY,
+        root_dir TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        favorites_json TEXT,
+        last_workspace_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      )
+    `);
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(user_affairs_library_settings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("favorites_json")) {
+    db.exec("ALTER TABLE user_affairs_library_settings ADD COLUMN favorites_json TEXT");
+  }
+
+  if (!columnNames.has("last_workspace_id")) {
+    db.exec("ALTER TABLE user_affairs_library_settings ADD COLUMN last_workspace_id TEXT");
+  }
+
+  migrateLegacyAffairsLibrarySettings(db);
+}
+
+function migrateLegacyAffairsLibrarySettings(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "workspace_navigation_states") || !tableExists(db, "user_affairs_library_settings")) {
+    return;
+  }
+
+  db.exec(`
+    INSERT INTO user_affairs_library_settings (
+      user_id,
+      root_dir,
+      enabled,
+      favorites_json,
+      last_workspace_id,
+      created_at,
+      updated_at
+    )
+    SELECT
+      legacy.user_id,
+      legacy.affairs_library_root_path,
+      legacy.affairs_library_enabled,
+      legacy.affairs_library_favorites_json,
+      legacy.workspace_id,
+      legacy.updated_at,
+      legacy.updated_at
+    FROM (
+      SELECT
+        workspace_id,
+        user_id,
+        affairs_library_root_path,
+        affairs_library_enabled,
+        affairs_library_favorites_json,
+        updated_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id
+          ORDER BY datetime(updated_at) DESC
+        ) AS row_number
+      FROM workspace_navigation_states
+      WHERE affairs_library_root_path IS NOT NULL
+        AND TRIM(affairs_library_root_path) <> ''
+    ) AS legacy
+    WHERE legacy.row_number = 1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM user_affairs_library_settings AS current
+        WHERE current.user_id = legacy.user_id
+      )
+  `);
 }
 
 function ensureManagedSkillScopeSchema(db: BetterSqliteDatabase): void {

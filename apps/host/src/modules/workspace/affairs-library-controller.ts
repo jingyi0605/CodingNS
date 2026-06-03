@@ -61,8 +61,51 @@ export class AffairsLibraryController {
   constructor(
     private readonly affairsLibraryService: AffairsLibraryService,
     private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
-    private readonly onBindingChanged?: (workspaceId: string) => void
+    private readonly onBindingChanged?: (workspaceId: string | null) => void
   ) {}
+
+  readonly getGlobalBinding = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.affairsLibraryService.getGlobalBinding(requireUserId(request)));
+  };
+
+  readonly saveGlobalBinding = async (
+    request: FastifyRequest<{ Body: SaveAffairsLibraryBindingBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const binding = this.affairsLibraryService.saveGlobalBinding(
+      requireUserId(request),
+      request.body.rootDir?.trim() ?? ""
+    );
+    this.onBindingChanged?.(binding.workspaceId);
+    reply.send(binding);
+  };
+
+  readonly setGlobalEnabled = async (
+    request: FastifyRequest<{ Body: SetAffairsLibraryEnabledBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const binding = this.affairsLibraryService.setGlobalEnabled(
+      requireUserId(request),
+      request.body.enabled === true
+    );
+    this.onBindingChanged?.(binding.workspaceId);
+    reply.send(binding);
+  };
+
+  readonly updateGlobalFavorites = async (
+    request: FastifyRequest<{ Body: UpdateAffairsLibraryFavoritesBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.affairsLibraryService.updateGlobalFavorites(
+        requireUserId(request),
+        Array.isArray(request.body.favorites) ? request.body.favorites : []
+      )
+    });
+  };
 
   readonly getBinding = async (
     request: FastifyRequest<{ Params: WorkspaceParams }>,

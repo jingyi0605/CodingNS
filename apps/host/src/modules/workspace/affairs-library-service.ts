@@ -4,6 +4,7 @@ import path from "node:path";
 import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
+import type { UserAffairsLibrarySettingRepository } from "../../storage/repositories/user-affairs-library-setting-repository.js";
 import {
   MAX_PREVIEW_FILE_BYTES,
   MAX_RESOURCE_PREVIEW_FILE_BYTES
@@ -35,12 +36,17 @@ const EXPORT_DIR_RELATIVE_PATH = ".ai-index/exports";
 const EXPORT_STATUS_RELATIVE_PATH = ".ai-index/exports/status.json";
 const EXPORT_MANIFEST_RELATIVE_PATH = ".ai-index/exports/manifest.json";
 const RUNTIME_STATUS_RELATIVE_PATH = ".ai-index/runtime-status.json";
+const COMMAND_LOCK_DIR_RELATIVE_PATH = ".ai-index/runtime/command.lock";
+const COMMAND_LOCK_OWNER_RELATIVE_PATH = ".ai-index/runtime/command.lock/owner.json";
+const COMMAND_LOCK_HEARTBEAT_RELATIVE_PATH = ".ai-index/runtime/command.lock/heartbeat.json";
 const DEFAULT_EXPORT_MODE = "v2" as const;
 const INDEX_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 const DIRECTORY_HINT_TASK_TIMEOUT_MS = 8_000;
 const INDEX_TASK_COOLDOWN_MS = 15_000;
 const AUTO_TASK_QUIET_WINDOW_MS = 800;
 const AUTO_TASK_RETRY_WINDOW_MS = 1_000;
+const COMMAND_LOCK_STALE_HEARTBEAT_MS = 3 * 60 * 1000;
+const ORPHAN_TASK_RECONCILE_GRACE_MS = 15_000;
 const SNAPSHOT_CACHE_FILE_NAME = "codingns-affairs-snapshot-cache.json";
 const SNAPSHOT_CACHE_SCHEMA_VERSION = 2;
 const HOT_DIRECTORY_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -58,7 +64,7 @@ export interface AffairsLibraryFavoriteRecord {
 }
 
 export interface AffairsLibraryBindingDto {
-  workspaceId: string;
+  workspaceId: string | null;
   rootDir: string;
   enabled: boolean;
   mirrorRoot: string | null;
@@ -199,6 +205,25 @@ interface WorkspaceNavigationStateLike {
   updatedAt: string;
 }
 
+interface UserAffairsLibrarySettingLike {
+  userId: string;
+  rootDir: string | null;
+  enabled: boolean;
+  favoritesJson: string | null;
+  lastWorkspaceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface WorkspaceNavigationBindingSource {
+  workspaceId: string;
+  userId: string;
+  affairsLibraryRootPath?: string | null;
+  affairsLibraryEnabled?: boolean;
+  affairsLibraryFavoritesJson?: string | null;
+  updatedAt: string;
+}
+
 interface AffairsLibraryConfigPayload {
   allowedExtensions?: string[];
   mirrorRoot?: string;
@@ -237,6 +262,29 @@ interface ParsedRuntimeStatusFile {
   updatedAt: string | null;
   updatedAtMs: number;
   errorSummary: string | null;
+}
+
+interface ParsedCommandLockOwnerFile {
+  pid: number | null;
+  command: string | null;
+  taskId: string | null;
+  taskType: string | null;
+  acquiredAt: string | null;
+}
+
+interface ParsedCommandLockHeartbeatFile {
+  ts: string | null;
+  tsMs: number;
+}
+
+interface OrphanedRunningTaskInfo {
+  reason: "command_lock_missing" | "command_lock_owner_dead" | "command_lock_heartbeat_stale";
+  errorSummary: string;
+  ownerPid: number | null;
+  heartbeatAgeMs: number | null;
+  runtimeUpdatedAt: string | null;
+  runtimeAgeMs: number | null;
+  runningStage: string | null;
 }
 
 interface IndexManifestPayload {
@@ -339,6 +387,7 @@ export class AffairsLibraryService {
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
+    private readonly userAffairsLibrarySettingRepository: UserAffairsLibrarySettingRepository,
     private readonly taskManager: TaskManager,
     private readonly logger: AffairsLibraryLogger
   ) {
@@ -346,93 +395,133 @@ export class AffairsLibraryService {
     this.resumeEnabledBindings();
   }
 
+  getGlobalBinding(userId: string): AffairsLibraryBindingDto | null {
+    const setting = this.resolveLibrarySetting(userId, null);
+    return this.buildBindingFromSetting(setting, null);
+  }
+
   getBinding(workspaceId: string, userId: string): AffairsLibraryBindingDto | null {
-    const state = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const rootDir = state?.affairsLibraryRootPath?.trim();
+    const setting = this.resolveLibrarySetting(userId, workspaceId);
+    return this.buildBindingFromSetting(setting, workspaceId);
+  }
+
+  saveGlobalBinding(userId: string, rootDir: string): AffairsLibraryBindingDto {
+    const normalizedRootDir = this.normalizeAndValidateBindingRootDir(rootDir);
+    const timestamp = nowIso();
+    const currentSetting = this.resolveLibrarySetting(userId, null);
+    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const nextSetting = this.upsertLibrarySetting({
+      userId,
+      rootDir: normalizedRootDir,
+      enabled: true,
+      favoritesJson: currentSetting?.favoritesJson ?? "[]",
+      lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      createdAt: currentSetting?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir: normalizedRootDir,
+      enabled: true,
+      favoritesJson: nextSetting.favoritesJson
+    });
+    if (workspaceId) {
+      this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    }
+    return this.buildBindingFromSetting(nextSetting, null)!;
+  }
+
+  setGlobalEnabled(userId: string, enabled: boolean): AffairsLibraryBindingDto {
+    const currentSetting = this.resolveLibrarySetting(userId, null);
+    const rootDir = currentSetting?.rootDir?.trim() ?? "";
 
     if (!rootDir) {
-      return null;
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
+        detail: "当前用户还没有绑定文档库路径"
+      });
     }
 
-    const enabled = state?.affairsLibraryEnabled === true;
-    const config = this.readConfig(rootDir);
+    if (enabled) {
+      this.assertLibraryRootDir(rootDir);
+    }
 
-    return {
-      workspaceId,
+    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const nextSetting = this.upsertLibrarySetting({
+      userId,
       rootDir,
       enabled,
-      mirrorRoot: config.mirrorRoot,
-      allowedExtensions: config.allowedExtensions,
-      includedHiddenPaths: config.includedHiddenPaths,
-      configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
-      exportMode: DEFAULT_EXPORT_MODE,
-      updatedAt: state?.updatedAt ?? nowIso()
-    };
+      favoritesJson: currentSetting?.favoritesJson ?? "[]",
+      lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      createdAt: currentSetting?.createdAt ?? nowIso(),
+      updatedAt: nowIso()
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir,
+      enabled,
+      favoritesJson: nextSetting.favoritesJson
+    });
+    if (enabled && workspaceId) {
+      this.scheduleAutoRefresh(workspaceId, "library_enabled");
+    }
+
+    return this.buildBindingFromSetting(nextSetting, null)!;
+  }
+
+  updateGlobalFavorites(
+    userId: string,
+    favorites: AffairsLibraryFavoriteRecord[]
+  ): AffairsLibraryFavoriteRecord[] {
+    const currentSetting = this.resolveLibrarySetting(userId, null);
+    const normalizedFavorites = this.normalizeFavorites(favorites);
+    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const nextSetting = this.upsertLibrarySetting({
+      userId,
+      rootDir: currentSetting?.rootDir ?? null,
+      enabled: currentSetting?.enabled ?? false,
+      favoritesJson: JSON.stringify(normalizedFavorites),
+      lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      createdAt: currentSetting?.createdAt ?? nowIso(),
+      updatedAt: nowIso()
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir: nextSetting.rootDir,
+      enabled: nextSetting.enabled,
+      favoritesJson: nextSetting.favoritesJson
+    });
+
+    return normalizedFavorites;
   }
 
   saveBinding(workspaceId: string, userId: string, rootDir: string): AffairsLibraryBindingDto {
-    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const normalizedRootDir = rootDir.trim();
+    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const normalizedRootDir = this.normalizeAndValidateBindingRootDir(rootDir);
 
-    if (!normalizedRootDir) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "AFFAIRS_LIBRARY_ROOT_REQUIRED",
-        detail: "文档库路径不能为空",
-        field: "rootDir"
-      });
-    }
-
-    if (!path.isAbsolute(normalizedRootDir)) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "AFFAIRS_LIBRARY_ROOT_NOT_ABSOLUTE",
-        detail: "文档库路径必须是绝对路径",
-        field: "rootDir"
-      });
-    }
-
-    if (!fs.existsSync(normalizedRootDir) || !fs.statSync(normalizedRootDir).isDirectory()) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "AFFAIRS_LIBRARY_ROOT_INVALID",
-        detail: "文档库路径不存在，或者不是文件夹",
-        field: "rootDir"
-      });
-    }
-
-    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const nextRecord: WorkspaceNavigationStateLike = {
-      workspaceId,
+    const timestamp = nowIso();
+    const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
+    const nextSetting = this.upsertLibrarySetting({
       userId,
-      collapsed: currentState?.collapsed ?? false,
-      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
-      affairsLibraryRootPath: normalizedRootDir,
-      affairsLibraryEnabled: true,
-      affairsLibraryFavoritesJson: currentState?.affairsLibraryFavoritesJson ?? "[]",
-      updatedAt: nowIso()
-    };
-    this.workspaceNavigationStateRepository.upsert(nextRecord);
-    this.scheduleAutoRefresh(workspaceId, "binding_saved");
-
-    const config = this.readConfig(normalizedRootDir);
-    return {
-      workspaceId,
       rootDir: normalizedRootDir,
       enabled: true,
-      mirrorRoot: config.mirrorRoot,
-      allowedExtensions: config.allowedExtensions,
-      includedHiddenPaths: config.includedHiddenPaths,
-      configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
-      exportMode: DEFAULT_EXPORT_MODE,
-      updatedAt: nextRecord.updatedAt
-    };
+      favoritesJson: currentSetting?.favoritesJson ?? "[]",
+      lastWorkspaceId: workspaceId,
+      createdAt: currentSetting?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir: normalizedRootDir,
+      enabled: true,
+      favoritesJson: nextSetting.favoritesJson
+    });
+    this.scheduleAutoRefresh(workspaceId, "binding_saved");
+
+    return this.buildBindingFromSetting(nextSetting, workspaceId)!;
   }
 
   setEnabled(workspaceId: string, userId: string, enabled: boolean): AffairsLibraryBindingDto {
-    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const rootDir = currentState?.affairsLibraryRootPath?.trim() ?? "";
+    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
+    const rootDir = currentSetting?.rootDir?.trim() ?? "";
 
     if (!rootDir) {
       throw new AppError({
@@ -446,33 +535,25 @@ export class AffairsLibraryService {
       this.assertLibraryRootDir(rootDir);
     }
 
-    const nextRecord: WorkspaceNavigationStateLike = {
-      workspaceId,
+    const nextSetting = this.upsertLibrarySetting({
       userId,
-      collapsed: currentState?.collapsed ?? false,
-      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
-      affairsLibraryRootPath: rootDir,
-      affairsLibraryEnabled: enabled,
-      affairsLibraryFavoritesJson: currentState?.affairsLibraryFavoritesJson ?? "[]",
+      rootDir,
+      enabled,
+      favoritesJson: currentSetting?.favoritesJson ?? "[]",
+      lastWorkspaceId: workspaceId,
+      createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
-    };
-    this.workspaceNavigationStateRepository.upsert(nextRecord);
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir,
+      enabled,
+      favoritesJson: nextSetting.favoritesJson
+    });
     if (enabled) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
     }
 
-    const config = this.readConfig(rootDir);
-    return {
-      workspaceId,
-      rootDir,
-      enabled,
-      mirrorRoot: config.mirrorRoot,
-      allowedExtensions: config.allowedExtensions,
-      includedHiddenPaths: config.includedHiddenPaths,
-      configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
-      exportMode: DEFAULT_EXPORT_MODE,
-      updatedAt: nextRecord.updatedAt
-    };
+    return this.buildBindingFromSetting(nextSetting, workspaceId)!;
   }
 
   getConfig(workspaceId: string, userId: string): {
@@ -886,25 +967,23 @@ export class AffairsLibraryService {
     userId: string,
     favorites: AffairsLibraryFavoriteRecord[]
   ): AffairsLibraryFavoriteRecord[] {
-    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const normalizedFavorites = favorites
-      .filter((item) => item && (item.kind === "folder" || item.kind === "tag") && item.path.trim())
-      .map((item) => ({
-        kind: item.kind,
-        path: item.path.trim(),
-        label: item.label.trim() || item.path.trim()
-      }));
+    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
+    const normalizedFavorites = this.normalizeFavorites(favorites);
 
-    this.workspaceNavigationStateRepository.upsert({
-      workspaceId,
+    const nextSetting = this.upsertLibrarySetting({
       userId,
-      collapsed: currentState?.collapsed ?? false,
-      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
-      affairsLibraryRootPath: currentState?.affairsLibraryRootPath ?? null,
-      affairsLibraryEnabled: currentState?.affairsLibraryEnabled ?? false,
-      affairsLibraryFavoritesJson: JSON.stringify(normalizedFavorites),
+      rootDir: currentSetting?.rootDir ?? null,
+      enabled: currentSetting?.enabled ?? false,
+      favoritesJson: JSON.stringify(normalizedFavorites),
+      lastWorkspaceId: workspaceId,
+      createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
+    });
+    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
+      rootDir: nextSetting.rootDir,
+      enabled: nextSetting.enabled,
+      favoritesJson: nextSetting.favoritesJson
     });
 
     return normalizedFavorites;
@@ -1269,6 +1348,12 @@ export class AffairsLibraryService {
   ): { taskId: string; deduped: boolean; status: AffairsLibraryIndexStatusDto } {
     const binding = this.requireBinding(workspaceId, userId);
     this.ensureLibraryEnabled(binding);
+    const normalizedReason = reason.trim() || "manual_refresh";
+
+    this.reconcileOrphanedRunningTasks(workspaceId, binding.rootDir, {
+      source: "affairs_library.refresh",
+      triggerReason: normalizedReason
+    });
 
     const handle = this.taskManager.enqueue<{ workspaceId: string; rootDir: string; reason: string; targetPath?: string }, AffairsIndexerCommandResult>(
       HOST_TASK_TYPES.affairsLibraryIndex,
@@ -1278,7 +1363,7 @@ export class AffairsLibraryService {
         input: {
           workspaceId,
           rootDir: binding.rootDir,
-          reason: reason.trim() || "manual_refresh"
+          reason: normalizedReason
         }
       }
     );
@@ -1290,7 +1375,7 @@ export class AffairsLibraryService {
       taskType: handle.taskType,
       taskId: handle.taskId,
       source: "affairs_library.refresh",
-      reason: reason.trim() || "manual_refresh",
+      reason: normalizedReason,
       deduped: handle.deduped,
       status: "queued"
     });
@@ -1304,7 +1389,7 @@ export class AffairsLibraryService {
         taskType: handle.taskType,
         taskId: handle.taskId,
         source: "affairs_library.refresh",
-        reason: reason.trim() || "manual_refresh",
+        reason: normalizedReason,
         status: "finished",
         durationMs: result.durationMs,
         resultSummary: summarizeIndexerCommandResult(result.result)
@@ -1318,7 +1403,7 @@ export class AffairsLibraryService {
         taskType: handle.taskType,
         taskId: handle.taskId,
         source: "affairs_library.refresh",
-        reason: reason.trim() || "manual_refresh",
+        reason: normalizedReason,
         status: "failed",
         message: error instanceof Error ? error.message : String(error)
       });
@@ -1803,8 +1888,8 @@ export class AffairsLibraryService {
   }
 
   private readFavorites(workspaceId: string, userId: string): AffairsLibraryFavoriteRecord[] {
-    const state = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const raw = state?.affairsLibraryFavoritesJson?.trim();
+    const setting = this.resolveLibrarySetting(userId, workspaceId);
+    const raw = setting?.favoritesJson?.trim();
     if (!raw) {
       return [];
     }
@@ -1845,6 +1930,24 @@ export class AffairsLibraryService {
         : null;
       if (reconciledStatus) {
         return reconciledStatus;
+      }
+
+      const orphanedRunningTask = binding?.enabled
+        ? detectOrphanedRunningTask(binding.rootDir, taskSnapshot, runtimeStatus)
+        : null;
+      if (orphanedRunningTask) {
+        return {
+          state: "failed",
+          dirtyReasons: ["refresh_failed", orphanedRunningTask.reason],
+          lastRequestedAt: toIso(taskSnapshot.enqueuedAt),
+          lastStartedAt: toIso(taskSnapshot.startedAt),
+          lastCompletedAt: null,
+          lastFailedAt: nowIso(),
+          nextAllowedAt: null,
+          runningTaskId: null,
+          runningStage: null,
+          errorSummary: orphanedRunningTask.errorSummary
+        };
       }
 
       return {
@@ -2143,7 +2246,10 @@ export class AffairsLibraryService {
       });
     }
 
-    const blockingTask = this.findBlockingAutoTask(workspaceId);
+    const blockingTask = this.reconcileOrphanedRunningTasks(workspaceId, rootDir, {
+      source: "affairs_library.auto_task",
+      triggerReason: "auto_refresh"
+    });
     if (blockingTask) {
       this.logger.info(
         {
@@ -2287,21 +2393,119 @@ export class AffairsLibraryService {
     }, delayMs);
   }
 
-  private findBlockingAutoTask(workspaceId: string): TaskSnapshot | null {
+  private reconcileOrphanedRunningTasks(
+    workspaceId: string,
+    rootDir: string,
+    meta: {
+      source: string;
+      triggerReason: string;
+    }
+  ): TaskSnapshot | null {
+    const runtimeStatus = readRuntimeStatusFileSafe(rootDir);
+    const activeSnapshots = this.findActiveLibraryTaskSnapshots(workspaceId);
+
+    for (const snapshot of activeSnapshots) {
+      if (snapshot.status !== "running") {
+        continue;
+      }
+
+      const orphanedRunningTask = detectOrphanedRunningTask(rootDir, snapshot, runtimeStatus);
+      if (!orphanedRunningTask) {
+        continue;
+      }
+
+      this.logger.warn?.(
+        {
+          workspaceId,
+          rootDir,
+          taskType: snapshot.taskType,
+          taskId: snapshot.taskId,
+          reason: orphanedRunningTask.reason,
+          ownerPid: orphanedRunningTask.ownerPid,
+          heartbeatAgeMs: orphanedRunningTask.heartbeatAgeMs,
+          runtimeUpdatedAt: orphanedRunningTask.runtimeUpdatedAt,
+          runtimeAgeMs: orphanedRunningTask.runtimeAgeMs,
+          runningStage: orphanedRunningTask.runningStage,
+          source: meta.source,
+          triggerReason: meta.triggerReason
+        },
+        "检测到事务文档库 orphan running 任务，准备主动清理"
+      );
+      writeAffairsLibraryDebugLog({
+        event: "orphan_running_task_detected",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: snapshot.taskType,
+        taskId: snapshot.taskId,
+        source: meta.source,
+        reason: orphanedRunningTask.reason,
+        status: snapshot.status,
+        details: {
+          triggerReason: meta.triggerReason,
+          ownerPid: orphanedRunningTask.ownerPid,
+          heartbeatAgeMs: orphanedRunningTask.heartbeatAgeMs,
+          runtimeUpdatedAt: orphanedRunningTask.runtimeUpdatedAt,
+          runtimeAgeMs: orphanedRunningTask.runtimeAgeMs,
+          runningStage: orphanedRunningTask.runningStage
+        },
+        message: orphanedRunningTask.errorSummary
+      });
+
+      this.taskManager.cancel(snapshot.taskType, workspaceId, `orphaned_helper_process:${orphanedRunningTask.reason}`);
+
+      writeAffairsLibraryDebugLog({
+        event: "orphan_running_task_cancelled",
+        processRole: "host",
+        workspaceId,
+        rootDir,
+        taskType: snapshot.taskType,
+        taskId: snapshot.taskId,
+        source: meta.source,
+        reason: orphanedRunningTask.reason,
+        status: "cancelled",
+        details: {
+          triggerReason: meta.triggerReason,
+          ownerPid: orphanedRunningTask.ownerPid,
+          heartbeatAgeMs: orphanedRunningTask.heartbeatAgeMs,
+          runtimeUpdatedAt: orphanedRunningTask.runtimeUpdatedAt,
+          runtimeAgeMs: orphanedRunningTask.runtimeAgeMs,
+          runningStage: orphanedRunningTask.runningStage
+        },
+        message: "检测到 orphan running 任务后已主动取消，避免持续阻塞后续刷新。"
+      });
+      this.logger.warn?.(
+        {
+          workspaceId,
+          rootDir,
+          taskType: snapshot.taskType,
+          taskId: snapshot.taskId,
+          reason: orphanedRunningTask.reason,
+          source: meta.source,
+          triggerReason: meta.triggerReason
+        },
+        "事务文档库 orphan running 任务已主动取消"
+      );
+    }
+
+    return this.findBlockingAutoTask(workspaceId);
+  }
+
+  private findActiveLibraryTaskSnapshots(workspaceId: string): TaskSnapshot[] {
     const taskTypes = [
       HOST_TASK_TYPES.affairsLibraryApplyConfig,
       HOST_TASK_TYPES.affairsLibraryIndex,
       HOST_TASK_TYPES.affairsLibraryExport
     ];
 
-    for (const taskType of taskTypes) {
-      const snapshot = this.taskManager.peek(taskType, workspaceId);
-      if (snapshot && (snapshot.status === "queued" || snapshot.status === "running")) {
-        return snapshot;
-      }
-    }
+    return taskTypes
+      .map((taskType) => this.taskManager.peek(taskType, workspaceId))
+      .filter((snapshot): snapshot is TaskSnapshot => Boolean(snapshot))
+      .filter((snapshot) => snapshot.status === "queued" || snapshot.status === "running");
+  }
 
-    return null;
+  private findBlockingAutoTask(workspaceId: string): TaskSnapshot | null {
+    return this.findActiveLibraryTaskSnapshots(workspaceId)[0] ?? null;
   }
 
   private findRelevantIndexTaskSnapshot(workspaceId: string): TaskSnapshot | null {
@@ -2695,6 +2899,34 @@ export class AffairsLibraryService {
     }
   }
 
+  getGlobalSetting(userId: string): UserAffairsLibrarySettingLike | null {
+    return this.userAffairsLibrarySettingRepository.findByUserId(userId);
+  }
+
+  private buildBindingFromSetting(
+    setting: UserAffairsLibrarySettingLike | null,
+    fallbackWorkspaceId: string | null
+  ): AffairsLibraryBindingDto | null {
+    const rootDir = setting?.rootDir?.trim();
+
+    if (!rootDir) {
+      return null;
+    }
+
+    const config = this.readConfig(rootDir);
+    return {
+      workspaceId: setting?.lastWorkspaceId ?? fallbackWorkspaceId,
+      rootDir,
+      enabled: setting?.enabled === true,
+      mirrorRoot: config.mirrorRoot,
+      allowedExtensions: config.allowedExtensions,
+      includedHiddenPaths: config.includedHiddenPaths,
+      configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
+      exportMode: DEFAULT_EXPORT_MODE,
+      updatedAt: setting?.updatedAt ?? nowIso()
+    };
+  }
+
   private requireBinding(workspaceId: string, userId: string): AffairsLibraryBindingDto {
     const binding = this.getBinding(workspaceId, userId);
     if (!binding) {
@@ -2705,6 +2937,142 @@ export class AffairsLibraryService {
       });
     }
     return binding;
+  }
+
+  private resolveLibrarySetting(userId: string, workspaceId?: string | null): UserAffairsLibrarySettingLike | null {
+    const currentSetting = this.userAffairsLibrarySettingRepository.findByUserId(userId);
+    const currentRootDir = currentSetting?.rootDir?.trim() ?? "";
+    if (currentRootDir) {
+      return currentSetting;
+    }
+
+    const workspaceScope = workspaceId?.trim() ?? "";
+    const legacyFromWorkspace = ((
+      workspaceScope
+        ? this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceScope, userId)
+        : null
+    ) ?? (
+      workspaceScope
+        ? this.workspaceNavigationStateRepository.findLatestAffairsLibraryByWorkspaceId(workspaceScope)
+        : null
+    )) as WorkspaceNavigationBindingSource | null;
+    const legacyFromUser = !workspaceScope
+      ? this.workspaceNavigationStateRepository
+        .listByUserId(userId)
+        .filter((item) => item.affairsLibraryRootPath?.trim())
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
+      : null;
+    const legacy = legacyFromWorkspace ?? legacyFromUser;
+    const legacyRootDir = legacy?.affairsLibraryRootPath?.trim() ?? "";
+    if (!legacyRootDir) {
+      return currentSetting;
+    }
+
+    const migrated = this.upsertLibrarySetting({
+      userId,
+      rootDir: legacyRootDir,
+      enabled: legacy?.affairsLibraryEnabled === true,
+      favoritesJson: legacy?.affairsLibraryFavoritesJson ?? "[]",
+      lastWorkspaceId: legacy?.workspaceId ?? (workspaceScope || null),
+      createdAt: currentSetting?.createdAt ?? legacy?.updatedAt ?? nowIso(),
+      updatedAt: legacy?.updatedAt ?? nowIso()
+    });
+    return migrated;
+  }
+
+  private upsertLibrarySetting(record: UserAffairsLibrarySettingLike): UserAffairsLibrarySettingLike {
+    return this.userAffairsLibrarySettingRepository.upsert({
+      userId: record.userId,
+      rootDir: record.rootDir?.trim() || null,
+      enabled: record.enabled === true,
+      favoritesJson: record.favoritesJson ?? null,
+      lastWorkspaceId: record.lastWorkspaceId?.trim() || null,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt
+    });
+  }
+
+  private normalizeAndValidateBindingRootDir(rootDir: string): string {
+    const normalizedRootDir = rootDir.trim();
+
+    if (!normalizedRootDir) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "AFFAIRS_LIBRARY_ROOT_REQUIRED",
+        detail: "文档库路径不能为空",
+        field: "rootDir"
+      });
+    }
+
+    if (!path.isAbsolute(normalizedRootDir)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "AFFAIRS_LIBRARY_ROOT_NOT_ABSOLUTE",
+        detail: "文档库路径必须是绝对路径",
+        field: "rootDir"
+      });
+    }
+
+    if (!fs.existsSync(normalizedRootDir) || !fs.statSync(normalizedRootDir).isDirectory()) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "AFFAIRS_LIBRARY_ROOT_INVALID",
+        detail: "文档库路径不存在，或者不是文件夹",
+        field: "rootDir"
+      });
+    }
+
+    return normalizedRootDir;
+  }
+
+  private normalizeFavorites(favorites: AffairsLibraryFavoriteRecord[]): AffairsLibraryFavoriteRecord[] {
+    return favorites
+      .filter((item) => item && (item.kind === "folder" || item.kind === "tag") && item.path.trim())
+      .map((item) => ({
+        kind: item.kind,
+        path: item.path.trim(),
+        label: item.label.trim() || item.path.trim()
+      }));
+  }
+
+  private resolvePreferredWorkspaceId(preferredWorkspaceId?: string | null): string | null {
+    const normalizedPreferredWorkspaceId = preferredWorkspaceId?.trim() ?? "";
+    if (normalizedPreferredWorkspaceId) {
+      try {
+        this.workspaceService.getWorkspaceOrThrow(normalizedPreferredWorkspaceId);
+        return normalizedPreferredWorkspaceId;
+      } catch {
+        // 旧的随机 workspaceId 已经失效时，直接降级到当前仍可见的工作区。
+      }
+    }
+
+    return this.workspaceService.list()[0]?.id ?? null;
+  }
+
+  private mirrorLegacyWorkspaceBindingIfPossible(
+    workspaceId: string | null,
+    userId: string,
+    input: {
+      rootDir: string | null;
+      enabled: boolean;
+      favoritesJson: string | null;
+    }
+  ): void {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
+    this.workspaceNavigationStateRepository.upsert({
+      workspaceId,
+      userId,
+      collapsed: currentState?.collapsed ?? false,
+      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
+      affairsLibraryRootPath: input.rootDir?.trim() || null,
+      affairsLibraryEnabled: input.enabled === true,
+      affairsLibraryFavoritesJson: input.favoritesJson ?? null,
+      updatedAt: nowIso()
+    });
   }
 
   private ensureLibraryEnabled(binding: AffairsLibraryBindingDto): void {
@@ -3096,6 +3464,160 @@ function readRuntimeStatusFileSafe(rootDir: string): ParsedRuntimeStatusFile | n
   }
 }
 
+function readCommandLockOwnerFileSafe(rootDir: string): ParsedCommandLockOwnerFile | null {
+  const filePath = path.join(rootDir, COMMAND_LOCK_OWNER_RELATIVE_PATH);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const payload = readJsonFile<{
+      pid?: number;
+      command?: string;
+      taskId?: string;
+      taskType?: string;
+      acquiredAt?: string;
+    }>(filePath);
+    return {
+      pid: typeof payload.pid === "number" && Number.isFinite(payload.pid) ? payload.pid : null,
+      command: payload.command?.trim() ?? null,
+      taskId: payload.taskId?.trim() ?? null,
+      taskType: payload.taskType?.trim() ?? null,
+      acquiredAt: payload.acquiredAt?.trim() ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readCommandLockHeartbeatFileSafe(rootDir: string): ParsedCommandLockHeartbeatFile | null {
+  const filePath = path.join(rootDir, COMMAND_LOCK_HEARTBEAT_RELATIVE_PATH);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const payload = readJsonFile<{ ts?: string }>(filePath);
+    const ts = payload.ts?.trim() ?? null;
+    const tsMs = ts ? Date.parse(ts) : Number.NaN;
+    return {
+      ts,
+      tsMs
+    };
+  } catch {
+    return null;
+  }
+}
+
+function detectOrphanedRunningTask(
+  rootDir: string,
+  taskSnapshot: TaskSnapshot,
+  runtimeStatus: ParsedRuntimeStatusFile | null
+): OrphanedRunningTaskInfo | null {
+  if (taskSnapshot.status !== "running") {
+    return null;
+  }
+
+  const runningStartedAtMs = taskSnapshot.startedAt ?? taskSnapshot.enqueuedAt ?? null;
+  if (
+    Number.isFinite(runningStartedAtMs ?? Number.NaN)
+    && Date.now() - (runningStartedAtMs ?? 0) < ORPHAN_TASK_RECONCILE_GRACE_MS
+  ) {
+    return null;
+  }
+
+  const lockDir = path.join(rootDir, COMMAND_LOCK_DIR_RELATIVE_PATH);
+  if (!fs.existsSync(lockDir)) {
+    return {
+      reason: "command_lock_missing",
+      errorSummary: "文档库索引任务已失去 helper 锁文件，上一轮运行可能异常退出。",
+      ownerPid: null,
+      heartbeatAgeMs: null,
+      runtimeUpdatedAt: runtimeStatus?.updatedAt ?? null,
+      runtimeAgeMs: Number.isFinite(runtimeStatus?.updatedAtMs ?? Number.NaN)
+        ? Date.now() - (runtimeStatus?.updatedAtMs ?? 0)
+        : null,
+      runningStage: runtimeStatus?.stage ?? null
+    };
+  }
+
+  const owner = readCommandLockOwnerFileSafe(rootDir);
+  if (!owner) {
+    return {
+      reason: "command_lock_missing",
+      errorSummary: "文档库索引任务缺少 helper 锁 owner 信息，上一轮运行可能异常退出。",
+      ownerPid: null,
+      heartbeatAgeMs: null,
+      runtimeUpdatedAt: runtimeStatus?.updatedAt ?? null,
+      runtimeAgeMs: Number.isFinite(runtimeStatus?.updatedAtMs ?? Number.NaN)
+        ? Date.now() - (runtimeStatus?.updatedAtMs ?? 0)
+        : null,
+      runningStage: runtimeStatus?.stage ?? null
+    };
+  }
+
+  if (owner.taskId && owner.taskId !== taskSnapshot.taskId) {
+    return null;
+  }
+
+  if (owner.taskType && owner.taskType !== taskSnapshot.taskType) {
+    return null;
+  }
+
+  if (owner.pid === null || !isProcessAliveSafe(owner.pid)) {
+    return {
+      reason: "command_lock_owner_dead",
+      errorSummary: `文档库索引任务的 helper 进程（pid=${owner.pid ?? "unknown"}）已经退出，但 Host 没收到结束回调。`,
+      ownerPid: owner.pid,
+      heartbeatAgeMs: null,
+      runtimeUpdatedAt: runtimeStatus?.updatedAt ?? null,
+      runtimeAgeMs: Number.isFinite(runtimeStatus?.updatedAtMs ?? Number.NaN)
+        ? Date.now() - (runtimeStatus?.updatedAtMs ?? 0)
+        : null,
+      runningStage: runtimeStatus?.stage ?? null
+    };
+  }
+
+  const heartbeat = readCommandLockHeartbeatFileSafe(rootDir);
+  const heartbeatAgeMs = Number.isFinite(heartbeat?.tsMs ?? Number.NaN)
+    ? Date.now() - (heartbeat?.tsMs ?? 0)
+    : Number.POSITIVE_INFINITY;
+  if (heartbeatAgeMs > COMMAND_LOCK_STALE_HEARTBEAT_MS) {
+    return {
+      reason: "command_lock_heartbeat_stale",
+      errorSummary: "文档库索引任务的 helper 心跳已长时间不刷新，上一轮运行很可能已经卡死。",
+      ownerPid: owner.pid,
+      heartbeatAgeMs: Number.isFinite(heartbeatAgeMs) ? heartbeatAgeMs : null,
+      runtimeUpdatedAt: runtimeStatus?.updatedAt ?? null,
+      runtimeAgeMs: Number.isFinite(runtimeStatus?.updatedAtMs ?? Number.NaN)
+        ? Date.now() - (runtimeStatus?.updatedAtMs ?? 0)
+        : null,
+      runningStage: runtimeStatus?.stage ?? null
+    };
+  }
+
+  if (
+    runtimeStatus?.status === "running"
+    && runtimeStatus.taskId === taskSnapshot.taskId
+    && Number.isFinite(runtimeStatus.updatedAtMs)
+  ) {
+    const runtimeAgeMs = Date.now() - runtimeStatus.updatedAtMs;
+    if (runtimeAgeMs > COMMAND_LOCK_STALE_HEARTBEAT_MS && heartbeatAgeMs > COMMAND_LOCK_STALE_HEARTBEAT_MS) {
+      return {
+        reason: "command_lock_heartbeat_stale",
+        errorSummary: "文档库索引任务的运行状态和 helper 心跳都已长时间停止刷新，上一轮运行很可能已经卡死。",
+        ownerPid: owner.pid,
+        heartbeatAgeMs,
+        runtimeUpdatedAt: runtimeStatus.updatedAt,
+        runtimeAgeMs,
+        runningStage: runtimeStatus.stage
+      };
+    }
+  }
+
+  return null;
+}
+
 function buildCompletedStatusFromExport(
   exportStatus: ParsedIndexStatusFile | null,
   enqueuedAtMs: number | null,
@@ -3191,6 +3713,21 @@ function doesRuntimeStatusMatchTask(
   }
 
   return Number.isFinite(runtimeStatus.updatedAtMs) && runtimeStatus.updatedAtMs >= referenceMs;
+}
+
+function isProcessAliveSafe(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "EPERM";
+  }
 }
 
 function readJsonFile<T>(filePath: string): T {

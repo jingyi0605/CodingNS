@@ -34,6 +34,22 @@ export class WorkspaceNavigationStateRepository {
     return row ? mapWorkspaceNavigationStateRow(row) : null;
   }
 
+  findLatestAffairsLibraryByWorkspaceId(workspaceId: string): WorkspaceNavigationStateRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT workspace_id, user_id, collapsed, background_color, affairs_library_root_path, affairs_library_enabled, affairs_library_favorites_json, updated_at
+         FROM workspace_navigation_states
+         WHERE workspace_id = ?
+           AND affairs_library_root_path IS NOT NULL
+           AND TRIM(affairs_library_root_path) <> ''
+         ORDER BY datetime(updated_at) DESC
+         LIMIT 1`
+      )
+      .get(workspaceId) as WorkspaceNavigationStateRow | undefined;
+
+    return row ? mapWorkspaceNavigationStateRow(row) : null;
+  }
+
   listByUserId(userId: string): WorkspaceNavigationStateRecord[] {
     return this.db
       .prepare(

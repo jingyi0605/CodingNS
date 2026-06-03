@@ -73,13 +73,24 @@ function createService(options: {
   rootDir: string;
   listEnabledAffairsLibraries?: WorkspaceNavigationStateRecord[];
   findAnyEnabledAffairsLibraryByWorkspaceId?: () => WorkspaceNavigationStateRecord | null;
+  findLatestAffairsLibraryByWorkspaceId?: () => WorkspaceNavigationStateRecord | null;
   findByWorkspaceIdAndUserId?: () => WorkspaceNavigationStateRecord | null;
+  currentGlobalSetting?: {
+    userId: string;
+    rootDir: string | null;
+    enabled: boolean;
+    favoritesJson: string | null;
+    lastWorkspaceId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
   peek?: (taskType: string, key: string) => TaskSnapshot | null;
   enqueue?: ReturnType<typeof vi.fn>;
 }) {
   return new AffairsLibraryService(
     {
-      getWorkspaceOrThrow: vi.fn(() => createWorkspace(options.rootDir))
+      getWorkspaceOrThrow: vi.fn(() => createWorkspace(options.rootDir)),
+      list: vi.fn(() => [createWorkspace(options.rootDir)])
     } as never,
     {
       findByWorkspaceIdAndUserId: vi.fn(
@@ -94,6 +105,7 @@ function createService(options: {
           updatedAt: "2026-05-31T06:00:00.000Z"
         }))
       ),
+      listByUserId: vi.fn(() => []),
       upsert: vi.fn(),
       listEnabledAffairsLibraries: vi.fn(() => options.listEnabledAffairsLibraries ?? []),
       findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(
@@ -107,7 +119,23 @@ function createService(options: {
           affairsLibraryFavoritesJson: "[]",
           updatedAt: "2026-05-31T06:00:00.000Z"
         }))
+      ),
+      findLatestAffairsLibraryByWorkspaceId: vi.fn(
+        options.findLatestAffairsLibraryByWorkspaceId ?? (() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: options.rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
       )
+    } as never,
+    {
+      findByUserId: vi.fn(() => options.currentGlobalSetting ?? null),
+      upsert: vi.fn((record) => record)
     } as never,
     {
       has: vi.fn(() => false),
@@ -618,7 +646,7 @@ describe("AffairsLibraryService auto tasks", () => {
 
   it("运行中的索引任务会优先显示 helper 正式上报的内部阶段", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-runtime-stage-"));
-    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".ai-index", "runtime", "command.lock"), { recursive: true });
     fs.writeFileSync(
       path.join(rootDir, ".ai-index", "runtime-status.json"),
       JSON.stringify({
@@ -629,6 +657,22 @@ describe("AffairsLibraryService auto tasks", () => {
         taskId: "task-1",
         taskType: HOST_TASK_TYPES.affairsLibraryIndex,
         updatedAt: new Date().toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        command: "index",
+        taskId: "task-1",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        acquiredAt: new Date().toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "heartbeat.json"),
+      JSON.stringify({
+        ts: new Date().toISOString()
       })
     );
     const now = Date.now();
@@ -1047,6 +1091,68 @@ describe("AffairsLibraryService auto tasks", () => {
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
+
+  it("task snapshot 还挂着 running，但 helper 进程已经消失时，会改判为 failed", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-orphan-running-"));
+    fs.mkdirSync(path.join(rootDir, ".ai-index", "runtime", "command.lock"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime-status.json"),
+      JSON.stringify({
+        version: 1,
+        status: "running",
+        stage: "export",
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        updatedAt: new Date(Date.now() - 60_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "owner.json"),
+      JSON.stringify({
+        pid: 999999,
+        command: "index",
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        acquiredAt: new Date(Date.now() - 120_000).toISOString()
+      })
+    );
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "runtime", "command.lock", "heartbeat.json"),
+      JSON.stringify({
+        ts: new Date(Date.now() - 120_000).toISOString()
+      })
+    );
+
+    const now = Date.now();
+    const service = createService({
+      rootDir,
+      peek: () => ({
+        taskId: "task-orphan",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        key: "workspace-1",
+        executionLane: "helper_process",
+        status: "running",
+        source: "affairs_library.auto_refresh",
+        attempt: 1,
+        enqueuedAt: now - 180_000,
+        startedAt: now - 175_000,
+        finishedAt: null,
+        timeoutMs: 15 * 60 * 1000
+      })
+    });
+
+    const snapshot = service.getSnapshot("workspace-1", "user-1");
+
+    expect(snapshot.status.state).toBe("failed");
+    expect(snapshot.status.runningTaskId).toBeNull();
+    expect(snapshot.status.runningStage).toBeNull();
+    expect(snapshot.status.dirtyReasons).toContain("command_lock_owner_dead");
+    expect(snapshot.status.errorSummary).toContain("helper 进程");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
 });
 
 describe("AffairsLibraryDirtyWatchService", () => {
@@ -1380,6 +1486,231 @@ describe("AffairsLibraryDirtyWatchService", () => {
         reason: expect.stringContaining("missing_index_artifact")
       })
     );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+});
+
+describe("AffairsLibraryService global binding", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("当前用户没有全局配置时，会把旧 workspace 绑定迁到全局配置", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-binding-fallback-"));
+
+    const service = createService({
+      rootDir,
+      findByWorkspaceIdAndUserId: () => null,
+      findLatestAffairsLibraryByWorkspaceId: () => ({
+        workspaceId: "workspace-1",
+        userId: "desktop-user",
+        collapsed: false,
+        backgroundColor: null,
+        affairsLibraryRootPath: rootDir,
+        affairsLibraryEnabled: true,
+        affairsLibraryFavoritesJson: "[{\"kind\":\"folder\",\"path\":\".\",\"label\":\"全部\"}]",
+        updatedAt: "2026-06-03T02:00:00.000Z"
+      })
+    });
+
+    expect(service.getBinding("workspace-1", "workspace-session-user")).toMatchObject({
+      workspaceId: "workspace-1",
+      rootDir,
+      enabled: true
+    });
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("切换启用状态时会更新用户级全局配置", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-binding-enable-fallback-"));
+    const upsert = vi.fn();
+    upsert.mockImplementation((record) => record);
+
+    const service = new AffairsLibraryService(
+      {
+        getWorkspaceOrThrow: vi.fn(() => createWorkspace(rootDir)),
+        list: vi.fn(() => [createWorkspace(rootDir)])
+      } as never,
+      {
+        findByWorkspaceIdAndUserId: vi.fn(() => null),
+        upsert,
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "desktop-user",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        })),
+        findLatestAffairsLibraryByWorkspaceId: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "desktop-user",
+          collapsed: false,
+          backgroundColor: null,
+          affairsLibraryRootPath: rootDir,
+          affairsLibraryEnabled: true,
+          affairsLibraryFavoritesJson: "[]",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        }))
+      } as never,
+      {
+        findByUserId: vi.fn(() => ({
+          userId: "workspace-session-user",
+          rootDir,
+          enabled: true,
+          favoritesJson: "[]",
+          lastWorkspaceId: "workspace-1",
+          createdAt: "2026-06-03T02:00:00.000Z",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        })),
+        upsert
+      } as never,
+      {
+        has: vi.fn(() => false),
+        register: vi.fn(),
+        enqueue: vi.fn(() => ({
+          taskId: "task-1",
+          taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+          key: "workspace-1",
+          executionLane: "helper_process",
+          deduped: false,
+          promise: Promise.resolve(createIndexerResult("index")),
+          cancel: vi.fn()
+        })),
+        peek: vi.fn(() => null)
+      } as never,
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      } as never
+    );
+
+    const binding = service.setEnabled("workspace-1", "workspace-session-user", false);
+
+    expect(binding).toMatchObject({
+      workspaceId: "workspace-1",
+      rootDir,
+      enabled: false
+    });
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "workspace-session-user",
+      rootDir,
+      enabled: false,
+      lastWorkspaceId: "workspace-1"
+    }));
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("全局绑定接口会优先复用用户级配置", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-binding-"));
+
+    const service = createService({
+      rootDir,
+      currentGlobalSetting: {
+        userId: "workspace-session-user",
+        rootDir,
+        enabled: true,
+        favoritesJson: "[]",
+        lastWorkspaceId: "workspace-1",
+        createdAt: "2026-06-03T02:00:00.000Z",
+        updatedAt: "2026-06-03T02:00:00.000Z"
+      }
+    });
+
+    expect(service.getGlobalBinding("workspace-session-user")).toMatchObject({
+      workspaceId: "workspace-1",
+      rootDir,
+      enabled: true
+    });
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("全局收藏接口会更新用户级收藏并保持旧兼容镜像", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-favorites-"));
+    const upsert = vi.fn((record) => record);
+    const legacyUpsert = vi.fn();
+
+    const service = new AffairsLibraryService(
+      {
+        getWorkspaceOrThrow: vi.fn(() => createWorkspace(rootDir)),
+        list: vi.fn(() => [createWorkspace(rootDir)])
+      } as never,
+      {
+        findByWorkspaceIdAndUserId: vi.fn(() => null),
+        upsert: legacyUpsert,
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        findLatestAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        findByUserId: vi.fn(() => ({
+          userId: "workspace-session-user",
+          rootDir,
+          enabled: true,
+          favoritesJson: "[]",
+          lastWorkspaceId: "workspace-1",
+          createdAt: "2026-06-03T02:00:00.000Z",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        })),
+        upsert
+      } as never,
+      {
+        has: vi.fn(() => false),
+        register: vi.fn(),
+        enqueue: vi.fn(() => ({
+          taskId: "task-1",
+          taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+          key: "workspace-1",
+          executionLane: "helper_process",
+          deduped: false,
+          promise: Promise.resolve(createIndexerResult("index")),
+          cancel: vi.fn()
+        })),
+        peek: vi.fn(() => null)
+      } as never,
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      } as never
+    );
+
+    const favorites = service.updateGlobalFavorites("workspace-session-user", [
+      {
+        kind: "folder",
+        path: "  .  ",
+        label: "全部资料"
+      }
+    ]);
+
+    expect(favorites).toEqual([
+      {
+        kind: "folder",
+        path: ".",
+        label: "全部资料"
+      }
+    ]);
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "workspace-session-user",
+      favoritesJson: JSON.stringify(favorites),
+      lastWorkspaceId: "workspace-1"
+    }));
+    expect(legacyUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-1",
+      userId: "workspace-session-user",
+      affairsLibraryFavoritesJson: JSON.stringify(favorites)
+    }));
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

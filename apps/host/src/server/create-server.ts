@@ -186,6 +186,7 @@ import { AffairsTagController } from "../modules/workspace/affairs-tag-controlle
 import { AffairsTagService } from "../modules/workspace/affairs-tag-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
+import { registerAffairsRoutes } from "../routes/affairs.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
 import { registerBrowserRuntimeRoutes } from "../routes/browser-runtime.js";
@@ -306,6 +307,7 @@ import { TerminalLogFileRepository } from "../storage/repositories/terminal-log-
 import { TerminalLogSegmentRepository } from "../storage/repositories/terminal-log-segment-repository.js";
 import { TerminalRuntimeSessionRepository } from "../storage/repositories/terminal-runtime-session-repository.js";
 import { UserPreferenceProfileRepository } from "../storage/repositories/user-preference-profile-repository.js";
+import { UserAffairsLibrarySettingRepository } from "../storage/repositories/user-affairs-library-setting-repository.js";
 import { UserQuickPhrasePreferenceRepository } from "../storage/repositories/user-quick-phrase-preference-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { WorkspaceWorktreeRepository } from "../storage/repositories/workspace-worktree-repository.js";
@@ -361,6 +363,7 @@ export function createServer(config: HostConfig) {
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
+    userAffairsLibrarySettingRepository: new UserAffairsLibrarySettingRepository(database.db),
     parallelSessionGroupRepository: new ParallelSessionGroupRepository(database.db),
     parallelSessionMemberRepository: new ParallelSessionMemberRepository(database.db),
     sessionIsolatedWorkspaceRepository: new SessionIsolatedWorkspaceRepository(database.db),
@@ -1360,6 +1363,7 @@ export function createServer(config: HostConfig) {
   const affairsLibraryService = new AffairsLibraryService(
     workspaceService,
     repositories.workspaceNavigationStateRepository,
+    repositories.userAffairsLibrarySettingRepository,
     taskManager,
     app.log
   );
@@ -1421,6 +1425,9 @@ export function createServer(config: HostConfig) {
     affairsLibraryService,
     affairsLibraryPreviewLinkService,
     (workspaceId) => {
+      if (!workspaceId?.trim()) {
+        return;
+      }
       affairsLibraryDirtyWatchService.syncWorkspace(workspaceId);
       workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
     }
@@ -1721,6 +1728,7 @@ export function createServer(config: HostConfig) {
   void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
   void registerOpsRuntimeRoutes(app, opsRuntimeController);
+  void registerAffairsRoutes(app, affairsLibraryController);
   void registerWorkspaceRoutes(app, workspaceController, affairsLibraryController, affairsTagController);
   void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
