@@ -141,6 +141,22 @@ describe("AffairsTagService", () => {
     ]));
   });
 
+  it("标签详情会返回当前命中的文档数量", async () => {
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const service = createService();
+    const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "人工确认",
+    });
+    service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
+
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+
+    const detail = service.getTagDetail("workspace-1", "user-1", manualTag.id);
+    expect(detail.documentCount).toBe(1);
+  });
+
   it("文件夹标签变更时只重跑目标文件夹子树，但会走完整标签推理", async () => {
     addIndexedDocument("客户A/合同.md", "客户A 合同");
     addIndexedDocument("客户B/报价.md", "客户B 报价");

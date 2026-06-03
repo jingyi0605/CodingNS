@@ -28,13 +28,6 @@ import { initCatalog } from "../affairs-indexer/core/src/sqlite/init-catalog.js"
 const TAG_EXPORT_REFRESH_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 const TAG_RECOMPUTE_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
-interface WorkspaceNavigationStateRepositoryLike {
-  findByWorkspaceIdAndUserId(workspaceId: string, userId: string): {
-    affairsLibraryRootPath?: string | null;
-    affairsLibraryEnabled?: boolean;
-  } | null;
-}
-
 export interface AffairsTagNodeDto {
   id: string;
   path: string;
@@ -116,7 +109,6 @@ export interface AffairsTagRecoveryStatusDto {
 export class AffairsTagService {
   constructor(
     private readonly workspaceService: WorkspaceService,
-    private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepositoryLike,
     private readonly affairsLibraryService: AffairsLibraryService,
     private readonly taskManager: TaskManager,
   ) {
@@ -128,14 +120,11 @@ export class AffairsTagService {
     const repository = new CatalogRepository(dbPath);
     const definitions = repository.listTagDefinitions(input.includeDisabled === true);
     const enabledRules = repository.listAllEnabledTagRules();
+    const countByPath = this.buildTagDocumentCountMap(repository);
     const resolvedRows = repository.listExportDocuments().flatMap(doc => [
       ...doc.tags.map(tagPath => ({ tagPath, derived: false })),
       ...doc.derivedTags.map(tagPath => ({ tagPath, derived: true })),
     ]);
-    const countByPath = new Map<string, number>();
-    resolvedRows.forEach(row => {
-      countByPath.set(row.tagPath, (countByPath.get(row.tagPath) ?? 0) + 1);
-    });
     const parentPathById = new Map(definitions.map(item => [item.id, item.path]));
 
     const items = definitions.map((tag) => this.toTagNodeDto(tag, parentPathById, countByPath.get(tag.path) ?? 0));
@@ -168,9 +157,10 @@ export class AffairsTagService {
     }
     const definitions = repository.listTagDefinitions(true);
     const parentPathById = new Map(definitions.map(item => [item.id, item.path]));
+    const countByPath = this.buildTagDocumentCountMap(repository);
     const rules = repository.listTagRulesByTagIds([tagId]);
     return {
-      ...this.toTagNodeDto(definition, parentPathById, 0),
+      ...this.toTagNodeDto(definition, parentPathById, countByPath.get(definition.path) ?? 0),
       smartRules: rules.map(mapTagRuleDto),
       smartRuleEnabled: rules.some(rule => rule.enabled),
     };
@@ -655,9 +645,9 @@ export class AffairsTagService {
 
   private requireBinding(workspaceId: string, userId: string) {
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const state = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    const rootDir = state?.affairsLibraryRootPath?.trim() ?? "";
-    if (!rootDir || state?.affairsLibraryEnabled !== true) {
+    const binding = this.affairsLibraryService.getBinding(workspaceId, userId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
+    if (!rootDir || binding?.enabled !== true) {
       throw new AppError({
         statusCode: 409,
         errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
@@ -744,6 +734,19 @@ export class AffairsTagService {
       updatedAt: row.updatedAt,
       disabledAt: row.disabledAt,
     };
+  }
+
+  private buildTagDocumentCountMap(repository: CatalogRepository): Map<string, number> {
+    const countByPath = new Map<string, number>();
+    repository.listExportDocuments().forEach((document) => {
+      document.tags.forEach((tagPath) => {
+        countByPath.set(tagPath, (countByPath.get(tagPath) ?? 0) + 1);
+      });
+      document.derivedTags.forEach((tagPath) => {
+        countByPath.set(tagPath, (countByPath.get(tagPath) ?? 0) + 1);
+      });
+    });
+    return countByPath;
   }
 
 }
