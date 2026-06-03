@@ -40,6 +40,47 @@ describe("runAffairsIndexerCommand", () => {
     }
   });
 
+  it("未变化文件不会重复解析，并会写出数量进度", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-index-command-unchanged-"));
+    const documentPath = path.join(rootDir, "未变化文档.md");
+    fs.writeFileSync(documentPath, "# 标题\n\n这是一个测试文档。\n", "utf8");
+
+    try {
+      await runAffairsIndexerCommand(rootDir, "index");
+      const secondResult = await runAffairsIndexerCommand(rootDir, "index");
+      const payload = secondResult.result as {
+        indexResult?: {
+          scannedCount?: number;
+          indexedCount?: number;
+          unchangedCount?: number;
+        };
+        exportSkipped?: boolean;
+      };
+      const runtimeStatusPath = path.join(rootDir, ".ai-index", "runtime-status.json");
+      const runtimeStatus = JSON.parse(fs.readFileSync(runtimeStatusPath, "utf8")) as {
+        progress?: {
+          scannedCount?: number;
+          indexedCount?: number;
+          unchangedCount?: number;
+          totalCount?: number | null;
+          maxConcurrency?: number;
+        };
+      };
+
+      expect(payload.indexResult?.scannedCount).toBe(1);
+      expect(payload.indexResult?.indexedCount).toBe(0);
+      expect(payload.indexResult?.unchangedCount).toBe(1);
+      expect(payload.exportSkipped).toBe(true);
+      expect(runtimeStatus.progress?.scannedCount).toBe(1);
+      expect(runtimeStatus.progress?.indexedCount).toBe(0);
+      expect(runtimeStatus.progress?.unchangedCount).toBe(1);
+      expect(runtimeStatus.progress?.totalCount).toBe(1);
+      expect(runtimeStatus.progress?.maxConcurrency).toBeGreaterThanOrEqual(1);
+    } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("index 失败时会把当前 tag 统计附带到错误详情里", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-index-command-failure-"));
     const aiIndexDir = path.join(rootDir, ".ai-index");

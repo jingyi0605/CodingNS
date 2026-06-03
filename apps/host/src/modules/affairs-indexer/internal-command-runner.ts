@@ -16,6 +16,7 @@ import type { DirtyScope } from "./core/src/services/dirty/dirty-scope-resolver.
 import type { ExportBuildStage } from "./core/src/services/export/export-builder.js";
 import type { RuntimeConfig } from "./contracts/src/index.js";
 import { writeAffairsLibraryDebugLog } from "../workspace/affairs-library-debug-log.js";
+import type { TextIndexProgress, TextIndexResult } from "./core/src/services/indexer/text-indexer.js";
 
 export type AffairsIndexerCommandName = "apply-config" | "index" | "export" | "watch-touch";
 export type AffairsIndexerRuntimeStage =
@@ -36,6 +37,8 @@ interface AffairsIndexerTaskMeta {
   key?: string;
   attempt?: number;
 }
+
+interface RuntimeProgressPayload extends TextIndexProgress {}
 
 interface AffairsIndexerRootLockHandle {
   release(): void;
@@ -142,23 +145,48 @@ export async function runAffairsIndexerCommand(
         const indexResult = await indexer.index(undefined, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "full",
-          signal: options.signal
-        });
-        runtimeStageWriter.write("running", "export");
-        const exportResult = await new ExportBuilder(config).build({
-          dirtyScope: indexResult.dirtyScope,
           signal: options.signal,
-          onStageChange: (stage) => runtimeStageWriter.write("running", stage),
-          commandName: command,
-          reason: options.reason,
-          targetPath: options.targetPath
+          onProgress: (progress) => runtimeStageWriter.setProgress(progress),
         });
+        let exportResult: Awaited<ReturnType<ExportBuilder["build"]>> | null = null;
+        const exportSkipped = shouldSkipExportAfterIndex(indexResult);
+        if (exportSkipped) {
+          writeAffairsLibraryDebugLog({
+            event: "index_export_skipped_no_changes",
+            processRole: "helper",
+            rootDir,
+            command,
+            reason: options.reason,
+            targetPath: options.targetPath,
+            status: "finished",
+            resultSummary: summarizeDirtyScope(indexResult.dirtyScope),
+            details: {
+              scannedCount: indexResult.scannedCount,
+              indexedCount: indexResult.indexedCount,
+              unchangedCount: indexResult.unchangedCount,
+              skippedCount: indexResult.skipStats.skippedCount,
+              failedCount: indexResult.failedCount,
+              deletedCount: indexResult.deletedCount
+            }
+          });
+        } else {
+          runtimeStageWriter.write("running", "export");
+          exportResult = await new ExportBuilder(config).build({
+            dirtyScope: indexResult.dirtyScope,
+            signal: options.signal,
+            onStageChange: (stage) => runtimeStageWriter.write("running", stage),
+            commandName: command,
+            reason: options.reason,
+            targetPath: options.targetPath
+          });
+        }
         runtimeStageWriter.write("running", "sqlite");
         writeIndexerCommandMeta(config, command, options);
         result = {
           indexResult: {
             scannedCount: indexResult.scannedCount,
             indexedCount: indexResult.indexedCount,
+            unchangedCount: indexResult.unchangedCount,
             skippedCount: indexResult.skipStats.skippedCount,
             failedCount: indexResult.failedCount,
             deletedCount: indexResult.deletedCount,
@@ -167,9 +195,12 @@ export async function runAffairsIndexerCommand(
             failedPathsSample: indexResult.failedPaths.slice(0, 20),
             dirtyScope: summarizeDirtyScope(indexResult.dirtyScope)
           },
+          exportSkipped,
           exportResult
         };
-        message = "文本文件索引和静态导出已完成。";
+        message = exportSkipped
+          ? "文本文件索引已完成，本轮没有变化，沿用现有导出结果。"
+          : "文本文件索引和静态导出已完成。";
         break;
       }
       case "export": {
@@ -192,7 +223,8 @@ export async function runAffairsIndexerCommand(
         const indexResult = await indexer.index(targetPath, {
           collectChangedPaths: true,
           dirtyScopeTrigger: "incremental",
-          signal: options.signal
+          signal: options.signal,
+          onProgress: (progress) => runtimeStageWriter.setProgress(progress),
         });
         runtimeStageWriter.write("running", "export");
         const exportResult = await new ExportBuilder(config).build({
@@ -220,6 +252,7 @@ export async function runAffairsIndexerCommand(
           indexResult: {
             scannedCount: indexResult.scannedCount,
             indexedCount: indexResult.indexedCount,
+            unchangedCount: indexResult.unchangedCount,
             skippedCount: indexResult.skipStats.skippedCount,
             failedCount: indexResult.failedCount,
             deletedCount: indexResult.deletedCount,
@@ -370,6 +403,29 @@ function summarizeDirtyScope(
   };
 }
 
+function shouldSkipExportAfterIndex(indexResult: TextIndexResult): boolean {
+  if (indexResult.indexedCount !== 0) {
+    return false;
+  }
+  if (indexResult.failedCount !== 0) {
+    return false;
+  }
+  if (indexResult.deletedCount !== 0) {
+    return false;
+  }
+  if (indexResult.skipStats.skippedCount !== 0) {
+    return false;
+  }
+  const dirtyScope = indexResult.dirtyScope;
+  if (!dirtyScope) {
+    return true;
+  }
+  return dirtyScope.changedPaths.length === 0
+    && dirtyScope.dirtyDirectories.length === 0
+    && dirtyScope.dirtyTagPaths.length === 0
+    && dirtyScope.dirtyRelations.length === 0;
+}
+
 function writeIndexerCommandMeta(
   config: RuntimeConfig,
   command: AffairsIndexerCommandName,
@@ -406,6 +462,7 @@ function createRuntimeStageWriter(
   let currentStatus: "running" | "finished" | "failed" = "running";
   let currentStage: AffairsIndexerRuntimeStage = "init";
   let currentErrorSummary: string | null = null;
+  let currentProgress: RuntimeProgressPayload | null = null;
 
   const flush = () => {
     fs.mkdirSync(path.dirname(runtimeStatusPath), { recursive: true });
@@ -423,7 +480,8 @@ function createRuntimeStageWriter(
         taskType: options.taskMeta?.taskType ?? null,
         taskKey: options.taskMeta?.key ?? null,
         attempt: options.taskMeta?.attempt ?? null,
-        errorSummary: currentErrorSummary
+        errorSummary: currentErrorSummary,
+        progress: currentProgress
       }, null, 2)}\n`,
       "utf8"
     );
@@ -438,6 +496,10 @@ function createRuntimeStageWriter(
       currentStatus = status;
       currentStage = stage;
       currentErrorSummary = errorSummary;
+      flush();
+    },
+    setProgress: (progress: RuntimeProgressPayload | null) => {
+      currentProgress = progress;
       flush();
     },
     startHeartbeat: () => {
@@ -552,6 +614,7 @@ function summarizeCommandResult(result: unknown): Record<string, unknown> | null
     return {
       scannedCount: indexPayload.scannedCount ?? null,
       indexedCount: indexPayload.indexedCount ?? null,
+      unchangedCount: indexPayload.unchangedCount ?? null,
       skippedCount: indexPayload.skippedCount ?? null,
       failedCount: indexPayload.failedCount ?? null,
       deletedCount: indexPayload.deletedCount ?? null,
@@ -566,6 +629,7 @@ function summarizeCommandResult(result: unknown): Record<string, unknown> | null
     return {
       scannedCount: payload.scannedCount ?? null,
       indexedCount: payload.indexedCount ?? null,
+      unchangedCount: payload.unchangedCount ?? null,
       failedCount: payload.failedCount ?? null,
       deletedCount: payload.deletedCount ?? null,
       dirtyScope: payload.dirtyScope ?? null,

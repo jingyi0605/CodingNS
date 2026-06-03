@@ -6,6 +6,7 @@ import { DocumentParser } from "../../parser/document-parser.js";
 import { ParserSkipRepository } from "../../parser/parser-skip-repository.js";
 import { CatalogRepository } from "../../repositories/catalog-repository.js";
 import {
+  type ActiveIndexedFileState,
   CatalogWriteRepository,
   type IndexedDocumentBatchEntry,
 } from "../../repositories/catalog-write-repository.js";
@@ -21,6 +22,7 @@ import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
 export interface TextIndexResult {
   scannedCount: number;
   indexedCount: number;
+  unchangedCount: number;
   indexedPaths: string[];
   skippedPaths: string[];
   failedPaths: string[];
@@ -66,6 +68,16 @@ export interface TextIndexResult {
     skippedByExtension: Record<string, number>;
     skipCatalogRecords: number;
   };
+}
+
+export interface TextIndexProgress {
+  scannedCount: number;
+  indexedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  unchangedCount: number;
+  totalCount: number | null;
+  maxConcurrency: number;
 }
 
 const RSS_PROGRESS_DOCUMENT_INTERVAL = 2000;
@@ -117,6 +129,7 @@ export class TextIndexer {
       collectChangedPaths?: boolean;
       dirtyScopeTrigger?: "full" | "incremental";
       signal?: AbortSignal;
+      onProgress?: (progress: TextIndexProgress) => void;
     } = {},
   ): Promise<TextIndexResult> {
     const startedAt = performance.now();
@@ -129,7 +142,14 @@ export class TextIndexer {
     const writer = new CatalogWriteRepository(this.config.dbPath);
     const repository = new CatalogRepository(this.config.dbPath);
     const skipRepository = new ParserSkipRepository(this.config.dbPath);
+    const estimatedTotalCount = targetPath
+      ? null
+      : (() => {
+        const value = writer.countActiveFiles();
+        return value > 0 ? value : null;
+      })();
     const runObservedAt = new Date().toISOString();
+    const maxIndexConcurrency = Math.max(1, Math.floor(this.config.maxIndexConcurrency));
     const collectChangedPaths = options.collectChangedPaths ?? Boolean(targetPath);
     const maxReportedFailures = 200;
     const indexedPaths: string[] = collectChangedPaths ? [] : [];
@@ -151,8 +171,10 @@ export class TextIndexer {
       file: FileScanResult;
       error: Error;
     }> = [];
+    const unchangedEntries: FileScanResult[] = [];
     let scannedCount = 0;
     let indexedCount = 0;
+    let unchangedCount = 0;
     let failedCount = 0;
     let failureOverflowCount = 0;
     let scanFsMs = 0;
@@ -171,6 +193,20 @@ export class TextIndexer {
     let derivedAssignedCount = 0;
     const skippedByExtension = new Map<string, number>();
     const skipCatalogKeys = new Set<string>();
+    const emitProgress = (): void => {
+      const totalCount = estimatedTotalCount === null
+        ? null
+        : Math.max(estimatedTotalCount, scannedCount);
+      options.onProgress?.({
+        scannedCount,
+        indexedCount,
+        skippedCount,
+        failedCount,
+        unchangedCount,
+        totalCount,
+        maxConcurrency: maxIndexConcurrency,
+      });
+    };
 
     const maybeLogParseProgress = (): void => {
       if (scannedCount === 0 || scannedCount % RSS_PROGRESS_DOCUMENT_INTERVAL !== 0) {
@@ -182,10 +218,13 @@ export class TextIndexer {
         scannedCount,
         indexedCount,
         skippedCount,
+        unchangedCount,
         failedCount,
         pendingSuccessEntries: successEntries.length,
         pendingSkippedEntries: skippedEntries.length,
-        pendingFailureEntries: failureEntries.length
+        pendingFailureEntries: failureEntries.length,
+        pendingUnchangedEntries: unchangedEntries.length,
+        maxIndexConcurrency,
       });
     };
 
@@ -201,6 +240,7 @@ export class TextIndexer {
         scannedCount,
         indexedCount,
         skippedCount,
+        unchangedCount,
         failedCount,
         successBatchCount,
         skipBatchCount,
@@ -244,6 +284,200 @@ export class TextIndexer {
       maybeLogWriteProgress("skip");
     };
 
+    const flushUnchanged = (): void => {
+      if (unchangedEntries.length === 0) {
+        return;
+      }
+      writer.batchTouchActiveFiles(unchangedEntries, runObservedAt);
+      unchangedEntries.length = 0;
+    };
+
+    const isUnchangedFile = (
+      file: FileScanResult,
+      existing: ActiveIndexedFileState | null,
+    ): boolean => {
+      if (!existing) {
+        return false;
+      }
+      return existing.extension === file.extension
+        && existing.size === file.size
+        && existing.mtime === file.mtime;
+    };
+
+    type FileProcessResult =
+      | {
+          kind: "success";
+          file: FileScanResult;
+          document: IndexedDocumentBatchEntry["document"];
+          tags: TagAssignment[];
+          derivedTags: TagAssignment[];
+          parseDurationMs: number;
+          tagInferenceDurationMs: number;
+        }
+      | {
+          kind: "skip";
+          file: FileScanResult;
+          adapter: string;
+          reasonCode: string;
+          message: string;
+          parseDurationMs: number;
+        }
+      | {
+          kind: "failure";
+          file: FileScanResult;
+          error: Error;
+          parseDurationMs: number;
+        };
+
+    const processFile = async (file: FileScanResult): Promise<FileProcessResult> => {
+      try {
+        const parseStartedAt = performance.now();
+        const parseResult = await parser.parseWithOutcome(file.fullPath, options.signal);
+        const parseDurationMs = performance.now() - parseStartedAt;
+        if ("kind" in parseResult && parseResult.kind === "skip") {
+          return {
+            kind: "skip",
+            file,
+            adapter: parseResult.adapter,
+            reasonCode: parseResult.reasonCode,
+            message: parseResult.message,
+            parseDurationMs,
+          };
+        }
+
+        const parsed = parseResult as ParsedDocument;
+        const inferStartedAt = performance.now();
+        const inferred = tagger.infer(file, parsed);
+        const tagInferenceDurationMs = performance.now() - inferStartedAt;
+        return {
+          kind: "success",
+          file,
+          document: {
+            title: parsed.title,
+            summary: parsed.summary,
+            text: parsed.text,
+          },
+          tags: inferred.tags,
+          derivedTags: inferred.derivedTags,
+          parseDurationMs,
+          tagInferenceDurationMs,
+        };
+      } catch (error) {
+        throwIfAborted(options.signal, "事务文档库索引已取消");
+        const appError = error instanceof AppError
+          ? error
+          : new AppError(
+            error instanceof Error ? error.message : "未知解析错误",
+            APP_ERROR_CODES.PARSER_UNKNOWN_ERROR,
+            {
+              details: {
+                path: file.relativePath,
+              },
+              cause: error,
+            },
+          );
+        return {
+          kind: "failure",
+          file,
+          error: appError,
+          parseDurationMs: 0,
+        };
+      }
+    };
+
+    const handleProcessResult = (result: FileProcessResult): void => {
+      parseMs += result.parseDurationMs;
+      if (result.kind === "success") {
+        tagInferenceMs += result.tagInferenceDurationMs;
+        directAssignedCount += result.tags.length;
+        derivedAssignedCount += result.derivedTags.length;
+        successEntries.push({
+          file: result.file,
+          document: result.document,
+          tags: result.tags,
+          derivedTags: result.derivedTags,
+        });
+        indexedCount += 1;
+        if (collectChangedPaths) {
+          indexedPaths.push(result.file.relativePath);
+        }
+        if (successEntries.length >= this.config.writeBatchSize) {
+          flushSuccess();
+        }
+        return;
+      }
+
+      if (result.kind === "skip") {
+        skippedCount += 1;
+        skippedByExtension.set(
+          result.file.extension,
+          (skippedByExtension.get(result.file.extension) ?? 0) + 1,
+        );
+        if (collectChangedPaths) {
+          skippedPaths.push(result.file.relativePath);
+        }
+        skippedEntries.push({
+          file: result.file,
+          adapter: result.adapter,
+          reasonCode: result.reasonCode,
+          message: result.message,
+        });
+        const skipCatalogStartedAt = performance.now();
+        const skipRecord = skipRepository.record({
+          adapter: result.adapter,
+          reasonCode: result.reasonCode,
+          extension: result.file.extension,
+          path: result.file.relativePath,
+          message: result.message,
+          observedAt: runObservedAt,
+        });
+        skipCatalogMs += performance.now() - skipCatalogStartedAt;
+        skipCatalogKeys.add(skipRecord.skipKey);
+        if (skippedEntries.length >= this.config.writeBatchSize) {
+          flushSkipped();
+        }
+        return;
+      }
+
+      failureEntries.push({
+        file: result.file,
+        error: result.error,
+      });
+      failedCount += 1;
+      if (collectChangedPaths) {
+        failedPaths.push(result.file.relativePath);
+      }
+      if (failures.length < maxReportedFailures) {
+        failures.push({
+          path: result.file.relativePath,
+          errorCode: result.error instanceof AppError ? result.error.errorCode : APP_ERROR_CODES.PARSER_UNKNOWN_ERROR,
+          message: result.error.message,
+        });
+      } else {
+        failureOverflowCount += 1;
+      }
+      if (failureEntries.length >= this.config.writeBatchSize) {
+        flushFailures();
+      }
+    };
+
+    const inFlight = new Set<Promise<FileProcessResult>>();
+    const trackInFlight = (task: Promise<FileProcessResult>): void => {
+      inFlight.add(task);
+      task.finally(() => {
+        inFlight.delete(task);
+      });
+    };
+
+    const drainOne = async (): Promise<void> => {
+      if (inFlight.size === 0) {
+        return;
+      }
+      const result = await Promise.race([...inFlight]);
+      handleProcessResult(result);
+      emitProgress();
+    };
+
     const scanStartedAt = performance.now();
     writer.beginSession();
     skipRepository.beginSession();
@@ -260,103 +494,34 @@ export class TextIndexer {
         const file = next.value;
         scannedCount += 1;
         maybeLogParseProgress();
-        try {
-          const parseStartedAt = performance.now();
-          const parseResult = await parser.parseWithOutcome(file.fullPath, options.signal);
-          parseMs += performance.now() - parseStartedAt;
-          if ("kind" in parseResult && parseResult.kind === "skip") {
-            skippedCount += 1;
-            skippedByExtension.set(file.extension, (skippedByExtension.get(file.extension) ?? 0) + 1);
-            if (collectChangedPaths) {
-              skippedPaths.push(file.relativePath);
-            }
-            skippedEntries.push({
-              file,
-              adapter: parseResult.adapter,
-              reasonCode: parseResult.reasonCode,
-              message: parseResult.message,
-            });
-            const skipCatalogStartedAt = performance.now();
-            const skipRecord = skipRepository.record({
-              adapter: parseResult.adapter,
-              reasonCode: parseResult.reasonCode,
-              extension: parseResult.extension,
-              path: file.relativePath,
-              message: parseResult.message,
-              observedAt: runObservedAt,
-            });
-            skipCatalogMs += performance.now() - skipCatalogStartedAt;
-            skipCatalogKeys.add(skipRecord.skipKey);
-            if (skippedEntries.length >= this.config.writeBatchSize) {
-              flushSkipped();
-            }
-            continue;
+        const existing = writer.getActiveIndexedFileState(file.relativePath);
+        if (isUnchangedFile(file, existing)) {
+          unchangedCount += 1;
+          unchangedEntries.push(file);
+          if (unchangedEntries.length >= this.config.writeBatchSize) {
+            flushUnchanged();
           }
-          const parsed = parseResult as ParsedDocument;
-          const inferStartedAt = performance.now();
-          const inferred = tagger.infer(file, parsed);
-          tagInferenceMs += performance.now() - inferStartedAt;
-          directAssignedCount += inferred.tags.length;
-          derivedAssignedCount += inferred.derivedTags.length;
-          successEntries.push({
-            file,
-            document: {
-              title: parsed.title,
-              summary: parsed.summary,
-              text: parsed.text,
-            },
-            tags: inferred.tags,
-            derivedTags: inferred.derivedTags,
-          });
-          indexedCount += 1;
-          if (collectChangedPaths) {
-            indexedPaths.push(file.relativePath);
-          }
-          if (successEntries.length >= this.config.writeBatchSize) {
-            flushSuccess();
-          }
-        } catch (error) {
-          const appError = error instanceof AppError
-            ? error
-            : new AppError(
-              error instanceof Error ? error.message : "未知解析错误",
-              APP_ERROR_CODES.PARSER_UNKNOWN_ERROR,
-              {
-                details: {
-                  path: file.relativePath,
-                },
-                cause: error,
-              },
-            );
-          failureEntries.push({
-            file,
-            error: appError,
-          });
-          failedCount += 1;
-          if (collectChangedPaths) {
-            failedPaths.push(file.relativePath);
-          }
-          if (failures.length < maxReportedFailures) {
-            failures.push({
-              path: file.relativePath,
-              errorCode: appError.errorCode,
-              message: appError.message,
-            });
-          } else {
-            failureOverflowCount += 1;
-          }
-          if (failureEntries.length >= this.config.writeBatchSize) {
-            flushFailures();
-          }
+          emitProgress();
+          continue;
+        }
+
+        trackInFlight(processFile(file));
+        if (inFlight.size >= maxIndexConcurrency) {
+          await drainOne();
         }
 
         if (scannedCount % Math.max(1, this.config.writeBatchSize) === 0) {
           await yieldToEventLoop(options.signal, "事务文档库索引已取消");
         }
       }
+      while (inFlight.size > 0) {
+        await drainOne();
+      }
       flushSuccess();
       flushSkipped();
       flushFailures();
+      flushUnchanged();
+      emitProgress();
     } finally {
       skipRepository.endSession();
       writer.endSession();
@@ -368,6 +533,7 @@ export class TextIndexer {
       scannedCount,
       indexedCount,
       skippedCount,
+      unchangedCount,
       failedCount,
       successBatchCount,
       skipBatchCount,
@@ -404,6 +570,7 @@ export class TextIndexer {
       scannedCount,
       indexedCount,
       skippedCount,
+      unchangedCount,
       failedCount,
       deletedCount: reconcile.deletedCount,
       successBatchCount,
@@ -414,6 +581,7 @@ export class TextIndexer {
     return {
       scannedCount,
       indexedCount: collectChangedPaths ? indexedPaths.length : indexedCount,
+      unchangedCount,
       indexedPaths: collectChangedPaths ? indexedPaths : [],
       skippedPaths: collectChangedPaths ? skippedPaths : [],
       failedPaths: collectChangedPaths ? failedPaths : [],

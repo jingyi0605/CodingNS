@@ -70,6 +70,8 @@ interface PreparedStatements {
   listActiveFilesExact: ReturnType<DatabaseSync["prepare"]>;
   listActiveFilesPrefix: ReturnType<DatabaseSync["prepare"]>;
   countActiveIndexedDocuments: ReturnType<DatabaseSync["prepare"]>;
+  selectActiveIndexedFileStateByPath: ReturnType<DatabaseSync["prepare"]>;
+  touchActiveFileByPath: ReturnType<DatabaseSync["prepare"]>;
 }
 
 export interface SkippedDocumentEntry {
@@ -121,6 +123,14 @@ export interface IndexedDocumentBatchEntry {
   document: IndexedDocumentWritePayload;
   tags: TagAssignment[];
   derivedTags: TagAssignment[];
+}
+
+export interface ActiveIndexedFileState {
+  path: string;
+  extension: string;
+  size: number;
+  mtime: string;
+  indexStatus: string;
 }
 
 export interface RecomputedResolvedTagEntry {
@@ -241,6 +251,17 @@ export class CatalogWriteRepository {
         JOIN files f ON f.id = d.file_id
         WHERE f.status = 'active'
           AND d.index_status = 'indexed'
+      `).get() as { count?: number } | undefined;
+      return Number(row?.count ?? 0);
+    });
+  }
+
+  countActiveFiles(): number {
+    return this.withConnection(db => {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM files
+        WHERE status = 'active'
       `).get() as { count?: number } | undefined;
       return Number(row?.count ?? 0);
     });
@@ -499,6 +520,27 @@ export class CatalogWriteRepository {
         JOIN files f ON f.id = d.file_id
         WHERE f.status = 'active'
           AND d.index_status = 'indexed'
+      `),
+      selectActiveIndexedFileStateByPath: db.prepare(`
+        SELECT
+          f.path,
+          f.extension,
+          f.size,
+          f.mtime,
+          d.index_status
+        FROM files f
+        JOIN documents d ON d.file_id = f.id
+        WHERE f.path = ?
+          AND f.status = 'active'
+          AND d.index_status IN ('indexed', 'failed', 'skipped')
+        LIMIT 1
+      `),
+      touchActiveFileByPath: db.prepare(`
+        UPDATE files
+        SET last_seen_at = ?,
+            status = 'active'
+        WHERE path = ?
+          AND status = 'active'
       `),
     };
   }
@@ -1390,6 +1432,49 @@ export class CatalogWriteRepository {
         db.exec("BEGIN IMMEDIATE");
         this.cleanupOrphanTagsInConnection(db);
         db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  getActiveIndexedFileState(relativePath: string): ActiveIndexedFileState | null {
+    return this.withConnection((_, statements) => {
+      const normalizedPath = this.normalizeRelativePath(relativePath);
+      const row = statements.selectActiveIndexedFileStateByPath.get(normalizedPath) as Record<string, unknown> | undefined;
+      if (!row?.path) {
+        return null;
+      }
+      return {
+        path: String(row.path),
+        extension: String(row.extension ?? ""),
+        size: Number(row.size ?? 0),
+        mtime: String(row.mtime ?? ""),
+        indexStatus: String(row.index_status ?? ""),
+      };
+    });
+  }
+
+  batchTouchActiveFiles(entries: FileScanResult[], observedAt: string): number {
+    if (entries.length === 0) {
+      return 0;
+    }
+
+    return this.withConnection((db, statements) => {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const touchedPaths = new Set<string>();
+        for (const entry of entries) {
+          const normalizedPath = this.normalizeRelativePath(entry.relativePath);
+          if (!normalizedPath || touchedPaths.has(normalizedPath)) {
+            continue;
+          }
+          touchedPaths.add(normalizedPath);
+          statements.touchActiveFileByPath.run(observedAt, normalizedPath);
+        }
+        db.exec("COMMIT");
+        return touchedPaths.size;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
