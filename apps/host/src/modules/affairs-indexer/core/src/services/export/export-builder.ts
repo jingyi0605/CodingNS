@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import type { RuntimeConfig } from "../../../../contracts/src/index.js";
 import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import {
@@ -16,12 +17,23 @@ import {
 } from "../../utils/file-streaming.js";
 import { logAffairsIndexerRss } from "../../utils/rss-log.js";
 import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
+import { writeAffairsLibraryDebugLog } from "../../../../../workspace/affairs-library-debug-log.js";
 
 export interface ExportBuildOptions {
   dirtyScope?: DirtyScope;
   light?: boolean;
   signal?: AbortSignal;
+  onStageChange?: (stage: ExportBuildStage) => void;
+  commandName?: string;
+  reason?: string;
+  targetPath?: string;
 }
+
+export type ExportBuildStage =
+  | "export_meta_detail"
+  | "export_tag"
+  | "export_relation"
+  | "export_search";
 
 export interface ExportBuildResult {
   outputDir: string;
@@ -238,6 +250,7 @@ export class ExportBuilder {
 
   async build(options: ExportBuildOptions = {}): Promise<ExportBuildResult> {
     const exportedAt = new Date().toISOString();
+    const stageStartedAt = new Map<ExportBuildStage, number>();
     const repository = new CatalogRepository(this.config.dbPath);
     const tags = repository.listExportTags();
     const taxonomy = makeTagTree(tags);
@@ -272,6 +285,41 @@ export class ExportBuilder {
     const detailDocumentPaths = new Set<string>();
     const folderBootstrapMap = new Map<string, FolderBootstrapNode>();
     ensureFolderBootstrapNode(folderBootstrapMap, ".");
+
+    const startStage = (stage: ExportBuildStage, details?: Record<string, unknown>) => {
+      stageStartedAt.set(stage, performance.now());
+      options.onStageChange?.(stage);
+      writeAffairsLibraryDebugLog({
+        event: "export_stage_started",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "running",
+        details: {
+          stage,
+          ...details
+        }
+      });
+    };
+    const finishStage = (stage: ExportBuildStage, details?: Record<string, unknown>) => {
+      const startedAt = stageStartedAt.get(stage) ?? performance.now();
+      writeAffairsLibraryDebugLog({
+        event: "export_stage_finished",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "finished",
+        durationMs: Number((performance.now() - startedAt).toFixed(2)),
+        details: {
+          stage,
+          ...details
+        }
+      });
+    };
 
     let currentMetaRoot: string | null = null;
     let currentMetaDocuments: Array<Record<string, unknown>> = [];
@@ -313,6 +361,12 @@ export class ExportBuilder {
       currentMetaDirectorySet = new Set<string>();
     };
 
+    startStage("export_meta_detail", {
+      fullBuild,
+      lightBuild,
+      dirtyDirectoryCount: dirtyDirectories.size,
+      changedPathCount: changedPaths.size
+    });
     for (const batch of repository.iterateExportDocumentRecords(2000)) {
       throwIfAborted(options.signal, "事务文档库导出已取消");
       for (const document of batch) {
@@ -391,6 +445,10 @@ export class ExportBuilder {
       dirtyDirectoryCount: dirtyDirectories.size,
       changedPathCount: changedPaths.size
     });
+    finishStage("export_meta_detail", {
+      metaShardCount: metaShards.length,
+      detailShardCount: detailShards.length
+    });
 
     const tagsByRoot = new Map<string, ExportTagRecord[]>();
     for (const tag of tags) {
@@ -460,6 +518,9 @@ export class ExportBuilder {
       currentTagDocuments = [];
     };
 
+    startStage("export_tag", {
+      dirtyTagPathCount: dirtyTagPaths.size
+    });
     for (const batch of repository.iterateTagPostingRows(10000)) {
       throwIfAborted(options.signal, "事务文档库导出已取消");
       for (const row of batch) {
@@ -501,6 +562,9 @@ export class ExportBuilder {
       tagShardCount: tagShards.length,
       dirtyTagPathCount: dirtyTagPaths.size
     });
+    finishStage("export_tag", {
+      tagShardCount: tagShards.length
+    });
 
     let currentRelationTag: string | null = null;
     let currentRelationPostings: Array<{ documentId: string; path: string; title: string }> = [];
@@ -541,6 +605,10 @@ export class ExportBuilder {
       currentRelationPostings = [];
     };
 
+    startStage("export_relation", {
+      lightBuild,
+      dirtyRelationCount: dirtyRelationIds.size
+    });
     if (!lightBuild) {
       for (const batch of repository.iterateDirectTagPostingRows(10000)) {
         throwIfAborted(options.signal, "事务文档库导出已取消");
@@ -614,17 +682,26 @@ export class ExportBuilder {
       dirtyRelationCount: dirtyRelationIds.size,
       lightBuild
     });
+    finishStage("export_relation", {
+      relationGroupCount: relationShards.length
+    });
 
     const statusPath = path.join(this.config.exportDir, "status.json");
     const taxonomyPath = path.join(this.config.exportDir, "taxonomy.json");
     const relationsPath = path.join(this.config.exportDir, "relations.json");
     const bootstrapPath = path.join(this.config.exportDir, "bootstrap.json");
 
+    startStage("export_search", {
+      lightBuild
+    });
     const searchIndexResult = lightBuild
       ? { bucketCount: 0, filesWritten: [] as string[], manifestPath: path.join(this.config.exportDir, "search", "manifest.json") }
       : await new SearchIndexBuilder(this.config).build({
         dirtyScope: options.dirtyScope,
-        signal: options.signal
+        signal: options.signal,
+        commandName: options.commandName,
+        reason: options.reason,
+        targetPath: options.targetPath
       });
     logAffairsIndexerRss("export.search_complete", {
       rootDir: this.config.rootDir,
@@ -733,6 +810,10 @@ export class ExportBuilder {
         }
       }
     }
+    finishStage("export_search", {
+      searchBucketCount: searchIndexResult.bucketCount,
+      searchFilesWritten: searchIndexResult.filesWritten.length
+    });
 
     return {
       outputDir: this.config.exportDir,

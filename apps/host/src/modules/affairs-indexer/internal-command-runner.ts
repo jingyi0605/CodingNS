@@ -13,11 +13,22 @@ import { CatalogWriteRepository } from "./core/src/repositories/catalog-write-re
 import { CatalogRepository } from "./core/src/repositories/catalog-repository.js";
 import { acquireAffairsIndexerRootLock } from "./core/src/utils/root-command-lock.js";
 import type { DirtyScope } from "./core/src/services/dirty/dirty-scope-resolver.js";
+import type { ExportBuildStage } from "./core/src/services/export/export-builder.js";
 import type { RuntimeConfig } from "./contracts/src/index.js";
 import { writeAffairsLibraryDebugLog } from "../workspace/affairs-library-debug-log.js";
 
 export type AffairsIndexerCommandName = "apply-config" | "index" | "export" | "watch-touch";
-export type AffairsIndexerRuntimeStage = "init" | "index" | "export" | "sqlite" | "finished" | "failed";
+export type AffairsIndexerRuntimeStage =
+  | "init"
+  | "index"
+  | "export"
+  | "export_meta_detail"
+  | "export_tag"
+  | "export_relation"
+  | "export_search"
+  | "sqlite"
+  | "finished"
+  | "failed";
 
 interface AffairsIndexerTaskMeta {
   taskId?: string;
@@ -29,6 +40,8 @@ interface AffairsIndexerTaskMeta {
 interface AffairsIndexerRootLockHandle {
   release(): void;
 }
+
+const DEFAULT_RUNTIME_HEARTBEAT_MS = 3_000;
 
 export interface AffairsIndexerCommandResult<TResult = unknown> {
   ok: true;
@@ -76,6 +89,7 @@ export async function runAffairsIndexerCommand(
       taskType: options.taskMeta?.taskType,
     });
     runtimeStageWriter.write("running", "init");
+    runtimeStageWriter.startHeartbeat();
     initCatalog(config);
     writeAffairsLibraryDebugLog({
       event: "helper_command_started",
@@ -133,7 +147,11 @@ export async function runAffairsIndexerCommand(
         runtimeStageWriter.write("running", "export");
         const exportResult = await new ExportBuilder(config).build({
           dirtyScope: indexResult.dirtyScope,
-          signal: options.signal
+          signal: options.signal,
+          onStageChange: (stage) => runtimeStageWriter.write("running", stage),
+          commandName: command,
+          reason: options.reason,
+          targetPath: options.targetPath
         });
         runtimeStageWriter.write("running", "sqlite");
         writeIndexerCommandMeta(config, command, options);
@@ -157,7 +175,11 @@ export async function runAffairsIndexerCommand(
       case "export": {
         runtimeStageWriter.write("running", "export");
         const exportResult = await new ExportBuilder(config).build({
-          signal: options.signal
+          signal: options.signal,
+          onStageChange: (stage) => runtimeStageWriter.write("running", stage),
+          commandName: command,
+          reason: options.reason,
+          targetPath: options.targetPath
         });
         result = { exportResult };
         message = "静态导出完成。";
@@ -175,7 +197,11 @@ export async function runAffairsIndexerCommand(
         runtimeStageWriter.write("running", "export");
         const exportResult = await new ExportBuilder(config).build({
           dirtyScope: indexResult.dirtyScope,
-          signal: options.signal
+          signal: options.signal,
+          onStageChange: (stage) => runtimeStageWriter.write("running", stage),
+          commandName: command,
+          reason: options.reason,
+          targetPath: options.targetPath
         });
         runtimeStageWriter.write("running", "sqlite");
         new CatalogWriteRepository(config.dbPath).setSchemaMeta(
@@ -231,6 +257,7 @@ export async function runAffairsIndexerCommand(
       },
       result,
     };
+    runtimeStageWriter.stopHeartbeat();
     runtimeStageWriter.write("finished", "finished");
     writeAffairsIndexerHelperLog({
       phase: "finish",
@@ -258,6 +285,7 @@ export async function runAffairsIndexerCommand(
   } catch (error) {
     rootLock?.release();
     rootLock = null;
+    runtimeStageWriter.stopHeartbeat();
     runtimeStageWriter.write(
       "failed",
       "failed",
@@ -374,33 +402,75 @@ function createRuntimeStageWriter(
   }
 ) {
   const runtimeStatusPath = path.join(rootDir, ".ai-index", "runtime-status.json");
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  let currentStatus: "running" | "finished" | "failed" = "running";
+  let currentStage: AffairsIndexerRuntimeStage = "init";
+  let currentErrorSummary: string | null = null;
+
+  const flush = () => {
+    fs.mkdirSync(path.dirname(runtimeStatusPath), { recursive: true });
+    fs.writeFileSync(
+      runtimeStatusPath,
+      `${JSON.stringify({
+        version: 1,
+        command,
+        status: currentStatus,
+        stage: currentStage,
+        updatedAt: new Date().toISOString(),
+        reason: options.reason?.trim() || null,
+        targetPath: normalizeOptionalTargetPath(options.targetPath) ?? null,
+        taskId: options.taskMeta?.taskId ?? null,
+        taskType: options.taskMeta?.taskType ?? null,
+        taskKey: options.taskMeta?.key ?? null,
+        attempt: options.taskMeta?.attempt ?? null,
+        errorSummary: currentErrorSummary
+      }, null, 2)}\n`,
+      "utf8"
+    );
+  };
+
   return {
     write: (
       status: "running" | "finished" | "failed",
       stage: AffairsIndexerRuntimeStage,
       errorSummary: string | null = null
     ) => {
-      fs.mkdirSync(path.dirname(runtimeStatusPath), { recursive: true });
-      fs.writeFileSync(
-        runtimeStatusPath,
-        `${JSON.stringify({
-          version: 1,
-          command,
-          status,
-          stage,
-          updatedAt: new Date().toISOString(),
-          reason: options.reason?.trim() || null,
-          targetPath: normalizeOptionalTargetPath(options.targetPath) ?? null,
-          taskId: options.taskMeta?.taskId ?? null,
-          taskType: options.taskMeta?.taskType ?? null,
-          taskKey: options.taskMeta?.key ?? null,
-          attempt: options.taskMeta?.attempt ?? null,
-          errorSummary
-        }, null, 2)}\n`,
-        "utf8"
-      );
+      currentStatus = status;
+      currentStage = stage;
+      currentErrorSummary = errorSummary;
+      flush();
+    },
+    startHeartbeat: () => {
+      if (heartbeatTimer) {
+        return;
+      }
+      heartbeatTimer = setInterval(() => {
+        if (currentStatus === "running") {
+          flush();
+        }
+      }, resolveRuntimeHeartbeatIntervalMs());
+      heartbeatTimer.unref?.();
+    },
+    stopHeartbeat: () => {
+      if (!heartbeatTimer) {
+        return;
+      }
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
     }
   };
+}
+
+function resolveRuntimeHeartbeatIntervalMs(): number {
+  const raw = process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS?.trim();
+  if (!raw) {
+    return DEFAULT_RUNTIME_HEARTBEAT_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_RUNTIME_HEARTBEAT_MS;
+  }
+  return Math.max(100, Math.floor(parsed));
 }
 
 function normalizeAffairsIndexerError(

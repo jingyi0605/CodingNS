@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import type { RuntimeConfig } from "../../../../contracts/src/index.js";
 import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import {
@@ -11,10 +12,14 @@ import {
 } from "../../utils/file-streaming.js";
 import { logAffairsIndexerRss } from "../../utils/rss-log.js";
 import { throwIfAborted, yieldToEventLoop } from "../../utils/abort.js";
+import { writeAffairsLibraryDebugLog } from "../../../../../workspace/affairs-library-debug-log.js";
 
 export interface SearchIndexBuildOptions {
   dirtyScope?: DirtyScope;
   signal?: AbortSignal;
+  commandName?: string;
+  reason?: string;
+  targetPath?: string;
 }
 
 export interface SearchIndexBuildResult {
@@ -177,6 +182,7 @@ export class SearchIndexBuilder {
 
   async build(options: SearchIndexBuildOptions = {}): Promise<SearchIndexBuildResult> {
     const exportedAt = new Date().toISOString();
+    const startedAt = performance.now();
     const repository = new CatalogRepository(this.config.dbPath);
     const outputDir = path.join(this.config.exportDir, "search");
     const tempDir = path.join(outputDir, ".tmp");
@@ -187,6 +193,19 @@ export class SearchIndexBuilder {
     const manifestBuckets: SearchManifest["buckets"] = [];
     const documentTempPaths = new Map<string, string>();
     const termTempPaths = new Map<string, string>();
+    writeAffairsLibraryDebugLog({
+      event: "search_build_started",
+      processRole: "helper",
+      rootDir: this.config.rootDir,
+      command: options.commandName ?? "export",
+      reason: options.reason,
+      targetPath: options.targetPath,
+      status: "running",
+      details: {
+        outputDir,
+        tempDir
+      }
+    });
 
     for (const batch of repository.iterateExportDocumentRecords(2000)) {
       throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
@@ -212,6 +231,22 @@ export class SearchIndexBuilder {
         for (const [bucket, terms] of bucketTerms.entries()) {
           const documentTempPath = documentTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.documents.ndjson`);
           const termTempPath = termTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.terms.ndjson`);
+          if (!documentTempPaths.has(bucket)) {
+            writeAffairsLibraryDebugLog({
+              event: "search_bucket_temp_prepared",
+              processRole: "helper",
+              rootDir: this.config.rootDir,
+              command: options.commandName ?? "export",
+              reason: options.reason,
+              targetPath: options.targetPath,
+              status: "running",
+              details: {
+                bucket,
+                documentTempPath,
+                termTempPath
+              }
+            });
+          }
           documentTempPaths.set(bucket, documentTempPath);
           termTempPaths.set(bucket, termTempPath);
           appendNdjson(documentTempPath, entry);
@@ -230,6 +265,21 @@ export class SearchIndexBuilder {
       throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
       const documentTempPath = documentTempPaths.get(bucket)!;
       const termTempPath = termTempPaths.get(bucket)!;
+      const bucketStartedAt = performance.now();
+      writeAffairsLibraryDebugLog({
+        event: "search_bucket_build_started",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "running",
+        details: {
+          bucket,
+          documentTempPath,
+          termTempPath
+        }
+      });
       const documentMap = new Map<string, SearchDocumentEntry>();
       const termMap = new Map<string, string[]>();
 
@@ -261,14 +311,56 @@ export class SearchIndexBuilder {
         path: `search/${bucket}.json`,
         term_count: termMap.size,
       });
+      writeAffairsLibraryDebugLog({
+        event: "search_bucket_build_finished",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "finished",
+        durationMs: Number((performance.now() - bucketStartedAt).toFixed(2)),
+        details: {
+          bucket,
+          filePath,
+          documentCount: documentMap.size,
+          termCount: termMap.size
+        }
+      });
 
       safeUnlink(documentTempPath);
       safeUnlink(termTempPath);
+      writeAffairsLibraryDebugLog({
+        event: "search_bucket_temp_cleaned",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "finished",
+        details: {
+          bucket,
+          documentTempPath,
+          termTempPath
+        }
+      });
       await yieldToEventLoop(options.signal, "事务文档库搜索索引构建已取消");
     }
 
     if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
       fs.rmdirSync(tempDir);
+      writeAffairsLibraryDebugLog({
+        event: "search_temp_dir_removed",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "finished",
+        details: {
+          tempDir
+        }
+      });
     }
 
     const manifestPath = path.join(outputDir, "manifest.json");
@@ -283,6 +375,21 @@ export class SearchIndexBuilder {
       rootDir: this.config.rootDir,
       bucketCount: manifestBuckets.length,
       fileCount: filesWritten.length
+    });
+    writeAffairsLibraryDebugLog({
+      event: "search_build_finished",
+      processRole: "helper",
+      rootDir: this.config.rootDir,
+      command: options.commandName ?? "export",
+      reason: options.reason,
+      targetPath: options.targetPath,
+      status: "finished",
+      durationMs: Number((performance.now() - startedAt).toFixed(2)),
+      details: {
+        bucketCount: manifestBuckets.length,
+        fileCount: filesWritten.length,
+        manifestPath
+      }
     });
 
     return {

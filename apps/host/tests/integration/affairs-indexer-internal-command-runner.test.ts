@@ -97,6 +97,73 @@ describe("runAffairsIndexerCommand", () => {
     }
   });
 
+  it("长时间导出时会持续刷新 runtime-status 的 updatedAt", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-index-heartbeat-"));
+    const documentPath = path.join(rootDir, "长导出文档.md");
+    fs.writeFileSync(documentPath, "# 标题\n\n这是一个测试文档。\n", "utf8");
+    const statusPath = path.join(rootDir, ".ai-index", "runtime-status.json");
+    const originalHeartbeatMs = process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS;
+    process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS = "50";
+
+    const { ExportBuilder } = await import("../../src/modules/affairs-indexer/core/src/services/export/export-builder.js");
+    const originalBuild = ExportBuilder.prototype.build;
+    ExportBuilder.prototype.build = async function patchedBuild() {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      return {
+        outputDir: path.join(rootDir, ".ai-index", "exports"),
+        manifestPath: path.join(rootDir, ".ai-index", "exports", "manifest.json"),
+        metaShardCount: 0,
+        detailShardCount: 0,
+        tagShardCount: 0,
+        searchBucketCount: 0,
+        relationGroupCount: 0,
+        filesWritten: [],
+        exportedAt: new Date().toISOString(),
+      };
+    };
+
+    try {
+      const pending = runAffairsIndexerCommand(rootDir, "index");
+
+      let firstUpdatedAt = "";
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (fs.existsSync(statusPath)) {
+          const payload = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
+            status?: string;
+            stage?: string;
+            updatedAt?: string;
+          };
+          if (payload.status === "running" && payload.stage === "export" && payload.updatedAt) {
+            firstUpdatedAt = payload.updatedAt;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(firstUpdatedAt).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      const secondPayload = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
+        updatedAt?: string;
+        stage?: string;
+      };
+
+      expect(secondPayload.stage).toBe("export");
+      expect(secondPayload.updatedAt).toBeTruthy();
+      expect(new Date(secondPayload.updatedAt!).getTime()).toBeGreaterThan(new Date(firstUpdatedAt).getTime());
+
+      await pending;
+    } finally {
+      ExportBuilder.prototype.build = originalBuild;
+      if (originalHeartbeatMs === undefined) {
+        delete process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS;
+      } else {
+        process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS = originalHeartbeatMs;
+      }
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("普通 index 不会再冲掉文件夹绑定生成的 direct tags", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-index-keep-direct-tags-"));
     const documentDir = path.join(rootDir, "客户A");
