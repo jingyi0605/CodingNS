@@ -10,11 +10,12 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   UNSAFE_LocationContext,
   UNSAFE_NavigationContext,
@@ -34,18 +35,15 @@ import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
   ButlerManagedSessionDto,
-  ButlerProjectDto,
   ButlerProfilePayload,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto
 } from "../../butler/api/butler-api";
 import {
-  getButlerSessionTarget,
   listAssistantAutomations,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerProjectSessions,
-  listButlerProjects,
   listRecentAssistantAutomationRuns,
   resumeButlerProjectSession
 } from "../../butler/api/butler-api";
@@ -97,6 +95,7 @@ import {
   listAffairsLightweightSessions,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
+  getAffairsLibraryPreviewWithOptions,
   getAffairsLibrarySnapshot,
   downloadAffairsLibraryFile,
   listAffairsLibraryDocuments,
@@ -123,7 +122,7 @@ import {
 } from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileViewerPanel } from "../../conversation/components/FileViewerModal";
-import { MessageTimeline } from "../../conversation/components/MessageTimeline";
+import { ConversationTranscriptExport, MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import { SessionProviderPicker } from "../../conversation/components/SessionProviderPicker";
 import { SessionHeader } from "../../conversation/components/SessionHeader";
@@ -134,6 +133,7 @@ import {
   buildSessionExportFileName,
   buildSessionMarkdownExport,
   buildSessionPdfExport,
+  buildStandaloneSessionExportHtml,
   downloadBinaryFile,
   downloadTextFile,
   loadSessionExportSnapshot
@@ -246,6 +246,7 @@ const AFFAIRS_FULL_TAG_RECOMPUTE_TASK_POLL_TERMINAL_HIDE_MS = 8_000;
 const AFFAIRS_TAG_SAVE_SNAPSHOT_POLL_MS = 600;
 const AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS = 8_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
   ".pdf", ".doc", ".docx", ".odt", ".wps",
@@ -496,6 +497,14 @@ type AffairsConversationDeleteTarget = {
   session: SessionSummaryDto;
 } | null;
 
+type AffairsConversationExportFormat = "md" | "pdf" | "html";
+
+type AffairsConversationExportRenderJob = {
+  session: SessionSummaryDto;
+  items: ReturnType<typeof buildConversationTimelineSourceItems>;
+  shellWidthPx: number | null;
+} | null;
+
 type AffairsInitGuardSnapshot = {
   loading: boolean;
   initialized: boolean;
@@ -625,6 +634,8 @@ interface AffairsWorkbenchContextValue {
   archiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   toggleConversationSessionFavorite: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   markConversationSessionSeen: (sessionId: string, seenAt?: string) => void;
+  openConversationRenameModal: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => void;
+  openConversationDeleteModal: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => void;
   renameConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto; title: string }) => Promise<SessionSummaryDto>;
   deleteConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   exportConversationSession: (input: { session: SessionSummaryDto; format: "md" | "pdf" | "html" }) => Promise<void>;
@@ -697,6 +708,7 @@ export function AffairsWorkbenchProvider({
     () => Object.fromEntries(workspaceSessions.map((session) => [session.sessionId, session.title?.trim() || session.sessionId])),
     [workspaceSessions]
   );
+  const lastConversationNodeIdRef = useRef<string | null>(null);
   const [conversationCreateModalOpen, setConversationCreateModalOpen] = useState(false);
   const [selectedConversationDraft, setSelectedConversationDraft] = useState<AffairsConversationDraftSelection | null>(null);
   const [selectedConversationSession, setSelectedConversationSession] = useState<AffairsConversationSessionSelection | null>(null);
@@ -707,12 +719,32 @@ export function AffairsWorkbenchProvider({
   const [conversationDeleteTarget, setConversationDeleteTarget] = useState<AffairsConversationDeleteTarget>(null);
   const [conversationDeletingSessionId, setConversationDeletingSessionId] = useState<string | null>(null);
   const [conversationExportingSessionId, setConversationExportingSessionId] = useState<string | null>(null);
+  const [conversationExportRenderJob, setConversationExportRenderJob] = useState<AffairsConversationExportRenderJob>(null);
   const [lightweightRuntimeBySessionId, setLightweightRuntimeBySessionId] = useState<Record<string, AffairsLightweightRuntimeSnapshot>>({});
-  const [lightweightConversationSessions, setLightweightConversationSessions] = useState<SessionSummaryDto[]>([]);
+  const initialLightweightConversationSessions = useMemo(
+    () => readCachedAffairsLightweightConversationSessions(workspaceId) ?? [],
+    [workspaceId]
+  );
+  const snapshotAgentConversationSessions = useMemo(
+    () => Array.isArray(workspaceGroup?.affairsAssistantSessions) ? workspaceGroup.affairsAssistantSessions : [],
+    [workspaceGroup?.affairsAssistantSessions]
+  );
+  const agentProjectId = workspaceGroup?.affairsAssistantProjectId ?? null;
+  const initialAgentConversationSessions = useMemo(
+    () => snapshotAgentConversationSessions,
+    [snapshotAgentConversationSessions]
+  );
+  const [lightweightConversationSessions, setLightweightConversationSessions] = useState<SessionSummaryDto[]>(
+    initialLightweightConversationSessions
+  );
   const [lightweightConversationSessionsLoading, setLightweightConversationSessionsLoading] = useState(false);
-  const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>([]);
-  const [agentConversationSessionsLoading, setAgentConversationSessionsLoading] = useState(false);
+  const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>(
+    initialAgentConversationSessions
+  );
+  const agentConversationSessionsLoading = false;
   const [lastObjectAssistantContext, setLastObjectAssistantContext] = useState<AffairsObjectContext | null>(null);
+  const conversationExportRenderRootRef = useRef<HTMLDivElement | null>(null);
+  const lightweightConversationSessionCacheScopeRef = useRef<string | null>(null);
   const initialLibrarySnapshot = useMemo(
     () => readCachedLibrarySnapshot(workspaceId),
     [workspaceId]
@@ -725,6 +757,7 @@ export function AffairsWorkbenchProvider({
     () => readCachedLibraryDocumentPage(workspaceId, state),
     [workspaceId, state]
   );
+  const activeSection = normalizeSection(state.primarySection);
   const [libraryLoading, setLibraryLoading] = useState(initialLibrarySnapshot === null);
   const [todoLoading, setTodoLoading] = useState(false);
   const [automationLoading, setAutomationLoading] = useState(false);
@@ -756,37 +789,13 @@ export function AffairsWorkbenchProvider({
     () => resolveAffairsAgentWorkspacePath(binding),
     [binding]
   );
-  const fallbackAgentWorkspaceId = useMemo(
+  const matchedAgentWorkspaceId = useMemo(
     () => resolveAffairsAgentWorkspaceId(agentWorkspacePath, navigationGroups),
     [agentWorkspacePath, navigationGroups]
   );
-  const [agentProject, setAgentProject] = useState<ButlerProjectDto | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void listButlerProjects()
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        const nextProject = resolveAffairsAgentProject(response.items, {
-          workspacePath: agentWorkspacePath,
-          workspaceIds: fallbackAgentWorkspaceId ? [fallbackAgentWorkspaceId] : []
-        });
-        setAgentProject((current) => current?.id === nextProject?.id ? current : nextProject);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAgentProject((current) => current === null ? current : null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [agentWorkspacePath, fallbackAgentWorkspaceId]);
   const agentWorkspaceId = useMemo(
-    () => agentProject?.workspaceId ?? fallbackAgentWorkspaceId ?? null,
-    [agentProject?.workspaceId, fallbackAgentWorkspaceId]
+    () => workspaceGroup?.affairsAssistantProjectWorkspaceId ?? matchedAgentWorkspaceId ?? null,
+    [matchedAgentWorkspaceId, workspaceGroup?.affairsAssistantProjectWorkspaceId]
   );
   const butlerStore = useMemo(
     () => new ButlerRuntimeStore(agentWorkspaceId ?? workspaceId),
@@ -803,6 +812,7 @@ export function AffairsWorkbenchProvider({
   const butlerActiveProvider = useButlerRuntimeStore(butlerStore, (value) => value.activeProvider);
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const { showToast } = useToast();
+  const [documentSummaryExpanded, setDocumentSummaryExpanded] = useState(false);
   const butlerHostUnavailable =
     butlerBootstrapErrorCode === "NETWORK_ERROR"
     || butlerBootstrapErrorCode === "INVALID_RESPONSE";
@@ -821,9 +831,6 @@ export function AffairsWorkbenchProvider({
         }
       : null
   }), [butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
-  const affairsUnavailable = initGuard.unavailable;
-  const affairsInitGuardActive = initGuard.loading || (!initGuard.initialized && !affairsUnavailable);
-  const activeSection = normalizeSection(state.primarySection);
   const isAffairsRoute = location.pathname === buildWorkspaceAffairsPath(workspaceId);
   const ensureAffairsRoute = useCallback(() => {
     if (isAffairsRoute) {
@@ -837,10 +844,13 @@ export function AffairsWorkbenchProvider({
   const directoryHintBootstrappedRef = useRef(false);
 
   useEffect(() => {
+    if (activeSection !== "conversation") {
+      return;
+    }
     if (typeof butlerStore.initialize === "function") {
       void butlerStore.initialize();
     }
-  }, [butlerStore]);
+  }, [activeSection, butlerStore]);
 
   useEffect(() => () => {
     butlerStore.dispose();
@@ -862,12 +872,33 @@ export function AffairsWorkbenchProvider({
   }, [workspaceId]);
 
   useEffect(() => {
+    lightweightConversationSessionCacheScopeRef.current = null;
+    setLightweightConversationSessions(initialLightweightConversationSessions);
+    setAgentConversationSessions(initialAgentConversationSessions);
+    setLightweightRuntimeBySessionId({});
+  }, [initialAgentConversationSessions, initialLightweightConversationSessions, workspaceId]);
+
+  useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
 
   useEffect(() => {
+    if (lightweightConversationSessionCacheScopeRef.current !== workspaceId) {
+      lightweightConversationSessionCacheScopeRef.current = workspaceId;
+      return;
+    }
+    writeCachedAffairsLightweightConversationSessions(workspaceId, lightweightConversationSessions);
+  }, [lightweightConversationSessions, workspaceId]);
+
+  useEffect(() => {
     setSelectedConversationDraft(parseAffairsConversationDraftSelection(state.selectedNodeId));
     setSelectedConversationSession(parseAffairsConversationSessionSelection(state.selectedNodeId));
+  }, [state.selectedNodeId]);
+
+  useEffect(() => {
+    if (state.selectedNodeId?.startsWith("conversation:")) {
+      lastConversationNodeIdRef.current = state.selectedNodeId;
+    }
   }, [state.selectedNodeId]);
 
   useEffect(() => {
@@ -925,77 +956,15 @@ export function AffairsWorkbenchProvider({
   }, [showToast, workspaceId]);
 
   useEffect(() => {
+    if (activeSection !== "conversation") {
+      return;
+    }
     void reloadLightweightConversationSessions();
-  }, [reloadLightweightConversationSessions]);
+  }, [activeSection, reloadLightweightConversationSessions]);
 
   const reloadAgentConversationSessions = useCallback(async () => {
-    setAgentConversationSessionsLoading(true);
-    try {
-      const normalizedAgentWorkspacePath = normalizeAffairsWorkspacePath(agentWorkspacePath);
-      const projectCandidates = buildAffairsAgentProjectCandidates(
-        (await listButlerProjects()).items,
-        {
-          workspacePath: normalizedAgentWorkspacePath,
-          workspaceIds: fallbackAgentWorkspaceId ? [fallbackAgentWorkspaceId] : []
-        }
-      );
-      if (projectCandidates.length === 0) {
-        setAgentConversationSessions([]);
-        return;
-      }
-
-      let project: ButlerProjectDto | null = null;
-      let sessionItems: ButlerManagedSessionDto[] = [];
-      for (const candidate of projectCandidates) {
-        const sessionsResponse = await listButlerProjectSessions(candidate.id);
-        if (!project || sessionsResponse.items.length > 0) {
-          project = candidate;
-          sessionItems = sessionsResponse.items;
-        }
-        if (sessionsResponse.items.length > 0) {
-          break;
-        }
-      }
-      if (!project) {
-        setAgentConversationSessions([]);
-        return;
-      }
-      if (project.id !== agentProject?.id) {
-        setAgentProject(project);
-      }
-
-      const items = await Promise.all(
-        sessionItems.map(async (item) => {
-          try {
-            const targetResponse = await getButlerSessionTarget(item.sessionId);
-            const sameProject = targetResponse.target.project.id === project.id;
-            const sameWorkspacePath =
-              normalizedAgentWorkspacePath.length > 0
-              && isAffairsWorkspacePathMatch(targetResponse.target.project.repoRoot, normalizedAgentWorkspacePath);
-            if (!sameProject && !sameWorkspacePath) {
-              return convertButlerManagedSessionToAffairsSessionSummary(item, project.workspaceId);
-            }
-            return convertButlerManagedSessionToAffairsSessionSummary(item, targetResponse.target.workspaceId);
-          } catch {
-            return convertButlerManagedSessionToAffairsSessionSummary(item, project.workspaceId);
-          }
-        })
-      );
-      setAgentConversationSessions(items.filter((item): item is SessionSummaryDto => Boolean(item)));
-    } catch (error) {
-      showToast({
-        tone: "error",
-        title: t("shell.affairsConversationAgentLoadFailed"),
-        description: getErrorMessage(error, t("shell.affairsConversationAgentLoadFailed"))
-      });
-    } finally {
-      setAgentConversationSessionsLoading(false);
-    }
-  }, [agentProject?.id, agentWorkspacePath, fallbackAgentWorkspaceId, showToast]);
-
-  useEffect(() => {
-    void reloadAgentConversationSessions();
-  }, [reloadAgentConversationSessions]);
+    setAgentConversationSessions(snapshotAgentConversationSessions);
+  }, [snapshotAgentConversationSessions]);
 
   const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
     setRecentTagTasks((previous) => {
@@ -2099,19 +2068,9 @@ export function AffairsWorkbenchProvider({
     detailViewerCollapsed: state.detailViewerCollapsed,
     selectSection: (section) => {
       ensureAffairsRoute();
-      const preservedConversationNodeId = section === "conversation" && state.selectedNodeId?.startsWith("conversation:")
-        ? state.selectedNodeId
+      const preservedConversationNodeId = section === "conversation"
+        ? (state.selectedNodeId?.startsWith("conversation:") ? state.selectedNodeId : lastConversationNodeIdRef.current)
         : null;
-      if (affairsInitGuardActive) {
-        onStateChange({
-          ...state,
-          primarySection: "conversation",
-          selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId("conversation", automationRecords, binding),
-          selectedObjectId: null,
-          selectedDocumentId: null
-        });
-        return;
-      }
       onStateChange({
         ...state,
         primarySection: section,
@@ -2122,8 +2081,8 @@ export function AffairsWorkbenchProvider({
     },
     openInitializedSection: (section) => {
       ensureAffairsRoute();
-      const preservedConversationNodeId = section === "conversation" && state.selectedNodeId?.startsWith("conversation:")
-        ? state.selectedNodeId
+      const preservedConversationNodeId = section === "conversation"
+        ? (state.selectedNodeId?.startsWith("conversation:") ? state.selectedNodeId : lastConversationNodeIdRef.current)
         : null;
       onStateChange({
         ...state,
@@ -2134,16 +2093,6 @@ export function AffairsWorkbenchProvider({
       });
     },
     selectSidebarNode: (nodeId) => {
-      if (affairsInitGuardActive) {
-        onStateChange({
-          ...state,
-          primarySection: "conversation",
-          selectedNodeId: resolveDefaultNodeId("conversation", automationRecords, binding),
-          selectedObjectId: null,
-          selectedDocumentId: null
-        });
-        return;
-      }
       if (activeSection === "library") {
         if (nodeId.startsWith("library:folder:")) {
           onStateChange({
@@ -2508,6 +2457,13 @@ export function AffairsWorkbenchProvider({
       ));
       void markSessionSeen(sessionId).catch(() => undefined);
     },
+    openConversationRenameModal: (input) => {
+      setConversationRenameTarget(input);
+      setConversationRenameValue(input.session.title ?? "");
+    },
+    openConversationDeleteModal: (input) => {
+      setConversationDeleteTarget(input);
+    },
     renameConversationSession: async (input) => {
       const renamedSession = await renameSessionTitle(input.session.sessionId, input.title.trim());
       setLightweightConversationSessions((current) => current.map((item) => (
@@ -2536,6 +2492,9 @@ export function AffairsWorkbenchProvider({
       ));
       if (selectedConversationSession?.sessionId === input.session.sessionId) {
         setSelectedConversationSession(null);
+        if (lastConversationNodeIdRef.current === buildAffairsConversationSessionNodeId(input.kind, input.session.sessionId)) {
+          lastConversationNodeIdRef.current = null;
+        }
         onStateChange({
           ...state,
           primarySection: "conversation",
@@ -2546,29 +2505,79 @@ export function AffairsWorkbenchProvider({
       }
     },
     exportConversationSession: async ({ session, format }) => {
-      const snapshot = await loadSessionExportSnapshot(session.sessionId);
-      if (format === "md") {
-        downloadTextFile(
-          buildSessionExportFileName(session, "md"),
-          buildSessionMarkdownExport(session, snapshot.messages),
-          "text/markdown;charset=utf-8"
-        );
+      if (conversationExportingSessionId) {
         return;
       }
-      if (format === "html") {
-        const html = buildSessionMarkdownExport(session, snapshot.messages);
-        downloadTextFile(
-          buildSessionExportFileName(session, "html"),
-          html,
-          "text/markdown;charset=utf-8"
+
+      setConversationExportingSessionId(session.sessionId);
+
+      try {
+        const snapshot = await loadSessionExportSnapshot(session.sessionId);
+        const exportLayout = captureAffairsSessionExportLayoutSnapshot();
+
+        if (format === "md") {
+          downloadTextFile(
+            buildSessionExportFileName(session, "md"),
+            buildSessionMarkdownExport(session, snapshot.messages),
+            "text/markdown;charset=utf-8"
+          );
+          return;
+        }
+
+        flushSync(() => {
+          setConversationExportRenderJob({
+            session,
+            items: buildConversationTimelineSourceItems({
+              messages: snapshot.messages
+            }),
+            shellWidthPx: exportLayout.shellWidthPx
+          });
+        });
+
+        await waitForAffairsSessionExportRender(conversationExportRenderRootRef.current);
+
+        const exportMarkup = conversationExportRenderRootRef.current?.innerHTML.trim() ?? "";
+
+        if (!exportMarkup) {
+          throw new Error(t("conversation.exportLoadFailed"));
+        }
+
+        const htmlAttributes = collectAffairsSessionExportAttributes(document.documentElement);
+        const bodyAttributes = document.body ? collectAffairsSessionExportAttributes(document.body) : {};
+        const htmlStyle = document.documentElement.getAttribute("style");
+        const bodyStyle = document.body?.getAttribute("style") ?? null;
+        const exportStyleText = `${collectAffairsSessionExportStyles()}
+${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
+        const htmlDocument = buildStandaloneSessionExportHtml({
+          title: session.title || t("conversation.titleFallback"),
+          bodyHtml: `<div class="session-export-document-root">${exportMarkup}</div>`,
+          styleText: exportStyleText,
+          htmlAttributes,
+          bodyAttributes,
+          htmlStyle,
+          bodyStyle
+        });
+
+        if (format === "html") {
+          downloadTextFile(
+            buildSessionExportFileName(session, "html"),
+            htmlDocument,
+            "text/html;charset=utf-8"
+          );
+          return;
+        }
+
+        downloadBinaryFile(
+          buildSessionExportFileName(session, "pdf"),
+          buildSessionPdfExport(session, snapshot.messages),
+          "application/pdf"
         );
-        return;
+      } finally {
+        flushSync(() => {
+          setConversationExportRenderJob(null);
+        });
+        setConversationExportingSessionId(null);
       }
-      downloadBinaryFile(
-        buildSessionExportFileName(session, "pdf"),
-        buildSessionPdfExport(session, snapshot.messages),
-        "application/pdf"
-      );
     },
     selectedConversationDraft,
     selectConversationDraft: (draft) => {
@@ -2610,7 +2619,7 @@ export function AffairsWorkbenchProvider({
         kind: input.kind,
         sessionId: nextSession.sessionId
       });
-      void markSessionSeen(nextSession.sessionId).catch(() => undefined);
+      void Promise.resolve(markSessionSeen(nextSession.sessionId)).catch(() => undefined);
       onStateChange({
         ...state,
         primarySection: "conversation",
@@ -2620,7 +2629,6 @@ export function AffairsWorkbenchProvider({
       });
     }
   }), [
-    affairsInitGuardActive,
     activeSection,
     agentWorkspaceId,
     agentWorkspacePath,
@@ -2687,13 +2695,111 @@ export function AffairsWorkbenchProvider({
     viewerState,
     showToast,
     workspaceId,
-    workspaceName
+    workspaceName,
+    conversationExportingSessionId
   ]);
 
   return (
     <AffairsWorkbenchContext.Provider value={contextValue}>
       {children}
       <AffairsConversationCreateModal />
+      <AffairsConversationRenameModal
+        target={conversationRenameTarget}
+        value={conversationRenameValue}
+        busySessionId={conversationRenamingSessionId}
+        onChange={setConversationRenameValue}
+        onClose={() => {
+          if (conversationRenamingSessionId) {
+            return;
+          }
+          setConversationRenameTarget(null);
+          setConversationRenameValue("");
+        }}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!conversationRenameTarget) {
+            return;
+          }
+          const nextTitle = conversationRenameValue.trim();
+          if (!nextTitle) {
+            return;
+          }
+          setConversationRenamingSessionId(conversationRenameTarget.session.sessionId);
+          try {
+            await contextValue.renameConversationSession({
+              kind: conversationRenameTarget.kind,
+              session: conversationRenameTarget.session,
+              title: nextTitle
+            });
+            setConversationRenameTarget(null);
+            setConversationRenameValue("");
+            showToast({ title: t("shell.renameSuccess"), tone: "success" });
+          } catch (error) {
+            showToast({
+              title: error instanceof Error ? error.message : t("shell.renameFailed"),
+              tone: "error"
+            });
+          } finally {
+            setConversationRenamingSessionId(null);
+          }
+        }}
+      />
+      <AffairsConversationDeleteModal
+        target={conversationDeleteTarget}
+        busySessionId={conversationDeletingSessionId}
+        onClose={() => {
+          if (conversationDeletingSessionId) {
+            return;
+          }
+          setConversationDeleteTarget(null);
+        }}
+        onConfirm={async () => {
+          if (!conversationDeleteTarget) {
+            return;
+          }
+          setConversationDeletingSessionId(conversationDeleteTarget.session.sessionId);
+          try {
+            await contextValue.deleteConversationSession({
+              kind: conversationDeleteTarget.kind,
+              session: conversationDeleteTarget.session
+            });
+            setConversationDeleteTarget(null);
+            showToast({ title: t("shell.deleteSessionSuccess"), tone: "success" });
+          } catch (error) {
+            showToast({
+              title: error instanceof Error ? error.message : t("shell.deleteSessionFailed"),
+              tone: "error"
+            });
+          } finally {
+            setConversationDeletingSessionId(null);
+          }
+        }}
+      />
+      {conversationExportRenderJob ? (
+        <div ref={conversationExportRenderRootRef} className="session-export-print-root" aria-hidden="true">
+          <div
+            className="session-export-print-shell"
+            style={
+              conversationExportRenderJob.shellWidthPx
+                ? {
+                    width: `${conversationExportRenderJob.shellWidthPx}px`,
+                    maxWidth: "100%"
+                  }
+                : undefined
+            }
+          >
+            <header className="session-export-print-header">
+              <h1>{conversationExportRenderJob.session.title || t("conversation.titleFallback")}</h1>
+              <p>{t("conversation.exportAction")}</p>
+            </header>
+            <ConversationTranscriptExport
+              sessionId={conversationExportRenderJob.session.sessionId}
+              items={conversationExportRenderJob.items}
+              provider={conversationExportRenderJob.session.provider}
+            />
+          </div>
+        </div>
+      ) : null}
       <AffairsLibraryFileViewerModal
         workspaceId={workspaceId}
         viewerState={viewerState}
@@ -2704,8 +2810,7 @@ export function AffairsWorkbenchProvider({
 }
 
 export function AffairsSectionMenu() {
-  const { activeSection, initGuard, selectSection } = useAffairsWorkbenchInternal();
-  const guardActive = initGuard.loading || initGuard.unavailable || !initGuard.initialized;
+  const { activeSection, selectSection } = useAffairsWorkbenchInternal();
 
   return (
     <div className="workbench-nav-code-entries" role="tablist" aria-label={t("shell.affairsSidebarMenuLabel")}>
@@ -2714,8 +2819,6 @@ export function AffairsSectionMenu() {
         className={activeSection === "library" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "library"}
-        aria-disabled={guardActive}
-        disabled={guardActive}
         onClick={() => selectSection("library")}
       >
         <AffairsLibraryIcon />
@@ -2736,8 +2839,6 @@ export function AffairsSectionMenu() {
         className={activeSection === "todo" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "todo"}
-        aria-disabled={guardActive}
-        disabled={guardActive}
         onClick={() => selectSection("todo")}
       >
         <AffairsTodoIcon />
@@ -2748,8 +2849,6 @@ export function AffairsSectionMenu() {
         className={activeSection === "automation" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
         role="tab"
         aria-selected={activeSection === "automation"}
-        aria-disabled={guardActive}
-        disabled={guardActive}
         onClick={() => selectSection("automation")}
       >
         <AffairsAutomationIcon />
@@ -2811,30 +2910,68 @@ function AffairsSessionArchiveIcon() {
   );
 }
 
+function AffairsSessionRenameIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4.75 14.25v1h1l7.98-7.98-1.99-1.99-6.99 6.99Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="m11.74 5.28 1.99 1.99 1.24-1.24a1.41 1.41 0 1 0-1.99-1.99z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsSessionExportIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10 3.5v8m0 0 3-3m-3 3-3-3M4.5 13.5v1A1.5 1.5 0 0 0 6 16h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsSessionDeleteIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.5 6.25h9l-.62 8.06A1.5 1.5 0 0 1 12.39 15.7H7.61a1.5 1.5 0 0 1-1.49-1.39zM7.75 6.25V4.9A1.4 1.4 0 0 1 9.15 3.5h1.7a1.4 1.4 0 0 1 1.4 1.4v1.35M4 6.25h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function AffairsConversationSessionCard({
   item,
   isActive,
   role,
   onOpen,
+  onRename,
+  onExport,
   onToggleFavorite,
-  onArchive
+  onArchive,
+  onDelete
 }: {
   item: AffairsConversationListItem;
   isActive: boolean;
   role?: string;
   onOpen: () => void;
+  onRename: () => void;
+  onExport: (format: "md" | "pdf" | "html") => Promise<void>;
   onToggleFavorite: () => Promise<void>;
   onArchive: () => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
   const platform = usePlatform();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number } | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [exportSubmenuOpen, setExportSubmenuOpen] = useState(false);
   const sessionActivityBadgeLabel = resolveSessionActivityBadgeLabel(item.session);
   const sessionActivityBadgeClassName =
     resolveSessionActivityBadgeClassName("session-activity-badge", item.session);
   const sessionMeta = buildAffairsConversationMeta(item.session);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      setExportSubmenuOpen(false);
+    }
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen || platform.isDesktop) {
@@ -2917,6 +3054,32 @@ function AffairsConversationSessionCard({
   const openDesktopSessionMenu = useCallback(async () => {
     await showDesktopContextMenu([
       {
+        id: `rename:${item.session.sessionId}`,
+        label: t("shell.renameAction"),
+        onSelect: onRename
+      },
+      {
+        id: `export:${item.session.sessionId}`,
+        label: t("conversation.exportAction"),
+        items: [
+          {
+            id: `export-markdown:${item.session.sessionId}`,
+            label: t("conversation.exportMarkdownAction"),
+            onSelect: () => onExport("md")
+          },
+          {
+            id: `export-pdf:${item.session.sessionId}`,
+            label: t("conversation.exportPdfAction"),
+            onSelect: () => onExport("pdf")
+          },
+          {
+            id: `export-html:${item.session.sessionId}`,
+            label: t("conversation.exportHtmlAction"),
+            onSelect: () => onExport("html")
+          }
+        ]
+      },
+      {
         id: `favorite:${item.session.sessionId}`,
         label: item.session.isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction"),
         onSelect: onToggleFavorite
@@ -2925,9 +3088,14 @@ function AffairsConversationSessionCard({
         id: `archive:${item.session.sessionId}`,
         label: t("shell.archiveAction"),
         onSelect: onArchive
+      },
+      {
+        id: `delete:${item.session.sessionId}`,
+        label: t("shell.deleteSessionAction"),
+        onSelect: onDelete
       }
     ]);
-  }, [item.session.isFavorite, item.session.sessionId, onArchive, onToggleFavorite]);
+  }, [item.session.isFavorite, item.session.sessionId, onArchive, onDelete, onExport, onRename, onToggleFavorite]);
 
   const sessionMenu =
     !platform.isDesktop && menuOpen && typeof document !== "undefined"
@@ -2951,6 +3119,64 @@ function AffairsConversationSessionCard({
               type="button"
               className="workbench-session-menu-item"
               onClick={() => {
+                closeMenu();
+                onRename();
+              }}
+            >
+              <AffairsSessionRenameIcon />
+              <span>{t("shell.renameAction")}</span>
+            </button>
+            <div className="workbench-session-submenu" data-open={exportSubmenuOpen}>
+              <button
+                type="button"
+                className="workbench-session-menu-item"
+                aria-haspopup="menu"
+                aria-expanded={exportSubmenuOpen}
+                onClick={() => setExportSubmenuOpen((current) => !current)}
+              >
+                <AffairsSessionExportIcon />
+                <span>{t("conversation.exportAction")}</span>
+                <span className="workbench-session-submenu-caret" aria-hidden="true">›</span>
+              </button>
+              {exportSubmenuOpen ? (
+                <div className="workbench-session-submenu-panel" role="menu" aria-label={t("conversation.exportAction")}>
+                  <button
+                    type="button"
+                    className="workbench-session-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      void onExport("md").finally(closeMenu);
+                    }}
+                  >
+                    <span>{t("conversation.exportMarkdownAction")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-session-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      void onExport("pdf").finally(closeMenu);
+                    }}
+                  >
+                    <span>{t("conversation.exportPdfAction")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-session-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      void onExport("html").finally(closeMenu);
+                    }}
+                  >
+                    <span>{t("conversation.exportHtmlAction")}</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
                 void onToggleFavorite().finally(closeMenu);
               }}
             >
@@ -2966,6 +3192,17 @@ function AffairsConversationSessionCard({
             >
               <AffairsSessionArchiveIcon />
               <span>{t("shell.archiveAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                closeMenu();
+                void onDelete();
+              }}
+            >
+              <AffairsSessionDeleteIcon />
+              <span>{t("shell.deleteSessionAction")}</span>
             </button>
           </div>,
           document.body
@@ -3077,11 +3314,15 @@ export function AffairsSidebarPanel() {
     selectedTagPaths,
     loading,
     error,
-    libraryDocumentTotal
+    libraryDocumentTotal,
+    openConversationRenameModal,
+    openConversationDeleteModal,
+    exportConversationSession
   } = useAffairsWorkbenchInternal();
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const butlerProfileWorkspacePath = useButlerRuntimeStore(butlerStore, (value) => value.profile?.workspacePath ?? null);
-  if (initGuard.loading) {
+  const { showToast } = useToast();
+  if (activeSection === "conversation" && initGuard.loading) {
     return (
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -3095,7 +3336,7 @@ export function AffairsSidebarPanel() {
     );
   }
 
-  if (initGuard.unavailable) {
+  if (activeSection === "conversation" && initGuard.unavailable) {
     return (
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -3109,7 +3350,7 @@ export function AffairsSidebarPanel() {
     );
   }
 
-  if (!initGuard.initialized) {
+  if (activeSection === "conversation" && !initGuard.initialized) {
     return (
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -3152,6 +3393,13 @@ export function AffairsSidebarPanel() {
         return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
       });
     const conversationSessionsLoading = lightweightConversationSessionsLoading || agentConversationSessionsLoading;
+    const showConversationBlockingLoading = conversationSessionsLoading && conversationListItems.length === 0;
+    const conversationLoadingHint = conversationListItems.length > 0
+      ? resolveConversationSidebarLoadingHint({
+          lightweightLoading: lightweightConversationSessionsLoading,
+          agentLoading: agentConversationSessionsLoading
+        })
+      : null;
     return (
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header affairs-sidebar-block-header-with-count">
@@ -3163,35 +3411,74 @@ export function AffairsSidebarPanel() {
         </div>
         <div className="affairs-sidebar-groups" role="list">
           <section className="affairs-sidebar-group">
-            {conversationSessionsLoading ? (
+            {showConversationBlockingLoading ? (
               <div className="affairs-sidebar-empty compact">{t("common.loading")}</div>
             ) : conversationListItems.length === 0 ? (
               <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">
                 {t("shell.affairsConversationCreateHint")}
               </div>
             ) : (
-              <div className="workbench-session-list affairs-conversation-session-list" role="list">
-                {conversationListItems.map((item) => (
-                  <AffairsConversationSessionCard
-                    key={item.id}
-                    item={item}
-                    isActive={item.id === state.selectedNodeId}
-                    role="listitem"
-                    onOpen={() => {
-                      markConversationSessionSeen(item.session.sessionId);
-                      selectSidebarNode(item.id);
-                    }}
-                    onToggleFavorite={() => toggleConversationSessionFavorite({
-                      kind: item.kind,
-                      session: item.session
-                    })}
-                    onArchive={() => archiveConversationSession({
-                      kind: item.kind,
-                      session: item.session
-                    })}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="workbench-session-list affairs-conversation-session-list" role="list">
+                  {conversationListItems.map((item) => (
+                    <AffairsConversationSessionCard
+                      key={item.id}
+                      item={item}
+                      isActive={item.id === state.selectedNodeId}
+                      role="listitem"
+                      onOpen={() => {
+                        markConversationSessionSeen(item.session.sessionId);
+                        selectSidebarNode(item.id);
+                      }}
+                      onRename={() => {
+                        openConversationRenameModal({
+                          kind: item.kind,
+                          session: item.session
+                        });
+                      }}
+                      onExport={async (format) => {
+                        try {
+                          await exportConversationSession({
+                            session: item.session,
+                            format
+                          });
+                          showToast({
+                            title:
+                              format === "md"
+                                ? t("conversation.exportMarkdownSuccess")
+                                : format === "pdf"
+                                  ? t("conversation.exportPdfPreparing")
+                                  : t("conversation.exportHtmlSuccess"),
+                            tone: "success"
+                          });
+                        } catch (error) {
+                          showToast({
+                            title: error instanceof Error ? error.message : t("conversation.exportLoadFailed"),
+                            tone: "error"
+                          });
+                        }
+                      }}
+                      onToggleFavorite={() => toggleConversationSessionFavorite({
+                        kind: item.kind,
+                        session: item.session
+                      })}
+                      onArchive={() => archiveConversationSession({
+                        kind: item.kind,
+                        session: item.session
+                      })}
+                      onDelete={async () => {
+                        openConversationDeleteModal({
+                          kind: item.kind,
+                          session: item.session
+                        });
+                      }}
+                    />
+                  ))}
+                </div>
+                {conversationLoadingHint ? (
+                  <div className="affairs-sidebar-empty compact">{conversationLoadingHint}</div>
+                ) : null}
+              </>
             )}
           </section>
         </div>
@@ -3621,6 +3908,397 @@ function AffairsConversationCreateProviderSection({
   );
 }
 
+const AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES = `
+html,
+body {
+  width: 100% !important;
+  height: auto !important;
+  min-height: auto !important;
+  overflow: visible !important;
+  overflow-x: visible !important;
+}
+
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.session-export-document-root {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  overflow: visible !important;
+}
+
+.session-export-document-root,
+.session-export-document-root * {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  text-align: left !important;
+  -webkit-text-fill-color: currentColor !important;
+  text-fill-color: currentColor !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  text-shadow: none !important;
+  mix-blend-mode: normal !important;
+}
+
+.session-export-document-root .markdown-content p,
+.session-export-document-root .markdown-content blockquote,
+.session-export-document-root .markdown-content td {
+  display: block !important;
+}
+
+.session-export-document-root .markdown-content li {
+  display: list-item !important;
+}
+
+.session-export-document-root .markdown-content code,
+.session-export-document-root .markdown-content pre,
+.session-export-document-root .code-block pre,
+.session-export-document-root .tool-call-section pre,
+.session-export-document-root .tool-call-input-preview,
+.session-export-document-root .apply-patch-line-content,
+.session-export-document-root .apply-patch-summary-file {
+  font-family:
+    var(--font-mono, "SF Mono", "Consolas", "Cascadia Code", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", monospace) !important;
+}
+
+.session-export-document-root .thinking-message-label,
+.session-export-document-root .thinking-status-text {
+  background: none !important;
+  color: var(--text-secondary, #475569) !important;
+  -webkit-text-fill-color: currentColor !important;
+  animation: none !important;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .session-export-document-root,
+  .session-export-document-root * {
+    visibility: visible;
+  }
+
+  .session-export-document-root {
+    position: static !important;
+  }
+
+  .session-export-document-root .session-export-print-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .session-export-document-root .message-timeline-export,
+  .session-export-document-root .message-timeline-export .message-list-export {
+    overflow: visible;
+    height: auto;
+    max-height: none;
+  }
+
+  .session-export-document-root .tool-call-header,
+  .session-export-document-root .tool-call-info,
+  .session-export-document-root .task-tool-header,
+  .session-export-document-root .task-tool-heading,
+  .session-export-document-root .task-tool-heading-main,
+  .session-export-document-root .task-tool-list-item,
+  .session-export-document-root .assistant-capability-header,
+  .session-export-document-root .assistant-capability-heading,
+  .session-export-document-root .assistant-capability-heading-main,
+  .session-export-document-root .assistant-capability-row,
+  .session-export-document-root .apply-patch-summary-row,
+  .session-export-document-root .rules-message-toggle {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+  }
+
+  .session-export-document-root .task-tool-list-item,
+  .session-export-document-root .assistant-capability-row,
+  .session-export-document-root .apply-patch-summary-row {
+    row-gap: 4px !important;
+  }
+
+  .session-export-document-root .tool-call-input-preview,
+  .session-export-document-root .rules-message-summary,
+  .session-export-document-root .task-tool-summary-text,
+  .session-export-document-root .task-tool-item-title,
+  .session-export-document-root .task-tool-item-detail,
+  .session-export-document-root .task-tool-item-status,
+  .session-export-document-root .assistant-capability-heading-main strong,
+  .session-export-document-root .assistant-capability-summary,
+  .session-export-document-root .assistant-capability-row-label,
+  .session-export-document-root .assistant-capability-row-value,
+  .session-export-document-root .apply-patch-summary-file,
+  .session-export-document-root .apply-patch-summary-stats,
+  .session-export-document-root .session-title,
+  .session-export-document-root .message-text,
+  .session-export-document-root .markdown-content,
+  .session-export-document-root .thinking-message-text,
+  .session-export-document-root .thinking-message-text :where(p, li, blockquote, strong, em, a, span),
+  .session-export-document-root .thinking-message-label,
+  .session-export-document-root .thinking-status-text {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .session-export-document-root .assistant-capability-summary {
+    display: inline !important;
+  }
+
+  .session-export-document-root .task-tool-list {
+    list-style: decimal !important;
+    padding-left: 24px !important;
+  }
+
+  .session-export-document-root .message-timeline-export .conversation-scroll-to-bottom-button,
+  .session-export-document-root .message-timeline-export .message-metadata-bar,
+  .session-export-document-root .message-timeline-export .retry-button,
+  .session-export-document-root .message-timeline-export .code-copy-button,
+  .session-export-document-root .message-timeline-export .rules-message-action,
+  .session-export-document-root .message-timeline-export .message-origin-detail-popover {
+    display: none !important;
+  }
+
+  .session-export-document-root .message-item,
+  .session-export-document-root .tool-message-row,
+  .session-export-document-root .rules-message-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+`;
+
+async function waitForAffairsSessionExportAnimationFrame(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function waitForAffairsSessionExportTimeout(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
+}
+
+async function waitForAffairsSessionExportFonts(doc: Document, timeoutMs: number): Promise<void> {
+  const fontFaceSet = doc.fonts;
+  if (!fontFaceSet || typeof fontFaceSet.ready === "undefined") {
+    return;
+  }
+  await Promise.race([
+    fontFaceSet.ready.catch(() => undefined),
+    waitForAffairsSessionExportTimeout(timeoutMs)
+  ]);
+}
+
+function waitForAffairsSessionExportImage(image: HTMLImageElement): Promise<void> {
+  if (image.complete) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      image.removeEventListener("load", handleDone);
+      image.removeEventListener("error", handleDone);
+    };
+    const handleDone = () => {
+      cleanup();
+      resolve();
+    };
+    image.addEventListener("load", handleDone, { once: true });
+    image.addEventListener("error", handleDone, { once: true });
+  });
+}
+
+async function waitForAffairsSessionExportImages(root: HTMLElement, timeoutMs: number): Promise<void> {
+  const images = Array.from(root.querySelectorAll("img"));
+  if (images.length === 0) {
+    return;
+  }
+  await Promise.race([
+    Promise.all(images.map((image) => waitForAffairsSessionExportImage(image))),
+    waitForAffairsSessionExportTimeout(timeoutMs)
+  ]);
+}
+
+async function waitForAffairsSessionExportRender(root: HTMLElement | null, doc: Document = document): Promise<void> {
+  await waitForAffairsSessionExportAnimationFrame();
+  await waitForAffairsSessionExportAnimationFrame();
+  await waitForAffairsSessionExportTimeout(420);
+  await waitForAffairsSessionExportFonts(doc, 1800);
+  if (!root) {
+    return;
+  }
+  await waitForAffairsSessionExportImages(root, 1800);
+}
+
+function collectAffairsSessionExportStyles(): string {
+  if (typeof document === "undefined") {
+    return "";
+  }
+  const styleChunks: string[] = [];
+  for (const styleSheet of Array.from(document.styleSheets)) {
+    try {
+      const rules = styleSheet.cssRules;
+      if (!rules || rules.length === 0) {
+        continue;
+      }
+      styleChunks.push(Array.from(rules).map((rule) => rule.cssText).join("\n"));
+    } catch {
+      continue;
+    }
+  }
+  return styleChunks.join("\n");
+}
+
+function collectAffairsSessionExportAttributes(element: HTMLElement): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  for (const attribute of Array.from(element.attributes)) {
+    if (attribute.name === "style") {
+      continue;
+    }
+    attributes[attribute.name] = attribute.value;
+  }
+  return attributes;
+}
+
+function captureAffairsSessionExportLayoutSnapshot(): { shellWidthPx: number | null } {
+  if (typeof document === "undefined") {
+    return { shellWidthPx: null };
+  }
+  const selectors = [
+    ".affairs-conversation-timeline-shell",
+    ".conversation-timeline-shell",
+    ".affairs-conversation-main",
+    ".conversation-main",
+    ".conversation-panel"
+  ];
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || rect.width <= 0) {
+      continue;
+    }
+    return { shellWidthPx: Math.round(rect.width) };
+  }
+  return { shellWidthPx: null };
+}
+
+function AffairsConversationRenameModal({
+  target,
+  value,
+  busySessionId,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  target: AffairsConversationRenameTarget;
+  value: string;
+  busySessionId: string | null;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> | void;
+}) {
+  return (
+    <WorkbenchModal
+      open={target !== null}
+      title={t("shell.renameModalTitle")}
+      description={t("shell.renameModalDescription")}
+      onClose={onClose}
+    >
+      <form className="workbench-rename-form" onSubmit={onSubmit}>
+        <ModalField label={t("shell.renameInputLabel")} htmlFor="affairs-conversation-rename-input">
+          <input
+            id="affairs-conversation-rename-input"
+            type="text"
+            value={value}
+            placeholder={t("shell.renameInputPlaceholder")}
+            maxLength={120}
+            autoFocus
+            onChange={(event) => onChange(event.target.value)}
+          />
+        </ModalField>
+        <ModalActions>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(busySessionId)}
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={!value.trim() || busySessionId === target?.session.sessionId}
+          >
+            {busySessionId === target?.session.sessionId ? t("shell.renamingSession") : t("common.save")}
+          </button>
+        </ModalActions>
+      </form>
+    </WorkbenchModal>
+  );
+}
+
+function AffairsConversationDeleteModal({
+  target,
+  busySessionId,
+  onClose,
+  onConfirm
+}: {
+  target: AffairsConversationDeleteTarget;
+  busySessionId: string | null;
+  onClose: () => void;
+  onConfirm: () => Promise<void> | void;
+}) {
+  return (
+    <WorkbenchModal
+      open={target !== null}
+      title={t("shell.deleteSessionConfirmTitle")}
+      description={t("shell.deleteSessionConfirmDescription")}
+      onClose={onClose}
+    >
+      <ModalSection>
+        {target ? <p>{target.session.title || t("conversation.titleFallback")}</p> : null}
+      </ModalSection>
+      <ModalActions>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={Boolean(busySessionId)}
+          onClick={onClose}
+        >
+          {t("common.cancel")}
+        </button>
+        <button
+          type="button"
+          className="workbench-danger-button"
+          disabled={busySessionId === target?.session.sessionId}
+          onClick={() => {
+            void onConfirm();
+          }}
+        >
+          {busySessionId === target?.session.sessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+        </button>
+      </ModalActions>
+    </WorkbenchModal>
+  );
+}
+
 function AffairsConversationCreateModal() {
   const {
     conversationCreateModalOpen,
@@ -3818,6 +4496,7 @@ function AffairsLightweightConversationDraftState(input: {
                     session: event.session,
                     bootstrapMessages: []
                   });
+                  void reloadLightweightConversationSessions();
                   return;
                 }
 
@@ -5070,8 +5749,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const { showToast } = useToast();
   const platform = usePlatform();
   const createNameInputId = useId();
-  const shouldRenderGuardStage = !initGuard.initialized || initGuard.loading || initGuard.unavailable;
-
   const favoriteFolderPathSet = useMemo(
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
     [favoriteEntries]
@@ -5808,7 +6485,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     return createPortal(content, document.body);
   };
 
-  if (shouldRenderGuardStage || activeSection === "conversation") {
+  if (activeSection === "conversation") {
     return <AffairsConversationInitState workspaceId={workspaceId} />;
   }
 
@@ -6322,6 +6999,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
 
 export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: AffairsAuxiliaryPanelProps) {
   const {
+    activeSection,
     binding,
     assistantContext,
     auxiliaryTab,
@@ -6334,6 +7012,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     initGuard,
     indexStatus,
     libraryConfig,
+    navigateLibraryFolder,
     selectAuxiliaryTab,
     toggleDetailViewerCollapsed,
     selectedObject,
@@ -6342,7 +7021,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     selectedTagPaths
   } = useAffairsWorkbenchInternal();
   const [viewerReady, setViewerReady] = useState(false);
-  const guardActive = !initGuard.initialized;
+  const conversationGuardActive = activeSection === "conversation" && !initGuard.initialized;
 
   const selectedAutomationRuns = useMemo(() => {
     if (selectedObject.section !== "automation" || !selectedObject.record) {
@@ -6387,7 +7066,11 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     return () => window.clearTimeout(timer);
   }, [auxiliaryTab, selectedObject]);
 
-  if (initGuard.loading) {
+  useEffect(() => {
+    setDocumentSummaryExpanded(false);
+  }, [selectedObject]);
+
+  if (activeSection === "conversation" && initGuard.loading) {
     return (
       <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
         <div className="affairs-sidebar-block-header">
@@ -6401,7 +7084,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     );
   }
 
-  if (initGuard.unavailable) {
+  if (activeSection === "conversation" && initGuard.unavailable) {
     return (
       <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
         <div className="affairs-sidebar-block-header">
@@ -6452,7 +7135,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
       </div>
 
       <div className="workbench-auxiliary-body" data-scrollbar-autohide="true">
-        {guardActive ? (
+        {conversationGuardActive ? (
           auxiliaryTab === "assistant"
             ? <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
             : <div className="affairs-stage-empty">{t("shell.affairsInitRouteGuardAuxiliaryEmpty")}</div>
@@ -6463,29 +7146,58 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
             ) : selectedObject.record ? (
               <div className="affairs-detail-panel">
                 <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
-                  <div className="affairs-detail-headline">
-                    <div>
+                  <div className="affairs-detail-headline affairs-detail-headline-document">
+                    <div className="affairs-detail-headline-main">
+                      <span className="affairs-inline-pill">{t("shell.affairsLibraryDocumentDetailTitle")}</span>
                       <h2>{selectedObject.record.displayName}</h2>
-                      <p>{selectedObject.record.summary}</p>
+                      <div className="affairs-detail-summary-block">
+                        <p
+                          className="affairs-detail-summary"
+                          data-expanded={documentSummaryExpanded ? "true" : undefined}
+                        >
+                          {selectedObject.record.summary}
+                        </p>
+                        {shouldShowDocumentSummaryToggle(selectedObject.record.summary) ? (
+                          <button
+                            type="button"
+                            className="affairs-detail-summary-toggle"
+                            aria-expanded={documentSummaryExpanded}
+                            onClick={() => setDocumentSummaryExpanded((current) => !current)}
+                          >
+                            {documentSummaryExpanded
+                              ? t("shell.affairsDocumentSummaryCollapseAction")
+                              : t("shell.affairsDocumentSummaryExpandAction")}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                    <span className="affairs-inline-pill">{t("shell.affairsLibraryDocumentDetailTitle")}</span>
                   </div>
                   <dl className="affairs-detail-meta-list">
                     <div>
                       <dt>{t("shell.affairsDetailMetaPath")}</dt>
-                      <dd>{selectedObject.record.filePath}</dd>
+                      <dd>
+                        <AffairsDetailPathBreadcrumbs
+                          path={selectedObject.record.filePath}
+                          rootLabel={t("shell.affairsLibraryFolderRootLabel")}
+                          onNavigate={navigateLibraryFolder}
+                        />
+                      </dd>
                     </div>
                     <div>
-                      <dt>{t("shell.affairsDetailMetaTags")}</dt>
-                      <dd>{selectedObject.record.tags.join(" · ") || t("common.none")}</dd>
+                      <dt>{t("shell.affairsLibraryDocumentSize")}</dt>
+                      <dd>{formatLibrarySize(selectedObject.record.sizeBytes)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("shell.affairsLibraryDocumentCreatedAt")}</dt>
+                      <dd>{formatFullDateTime(selectedObject.record.createdAt)}</dd>
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryDocumentUpdatedAt")}</dt>
-                      <dd>{formatRelativeMeta(selectedObject.record.updatedAt)}</dd>
+                      <dd>{formatFullDateTime(selectedObject.record.updatedAt)}</dd>
                     </div>
                     <div>
                       <dt>{t("shell.affairsLibraryMirrorRootLabel")}</dt>
-                      <dd>{libraryConfig?.mirrorRoot || t("common.none")}</dd>
+                      <dd>{libraryConfig?.mirrorRoot?.trim() || t("shell.affairsLibraryMirrorRootEmpty")}</dd>
                     </div>
                   </dl>
                   <div className="affairs-detail-tag-editor">
@@ -6499,43 +7211,46 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                     <button
                       type="button"
                       className="secondary-button"
-                      disabled={!localMirrorTarget}
-                      onClick={async () => {
-                        if (!localMirrorTarget) {
-                          return;
-                        }
-                        const result = await getCodingNSDesktopBridge().fs.openFile(localMirrorTarget.absolutePath);
-                        if (!result.ok) {
-                          showToast({
-                            title: t("shell.affairsLibraryOpenLocalFileFailed"),
-                            description: result.detail ?? localMirrorTarget.absolutePath,
-                            tone: "error"
-                          });
-                        }
-                      }}
+                      onClick={() => navigateLibraryFolder(getDocumentParentPath(selectedObject.record.filePath) || null)}
                     >
-                      {t("shell.affairsLibraryOpenLocalFileAction")}
+                      {t("shell.affairsLibraryLocateFolderAction")}
                     </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!localMirrorTarget}
-                      onClick={async () => {
-                        if (!localMirrorTarget) {
-                          return;
-                        }
-                        const result = await getCodingNSDesktopBridge().fs.revealInFileManager(localMirrorTarget.absolutePath);
-                        if (!result.ok) {
-                          showToast({
-                            title: t("shell.affairsLibraryRevealLocalFileFailed"),
-                            description: result.detail ?? localMirrorTarget.absolutePath,
-                            tone: "error"
-                          });
-                        }
-                      }}
-                    >
-                      {t("shell.affairsLibraryRevealLocalFileAction")}
-                    </button>
+                    {localMirrorTarget ? (
+                      <>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={async () => {
+                            const result = await getCodingNSDesktopBridge().fs.openFile(localMirrorTarget.absolutePath);
+                            if (!result.ok) {
+                              showToast({
+                                title: t("shell.affairsLibraryOpenLocalFileFailed"),
+                                description: result.detail ?? localMirrorTarget.absolutePath,
+                                tone: "error"
+                              });
+                            }
+                          }}
+                        >
+                          {t("shell.affairsLibraryOpenLocalFileAction")}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={async () => {
+                            const result = await getCodingNSDesktopBridge().fs.revealInFileManager(localMirrorTarget.absolutePath);
+                            if (!result.ok) {
+                              showToast({
+                                title: t("shell.affairsLibraryRevealLocalFileFailed"),
+                                description: result.detail ?? localMirrorTarget.absolutePath,
+                                tone: "error"
+                              });
+                            }
+                          }}
+                        >
+                          {t("shell.affairsLibraryRevealLocalFileAction")}
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </section>
                 <div className="affairs-detail-viewer-shell" data-collapsed={detailViewerCollapsed ? "true" : undefined}>
@@ -9482,6 +10197,14 @@ function AffairsLibraryFileViewerSurface({
   open: boolean;
   onClose: () => void;
 }) {
+  const previewLoader = useMemo(
+    () => (targetWorkspaceId: string, targetFilePath: string) =>
+      getAffairsLibraryPreviewWithOptions(targetWorkspaceId, targetFilePath, {
+        officeDisplayMode
+      }),
+    [officeDisplayMode]
+  );
+
   return (
     <FileViewerPanel
       workspaceId={workspaceId}
@@ -9491,7 +10214,7 @@ function AffairsLibraryFileViewerSurface({
       windowTitle={windowTitle}
       onClose={onClose}
       onSaved={() => undefined}
-      previewLoader={getAffairsLibraryPreview}
+      previewLoader={previewLoader}
       saveDisabledReason={t("shell.affairsLibraryViewerEditDisabled")}
       officeDisplayMode={officeDisplayMode}
     />
@@ -10413,6 +11136,14 @@ function buildAffairsLibrarySnapshotCacheKey(workspaceId: string) {
   return `affairs.library.snapshot.${workspaceId}`;
 }
 
+function buildAffairsLightweightConversationSessionsCacheKey(workspaceId: string) {
+  return `affairs.conversation.lightweight.sessions.${workspaceId}`;
+}
+
+function buildAffairsAgentConversationSessionsCacheKey(workspaceId: string) {
+  return `affairs.conversation.agent.sessions.${workspaceId}`;
+}
+
 function buildAffairsLibraryConfigCacheKey(workspaceId: string) {
   return `affairs.library.config.${workspaceId}`;
 }
@@ -10463,6 +11194,28 @@ function writeCachedLibraryDocumentPage(
   page: AffairsLibraryDocumentListDto
 ) {
   writeViewSnapshot(buildAffairsLibraryDocumentPageCacheKey(workspaceId, state), page);
+}
+
+function readCachedAffairsLightweightConversationSessions(workspaceId: string) {
+  return readViewSnapshot<SessionSummaryDto[]>(
+    buildAffairsLightweightConversationSessionsCacheKey(workspaceId),
+    AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS
+  );
+}
+
+function writeCachedAffairsLightweightConversationSessions(workspaceId: string, sessions: SessionSummaryDto[]) {
+  writeViewSnapshot(buildAffairsLightweightConversationSessionsCacheKey(workspaceId), sessions);
+}
+
+function readCachedAffairsAgentConversationSessions(workspaceId: string) {
+  return readViewSnapshot<SessionSummaryDto[]>(
+    buildAffairsAgentConversationSessionsCacheKey(workspaceId),
+    AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS
+  );
+}
+
+function writeCachedAffairsAgentConversationSessions(workspaceId: string, sessions: SessionSummaryDto[]) {
+  writeViewSnapshot(buildAffairsAgentConversationSessionsCacheKey(workspaceId), sessions);
 }
 
 function mergeDocumentPageItems(
@@ -11353,6 +12106,22 @@ function resolveAutomationTargetLabel(
   return sessionTitleById[sessionId] ?? t("shell.affairsAutomationTargetFallback");
 }
 
+function resolveConversationSidebarLoadingHint(input: {
+  lightweightLoading: boolean;
+  agentLoading: boolean;
+}) {
+  if (input.lightweightLoading && input.agentLoading) {
+    return t("shell.affairsConversationSidebarLoadingAll");
+  }
+  if (input.agentLoading) {
+    return t("shell.affairsConversationSidebarLoadingAgent");
+  }
+  if (input.lightweightLoading) {
+    return t("shell.affairsConversationSidebarLoadingLightweight");
+  }
+  return null;
+}
+
 function resolveAffairsConversationKindLabel(kind: AffairsConversationKind) {
   return kind === "agent"
     ? t("shell.affairsConversationKindAgent")
@@ -11696,6 +12465,82 @@ function formatRelativeMeta(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatFullDateTime(value: string | null | undefined) {
+  if (!value) {
+    return t("common.unknown");
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return t("common.unknown");
+  }
+  return new Intl.DateTimeFormat(userPreferenceStore.getState().profile.language ?? "zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function shouldShowDocumentSummaryToggle(summary: string | null | undefined) {
+  const normalized = summary?.trim() ?? "";
+  if (!normalized) {
+    return false;
+  }
+  const lines = normalized.split(/?
+/).filter((line) => line.trim().length > 0);
+  return lines.length > 3 || normalized.length > 120;
+}
+
+function buildDocumentPathSegments(filePath: string) {
+  const normalized = normalizeFolderPath(filePath);
+  if (!normalized) {
+    return [] as Array<{ label: string; path: string | null }>;
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.map((segment, index) => ({
+    label: segment,
+    path: index < segments.length - 1 ? segments.slice(0, index + 1).join("/") : getDocumentParentPath(normalized) || null
+  }));
+}
+
+function AffairsDetailPathBreadcrumbs({
+  path,
+  rootLabel,
+  onNavigate
+}: {
+  path: string;
+  rootLabel: string;
+  onNavigate: (folderPath: string | null) => void;
+}) {
+  const items = useMemo(() => buildDocumentPathSegments(path), [path]);
+  return (
+    <span className="affairs-detail-path-breadcrumbs">
+      <button
+        type="button"
+        className="affairs-detail-path-segment root"
+        onClick={() => onNavigate(null)}
+      >
+        {rootLabel}
+      </button>
+      {items.map((item, index) => (
+        <Fragment key={`${item.label}:${item.path ?? index}`}>
+          <span className="affairs-detail-path-separator" aria-hidden="true">/</span>
+          <button
+            type="button"
+            className={index === items.length - 1 ? "affairs-detail-path-segment current" : "affairs-detail-path-segment"}
+            onClick={() => onNavigate(item.path)}
+          >
+            {item.label}
+          </button>
+        </Fragment>
+      ))}
+    </span>
+  );
 }
 
 function formatFinderDateTime(value: string | null | undefined) {

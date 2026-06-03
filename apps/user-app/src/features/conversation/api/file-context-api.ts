@@ -73,6 +73,7 @@ export type FilePreviewKind =
   | "html"
   | "image"
   | "pdf"
+  | "office"
   | "binary"
   | "unsupported";
 
@@ -96,6 +97,13 @@ export interface FilePreviewDto {
   updatedAt: string | null;
   previewPath: string | null;
   previewUrl: string | null;
+  onlyOffice: {
+    apiScriptUrl: string;
+    editorMode: "edit" | "view";
+    documentUrl: string;
+    callbackUrl: string;
+    editorConfig: Record<string, unknown>;
+  } | null;
   capabilities: FilePreviewCapabilitiesDto;
 }
 
@@ -103,6 +111,10 @@ export interface FilePreviewLinkDto {
   previewPath: string;
   previewUrl: string;
   expiresAt: string;
+}
+
+export interface FilePreviewRequestOptions {
+  officeDisplayMode?: "default" | "reading";
 }
 
 export function getOfficeArtifactPreviewLink(artifactId: string) {
@@ -259,11 +271,19 @@ export function getRecentModifiedFiles(
   );
 }
 
-export function getFilePreview(workspaceId: string, filePath: string) {
+export function getFilePreview(
+  workspaceId: string,
+  filePath: string,
+  options?: FilePreviewRequestOptions
+) {
   const search = new URLSearchParams({
     workspaceId,
     path: filePath
   });
+
+  if (options?.officeDisplayMode === "reading") {
+    search.set("displayMode", "reading");
+  }
 
   return httpClient.request<FilePreviewDto>(`/api/files/preview?${search.toString()}`);
 }

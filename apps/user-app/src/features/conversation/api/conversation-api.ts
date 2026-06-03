@@ -156,6 +156,17 @@ export interface AffairsLibraryIndexStatusDto {
   runningTaskId: string | null;
   runningStage: string | null;
   errorSummary: string | null;
+  progress?: AffairsLibraryIndexProgressDto | null;
+}
+
+export interface AffairsLibraryIndexProgressDto {
+  scannedCount: number;
+  indexedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  unchangedCount: number;
+  totalCount: number | null;
+  maxConcurrency: number | null;
 }
 
 export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "fresh" | "failed";
@@ -316,6 +327,7 @@ export type AffairsLibraryPreviewKindDto =
   | "html"
   | "image"
   | "pdf"
+  | "office"
   | "binary"
   | "unsupported";
 
@@ -339,6 +351,13 @@ export interface AffairsLibraryPreviewDto {
   updatedAt: string | null;
   previewPath: string | null;
   previewUrl: string | null;
+  onlyOffice: {
+    apiScriptUrl: string;
+    editorMode: "edit" | "view";
+    documentUrl: string;
+    callbackUrl: string;
+    editorConfig: Record<string, unknown>;
+  } | null;
   capabilities: AffairsLibraryPreviewCapabilitiesDto;
 }
 
@@ -996,6 +1015,10 @@ export interface WorkbenchSnapshotItemDto {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
   childWorktrees?: WorkbenchWorktreeNodeDto[];
+  affairsAssistantSessions?: SessionSummaryDto[];
+  affairsAssistantProjectId?: string | null;
+  affairsAssistantProjectWorkspaceId?: string | null;
+  affairsAssistantSessionsUpdatedAt?: string | null;
   collapsed?: boolean;
 }
 
@@ -1129,6 +1152,15 @@ export type AffairsLightweightSessionStreamEventDto =
       acceptedAt: string;
       clientRequestId: string;
       userMessage: HistoryMessageDto;
+    }
+  | {
+      type: "tool";
+      toolCallId: string;
+      toolName: string;
+      status: "running" | "completed" | "failed";
+      detail: string | null;
+      input: string | null;
+      output: string | null;
     }
   | {
       type: "delta";
@@ -1537,9 +1569,23 @@ export function listAffairsLibraryDocuments(
 }
 
 export function getAffairsLibraryPreview(workspaceId: string, filePath: string) {
+  return getAffairsLibraryPreviewWithOptions(workspaceId, filePath);
+}
+
+export function getAffairsLibraryPreviewWithOptions(
+  workspaceId: string,
+  filePath: string,
+  options?: {
+    officeDisplayMode?: "default" | "reading";
+  }
+) {
   const search = new URLSearchParams({
     path: filePath
   });
+
+  if (options?.officeDisplayMode === "reading") {
+    search.set("displayMode", "reading");
+  }
 
   return httpClient.request<AffairsLibraryPreviewDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-preview?${search.toString()}`

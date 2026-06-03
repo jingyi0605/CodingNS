@@ -186,6 +186,29 @@ export interface BrowserBridgeStatusDto {
   version: string | null;
 }
 
+export interface OnlyOfficeSettingsDto {
+  enabled: boolean;
+  serverUrl: string | null;
+  publicBaseUrl: string | null;
+  callbackBaseUrl: string | null;
+  userDisplayName: string | null;
+  userAvatarUrl: string | null;
+  jwtSecretConfigured: boolean;
+  updatedAt: string | null;
+}
+
+export interface OnlyOfficeStatusDto {
+  state: "disabled" | "misconfigured" | "ready" | "warning" | "error";
+  summary: string;
+  checkedAt: string;
+  checks: Array<{
+    key: string;
+    label: string;
+    status: "pass" | "warn" | "fail" | "skip";
+    detail: string;
+  }>;
+}
+
 export async function fetchDocumentTemplates(status: DocumentTemplateStatus = "active"): Promise<DocumentTemplateDto[]> {
   const query = new URLSearchParams({ status });
   const response = await httpClient.request<{ items: DocumentTemplateDto[] }>(
@@ -360,6 +383,30 @@ export async function fetchBrowserTaskExecution(taskId: string): Promise<Browser
 
 export async function fetchBrowserBridgeStatus(): Promise<BrowserBridgeStatusDto> {
   return await httpClient.request<BrowserBridgeStatusDto>("/api/office/browser/bridge-status");
+}
+
+export async function fetchOnlyOfficeSettings(): Promise<OnlyOfficeSettingsDto> {
+  return await httpClient.request<OnlyOfficeSettingsDto>("/api/office/onlyoffice/settings");
+}
+
+export async function updateOnlyOfficeSettings(input: {
+  enabled: boolean;
+  serverUrl?: string | null;
+  publicBaseUrl?: string | null;
+  callbackBaseUrl?: string | null;
+  userDisplayName?: string | null;
+  userAvatarUrl?: string | null;
+  jwtSecret?: string | null;
+  clearJwtSecret?: boolean;
+}): Promise<OnlyOfficeSettingsDto> {
+  return await httpClient.request<OnlyOfficeSettingsDto>("/api/office/onlyoffice/settings", {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function fetchOnlyOfficeStatus(): Promise<OnlyOfficeStatusDto> {
+  return await httpClient.request<OnlyOfficeStatusDto>("/api/office/onlyoffice/status");
 }
 
 export async function cancelBrowserTaskExecution(taskId: string): Promise<{

@@ -3,8 +3,8 @@ import {
   useEffect,
   useId,
   type HTMLAttributes,
+  type Ref,
   type ReactNode,
-  type RefObject
 } from "react";
 
 import { ModalCloseButton } from "./ModalCloseButton";
@@ -27,8 +27,9 @@ interface DesktopModalProps {
   readonly className?: string;
   readonly bodyClassName?: string;
   readonly titleClassName?: string;
-  readonly titleRef?: RefObject<HTMLHeadingElement | null>;
-  readonly titleProps?: Omit<HTMLAttributes<HTMLHeadingElement>, "id" | "children" | "className" | "ref">;
+  readonly titleRef?: Ref<HTMLHeadingElement>;
+  readonly titleProps?: Omit<HTMLAttributes<HTMLHeadingElement>, "id" | "children" | "className" | "ref">
+    & Record<`data-${string}`, string | undefined>;
   readonly headerActions?: ReactNode;
   readonly beforeCloseButton?: ReactNode;
   readonly footer?: ReactNode;

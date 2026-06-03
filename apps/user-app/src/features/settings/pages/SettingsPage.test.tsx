@@ -386,6 +386,35 @@ describe("SettingsPage", () => {
     expect(within(dialog).getByText(t("plugins.permissionAuditTitle"))).toBeInTheDocument();
   });
 
+  it("桌面设置页的能力管理分类会提供 ONLYOFFICE 设置入口", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    authStore.hydrate(createAuthSession());
+    renderSettingsPage();
+
+    const trigger = screen.getByRole("button", { name: t("settings.skillOnlyOfficeOpenSettingsAction") });
+    expect(trigger).toBeInTheDocument();
+
+    await userEvent.click(trigger);
+
+    expect(screen.queryByRole("dialog", { name: t("settings.skillConfigModalTitle") })).not.toBeInTheDocument();
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillOnlyOfficeModalTitle") });
+    expect(within(dialog).getByRole("textbox", { name: t("settings.skillOnlyOfficeServerUrlLabel") })).toHaveValue("http://127.0.0.1:8088");
+    expect(within(dialog).getByRole("button", { name: t("settings.skillOnlyOfficeCheckAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.skillOnlyOfficeSaveAction") })).toBeInTheDocument();
+  });
+
   it("移动设置页可以打开插件管理弹层", async () => {
     setViewportWidth(390);
     renderSettingsPage();
@@ -1156,6 +1185,150 @@ function createJsonResponse(payload: unknown): Response {
       "Content-Type": "application/json"
     }
   });
+}
+
+function matchSkillManagementPanelRequest(
+  url: string,
+  method: string,
+  init?: RequestInit
+): Response | null {
+  if (url.endsWith("/api/skills/overview") && method === "GET") {
+    return createJsonResponse(createSkillOverviewResponse());
+  }
+
+  if (url.endsWith("/api/providers/catalog") && method === "GET") {
+    return createJsonResponse({
+      items: [
+        {
+          providerId: "codex",
+          targetCli: "codex",
+          displayName: "Codex",
+          enabled: true
+        },
+        {
+          providerId: "claude-code",
+          targetCli: "claude-code",
+          displayName: "Claude Code",
+          enabled: true
+        }
+      ]
+    });
+  }
+
+  if (url.includes("/api/office/document-templates") && method === "GET") {
+    return createJsonResponse({
+      items: [
+        {
+          id: "template-1",
+          templateKey: "daily-report",
+          displayName: "项目日报模板",
+          templateVersion: "1.0.0",
+          engine: "doct",
+          status: "active",
+          templateSourcePath: "/templates/daily-report.docx"
+        }
+      ]
+    });
+  }
+
+  if (url.includes("/api/office/browser/profiles") && method === "GET") {
+    return createJsonResponse({
+      items: []
+    });
+  }
+
+  if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
+    return createJsonResponse({
+      provider: "opencli",
+      availability: "ready",
+      detail: null,
+      checkedAt: "2026-06-03T10:00:00.000Z",
+      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
+      version: "0.1.0"
+    });
+  }
+
+  if (url.includes("/api/office/tasks") && method === "GET") {
+    return createJsonResponse({ items: [] });
+  }
+
+  if (url.includes("/api/office/ops/targets") && method === "GET") {
+    return createJsonResponse({ items: [] });
+  }
+
+  if (url.endsWith("/api/workspaces") && method === "GET") {
+    return createJsonResponse({
+      items: [
+        {
+          id: "workspace-1",
+          name: "当前工作区",
+          rootPath: "/tmp/workspace-1",
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        }
+      ]
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "GET") {
+    return createJsonResponse({
+      enabled: true,
+      serverUrl: "http://127.0.0.1:8088",
+      publicBaseUrl: "http://127.0.0.1:3002",
+      callbackBaseUrl: "",
+      userDisplayName: "产品演示账号",
+      userAvatarUrl: "https://example.com/avatar.png",
+      jwtSecretConfigured: true,
+      updatedAt: "2026-06-03T10:00:00.000Z"
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/status") && method === "GET") {
+    return createJsonResponse({
+      state: "ready",
+      summary: "ONLYOFFICE 服务和回调地址都已通过基础检查，可以启用 Office 预览。",
+      checkedAt: "2026-06-03T10:00:00.000Z",
+      checks: [
+        {
+          key: "serverUrl",
+          label: "ONLYOFFICE 服务地址",
+          status: "pass",
+          detail: "http://127.0.0.1:8088"
+        }
+      ]
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+
+    return createJsonResponse({
+      enabled: body.enabled === true,
+      serverUrl: body.serverUrl ?? null,
+      publicBaseUrl: body.publicBaseUrl ?? null,
+      callbackBaseUrl: body.callbackBaseUrl ?? null,
+      userDisplayName: body.userDisplayName ?? null,
+      userAvatarUrl: body.userAvatarUrl ?? null,
+      jwtSecretConfigured: Boolean(body.jwtSecret),
+      updatedAt: "2026-06-03T10:01:00.000Z"
+    });
+  }
+
+  if (url.endsWith("/api/opencli/check") && method === "POST") {
+    return createJsonResponse({
+      ok: true,
+      provider: "opencli"
+    });
+  }
+
+  if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+    return createJsonResponse({
+      version: "0.1.0",
+      items: []
+    });
+  }
+
+  return null;
 }
 
 function createSkillOverviewResponse() {

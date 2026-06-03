@@ -645,6 +645,103 @@ describe("SkillManagementPanel", () => {
     expect(within(opsModal).getByDisplayValue("/Users/jackson/.ssh/id_ed25519")).toBeInTheDocument();
   });
 
+  it("ONLYOFFICE 配置会显示单独的设置按钮，并在独立弹窗里编辑", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const onlyOfficeResponse = matchOnlyOfficeRequest(url, method, init);
+
+      if (onlyOfficeResponse) {
+        return onlyOfficeResponse;
+      }
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse({
+          imported: false,
+          uploaded: false,
+          assistantUploaded: false
+        }));
+      }
+
+      if (url.endsWith("/api/providers/catalog") && method === "GET") {
+        return createJsonResponse({ items: createProviderCatalogResponse() });
+      }
+
+      if (url.includes("/api/office/document-templates") && method === "GET") {
+        return createJsonResponse({ items: createDocumentTemplatesResponse() });
+      }
+
+      if (url.includes("/api/office/browser/profiles") && method === "GET") {
+        return createJsonResponse({ items: createBrowserProfilesResponse() });
+      }
+
+      if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
+        return createJsonResponse({
+          provider: "opencli",
+          availability: "ready",
+          detail: null,
+          checkedAt: "2026-05-17T08:00:00.000Z",
+          installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
+          version: "0.1.0"
+        });
+      }
+
+      if (url.endsWith("/api/workspaces") && method === "GET") {
+        return createJsonResponse(createWorkspaceListResponse());
+      }
+
+      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
+        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
+      }
+
+      if (url.includes("/api/office/tasks") && method === "GET") {
+        return createJsonResponse({
+          items: url.includes("taskType=browser")
+            ? createBrowserOfficeTasksResponse()
+            : createOfficeTasksResponse()
+        });
+      }
+
+      if (url.includes("/api/office/ops/targets") && method === "GET") {
+        return createJsonResponse({ items: createOpsTargetsResponse() });
+      }
+
+      if (url.endsWith("/api/opencli/check") && method === "POST") {
+        return createJsonResponse(createOpenCliCheckResponse());
+      }
+
+      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
+        return createJsonResponse(createOpenCliCatalogResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    renderPanel("workspace-1");
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") }));
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("settings.skillOnlyOfficeOpenSettingsAction") })
+    );
+
+    const onlyOfficeModal = await screen.findByRole("dialog", { name: t("settings.skillOnlyOfficeModalTitle") });
+    expect(within(onlyOfficeModal).getByDisplayValue("http://127.0.0.1:8088")).toBeInTheDocument();
+    expect(within(onlyOfficeModal).getByDisplayValue("http://127.0.0.1:3002")).toBeInTheDocument();
+    expect(within(onlyOfficeModal).getByDisplayValue("产品演示账号")).toBeInTheDocument();
+    expect(within(onlyOfficeModal).getByDisplayValue("https://example.com/avatar.png")).toBeInTheDocument();
+    expect(
+      within(onlyOfficeModal).getByRole("button", { name: t("settings.skillOnlyOfficeCheckAction") })
+    ).toBeInTheDocument();
+    expect(
+      within(onlyOfficeModal).getByRole("button", { name: t("settings.skillOnlyOfficeSaveAction") })
+    ).toBeInTheDocument();
+  });
+
   it("可以查看工作区会话 MCP 状态", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -772,6 +869,33 @@ function createJsonResponse(payload: unknown): Response {
       "Content-Type": "application/json"
     }
   });
+}
+
+function matchOnlyOfficeRequest(url: string, method: string, init?: RequestInit): Response | null {
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "GET") {
+    return createJsonResponse(createOnlyOfficeSettingsResponse());
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/status") && method === "GET") {
+    return createJsonResponse(createOnlyOfficeStatusResponse());
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+
+    return createJsonResponse({
+      enabled: body.enabled === true,
+      serverUrl: body.serverUrl ?? null,
+      publicBaseUrl: body.publicBaseUrl ?? null,
+      callbackBaseUrl: body.callbackBaseUrl ?? null,
+      userDisplayName: body.userDisplayName ?? null,
+      userAvatarUrl: body.userAvatarUrl ?? null,
+      jwtSecretConfigured: Boolean(body.jwtSecret),
+      updatedAt: "2026-06-03T10:00:00.000Z"
+    });
+  }
+
+  return null;
 }
 
 function createSkillOverviewResponse(
@@ -902,6 +1026,41 @@ function createSkillOverviewResponse(
     conflictedEntries: [],
     diagnostics: [],
     scannedAt: "2026-04-14T10:10:00.000Z"
+  };
+}
+
+function createOnlyOfficeSettingsResponse() {
+  return {
+    enabled: true,
+    serverUrl: "http://127.0.0.1:8088",
+    publicBaseUrl: "http://127.0.0.1:3002",
+    callbackBaseUrl: "",
+    userDisplayName: "产品演示账号",
+    userAvatarUrl: "https://example.com/avatar.png",
+    jwtSecretConfigured: true,
+    updatedAt: "2026-06-03T09:00:00.000Z"
+  };
+}
+
+function createOnlyOfficeStatusResponse() {
+  return {
+    state: "ready",
+    summary: "ONLYOFFICE 服务和回调地址都已通过基础检查，可以启用 Office 预览。",
+    checkedAt: "2026-06-03T09:00:00.000Z",
+    checks: [
+      {
+        key: "serverUrl",
+        label: "ONLYOFFICE 服务地址",
+        status: "pass",
+        detail: "http://127.0.0.1:8088"
+      },
+      {
+        key: "publicBaseUrl",
+        label: "CodingNS 对外地址",
+        status: "pass",
+        detail: "http://127.0.0.1:3002"
+      }
+    ]
   };
 }
 

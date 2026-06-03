@@ -19089,6 +19089,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .file-viewer-preview-overview-shell > .file-viewer-html-frame-shell,
 .file-viewer-preview-overview-shell > .file-viewer-media-shell,
 .file-viewer-preview-overview-shell > .file-viewer-pdf-shell,
+.file-viewer-preview-overview-shell > .file-viewer-office-shell,
 .file-viewer-preview-overview-shell > .file-viewer-markdown {
   flex: 1 1 auto;
   width: 100%;
@@ -19156,7 +19157,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .file-viewer-media-shell,
-.file-viewer-pdf-shell {
+.file-viewer-pdf-shell,
+.file-viewer-office-shell {
   display: flex;
   flex: 1 1 auto;
   width: 100%;
@@ -19211,6 +19213,17 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   border: none;
   border-radius: 14px;
   background: #ffffff;
+}
+
+.file-viewer-office-stage {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: clamp(620px, 72vh, 980px);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 12px 40px color-mix(in srgb, #0f172a 12%, transparent);
 }
 
 .workbench-modal-layer .workbench-modal-card textarea.file-viewer-editor {

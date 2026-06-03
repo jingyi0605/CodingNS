@@ -38,9 +38,20 @@ import {
 } from "../../static-html-editor";
 import {
   getFilePreview,
+  type FilePreviewRequestOptions,
   saveFileContent,
   type FilePreviewDto
 } from "../api/file-context-api";
+
+declare global {
+  interface Window {
+    DocsAPI?: {
+      DocEditor: new (elementId: string, config: Record<string, unknown>) => {
+        destroyEditor?: () => void;
+      };
+    };
+  }
+}
 
 export interface FileViewerModalProps {
   workspaceId: string | null | undefined;
@@ -64,8 +75,13 @@ export interface FileViewerPanelProps {
   windowTitle?: string | null;
   showDetachAction?: boolean;
   onDetach?: () => void | Promise<void>;
-  previewLoader?: (workspaceId: string, filePath: string) => Promise<FilePreviewDto>;
+  previewLoader?: (
+    workspaceId: string,
+    filePath: string,
+    options?: FilePreviewRequestOptions
+  ) => Promise<FilePreviewDto>;
   saveDisabledReason?: string | null;
+  officeDisplayMode?: "default" | "reading";
 }
 
 type ViewerMode = "preview" | "presentation" | "code" | "edit";
@@ -298,7 +314,8 @@ export function FileViewerPanel({
   showDetachAction = false,
   onDetach,
   previewLoader = getFilePreview,
-  saveDisabledReason = null
+  saveDisabledReason = null,
+  officeDisplayMode = "default"
 }: FileViewerPanelProps) {
   const titleElementRef = useRef<HTMLHeadingElement | null>(null);
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
@@ -474,7 +491,9 @@ export function FileViewerPanel({
       setLoading(true);
 
       try {
-        const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
+        const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+          officeDisplayMode
+        });
 
         if (!cancelled) {
           applyPreviewState(nextPreview, safeFilePath, {
@@ -511,7 +530,7 @@ export function FileViewerPanel({
     return () => {
       cancelled = true;
     };
-  }, [filePath, open, workspaceId]);
+  }, [filePath, officeDisplayMode, open, previewLoader, workspaceId]);
 
   if (!open || !filePath) {
     return null;
@@ -533,7 +552,9 @@ export function FileViewerPanel({
         : editorContent;
 
       await saveFileContent(safeWorkspaceId, safeFilePath, nextContent, preview.version);
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
+      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+        officeDisplayMode
+      });
       applyPreviewState(nextPreview, safeFilePath, {
         preserveMode: false,
         setPreview,
@@ -570,7 +591,9 @@ export function FileViewerPanel({
     setLoading(true);
 
     try {
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath);
+      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+        officeDisplayMode
+      });
       applyPreviewState(nextPreview, safeFilePath, {
         preserveMode: true,
         setPreview,
@@ -898,6 +921,15 @@ export function FileViewerPanel({
             overviewMarkers={overviewMarkers}
             overviewTotalLines={overviewTotalLines}
           />
+        ) : effectiveMode === "preview" && previewKind === "office" ? (
+          <OnlyOfficePreview
+            onlyOffice={preview?.onlyOffice ?? null}
+            filePath={filePath}
+            overviewMarkers={overviewMarkers}
+            overviewTotalLines={overviewTotalLines}
+            mode={platform.isMobile ? "mobile" : "desktop"}
+            displayMode={officeDisplayMode}
+          />
         ) : effectiveMode === "preview" && previewKind === "markdown" ? (
           <MarkdownPreview
             content={editorContent}
@@ -1044,7 +1076,13 @@ function hasStrongPresentationSignals(html: string): boolean {
 }
 
 function resolveInitialViewerMode(filePath: string | null, previewKind: FilePreviewDto["kind"] | null): ViewerMode {
-  if (previewKind === "markdown" || previewKind === "html" || previewKind === "image" || previewKind === "pdf") {
+  if (
+    previewKind === "markdown"
+    || previewKind === "html"
+    || previewKind === "image"
+    || previewKind === "pdf"
+    || previewKind === "office"
+  ) {
     return "preview";
   }
 
@@ -1101,7 +1139,8 @@ function canUsePreviewMode(previewKind: FilePreviewDto["kind"] | null): boolean 
   return previewKind === "markdown"
     || previewKind === "html"
     || previewKind === "image"
-    || previewKind === "pdf";
+    || previewKind === "pdf"
+    || previewKind === "office";
 }
 
 function canUseCodeMode(previewKind: FilePreviewDto["kind"] | null): boolean {
@@ -1233,6 +1272,15 @@ function buildFormatActions(input: {
   if (input.preview.kind === "pdf") {
     actions.push({
       id: "pdf-refresh",
+      label: t("conversation.fileViewerRefreshPreview"),
+      disabled: refreshDisabled,
+      onClick: input.handleRefreshPreview
+    });
+  }
+
+  if (input.preview.kind === "office") {
+    actions.push({
+      id: "office-refresh",
       label: t("conversation.fileViewerRefreshPreview"),
       disabled: refreshDisabled,
       onClick: input.handleRefreshPreview
@@ -1608,6 +1656,148 @@ function PdfPreview({
       </div>
     </PreviewOverviewShell>
   );
+}
+
+const ONLY_OFFICE_SCRIPT_CACHE = new Map<string, Promise<void>>();
+
+function OnlyOfficePreview({
+  onlyOffice,
+  filePath,
+  overviewMarkers,
+  overviewTotalLines,
+  mode: _mode,
+  displayMode: _displayMode
+}: {
+  onlyOffice: FilePreviewDto["onlyOffice"];
+  filePath: string;
+  overviewMarkers: FileOverviewMarker[];
+  overviewTotalLines: number;
+  mode: "desktop" | "mobile";
+  displayMode: "default" | "reading";
+}) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const editorInstanceRef = useRef<{ destroyEditor?: () => void } | null>(null);
+  const containerId = useMemo(
+    () => `onlyoffice-${filePath.replace(/[^a-zA-Z0-9_-]+/g, "-")}-${Math.random().toString(36).slice(2, 8)}`,
+    [filePath]
+  );
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!onlyOffice) {
+      setErrorText(t("conversation.fileViewerOfficeUnavailable"));
+      setReady(false);
+      return;
+    }
+
+    setErrorText(null);
+    setReady(false);
+
+    void loadOnlyOfficeScript(onlyOffice.apiScriptUrl)
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!window.DocsAPI?.DocEditor) {
+          throw new Error(t("conversation.fileViewerOfficeScriptUnavailable"));
+        }
+
+        editorInstanceRef.current?.destroyEditor?.();
+        editorInstanceRef.current = new window.DocsAPI.DocEditor(containerId, onlyOffice.editorConfig);
+        setReady(true);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setErrorText(error instanceof Error ? error.message : t("conversation.fileViewerOfficeUnavailable"));
+      });
+
+    return () => {
+      cancelled = true;
+      editorInstanceRef.current?.destroyEditor?.();
+      editorInstanceRef.current = null;
+    };
+  }, [containerId, onlyOffice]);
+
+  if (!onlyOffice) {
+    return <p className="status-text">{t("conversation.fileViewerOfficeUnavailable")}</p>;
+  }
+
+  return (
+    <PreviewOverviewShell
+      overviewMarkers={overviewMarkers}
+      overviewTotalLines={overviewTotalLines}
+      scrollContainerRef={scrollContainerRef}
+    >
+      <div className="file-viewer-office-shell" ref={scrollContainerRef}>
+        {!ready && !errorText ? (
+          <p className="status-text">{t("conversation.fileViewerOfficeLoading")}</p>
+        ) : null}
+        {errorText ? <p className="status-text">{errorText}</p> : null}
+        <div
+          id={containerId}
+          className="file-viewer-office-stage"
+          data-testid="file-viewer-office-preview"
+          aria-label={filePath}
+        />
+      </div>
+    </PreviewOverviewShell>
+  );
+}
+
+function loadOnlyOfficeScript(src: string): Promise<void> {
+  const cached = ONLY_OFFICE_SCRIPT_CACHE.get(src);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = new Promise<void>((resolve, reject) => {
+    if (typeof document === "undefined") {
+      reject(new Error(t("conversation.fileViewerOfficeUnavailable")));
+      return;
+    }
+
+    const existing = document.querySelector<HTMLScriptElement>(`script[data-onlyoffice-src=\"${cssEscape(src)}\"]`);
+    if (existing?.dataset.loaded === "true") {
+      resolve();
+      return;
+    }
+
+    const script = existing ?? document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.onlyofficeSrc = src;
+
+    script.onload = () => {
+      script.dataset.loaded = "true";
+      resolve();
+    };
+    script.onerror = () => {
+      ONLY_OFFICE_SCRIPT_CACHE.delete(src);
+      reject(new Error(t("conversation.fileViewerOfficeScriptUnavailable")));
+    };
+
+    if (!existing) {
+      document.head.appendChild(script);
+    }
+  });
+
+  ONLY_OFFICE_SCRIPT_CACHE.set(src, promise);
+  return promise;
+}
+
+function cssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 function MarkdownPreview({

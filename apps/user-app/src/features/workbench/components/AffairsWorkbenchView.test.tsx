@@ -165,6 +165,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsTagDetail: vi.fn(),
   getAffairsLibraryConfig: vi.fn(),
   getAffairsLibraryPreview: vi.fn(),
+  getAffairsLibraryPreviewWithOptions: vi.fn(),
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
   listAffairsLightweightSessions: vi.fn(),
@@ -185,6 +186,9 @@ const conversationApiMock = vi.hoisted(() => ({
   sendAffairsLightweightSessionMessage: vi.fn(),
   sendAffairsLightweightSessionMessageStream: vi.fn(),
   markSessionSeen: vi.fn(),
+  renameSessionTitle: vi.fn(),
+  deleteSession: vi.fn(),
+  getSessionMessages: vi.fn(),
   setGlobalAffairsLibraryEnabled: vi.fn(),
   startAffairsLightweightSession: vi.fn(),
   startAffairsLightweightSessionStream: vi.fn(),
@@ -192,6 +196,11 @@ const conversationApiMock = vi.hoisted(() => ({
   updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
   updateGlobalAffairsLibraryFavorites: vi.fn()
+}));
+
+const docsApiMock = vi.hoisted(() => ({
+  destroyEditor: vi.fn(),
+  docEditor: vi.fn()
 }));
 
 vi.mock("../../conversation/api/conversation-api", async () => {
@@ -214,6 +223,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsTagDetail: conversationApiMock.getAffairsTagDetail,
     getAffairsLibraryConfig: conversationApiMock.getAffairsLibraryConfig,
     getAffairsLibraryPreview: conversationApiMock.getAffairsLibraryPreview,
+    getAffairsLibraryPreviewWithOptions: conversationApiMock.getAffairsLibraryPreviewWithOptions,
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
     listAffairsLightweightSessions: conversationApiMock.listAffairsLightweightSessions,
@@ -234,6 +244,9 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     sendAffairsLightweightSessionMessage: conversationApiMock.sendAffairsLightweightSessionMessage,
     sendAffairsLightweightSessionMessageStream: conversationApiMock.sendAffairsLightweightSessionMessageStream,
     markSessionSeen: conversationApiMock.markSessionSeen,
+    renameSessionTitle: conversationApiMock.renameSessionTitle,
+    deleteSession: conversationApiMock.deleteSession,
+    getSessionMessages: conversationApiMock.getSessionMessages,
     setGlobalAffairsLibraryEnabled: conversationApiMock.setGlobalAffairsLibraryEnabled,
     startAffairsLightweightSession: conversationApiMock.startAffairsLightweightSession,
     startAffairsLightweightSessionStream: conversationApiMock.startAffairsLightweightSessionStream,
@@ -901,12 +914,27 @@ function mockAffairsConversationSidebarSessions() {
 
 describe("AffairsWorkbenchView", () => {
   afterEach(() => {
+    delete window.DocsAPI;
     userPreferenceStore.hydrate(initialPreferenceState);
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
+    docsApiMock.destroyEditor.mockReset();
+    docsApiMock.docEditor.mockReset();
+    docsApiMock.docEditor.mockImplementation(() => ({
+      destroyEditor: docsApiMock.destroyEditor
+    }));
+    window.DocsAPI = {
+      DocEditor: docsApiMock.docEditor as unknown as NonNullable<typeof window.DocsAPI>["DocEditor"]
+    };
+    document.head.querySelectorAll("script[data-onlyoffice-src]").forEach((node) => node.remove());
+    const script = document.createElement("script");
+    script.dataset.onlyofficeSrc = "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js";
+    script.dataset.loaded = "true";
+    document.head.appendChild(script);
+
     butlerRuntimeStateMock.reset();
     userPreferenceStore.hydrate({
       ...initialPreferenceState,
@@ -918,6 +946,8 @@ describe("AffairsWorkbenchView", () => {
     clearViewSnapshot("affairs.library.snapshot.workspace-1");
     clearViewSnapshot("affairs.library.config.workspace-1");
     clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
+    clearViewSnapshot("affairs.conversation.lightweight.sessions.workspace-1");
+    clearViewSnapshot("affairs.conversation.agent.sessions.workspace-1");
     window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
     window.sessionStorage.clear();
     clearProviderCatalogStore();
@@ -926,6 +956,7 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.listAffairsLightweightSessions.mockReset();
     conversationApiMock.getAffairsLightweightSession.mockReset();
     conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
+    conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
     conversationApiMock.getProviderCapabilities.mockReset();
@@ -959,6 +990,9 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.sendAffairsLightweightSessionMessage.mockReset();
     conversationApiMock.sendAffairsLightweightSessionMessageStream.mockReset();
     conversationApiMock.markSessionSeen.mockReset();
+    conversationApiMock.renameSessionTitle.mockReset();
+    conversationApiMock.deleteSession.mockReset();
+    conversationApiMock.getSessionMessages.mockReset();
     conversationApiMock.setGlobalAffairsLibraryEnabled.mockReset();
     conversationApiMock.startAffairsLightweightSession.mockReset();
     conversationApiMock.startAffairsLightweightSessionStream.mockReset();
@@ -1251,6 +1285,10 @@ describe("AffairsWorkbenchView", () => {
         canPaginate: false
       }
     });
+    conversationApiMock.getAffairsLibraryPreviewWithOptions.mockImplementation(
+      async (workspaceId: string, filePath: string, options?: { officeDisplayMode?: "default" | "reading" }) =>
+        conversationApiMock.getAffairsLibraryPreview(workspaceId, filePath, options)
+    );
     conversationApiMock.listProviderCatalog.mockResolvedValue([
       { provider: "gemini", enabled: true },
       { provider: "kimi", enabled: true },
@@ -1451,9 +1489,12 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.dblClick(card);
 
     await waitFor(() => {
-      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith(
+      expect(conversationApiMock.getAffairsLibraryPreviewWithOptions).toHaveBeenCalledWith(
         "workspace-1",
-        "Exchange 分层通讯簿.txt"
+        "Exchange 分层通讯簿.txt",
+        {
+          officeDisplayMode: "default"
+        }
       );
     });
 
@@ -1462,6 +1503,217 @@ describe("AffairsWorkbenchView", () => {
     ).toBeInTheDocument();
     expect(await screen.findByText(/纯文本|Plain Text/)).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: t("conversation.fileViewerEdit") })).not.toBeInTheDocument();
+  });
+
+  it("右侧对象详情栏底部的 Office 预览会走阅读视图，不影响双击正式预览", async () => {
+    conversationApiMock.getAffairsLibraryPreviewWithOptions.mockImplementation(
+      async (_workspaceId: string, _filePath: string, options?: { officeDisplayMode?: "default" | "reading" }) => ({
+        workspaceId: "workspace-1",
+        path: "Exchange 分层通讯簿.txt",
+        supported: true,
+        kind: "office",
+        reason: null,
+        content: null,
+        version: "doc-v1",
+        size: 24,
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        previewPath: null,
+        previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+        onlyOffice: options?.officeDisplayMode === "reading"
+          ? {
+              apiScriptUrl: "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js",
+              editorMode: "view",
+              documentUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+              callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+              editorConfig: {
+                documentType: "word",
+                type: "embedded",
+                document: {
+                  fileType: "docx",
+                  key: "doc-v1",
+                  title: "Exchange 分层通讯簿.docx",
+                  url: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+                  permissions: {
+                    edit: false,
+                    review: false,
+                    comment: false,
+                    download: true,
+                    print: true,
+                    copy: true
+                  }
+                },
+                editorConfig: {
+                  callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+                  mode: "view",
+                  coEditing: {
+                    mode: "strict",
+                    change: false
+                  },
+                  customization: {
+                    features: {
+                      spellcheck: false
+                    },
+                    anonymous: {
+                      request: false
+                    }
+                  }
+                }
+              }
+            }
+          : {
+              apiScriptUrl: "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js",
+              editorMode: "edit",
+              documentUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+              callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+              editorConfig: {
+                documentType: "word",
+                type: "desktop",
+                document: {
+                  fileType: "docx",
+                  key: "doc-v1",
+                  title: "Exchange 分层通讯簿.docx",
+                  url: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+                  permissions: {
+                    edit: true,
+                    download: true,
+                    print: true,
+                    copy: true
+                  }
+                },
+                editorConfig: {
+                  callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+                  mode: "edit",
+                  customization: {
+                    features: {
+                      spellcheck: false
+                    },
+                    anonymous: {
+                      request: false
+                    }
+                  }
+                }
+              }
+            },
+        capabilities: {
+          canEdit: false,
+          canRefresh: true,
+          canResize: true,
+          canZoom: false,
+          canPaginate: false
+        }
+      })
+    );
+
+    conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "Exchange 分层通讯簿.txt",
+      supported: true,
+      kind: "office",
+      reason: null,
+      content: null,
+      version: "doc-v1",
+      size: 24,
+      updatedAt: "2026-05-31T08:00:00.000Z",
+      previewPath: null,
+      previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+      onlyOffice: {
+        apiScriptUrl: "http://127.0.0.1:8088/web-apps/apps/api/documents/api.js",
+        editorMode: "edit",
+        documentUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+        callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+        editorConfig: {
+          documentType: "word",
+          document: {
+            fileType: "docx",
+            key: "doc-v1",
+            title: "Exchange 分层通讯簿.docx",
+            url: "http://127.0.0.1:3002/preview/affairs-files/mock/Exchange%20%E5%88%86%E5%B1%82%E9%80%9A%E8%AE%AF%E7%B0%BF.docx",
+            permissions: {
+              edit: true,
+              download: true,
+              print: true,
+              copy: true
+            }
+          },
+          editorConfig: {
+            callbackUrl: "http://127.0.0.1:3002/api/office/onlyoffice/callback/mock-token",
+            mode: "edit",
+            customization: {
+              features: {
+                spellcheck: false
+              },
+              anonymous: {
+                request: false
+              }
+            }
+          }
+        }
+      },
+      capabilities: {
+        canEdit: false,
+        canRefresh: true,
+        canResize: true,
+        canZoom: false,
+        canPaginate: false
+      }
+    });
+
+    renderWorkbenchWithState({
+      ...createState(),
+      primarySection: "library",
+      selectedNodeId: "library:folder:root",
+      auxiliaryTab: "detail",
+      detailViewerCollapsed: false
+    });
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    await userEvent.click(card);
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibraryPreviewWithOptions).toHaveBeenCalledWith(
+        "workspace-1",
+        "Exchange 分层通讯簿.txt",
+        {
+          officeDisplayMode: "reading"
+        }
+      );
+    }, { timeout: 3000 });
+    await waitFor(() => {
+      expect(docsApiMock.docEditor).toHaveBeenCalledTimes(1);
+    });
+
+    expect(docsApiMock.docEditor).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^onlyoffice-/),
+      expect.objectContaining({
+        type: "embedded",
+        document: expect.objectContaining({
+          permissions: expect.objectContaining({
+            edit: false,
+            review: false,
+            comment: false
+          })
+        }),
+        editorConfig: expect.objectContaining({
+          mode: "view",
+          coEditing: expect.objectContaining({
+            mode: "strict",
+            change: false
+          })
+        })
+      })
+    );
+
+    await userEvent.dblClick(card);
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibraryPreviewWithOptions).toHaveBeenCalledWith(
+        "workspace-1",
+        "Exchange 分层通讯簿.txt",
+        {
+          officeDisplayMode: "default"
+        }
+      );
+    });
   });
 
 
@@ -1736,9 +1988,11 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务轻量草稿发送首条消息后会走独立 lightweight runtime 并切到对话页面", async () => {
     const user = userEvent.setup();
-    renderWorkbenchWithSectionMenu();
-
-    await user.click(screen.getByRole("tab", { name: "对话" }));
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: null
+    }, navigationGroupsWithBoundLibraryWorkspace);
     const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
     expect(conversationShell).not.toBeNull();
@@ -1909,9 +2163,8 @@ describe("AffairsWorkbenchView", () => {
     await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
     await user.click(screen.getByTestId("affairs-composer-send"));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("联网搜索");
     await waitFor(() => {
-      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-tool-result:3");
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-tool-result:0");
     });
   });
 
@@ -2042,8 +2295,10 @@ describe("AffairsWorkbenchView", () => {
 
     await user.click(screen.getByTestId("affairs-composer-send"));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("联网搜索");
-    expect(screen.getByRole("status")).toHaveTextContent("正在联网搜索");
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-pending:0");
+    });
+    expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
     releaseCompletion?.();
   });
 
@@ -2238,14 +2493,18 @@ describe("AffairsWorkbenchView", () => {
     await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
     await user.click(screen.getByTestId("affairs-composer-send"));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("正在联网搜索");
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-switching:0");
+    });
     expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
     await screen.findByText("Exchange 分层通讯簿.txt");
     await user.click(screen.getByRole("tab", { name: "对话" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("正在联网搜索");
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-switching:0");
+    });
     expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
 
     releaseCompletion?.();
@@ -2355,7 +2614,7 @@ describe("AffairsWorkbenchView", () => {
     expect(assistantSection).not.toBeNull();
     await user.click(within(assistantSection as HTMLElement).getByRole("button", { name: "Codex" }));
 
-    await user.click(await screen.findByTestId("affairs-composer-send"));
+    await user.click((await screen.findAllByTestId("affairs-composer-send"))[0]);
 
     await waitFor(() => {
       expect(butlerRuntimeCallsMock.constructedWorkspaceIds).toContain("workspace-2");
@@ -2368,7 +2627,11 @@ describe("AffairsWorkbenchView", () => {
 
   it("事务 Agent 首条消息会默认带上当前事务对象上下文", async () => {
     const user = userEvent.setup();
-    renderWorkbenchWithSectionMenu();
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "library",
+      selectedNodeId: "library:all"
+    }, navigationGroupsWithBoundLibraryWorkspace);
 
     const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
     await user.click(card);
@@ -2382,7 +2645,7 @@ describe("AffairsWorkbenchView", () => {
     const assistantSection = within(dialog).getByText("助手模式").closest("section");
     expect(assistantSection).not.toBeNull();
     await user.click(within(assistantSection as HTMLElement).getByRole("button", { name: "Codex" }));
-    await user.click(await screen.findByTestId("affairs-composer-send"));
+    await user.click((await screen.findAllByTestId("affairs-composer-send"))[0]);
 
     await waitFor(() => {
       expect(butlerRuntimeCallsMock.sendMessage).toHaveBeenCalledWith(
@@ -2834,18 +3097,14 @@ describe("AffairsWorkbenchView", () => {
     const sidebar = document.querySelector(".affairs-sidebar-block");
     expect(sidebar).not.toBeNull();
 
-    const groupTitles = Array.from(
-      sidebar?.querySelectorAll(".affairs-sidebar-group-header > span:first-child") ?? []
-    ).map((node) => node.textContent?.trim());
-
-    expect(groupTitles).toEqual(expect.arrayContaining(["会话列表"]));
-    expect(groupTitles).not.toContain("当前准备创建的会话");
-    expect(groupTitles).not.toContain("轻量会话");
-    expect(groupTitles).not.toContain("Agent 会话");
+    expect(sidebar?.querySelectorAll(".affairs-sidebar-group")).toHaveLength(1);
+    expect(within(sidebar as HTMLElement).queryByText("当前准备创建的会话")).not.toBeInTheDocument();
+    expect(within(sidebar as HTMLElement).queryByText("轻量会话")).not.toBeInTheDocument();
+    expect(within(sidebar as HTMLElement).queryByText("Agent 会话")).not.toBeInTheDocument();
     expect(sidebar?.querySelectorAll(".affairs-conversation-session-card")).toHaveLength(2);
   });
 
-  it("事务会话列表在网页端会显示更多菜单，并包含收藏和归档操作", async () => {
+  it("事务会话列表在网页端右键菜单会包含完整操作", async () => {
     mockAffairsConversationSidebarSessions();
     platformStateMock.platform = "web";
     platformStateMock.isDesktop = false;
@@ -2860,15 +3119,17 @@ describe("AffairsWorkbenchView", () => {
     const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
     expect(sessionCard).not.toBeNull();
 
-    const moreButton = within(sessionCard as HTMLElement).getByRole("button", { name: t("shell.sessionMoreAction") });
-    await userEvent.click(moreButton);
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
 
     const menu = await screen.findByRole("menu", { name: t("shell.sessionMoreAction") });
+    expect(within(menu).getByRole("button", { name: t("shell.renameAction") })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: t("conversation.exportAction") })).toBeInTheDocument();
     expect(within(menu).getByRole("button", { name: t("shell.favoriteAction") })).toBeInTheDocument();
     expect(within(menu).getByRole("button", { name: t("shell.archiveAction") })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: t("shell.deleteSessionAction") })).toBeInTheDocument();
   });
 
-  it("事务会话列表桌面端右键菜单会包含收藏和归档操作", async () => {
+  it("事务会话列表桌面端右键菜单会包含完整操作", async () => {
     mockAffairsConversationSidebarSessions();
 
     renderWorkbenchWithCustomNavigationGroups({
@@ -2888,9 +3149,20 @@ describe("AffairsWorkbenchView", () => {
 
     const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
     expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: t("shell.renameAction") }),
+      expect.objectContaining({ label: t("conversation.exportAction") }),
       expect.objectContaining({ label: t("shell.favoriteAction") }),
-      expect.objectContaining({ label: t("shell.archiveAction") })
+      expect.objectContaining({ label: t("shell.archiveAction") }),
+      expect.objectContaining({ label: t("shell.deleteSessionAction") })
     ]));
+    const exportItem = items.find((entry: { label?: string }) => entry.label === t("conversation.exportAction"));
+    expect(exportItem).toEqual(expect.objectContaining({
+      items: expect.arrayContaining([
+        expect.objectContaining({ label: t("conversation.exportMarkdownAction") }),
+        expect.objectContaining({ label: t("conversation.exportPdfAction") }),
+        expect.objectContaining({ label: t("conversation.exportHtmlAction") })
+      ])
+    }));
   });
 
   it("事务会话列表收藏操作会更新卡片标记", async () => {
@@ -2971,7 +3243,131 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-  it("事务模式未初始化时会强制回到初始化页，并禁用其他事务分区", async () => {
+  it("事务会话列表重命名操作会调用重命名接口", async () => {
+    const { lightweightSession } = mockAffairsConversationSidebarSessions();
+    conversationApiMock.renameSessionTitle.mockResolvedValue({
+      ...lightweightSession,
+      title: "已重命名会话"
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const renameItem = items.find((entry: { label?: string }) => entry.label === t("shell.renameAction"));
+    expect(renameItem).toBeTruthy();
+    if (!renameItem || !("onSelect" in renameItem)) {
+      throw new Error("未找到重命名菜单项");
+    }
+
+    await act(async () => {
+      await renameItem.onSelect();
+    });
+
+    const input = await screen.findByLabelText(t("shell.renameInputLabel"));
+    await userEvent.clear(input);
+    await userEvent.type(input, "已重命名会话");
+    await userEvent.click(screen.getByRole("button", { name: t("common.save") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.renameSessionTitle).toHaveBeenCalledWith("light-session-1", "已重命名会话");
+    });
+    expect(await screen.findByText("已重命名会话")).toBeInTheDocument();
+  });
+
+  it("事务会话列表删除操作会调用删除接口", async () => {
+    mockAffairsConversationSidebarSessions();
+    conversationApiMock.deleteSession.mockResolvedValue(undefined);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const deleteItem = items.find((entry: { label?: string }) => entry.label === t("shell.deleteSessionAction"));
+    expect(deleteItem).toBeTruthy();
+    if (!deleteItem || !("onSelect" in deleteItem)) {
+      throw new Error("未找到删除菜单项");
+    }
+
+    await act(async () => {
+      await deleteItem.onSelect();
+    });
+
+    expect(await screen.findByText(t("shell.deleteSessionConfirmDescription"))).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: t("shell.deleteSessionAction") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.deleteSession).toHaveBeenCalledWith("light-session-1");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("事务轻量会话")).not.toBeInTheDocument();
+    });
+  });
+
+  it("事务会话列表导出操作会调用消息加载接口", async () => {
+    mockAffairsConversationSidebarSessions();
+    conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sessionCard = (await screen.findByText("事务轻量会话")).closest(".affairs-conversation-session-card");
+    expect(sessionCard).not.toBeNull();
+
+    fireEvent.contextMenu(sessionCard as HTMLElement, { clientX: 240, clientY: 180 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    const exportItem = items.find((entry: { label?: string; items?: Array<{ label?: string; onSelect?: () => void | Promise<void> }> }) => entry.label === t("conversation.exportAction"));
+    expect(exportItem).toBeTruthy();
+    const markdownItem = exportItem?.items?.find((entry) => entry.label === t("conversation.exportMarkdownAction"));
+    expect(markdownItem).toBeTruthy();
+    if (!markdownItem || !("onSelect" in markdownItem)) {
+      throw new Error("未找到导出 markdown 菜单项");
+    }
+
+    await act(async () => {
+      await markdownItem.onSelect?.();
+    });
+
+    await waitFor(() => {
+      expect(conversationApiMock.getSessionMessages).toHaveBeenCalledWith("light-session-1", null, 200, "forward");
+    });
+  });
+
+  it("事务模式未初始化时切到自动化分区也不会被强制打回对话初始化页", async () => {
+    butlerApiMock.listAssistantAutomations.mockResolvedValue({ payload: { items: [] } });
+    butlerApiMock.listRecentAssistantAutomationRuns.mockResolvedValue({ payload: { items: [] } });
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: false,
@@ -2995,18 +3391,16 @@ describe("AffairsWorkbenchView", () => {
       selectedNodeId: "automation:all"
     });
 
-    expect(await screen.findAllByText("设置助手")).not.toHaveLength(0);
-    expect(screen.getAllByText(t("shell.affairsInitRouteGuardHint")).length).toBeGreaterThan(0);
-    expect(screen.getByText(t("shell.affairsInitRouteGuardSidebarEmpty"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.affairsInitRouteGuardAuxiliaryEmpty"))).toBeInTheDocument();
-
-    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeDisabled();
-    expect(screen.getByRole("tab", { name: "待办" })).toBeDisabled();
-    expect(screen.getByRole("tab", { name: "自动化" })).toBeDisabled();
-    expect(screen.getByRole("tab", { name: "对话" })).not.toBeDisabled();
+    expect(await screen.findByRole("tab", { name: "自动化" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(t("shell.affairsAutomationEmpty"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).not.toBeDisabled();
+    expect(screen.getByRole("tab", { name: "待办" })).not.toBeDisabled();
+    expect(screen.getByRole("tab", { name: "自动化" })).not.toBeDisabled();
   });
 
-  it("事务模式未初始化时即使旧状态停在文档库，也会改为初始化页", async () => {
+  it("事务模式未初始化时刷新到文档页会直接显示文档内容", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: false,
@@ -3027,11 +3421,12 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbenchWithState(createState());
 
-    expect(await screen.findAllByText("设置助手")).not.toHaveLength(0);
-    expect(screen.queryByText("Exchange 分层通讯簿.txt")).not.toBeInTheDocument();
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
 
-  it("事务服务连不上时会显示单独的不可用页面，不会误导成初始化页", async () => {
+  it("事务服务连不上时文档主区也不会被不可用页接管", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: false,
@@ -3054,14 +3449,13 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbenchWithState(createState());
 
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
     expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(t("shell.affairsHostUnavailableDescription")).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: t("shell.affairsHostUnavailableRetryAction") }).length).toBeGreaterThan(0);
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
 
-  it("事务服务返回无效响应时也会显示不可用页面，不会误导成初始化页", async () => {
+  it("事务服务返回无效响应时文档主区也不会被不可用页接管", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: false,
@@ -3084,13 +3478,13 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbenchWithState(createState());
 
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
     expect((await screen.findAllByRole("heading", { name: t("shell.affairsHostUnavailableTitle") })).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(t("shell.affairsHostUnavailableDescription")).length).toBeGreaterThan(0);
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
   });
 
-  it("事务服务连接检查中时会显示单独的检查页面，不会先误导成初始化页", async () => {
+  it("事务服务连接检查中时文档主区仍然直接显示文档内容", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: true,
@@ -3113,10 +3507,296 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbenchWithState(createState());
 
-    expect((await screen.findAllByText(t("shell.affairsConnectionCheckingTitle"))).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(t("shell.affairsConnectionCheckingDescription")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingTitle"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingAuxiliaryEmpty"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+  });
+
+  it("文档库视图正常显示时，右侧辅助面板不会再显示事务连接检查占位", async () => {
+    useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
+      initialized: false,
+      loading: true,
+      bootstrapErrorCode: null,
+      error: null,
+      profile: null,
+      activeProvider: "codex",
+      controlSession: null,
+      capabilities: null,
+      messages: [],
+      historyState: "idle",
+      loadingOlderMessages: false,
+      hasOlderMessages: false,
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      contextUsage: null,
+      permissionRequests: [],
+      sending: false
+    }));
+
+    renderWorkbenchWithState({
+      ...createState(),
+      primarySection: "library",
+      auxiliaryTab: "detail",
+      selectedNodeId: "library:folder:root"
+    });
+
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingAuxiliaryEmpty"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingDescription"))).not.toBeInTheDocument();
+  });
+
+  it("文档首页初次渲染时不会提前预热事务对话列表，切到对话后才开始加载", async () => {
+    const user = userEvent.setup();
+    renderWorkbenchWithState(createState());
+
+    await screen.findByText("Exchange 分层通讯簿.txt");
+
+    expect(conversationApiMock.listAffairsLightweightSessions).not.toHaveBeenCalled();
+    expect(butlerApiMock.listButlerProjects).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("tab", { name: "对话" }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLightweightSessions).toHaveBeenCalledWith("workspace-1");
+      expect(butlerApiMock.listButlerProjects).toHaveBeenCalled();
+    });
+  });
+
+  it("事务对话侧栏已有轻量会话时，不会继续被助手会话加载占位挡住", async () => {
+    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
+    butlerApiMock.listButlerProjects.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveProjects = resolve;
+      })
+    );
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({
+      items: [
+        {
+          sessionId: "light-session-visible-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider://codex/light-session-visible-1",
+          rawStoreRef: "raw://codex/light-session-visible-1",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: false,
+          isFavorite: false,
+          title: "事务轻量会话",
+          messageCount: 3,
+          lastMessageAt: "2026-06-03T12:48:00.000Z",
+          createdAt: "2026-06-03T12:30:00.000Z",
+          updatedAt: "2026-06-03T12:48:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-03T12:48:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-03T12:48:00.000Z",
+          completedAt: "2026-06-03T12:48:00.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroups);
+
+    const sidebarHeading = await screen.findByRole("heading", { name: "对话" });
+    const sidebarSection = sidebarHeading.closest(".affairs-sidebar-block");
+    expect(sidebarSection).not.toBeNull();
+    expect(await within(sidebarSection as HTMLElement).findByText("事务轻量会话")).toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).queryByText(t("common.loading"))).not.toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).getByText(t("shell.affairsConversationSidebarLoadingAgent"))).toBeInTheDocument();
+
+    resolveProjects?.({ items: [] });
+  });
+
+  it("事务对话刷新时会先显示缓存的轻量会话标题，再后台刷新更新", async () => {
+    writeViewSnapshot("affairs.conversation.lightweight.sessions.workspace-1", [
+      {
+        sessionId: "light-session-cached-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider://codex/light-session-cached-1",
+        rawStoreRef: "raw://codex/light-session-cached-1",
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "缓存轻量会话",
+        messageCount: 2,
+        lastMessageAt: "2026-06-03T12:40:00.000Z",
+        createdAt: "2026-06-03T12:10:00.000Z",
+        updatedAt: "2026-06-03T12:40:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-06-03T12:40:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-03T12:40:00.000Z",
+        completedAt: "2026-06-03T12:40:00.000Z",
+        lastSeenAt: null,
+        activityState: "completed_unread"
+      }
+    ]);
+    let resolveLightweightSessions: ((value: { items: Array<unknown> }) => void) | null = null;
+    conversationApiMock.listAffairsLightweightSessions.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveLightweightSessions = resolve;
+      })
+    );
+    butlerApiMock.listButlerProjects.mockResolvedValue({ items: [] });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroups);
+
+    const sidebarHeading = await screen.findByRole("heading", { name: "对话" });
+    const sidebarSection = sidebarHeading.closest(".affairs-sidebar-block");
+    expect(sidebarSection).not.toBeNull();
+    expect(within(sidebarSection as HTMLElement).getByText("缓存轻量会话")).toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).getByText(t("shell.affairsConversationSidebarLoadingLightweight"))).toBeInTheDocument();
+
+    resolveLightweightSessions?.({
+      items: [
+        {
+          sessionId: "light-session-fresh-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider://codex/light-session-fresh-1",
+          rawStoreRef: "raw://codex/light-session-fresh-1",
+          providerConfigMode: "global-default",
+          providerPresetId: null,
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          isArchived: false,
+          isFavorite: false,
+          title: "刷新后的轻量会话",
+          messageCount: 3,
+          lastMessageAt: "2026-06-03T12:58:00.000Z",
+          createdAt: "2026-06-03T12:50:00.000Z",
+          updatedAt: "2026-06-03T12:58:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: "2026-06-03T12:58:00.000Z",
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "completed",
+          activitySource: "runtime",
+          lastEventAt: "2026-06-03T12:58:00.000Z",
+          completedAt: "2026-06-03T12:58:00.000Z",
+          lastSeenAt: null,
+          activityState: "completed_unread"
+        }
+      ]
+    });
+
+    await waitFor(() => {
+      expect(within(sidebarSection as HTMLElement).getByText("刷新后的轻量会话")).toBeInTheDocument();
+    });
+    expect(within(sidebarSection as HTMLElement).queryByText("缓存轻量会话")).not.toBeInTheDocument();
+  });
+
+  it("事务对话刷新时会先显示缓存的助手会话标题，不再等实时检索完成", async () => {
+    writeViewSnapshot("affairs.conversation.agent.sessions.workspace-1", [
+      {
+        sessionId: "agent-session-cached-1",
+        workspaceId: "workspace-2",
+        provider: "codex",
+        providerSessionId: "agent-session-cached-1",
+        rawStoreRef: "butler://agent-session-cached-1",
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "缓存助手会话",
+        messageCount: 0,
+        lastMessageAt: "2026-06-03T13:08:00.000Z",
+        createdAt: "2026-06-03T13:00:00.000Z",
+        updatedAt: "2026-06-03T13:08:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-06-03T13:08:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "inferred",
+        lastEventAt: "2026-06-03T13:08:00.000Z",
+        completedAt: "2026-06-03T13:08:00.000Z",
+        lastSeenAt: null,
+        activityState: "completed_unread"
+      }
+    ]);
+    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
+    butlerApiMock.listButlerProjects.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveProjects = resolve;
+      })
+    );
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:agent:codex"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const sidebarHeading = await screen.findByRole("heading", { name: "对话" });
+    const sidebarSection = sidebarHeading.closest(".affairs-sidebar-block");
+    expect(sidebarSection).not.toBeNull();
+    expect(within(sidebarSection as HTMLElement).getByText("缓存助手会话")).toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).getByText(t("shell.affairsConversationSidebarLoadingAgent"))).toBeInTheDocument();
+    expect(within(sidebarSection as HTMLElement).queryByText(t("common.loading"))).not.toBeInTheDocument();
+
+    resolveProjects?.({ items: [] });
+  });
+
+  it("进入事务对话时不会重复请求 Butler 项目列表", async () => {
+    let resolveProjects: ((value: { items: Array<unknown> }) => void) | null = null;
+    butlerApiMock.listButlerProjects.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveProjects = resolve;
+      })
+    );
+    conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: "conversation:draft:lightweight:codex"
+    }, navigationGroups);
+
+    await waitFor(() => {
+      expect(butlerApiMock.listButlerProjects).toHaveBeenCalledTimes(1);
+    });
+
+    resolveProjects?.({ items: [] });
   });
 
   it("辅助面板从连接检查切回正常态时不会触发 hooks 顺序错误", async () => {
@@ -3152,7 +3832,8 @@ describe("AffairsWorkbenchView", () => {
 
     const view = render(<TestHarness />);
 
-    expect((await screen.findAllByText(t("shell.affairsConnectionCheckingTitle"))).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.affairsConnectionCheckingTitle"))).not.toBeInTheDocument();
 
     butlerRuntimeStateMock.setState({
       initialized: true,
@@ -4467,7 +5148,7 @@ describe("AffairsWorkbenchView", () => {
     expect(txtChip).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("详情区会提供打开本地镜像文件按钮", async () => {
+  it("详情区在有镜像路径时会提供本地文件动作，并显示完整元信息", async () => {
     renderWorkbench();
 
     const button = await screen.findByText("Exchange 分层通讯簿.txt");
@@ -4475,11 +5156,72 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsLibraryLocateFolderAction") })).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryDocumentCreatedAt"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryDocumentSize"))).toBeInTheDocument();
+    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("2026/05/30 08:00:00")).toBeInTheDocument();
+    expect(screen.getByText("2026/05/31 08:00:00")).toBeInTheDocument();
 
     const bridge = getCodingNSDesktopBridge();
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") }));
 
     expect(bridge.fs.openFile).toHaveBeenCalledWith("/Users/jackson/SynologyDrive/Exchange 分层通讯簿.txt");
+  });
+
+  it("详情区在没有镜像路径时会隐藏本地文件动作，并允许点击路径逐级跳转", async () => {
+    conversationApiMock.getAffairsLibraryConfig.mockResolvedValueOnce({
+      binding: {
+        workspaceId: "workspace-1",
+        rootDir: "/Users/jackson/WorkFile",
+        enabled: true,
+        mirrorRoot: null,
+        allowedExtensions: [],
+        includedHiddenPaths: [],
+        configRelativePath: ".ai-index/doc-semantic-index.config.json",
+        exportMode: "v2",
+        updatedAt: "2026-05-31T08:00:00.000Z"
+      },
+      mirrorRoot: null,
+      allowedExtensions: [],
+      includedHiddenPaths: [],
+      configRelativePath: ".ai-index/doc-semantic-index.config.json",
+      canWrite: true
+    });
+
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValueOnce(createDocumentListResponse([
+      {
+        documentId: "doc-1",
+        path: "客户/合同/Exchange 分层通讯簿.txt",
+        title: "Exchange 分层通讯簿",
+        summary: "第一行\n第二行\n第三行\n第四行",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+
+    renderWorkbench();
+
+    const button = await screen.findByText("Exchange 分层通讯簿.txt");
+    await userEvent.click(button);
+
+    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryOpenLocalFileAction") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsLibraryRevealLocalFileAction") })).not.toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsLibraryMirrorRootEmpty"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsDocumentSummaryExpandAction") })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "客户" }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
+        browseMode: "folder",
+        selectedFolderPath: "客户"
+      }));
+    });
   });
 
   it("可以按树状结构管理标签", async () => {

@@ -28,6 +28,8 @@ import type {
   BrowserProfileOwnershipScope,
   BrowserTaskExecutionDto,
   DocumentTemplateDto,
+  OnlyOfficeSettingsDto,
+  OnlyOfficeStatusDto,
   OfficeTaskDetailDto,
   OfficeTaskDto,
   OfficeTaskStatus,
@@ -54,12 +56,15 @@ import {
   fetchBrowserProfiles,
   fetchBrowserTaskExecution,
   fetchDocumentTemplates,
+  fetchOnlyOfficeSettings,
+  fetchOnlyOfficeStatus,
   fetchOfficeTaskDetail,
   fetchOfficeTasks,
   fetchOpsTargets,
   importDocumentTemplateFile,
   replyOfficeApproval,
   resolveBrowserTaskExecutionBackend,
+  updateOnlyOfficeSettings,
   updateBrowserProfile,
   updateDocumentTemplate,
   updateOpsTarget
@@ -88,6 +93,8 @@ interface SkillManagementPanelProps {
   readonly triggerLeading?: ReactNode;
   readonly workspaceId?: string | null;
   readonly sessionId?: string | null;
+  readonly initialTab?: SkillManagementTabId;
+  readonly triggerMode?: "panel" | "onlyoffice";
 }
 
 type SkillUploadSourceMode = "file" | "paste";
@@ -104,9 +111,12 @@ export function SkillManagementPanel({
   triggerLabel,
   triggerLeading,
   workspaceId = null,
-  sessionId = null
+  sessionId = null,
+  initialTab = "skills",
+  triggerMode = "panel"
 }: SkillManagementPanelProps) {
   const accessToken = useAuthSelector((state) => state.session?.accessToken ?? null);
+  const currentUser = useAuthSelector((state) => state.session?.user ?? null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const templateUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<SkillOverviewDto | null>(null);
@@ -115,6 +125,8 @@ export function SkillManagementPanel({
   const [browserTasks, setBrowserTasks] = useState<OfficeTaskDto[]>([]);
   const [browserTaskExecutions, setBrowserTaskExecutions] = useState<Record<string, BrowserTaskExecutionDto | null>>({});
   const [browserBridgeStatus, setBrowserBridgeStatus] = useState<BrowserBridgeStatusDto | null>(null);
+  const [onlyOfficeSettings, setOnlyOfficeSettings] = useState<OnlyOfficeSettingsDto | null>(null);
+  const [onlyOfficeStatus, setOnlyOfficeStatus] = useState<OnlyOfficeStatusDto | null>(null);
   const [workspaceItems, setWorkspaceItems] = useState<WorkspaceDto[]>([]);
   const [opsTasks, setOpsTasks] = useState<OfficeTaskDto[]>([]);
   const [opsTargets, setOpsTargets] = useState<OpsTargetDto[]>([]);
@@ -130,6 +142,7 @@ export function SkillManagementPanel({
   const [modalOpen, setModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [officeTemplateModalOpen, setOfficeTemplateModalOpen] = useState(false);
+  const [onlyOfficeModalOpen, setOnlyOfficeModalOpen] = useState(false);
   const [browserProfileModalOpen, setBrowserProfileModalOpen] = useState(false);
   const [browserProfileOptionsModalOpen, setBrowserProfileOptionsModalOpen] = useState(false);
   const [browserProfileDeleteModalOpen, setBrowserProfileDeleteModalOpen] = useState(false);
@@ -147,10 +160,29 @@ export function SkillManagementPanel({
   const [uploadTargets, setUploadTargets] = useState<Record<SkillTargetCli, boolean>>(() =>
     createDefaultUploadTargets("workspace")
   );
-  const [activeTab, setActiveTab] = useState<SkillManagementTabId>("skills");
+  const [activeTab, setActiveTab] = useState<SkillManagementTabId>(initialTab);
   const [openCliToolbarState, setOpenCliToolbarState] = useState<OpenCliManagementToolbarState | null>(null);
   const [opsTaskStatusFilter, setOpsTaskStatusFilter] = useState<OfficeTaskStatus | "all">("all");
   const [opsTargetKindFilter, setOpsTargetKindFilter] = useState<OpsTargetKind | "all">("ssh_host");
+  const [onlyOfficeDraft, setOnlyOfficeDraft] = useState<{
+    enabled: boolean;
+    serverUrl: string;
+    publicBaseUrl: string;
+    callbackBaseUrl: string;
+    userDisplayName: string;
+    userAvatarUrl: string;
+    jwtSecret: string;
+    clearJwtSecret: boolean;
+  }>({
+    enabled: false,
+    serverUrl: "",
+    publicBaseUrl: "",
+    callbackBaseUrl: "",
+    userDisplayName: "",
+    userAvatarUrl: "",
+    jwtSecret: "",
+    clearJwtSecret: false
+  });
   const [officeTemplateDraft, setOfficeTemplateDraft] = useState<{
     fileName: string;
     fileContentBase64: string;
@@ -227,9 +259,17 @@ export function SkillManagementPanel({
   }, [browserTasks, selectedBrowserProfileForTasks]);
 
   useEffect(() => {
+    if (!onlyOfficeSettings) {
+      return;
+    }
+
+    setOnlyOfficeDraft(createOnlyOfficeDraft(onlyOfficeSettings));
+  }, [onlyOfficeSettings]);
+
+  useEffect(() => {
     let active = true;
 
-    if (!modalOpen) {
+    if (!modalOpen && !onlyOfficeModalOpen) {
       return;
     }
 
@@ -250,6 +290,8 @@ export function SkillManagementPanel({
           nextTemplates,
           nextBrowserProfiles,
           nextBrowserTasks,
+          nextOnlyOfficeSettings,
+          nextOnlyOfficeStatus,
           workspaceResponse,
           nextOpsTasks,
           nextOpsTargets
@@ -261,6 +303,8 @@ export function SkillManagementPanel({
             taskType: "browser",
             limit: 100
           }),
+          fetchOnlyOfficeSettings(),
+          fetchOnlyOfficeStatus(),
           listWorkspaces(),
           fetchOfficeTasks({
             workspaceId,
@@ -286,6 +330,8 @@ export function SkillManagementPanel({
         setBrowserTasks(nextBrowserTasks);
         setBrowserBridgeStatus(nextBrowserBridgeStatus);
         setBrowserTaskExecutions(nextBrowserTaskExecutions);
+        setOnlyOfficeSettings(nextOnlyOfficeSettings);
+        setOnlyOfficeStatus(nextOnlyOfficeStatus);
         setWorkspaceItems(workspaceResponse.items);
         setOpsTasks(nextOpsTasks);
         setOpsTargets(nextOpsTargets);
@@ -311,7 +357,7 @@ export function SkillManagementPanel({
     return () => {
       active = false;
     };
-  }, [accessToken, modalOpen, workspaceId]);
+  }, [accessToken, modalOpen, onlyOfficeModalOpen, workspaceId]);
 
 async function reloadPanelData(): Promise<void> {
     const [
@@ -319,6 +365,8 @@ async function reloadPanelData(): Promise<void> {
       nextTemplates,
       nextBrowserProfiles,
       nextBrowserTasks,
+      nextOnlyOfficeSettings,
+      nextOnlyOfficeStatus,
       workspaceResponse,
       nextOpsTasks,
       nextOpsTargets
@@ -330,6 +378,8 @@ async function reloadPanelData(): Promise<void> {
         taskType: "browser",
         limit: 100
       }),
+      fetchOnlyOfficeSettings(),
+      fetchOnlyOfficeStatus(),
       listWorkspaces(),
       fetchOfficeTasks({
         workspaceId,
@@ -350,6 +400,8 @@ async function reloadPanelData(): Promise<void> {
     setBrowserTasks(nextBrowserTasks);
     setBrowserBridgeStatus(nextBrowserBridgeStatus);
     setBrowserTaskExecutions(nextBrowserTaskExecutions);
+    setOnlyOfficeSettings(nextOnlyOfficeSettings);
+    setOnlyOfficeStatus(nextOnlyOfficeStatus);
     setWorkspaceItems(workspaceResponse.items);
     setOpsTasks(nextOpsTasks);
     setOpsTargets(nextOpsTargets);
@@ -368,6 +420,62 @@ async function reloadPanelData(): Promise<void> {
     try {
       await reloadPanelData();
       setStatusText(t("settings.skillRefreshSuccess"));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOnlyOfficeSave(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey("onlyoffice-save");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      const nextSettings = await updateOnlyOfficeSettings({
+        enabled: onlyOfficeDraft.enabled,
+        serverUrl: onlyOfficeDraft.serverUrl,
+        publicBaseUrl: onlyOfficeDraft.publicBaseUrl,
+        callbackBaseUrl: onlyOfficeDraft.callbackBaseUrl,
+        userDisplayName: onlyOfficeDraft.userDisplayName,
+        userAvatarUrl: onlyOfficeDraft.userAvatarUrl,
+        jwtSecret: onlyOfficeDraft.jwtSecret,
+        clearJwtSecret: onlyOfficeDraft.clearJwtSecret
+      });
+      const nextStatus = await fetchOnlyOfficeStatus();
+      setOnlyOfficeSettings(nextSettings);
+      setOnlyOfficeStatus(nextStatus);
+      setOnlyOfficeDraft((current) => ({
+        ...current,
+        jwtSecret: "",
+        clearJwtSecret: false
+      }));
+      setStatusText(t("settings.skillOnlyOfficeSaveSuccess"));
+    } catch (error) {
+      setPanelError(resolveSkillPanelError(error));
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleOnlyOfficeCheck(): Promise<void> {
+    if (!accessToken) {
+      return;
+    }
+
+    setPendingActionKey("onlyoffice-check");
+    setPanelError(null);
+    setStatusText(null);
+
+    try {
+      const nextStatus = await fetchOnlyOfficeStatus();
+      setOnlyOfficeStatus(nextStatus);
+      setStatusText(t("settings.skillOnlyOfficeCheckSuccess"));
     } catch (error) {
       setPanelError(resolveSkillPanelError(error));
     } finally {
@@ -773,6 +881,12 @@ async function reloadPanelData(): Promise<void> {
     setPanelError(null);
   }
 
+  function openOnlyOfficeModal(): void {
+    setOnlyOfficeDraft(createOnlyOfficeDraft(onlyOfficeSettings));
+    setOnlyOfficeModalOpen(true);
+    setPanelError(null);
+  }
+
   function openBrowserProfileModal(): void {
     setBrowserProfileDraft(createDefaultBrowserProfileDraft(workspaceId));
     setBrowserProfileModalOpen(true);
@@ -1016,17 +1130,26 @@ async function reloadPanelData(): Promise<void> {
   const officeTabSelected = activeTab === "office";
   const opsTabSelected = activeTab === "ops";
   const openCliTabSelected = activeTab === "opencli";
+  const triggerOpensOnlyOffice = triggerMode === "onlyoffice";
+  const rootDialogOpen = modalOpen || onlyOfficeModalOpen;
 
   return (
     <>
       <button
         className={triggerClassName}
         type="button"
-        data-open={modalOpen ? "true" : "false"}
+        data-open={rootDialogOpen ? "true" : "false"}
         aria-haspopup="dialog"
-        aria-expanded={modalOpen}
+        aria-expanded={rootDialogOpen}
         onClick={() => {
-          setActiveTab("skills");
+          setPanelError(null);
+          setStatusText(null);
+          setActiveTab(initialTab);
+          if (triggerOpensOnlyOffice) {
+            setOnlyOfficeModalOpen(true);
+            return;
+          }
+
           setModalOpen(true);
         }}
       >
@@ -1040,7 +1163,7 @@ async function reloadPanelData(): Promise<void> {
         hideHeader
         className="settings-skill-modal"
         onClose={() => {
-          setActiveTab("skills");
+          setActiveTab(initialTab);
           setModalOpen(false);
         }}
       >
@@ -1480,6 +1603,10 @@ async function reloadPanelData(): Promise<void> {
                 <SummaryCard label={t("settings.skillOfficeBrowserProfileCount")} value={String(filteredBrowserProfiles.length)} />
                 <SummaryCard label={t("settings.skillOfficeBrowserTaskCount")} value={String(browserTasks.length)} />
                 <SummaryCard
+                  label={t("settings.skillOnlyOfficeStatusLabel")}
+                  value={resolveOnlyOfficeStatusLabel(onlyOfficeStatus)}
+                />
+                <SummaryCard
                   label={t("settings.skillOfficeWorkspaceScope")}
                   value={workspaceId?.trim() ? t("settings.skillOfficeScoped") : t("settings.skillOfficeGlobal")}
                 />
@@ -1487,6 +1614,65 @@ async function reloadPanelData(): Promise<void> {
               {statusText ? <p className="settings-release-status">{statusText}</p> : null}
               {panelError ? <p className="settings-release-status">{panelError}</p> : null}
             </section>
+
+            <SkillSection
+              title={t("settings.skillOnlyOfficeSectionTitle")}
+              description={t("settings.skillOnlyOfficeSectionDescription")}
+              emptyText={t("settings.skillOnlyOfficeSectionEmpty")}
+              items={[onlyOfficeStatus ?? null]}
+              renderItem={() => (
+                <div className="settings-skill-entry">
+                  <div className="settings-skill-entry-main">
+                    <strong className="settings-skill-entry-title">{t("settings.skillOnlyOfficeSectionTitle")}</strong>
+                    <p className="settings-skill-entry-meta">
+                      {onlyOfficeStatus?.summary ?? t("settings.skillOnlyOfficeStatusUnknown")}
+                    </p>
+                    <div className="settings-skill-tags">
+                      <span
+                        className="settings-skill-tag"
+                        data-status={mapOnlyOfficeStatusTag(onlyOfficeStatus?.state)}
+                      >
+                        {resolveOnlyOfficeStatusLabel(onlyOfficeStatus)}
+                      </span>
+                      <span
+                        className="settings-skill-tag"
+                        data-status={onlyOfficeSettings?.enabled ? "synced" : "pending"}
+                      >
+                        {onlyOfficeSettings?.enabled
+                          ? t("settings.skillOnlyOfficeEnabledLabel")
+                          : t("settings.skillOnlyOfficeStatusDisabled")}
+                      </span>
+                    </div>
+                    {onlyOfficeStatus?.checks?.length ? (
+                      <div className="settings-skill-tags">
+                        {onlyOfficeStatus.checks.map((check) => (
+                          <span
+                            key={check.key}
+                            className="settings-skill-tag"
+                            data-status={mapOnlyOfficeCheckStatusTag(check.status)}
+                            title={check.detail}
+                          >
+                            {`${check.label} · ${resolveOnlyOfficeCheckStatusLabel(check.status)}`}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="settings-skill-entry-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={loading || pendingActionKey !== null}
+                      onClick={() => {
+                        openOnlyOfficeModal();
+                      }}
+                    >
+                      {t("settings.skillOnlyOfficeOpenSettingsAction")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            />
 
             <SkillSection
               title={t("settings.skillOfficeTemplateListTitle")}
@@ -1749,6 +1935,212 @@ async function reloadPanelData(): Promise<void> {
             />
           </div>
         ) : null}
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={onlyOfficeModalOpen}
+        title={t("settings.skillOnlyOfficeModalTitle")}
+        description={t("settings.skillOnlyOfficeModalDescription")}
+        className="settings-skill-create-modal"
+        onClose={() => {
+          setOnlyOfficeModalOpen(false);
+          setOnlyOfficeDraft(createOnlyOfficeDraft(onlyOfficeSettings));
+        }}
+      >
+        <ModalSection heading={t("settings.skillOnlyOfficeStatusLabel")}>
+          <div className="settings-skill-entry">
+            <div className="settings-skill-entry-main">
+              <strong className="settings-skill-entry-title">{resolveOnlyOfficeStatusLabel(onlyOfficeStatus)}</strong>
+              <p className="settings-skill-entry-meta">
+                {onlyOfficeStatus?.summary ?? t("settings.skillOnlyOfficeStatusUnknown")}
+              </p>
+              {onlyOfficeStatus?.checks?.length ? (
+                <div className="settings-skill-tags">
+                  {onlyOfficeStatus.checks.map((check) => (
+                    <span
+                      key={check.key}
+                      className="settings-skill-tag"
+                      data-status={mapOnlyOfficeCheckStatusTag(check.status)}
+                      title={check.detail}
+                    >
+                      {`${check.label} · ${resolveOnlyOfficeCheckStatusLabel(check.status)}`}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </ModalSection>
+
+        <ModalSection heading={t("settings.skillOnlyOfficeSectionTitle")}>
+          <ModalField label={t("settings.skillOnlyOfficeEnabledLabel")}>
+            <label className="settings-skill-inline-toggle">
+              <input
+                type="checkbox"
+                checked={onlyOfficeDraft.enabled}
+                onChange={(event) => {
+                  setOnlyOfficeDraft((current) => ({
+                    ...current,
+                    enabled: event.target.checked
+                  }));
+                }}
+              />
+              <span>{t("settings.skillOnlyOfficeEnabledLabel")}</span>
+            </label>
+          </ModalField>
+          <ModalField label={t("settings.skillOnlyOfficeServerUrlLabel")} htmlFor="onlyoffice-server-url">
+            <input
+              id="onlyoffice-server-url"
+              className="settings-text-input"
+              value={onlyOfficeDraft.serverUrl}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  serverUrl: event.target.value
+                }));
+              }}
+              placeholder={t("settings.skillOnlyOfficeServerUrlPlaceholder")}
+            />
+          </ModalField>
+          <ModalField label={t("settings.skillOnlyOfficePublicBaseUrlLabel")} htmlFor="onlyoffice-public-base-url">
+            <input
+              id="onlyoffice-public-base-url"
+              className="settings-text-input"
+              value={onlyOfficeDraft.publicBaseUrl}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  publicBaseUrl: event.target.value
+                }));
+              }}
+              placeholder={t("settings.skillOnlyOfficePublicBaseUrlPlaceholder")}
+            />
+          </ModalField>
+          <ModalField label={t("settings.skillOnlyOfficeCallbackBaseUrlLabel")} htmlFor="onlyoffice-callback-base-url">
+            <input
+              id="onlyoffice-callback-base-url"
+              className="settings-text-input"
+              value={onlyOfficeDraft.callbackBaseUrl}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  callbackBaseUrl: event.target.value
+                }));
+              }}
+              placeholder={t("settings.skillOnlyOfficeCallbackBaseUrlPlaceholder")}
+            />
+          </ModalField>
+          <ModalField
+            label={t("settings.skillOnlyOfficeUserDisplayNameLabel")}
+            description={t("settings.skillOnlyOfficeUserDisplayNameDescription", {
+              username: currentUser?.username ?? "-"
+            })}
+            htmlFor="onlyoffice-user-display-name"
+          >
+            <input
+              id="onlyoffice-user-display-name"
+              className="settings-text-input"
+              value={onlyOfficeDraft.userDisplayName}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  userDisplayName: event.target.value
+                }));
+              }}
+              placeholder={t("settings.skillOnlyOfficeUserDisplayNamePlaceholder")}
+            />
+          </ModalField>
+          <ModalField
+            label={t("settings.skillOnlyOfficeUserAvatarUrlLabel")}
+            description={t("settings.skillOnlyOfficeUserAvatarUrlDescription")}
+            htmlFor="onlyoffice-user-avatar-url"
+          >
+            <input
+              id="onlyoffice-user-avatar-url"
+              className="settings-text-input"
+              value={onlyOfficeDraft.userAvatarUrl}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  userAvatarUrl: event.target.value
+                }));
+              }}
+              placeholder={t("settings.skillOnlyOfficeUserAvatarUrlPlaceholder")}
+            />
+          </ModalField>
+          <ModalField label={t("settings.skillOnlyOfficeJwtSecretLabel")} htmlFor="onlyoffice-jwt-secret">
+            <input
+              id="onlyoffice-jwt-secret"
+              className="settings-text-input"
+              value={onlyOfficeDraft.jwtSecret}
+              onChange={(event) => {
+                setOnlyOfficeDraft((current) => ({
+                  ...current,
+                  jwtSecret: event.target.value,
+                  clearJwtSecret: false
+                }));
+              }}
+              placeholder={onlyOfficeSettings?.jwtSecretConfigured
+                ? t("settings.skillOnlyOfficeJwtSecretKeepPlaceholder")
+                : t("settings.skillOnlyOfficeJwtSecretPlaceholder")}
+            />
+          </ModalField>
+          {onlyOfficeSettings?.jwtSecretConfigured ? (
+            <ModalField label={t("settings.skillOnlyOfficeClearJwtSecretLabel")}>
+              <label className="settings-skill-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={onlyOfficeDraft.clearJwtSecret}
+                  onChange={(event) => {
+                    setOnlyOfficeDraft((current) => ({
+                      ...current,
+                      clearJwtSecret: event.target.checked
+                    }));
+                  }}
+                />
+                <span>{t("settings.skillOnlyOfficeClearJwtSecretLabel")}</span>
+              </label>
+            </ModalField>
+          ) : null}
+          {statusText ? <p className="settings-release-status">{statusText}</p> : null}
+          {panelError ? <p className="settings-release-status">{panelError}</p> : null}
+          <ModalActions>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setOnlyOfficeModalOpen(false);
+                setOnlyOfficeDraft(createOnlyOfficeDraft(onlyOfficeSettings));
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleOnlyOfficeCheck();
+              }}
+            >
+              {pendingActionKey === "onlyoffice-check"
+                ? t("common.loading")
+                : t("settings.skillOnlyOfficeCheckAction")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={loading || pendingActionKey !== null}
+              onClick={() => {
+                void handleOnlyOfficeSave();
+              }}
+            >
+              {pendingActionKey === "onlyoffice-save"
+                ? t("common.loading")
+                : t("settings.skillOnlyOfficeSaveAction")}
+            </button>
+          </ModalActions>
+        </ModalSection>
       </WorkbenchModal>
 
       <WorkbenchModal
@@ -2661,6 +3053,19 @@ function createDefaultOfficeTemplateDraft() {
   };
 }
 
+function createOnlyOfficeDraft(settings: OnlyOfficeSettingsDto | null) {
+  return {
+    enabled: settings?.enabled ?? false,
+    serverUrl: settings?.serverUrl ?? "",
+    publicBaseUrl: settings?.publicBaseUrl ?? "",
+    callbackBaseUrl: settings?.callbackBaseUrl ?? "",
+    userDisplayName: settings?.userDisplayName ?? "",
+    userAvatarUrl: settings?.userAvatarUrl ?? "",
+    jwtSecret: "",
+    clearJwtSecret: false
+  };
+}
+
 function parseOpsTargetConfig(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -2802,6 +3207,68 @@ function resolveBrowserExecutionBackendLabel(backend: BrowserExecutionBackend): 
   return backend === "opencli_bridge"
     ? t("settings.skillOfficeBrowserExecutionBackendOpenCliBridge")
     : t("settings.skillOfficeBrowserExecutionBackendPlaywright");
+}
+
+function resolveOnlyOfficeStatusLabel(status: OnlyOfficeStatusDto | null): string {
+  switch (status?.state) {
+    case "ready":
+      return t("settings.skillOnlyOfficeStatusReady");
+    case "warning":
+      return t("settings.skillOnlyOfficeStatusWarning");
+    case "error":
+      return t("settings.skillOnlyOfficeStatusError");
+    case "misconfigured":
+      return t("settings.skillOnlyOfficeStatusMisconfigured");
+    case "disabled":
+      return t("settings.skillOnlyOfficeStatusDisabled");
+    default:
+      return t("settings.skillOnlyOfficeStatusUnknown");
+  }
+}
+
+function resolveOnlyOfficeCheckStatusLabel(status: "pass" | "warn" | "fail" | "skip"): string {
+  switch (status) {
+    case "pass":
+      return t("settings.skillOnlyOfficeCheckPass");
+    case "warn":
+      return t("settings.skillOnlyOfficeCheckWarn");
+    case "fail":
+      return t("settings.skillOnlyOfficeCheckFail");
+    case "skip":
+    default:
+      return t("settings.skillOnlyOfficeCheckSkip");
+  }
+}
+
+function mapOnlyOfficeCheckStatusTag(status: "pass" | "warn" | "fail" | "skip"): string {
+  switch (status) {
+    case "pass":
+      return "synced";
+    case "warn":
+      return "pending";
+    case "fail":
+      return "failed";
+    case "skip":
+    default:
+      return "assistant-runtime";
+  }
+}
+
+function mapOnlyOfficeStatusTag(
+  status: OnlyOfficeStatusDto["state"] | undefined
+): "pending" | "synced" | "failed" | "assistant-runtime" {
+  switch (status) {
+    case "ready":
+      return "synced";
+    case "error":
+      return "failed";
+    case "warning":
+    case "misconfigured":
+      return "pending";
+    case "disabled":
+    default:
+      return "assistant-runtime";
+  }
 }
 
 function resolveBrowserExecutionBackendTag(

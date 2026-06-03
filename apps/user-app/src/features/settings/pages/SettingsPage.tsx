@@ -30,6 +30,7 @@ import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagemen
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { PluginManagementModal } from "../../../settings/PluginManagementModal";
+import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 import type { DebugPortPoolConfig } from "../../../preferences/types";
@@ -566,6 +567,24 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 >
                   {t("settings.pluginManagementAction")}
                 </button>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.skillOnlyOfficeSectionTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.skillOnlyOfficeSectionDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <SkillManagementPanel
+                  triggerClassName="settings-button"
+                  triggerLabel={t("settings.skillOnlyOfficeOpenSettingsAction")}
+                  workspaceId={pluginManagementWorkspaceId}
+                  initialTab="office"
+                  triggerMode="onlyoffice"
+                />
               </div>
             </div>
 
@@ -1402,6 +1421,21 @@ function MobileAbilityManagementSection() {
             >
               {t("settings.pluginManagementAction")}
             </button>
+          </div>
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.skillOnlyOfficeSectionTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.skillOnlyOfficeSectionDescription")}
+              </span>
+            </div>
+            <SkillManagementPanel
+              triggerClassName="settings-mobile-primary-button"
+              triggerLabel={t("settings.skillOnlyOfficeOpenSettingsAction")}
+              workspaceId={pluginManagementWorkspaceId}
+              initialTab="office"
+              triggerMode="onlyoffice"
+            />
           </div>
         </div>
         <div className="settings-mobile-ability-stack">
