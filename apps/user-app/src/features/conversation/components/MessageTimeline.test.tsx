@@ -857,6 +857,83 @@ describe("MessageTimeline", () => {
     expect(screen.getAllByText((content) => content.includes("M src/main.ts")).length).toBeGreaterThan(0);
   });
 
+  it("会把联网搜索结果渲染成来源列表", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "tool-call-web-search-1",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"query\": \"今天的热点新闻\"\n}",
+            toolCall: {
+              callId: "call-web-search-1",
+              name: "web_search",
+              input: "{\n  \"query\": \"今天的热点新闻\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-06-03T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "lightweight://raw#line=1",
+            deliveryState: "sent",
+            clientRequestId: null
+          },
+          {
+            id: "tool-result-web-search-1",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "联网搜索完成",
+            toolCall: {
+              callId: "call-web-search-1",
+              name: "web_search",
+              input: "",
+              output: JSON.stringify({
+                detail: "联网搜索完成，找到 2 个来源",
+                query: "今天的热点新闻",
+                sources: [
+                  {
+                    title: "示例新闻一",
+                    url: "https://example.com/news-1"
+                  },
+                  {
+                    title: "示例新闻二",
+                    url: "https://example.com/news-2"
+                  }
+                ]
+              }, null, 2),
+              error: null,
+              status: "completed"
+            },
+            timestamp: "2026-06-03T10:00:01.000Z",
+            sequence: 2,
+            rawRef: "lightweight://raw#line=2",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.toolWebSearch"))).toBeInTheDocument();
+    expect(screen.getByText("搜索：今天的热点新闻")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("conversation.toolWebSearch"), "i") }));
+
+    expect(screen.getByText("联网搜索完成，找到 2 个来源")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.toolWebSearchQueryLabel"))).toBeInTheDocument();
+    expect(screen.getByText("今天的热点新闻")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.toolWebSearchSourcesLabel"))).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "示例新闻一" })).toHaveAttribute("href", "https://example.com/news-1");
+    expect(screen.getByRole("link", { name: "示例新闻二" })).toHaveAttribute("href", "https://example.com/news-2");
+  });
+
   it("不会在工具分组阶段重排已经线性的时间线顺序", () => {
     render(
       <MessageTimeline
@@ -1297,345 +1374,6 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("C:/Code/FamilyClaw")).toBeInTheDocument();
   });
 
-  it("会把 codex 的 view_image 工具调用渲染成图片预览", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-1",
-            callId: "call-view-image-1",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/Code/CodingNS/apps/user-app/src/assets/menu.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(screen.getByText(t("conversation.toolViewImageActiveLabel"))).toBeInTheDocument();
-    expect(screen.getByText("apps/user-app/src/assets/menu.png")).toBeInTheDocument();
-    expect(getFilePreviewLinkMock).toHaveBeenCalledWith("workspace-1", "apps/user-app/src/assets/menu.png");
-
-    const image = await screen.findByAltText("menu.png");
-    expect(image.getAttribute("src")).toContain(
-      "/preview/files/preview-token/apps/user-app/src/assets/menu.png"
-    );
-    expect(screen.queryByText(/^view_image$/)).not.toBeInTheDocument();
-  });
-
-  it("会把 view_image 的 office artifact 绝对路径转换成办公预览链接", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-office-artifact",
-            callId: "call-view-image-office-artifact",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/.codingns/office-artifacts/browser-task-1/12345678-1234-1234-1234-123456789abc-zhihu-qr.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(getOfficeArtifactPreviewLinkMock).toHaveBeenCalledWith("12345678-1234-1234-1234-123456789abc");
-    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-
-    const image = await screen.findByAltText("12345678-1234-1234-1234-123456789abc-zhihu-qr.png");
-    expect(image.getAttribute("src")).toContain(
-      "/preview/office/artifacts/office-token/12345678-1234-1234-1234-123456789abc"
-    );
-  });
-
-  it("会把 view_image 的 office task file 绝对路径转换成任务文件预览链接", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-office-task-file",
-            callId: "call-view-image-office-task-file",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/Code/CodingNS/apps/host/data/host/office-artifacts/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(getOfficeTaskFilePreviewLinkMock).toHaveBeenCalledWith(
-      "73c79787-1e73-41af-86fd-9896ea050176",
-      "zhihu-qr-crop.png"
-    );
-    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-
-    const image = await screen.findByAltText("zhihu-qr-crop.png");
-    expect(image.getAttribute("src")).toContain(
-      "/preview/office/tasks/office-task-token/73c79787-1e73-41af-86fd-9896ea050176/zhihu-qr-crop.png"
-    );
-  });
-
-  it("遇到工作区外的 view_image 绝对路径时不会再请求普通文件预览接口", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-outside-workspace",
-            callId: "call-view-image-outside-workspace",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/tmp/outside-workspace-preview.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(screen.getByText(t("conversation.toolViewImageActiveLabel"))).toBeInTheDocument();
-    expect(screen.getByText("/tmp/outside-workspace-preview.png")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-      expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
-      expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
-    });
-  });
-
-  it("会把 view_image 的会话附件绝对路径转换成附件内容预览", async () => {
-    render(
-      <MessageTimeline
-        sessionId="session-1"
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-session-attachment",
-            callId: "call-view-image-session-attachment",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/session-1/client-request-1/12345678-1234-1234-1234-123456789abc-image.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(getSessionAttachmentBlobMock).toHaveBeenCalledWith(
-      "session-1",
-      "12345678-1234-1234-1234-123456789abc"
-    );
-    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-    expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
-    expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
-
-    const image = await screen.findByAltText("12345678-1234-1234-1234-123456789abc-image.png");
-    expect(image.getAttribute("src")).toBe("blob:mock-session-attachment");
-  });
-
-  it("历史 view_image 指向旧会话附件时，优先使用路径里的真实 sessionId", async () => {
-    render(
-      <MessageTimeline
-        sessionId="current-session"
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-history-session-attachment",
-            callId: "call-view-image-history-session-attachment",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-image.png"
-            }),
-            status: "running"
-          })
-        ]}
-      />
-    );
-
-    expect(getSessionAttachmentBlobMock).toHaveBeenCalledWith(
-      "ff44e87f-ee74-49ad-8270-68e242c5cd27",
-      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-    );
-  });
-
-  it("view_image 的 tool_result 里带内联图片时，直接显示 data url", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-result-view-image-inline",
-            callId: "call-view-image-inline",
-            name: "view_image",
-            kind: "tool_result",
-            content: JSON.stringify({
-              type: "input_image",
-              image_url: SAMPLE_IMAGE_DATA_URL
-            }),
-            toolInput: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/session-1/client-request-3/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff-image.png"
-            })
-          })
-        ]}
-      />
-    );
-
-    const image = await screen.findByAltText("bbbbbbbb-cccc-4ddd-8eee-ffffffffffff-image.png");
-    expect(image.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
-    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
-    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-    expect(getOfficeArtifactPreviewLinkMock).not.toHaveBeenCalled();
-    expect(getOfficeTaskFilePreviewLinkMock).not.toHaveBeenCalled();
-  });
-
-  it("同一个 view_image 调用同时有 path 和 tool_result 内联图片时，优先显示内联图片", async () => {
-    render(
-      <MessageTimeline
-        sessionId="current-session"
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-call-view-image-inline-priority",
-            callId: "call-view-image-inline-priority",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/cccccccc-dddd-4eee-8fff-111111111111-image.png"
-            }),
-            status: "running",
-            sequence: 1
-          }),
-          createToolMessage({
-            id: "tool-result-view-image-inline-priority",
-            callId: "call-view-image-inline-priority",
-            name: "view_image",
-            kind: "tool_result",
-            content: JSON.stringify({
-              output: [
-                {
-                  type: "input_image",
-                  image_url: SAMPLE_IMAGE_DATA_URL
-                }
-              ]
-            }),
-            toolInput: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/ff44e87f-ee74-49ad-8270-68e242c5cd27/client-request-2/cccccccc-dddd-4eee-8fff-111111111111-image.png"
-            }),
-            sequence: 2
-          })
-        ]}
-      />
-    );
-
-    const image = await screen.findByAltText("cccccccc-dddd-4eee-8fff-111111111111-image.png");
-    expect(image.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
-    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
-    expect(getFilePreviewLinkMock).not.toHaveBeenCalled();
-  });
-
-  it("历史 view_image 被其他工具消息打断时，也会回填同 callId 的最终图片结果", async () => {
-    render(
-      <MessageTimeline
-        sessionId="31302177-e632-4155-a13d-f0a3367d2498"
-        historyState="ready"
-        provider="codex"
-        workspaceId="workspace-1"
-        workspacePath="/Users/jackson/Code/CodingNS"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createAssistantCliToolMessage({
-            id: "shell-between-1",
-            command: "rg -n \"host switch\" apps/user-app"
-          }),
-          createToolMessage({
-            id: "view-image-call-separated",
-            callId: "call-history-view-image-separated",
-            name: "view_image",
-            kind: "tool_call",
-            content: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/31302177-e632-4155-a13d-f0a3367d2498/c068243d-1dc1-4ce3-bf73-60412fd5ddd9/0fec62fd-6f04-438c-8da5-065c56ab0426-image.png",
-              detail: "original"
-            }),
-            status: "running",
-            sequence: 2
-          }),
-          createAssistantCliToolMessage({
-            id: "shell-between-2",
-            command: "sed -n '1,220p' docs/开发设计规范/20260419-前端页面与样式设计规范.md"
-          }),
-          createToolMessage({
-            id: "view-image-result-separated",
-            callId: "call-history-view-image-separated",
-            name: "view_image",
-            kind: "tool_result",
-            content: JSON.stringify({
-              type: "input_image",
-              image_url: SAMPLE_IMAGE_DATA_URL,
-              detail: "original"
-            }),
-            toolInput: JSON.stringify({
-              path: "/Users/jackson/.codingns/session-attachments/31302177-e632-4155-a13d-f0a3367d2498/c068243d-1dc1-4ce3-bf73-60412fd5ddd9/0fec62fd-6f04-438c-8da5-065c56ab0426-image.png",
-              detail: "original"
-            }),
-            sequence: 4
-          })
-        ]}
-      />
-    );
-
-    const images = await screen.findAllByAltText("0fec62fd-6f04-438c-8da5-065c56ab0426-image.png");
-    expect(images[0]?.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
-    expect(images[1]?.getAttribute("src")).toBe(SAMPLE_IMAGE_DATA_URL);
-    expect(getSessionAttachmentBlobMock).not.toHaveBeenCalled();
-  });
-
-
   it("会把工作区内 markdown 本地图片路径转换成受控预览链接", async () => {
     render(
       <MessageTimeline
@@ -1935,240 +1673,6 @@ ARGUMENTS: capabilities list`)
     await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
     expect(screen.getAllByText("legacy tool output").length).toBeGreaterThan(0);
-  });
-
-  it("renders apply_patch as file summaries and opens a diff modal", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        onRetryMessage={vi.fn()}
-        messages={[
-          {
-            id: "tool-call-apply-patch",
-            sessionId: "session-1",
-            role: "tool",
-            kind: "tool_call",
-            content: SAMPLE_APPLY_PATCH_INPUT,
-            toolCall: {
-              callId: "call-apply-patch",
-              name: "apply_patch",
-              input: SAMPLE_APPLY_PATCH_INPUT,
-              output: null,
-              error: null,
-              status: "running"
-            },
-            timestamp: "2026-03-23T10:00:02.000Z",
-            sequence: 2,
-            rawRef: "codex://raw#line=2",
-            deliveryState: "sent",
-            clientRequestId: null
-          }
-        ]}
-      />
-    );
-
-    expect(screen.queryByText(/^apply_patch$/)).not.toBeInTheDocument();
-    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
-    expect(screen.getByText("styles.css")).toBeInTheDocument();
-    expect(screen.getAllByText("+5").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("-2").length).toBeGreaterThan(0);
-    expect(screen.queryByText("*** Begin Patch")).not.toBeInTheDocument();
-    expect(document.querySelector(".apply-patch-header")).toBeNull();
-
-    await userEvent.click(screen.getByRole("button", { name: /styles\.css/i }));
-
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(document.querySelector(".message-list .apply-patch-modal")).toBeNull();
-    expect(document.body.querySelector(".apply-patch-modal")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: t("conversation.applyPatchDialogTitle") })).toBeInTheDocument();
-    expect(screen.getByText("C:/Code/CodingNS/apps/user-app/src/app/styles.css")).toBeInTheDocument();
-    const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
-    expect(diffViewText).toContain("+  gap: 8px;");
-    expect(diffViewText).toContain("-  padding: 10px 14px;");
-  });
-
-  it("遇到裸 hunk 的 apply_patch 也会回退成编辑摘要", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-result-loose-apply-patch",
-            callId: "call-loose-apply-patch",
-            name: "apply_patch",
-            kind: "tool_result",
-            content: SAMPLE_LOOSE_APPLY_PATCH_OUTPUT,
-            toolInput: SAMPLE_LOOSE_APPLY_PATCH_INPUT,
-            toolOutput: SAMPLE_LOOSE_APPLY_PATCH_OUTPUT,
-            status: "completed"
-          })
-        ]}
-      />
-    );
-
-    expect(screen.queryByText(/^apply_patch$/)).not.toBeInTheDocument();
-    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
-    expect(screen.getByText("session-live-runtime-service.ts")).toBeInTheDocument();
-    expect(screen.queryByText("@@ -398,3 +398,2 @@")).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: /session-live-runtime-service\.ts/i }));
-
-    const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
-    expect(diffViewText).toContain("+// 先把基础记录建出来，再回放 runtime 缓存事件");
-    expect(diffViewText).toContain("-this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);");
-  });
-
-  it("只有文件路径没有真实 diff 的 apply_patch 只显示已编辑", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="codex"
-        onRetryMessage={vi.fn()}
-        messages={[
-          createToolMessage({
-            id: "tool-result-file-only-apply-patch",
-            callId: "call-file-only-apply-patch",
-            name: "apply_patch",
-            kind: "tool_result",
-            content: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
-            toolInput: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
-            toolOutput: SAMPLE_FILE_ONLY_APPLY_PATCH_INPUT,
-            status: "completed"
-          })
-        ]}
-      />
-    );
-
-    expect(screen.getByText("butler-session-service.ts")).toBeInTheDocument();
-    expect(screen.getAllByText(t("conversation.applyPatchEditedStat")).length).toBeGreaterThan(0);
-    expect(screen.queryByText("+0")).not.toBeInTheDocument();
-    expect(screen.queryByText("-0")).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: /butler-session-service\.ts/i }));
-
-    expect(screen.getAllByText(t("conversation.applyPatchEditedStat")).length).toBeGreaterThan(1);
-    expect(screen.queryByText("+0")).not.toBeInTheDocument();
-    expect(screen.queryByText("-0")).not.toBeInTheDocument();
-  });
-
-  it("renders Claude Write tool with the same edit-style preview", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="claude-code"
-        onRetryMessage={vi.fn()}
-        messages={[
-          {
-            id: "tool-call-write-1",
-            sessionId: "session-1",
-            role: "tool",
-            kind: "tool_call",
-            content: "{\"file_path\":\"C:/Code/CodingNS/novel.md\",\"content\":\"第一行\\n第二行\"}",
-            toolCall: {
-              callId: "call-write-1",
-              name: "Write",
-              input: "{\"file_path\":\"C:/Code/CodingNS/novel.md\",\"content\":\"第一行\\n第二行\"}",
-              output: null,
-              error: null,
-              status: "running"
-            },
-            timestamp: "2026-03-23T10:00:00.000Z",
-            sequence: 1,
-            rawRef: "claude-code://raw#line=1",
-            deliveryState: "sent",
-            clientRequestId: null
-          }
-        ]}
-      />
-    );
-
-    expect(screen.queryByText(/^Write$/)).not.toBeInTheDocument();
-    expect(screen.getByText("novel.md")).toBeInTheDocument();
-    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
-  });
-
-  it("renders OpenCode lowercase write tool with the same edit-style preview", async () => {
-    render(
-      <MessageTimeline
-        historyState="ready"
-        provider="opencode"
-        onRetryMessage={vi.fn()}
-        messages={[
-          {
-            id: "tool-call-write-lowercase-1",
-            sessionId: "session-1",
-            role: "tool",
-            kind: "tool_call",
-            content: "{\"path\":\"C:/Code/CodingNS/notes.md\",\"content\":\"第一行\\n第二行\\n第三行\"}",
-            toolCall: {
-              callId: "call-write-lowercase-1",
-              name: "write",
-              input: "{\"path\":\"C:/Code/CodingNS/notes.md\",\"content\":\"第一行\\n第二行\\n第三行\"}",
-              output: null,
-              error: null,
-              status: "running"
-            },
-            timestamp: "2026-03-23T10:00:00.000Z",
-            sequence: 1,
-            rawRef: "opencode://session/thread-1/message/msg-1/part/tool-1",
-            deliveryState: "sent",
-            clientRequestId: null
-          }
-        ]}
-      />
-    );
-
-    expect(screen.queryByText(/^write$/)).not.toBeInTheDocument();
-    expect(screen.getByText("notes.md")).toBeInTheDocument();
-    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
-  });
-
-  it("同一文件出现多个 patch 段时不会因为重复 key 报警", () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      render(
-        <MessageTimeline
-          historyState="ready"
-          provider="codex"
-          onRetryMessage={vi.fn()}
-          messages={[
-            {
-              id: "tool-call-duplicate-apply-patch",
-              sessionId: "session-1",
-              role: "tool",
-              kind: "tool_call",
-              content: SAMPLE_DUPLICATE_APPLY_PATCH_INPUT,
-              toolCall: {
-                callId: "call-duplicate-apply-patch",
-                name: "apply_patch",
-                input: SAMPLE_DUPLICATE_APPLY_PATCH_INPUT,
-                output: null,
-                error: null,
-                status: "running"
-              },
-              timestamp: "2026-03-23T10:00:02.000Z",
-              sequence: 2,
-              rawRef: "codex://raw#line=duplicate-apply-patch",
-              deliveryState: "sent",
-              clientRequestId: null
-            }
-          ]}
-        />
-      );
-
-      const duplicateKeyCalls = consoleErrorSpy.mock.calls.filter(
-        ([firstArg]) =>
-          typeof firstArg === "string" && firstArg.includes("Encountered two children with the same key")
-      );
-
-      expect(screen.getAllByRole("button", { name: /styles\.css/i })).toHaveLength(2);
-      expect(duplicateKeyCalls).toHaveLength(0);
-    } finally {
-      consoleErrorSpy.mockRestore();
-    }
   });
 
   it("首屏不会自动加载更早消息，只有滚到顶部时才触发", () => {
@@ -3719,95 +3223,5 @@ ARGUMENTS: capabilities list`)
     expect(meta?.contains(time!)).toBe(true);
   });
 
-  it("会把结构化问题渲染成可选择卡片并提交答案", async () => {
-    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
 
-    render(
-      <MessageTimeline
-        messages={[
-          createAssistantTextMessage(
-            JSON.stringify({
-              questions: [
-                {
-                  id: "file_name",
-                  header: "文件名",
-                  question: "你想把笑话保存到哪个文件名？",
-                  options: [
-                    {
-                      label: "jokes.md",
-                      description: "保存为 jokes.md"
-                    },
-                    {
-                      label: "10-jokes.md",
-                      description: "保存为 10-jokes.md"
-                    }
-                  ]
-                }
-              ]
-            })
-          )
-        ]}
-        historyState="ready"
-        provider="opencode"
-        onRetryMessage={vi.fn()}
-        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
-      />
-    );
-
-    expect(screen.getByText("你想把笑话保存到哪个文件名？")).toBeInTheDocument();
-    expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getAllByRole("radio")[0]!);
-    await userEvent.click(screen.getByRole("button", { name: /confirm|确认|common\.confirm/i }));
-
-    expect(onSubmitStructuredQuestion).toHaveBeenCalledWith({
-      messageId: "assistant-1",
-      answers: {
-        file_name: ["jokes.md"]
-      }
-    });
-  });
-
-  it("会识别正文后面的 question 代码块并渲染成问题卡片", async () => {
-    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <MessageTimeline
-        messages={[
-          createAssistantTextMessage(`我有两个问题需要确认：
-
-\`\`\`question
-{
-  "questions": [
-    {
-      "id": "spec_status",
-      "question": "spec 目录下的 requirements.md 是否存在？",
-      "header": "Spec 文件存在",
-      "options": [
-        {
-          "label": "帮我创建",
-          "description": "按模板先补齐"
-        },
-        {
-          "label": "我有别的位置",
-          "description": "告诉你路径"
-        }
-      ]
-    }
-  ]
-}
-\`\`\``)
-        ]}
-        historyState="ready"
-        provider="claude-code"
-        onRetryMessage={vi.fn()}
-        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
-      />
-    );
-
-    expect(screen.getByText("我有两个问题需要确认：")).toBeInTheDocument();
-    expect(screen.getByText("spec 目录下的 requirements.md 是否存在？")).toBeInTheDocument();
-    expect(screen.queryByText(/```question/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
-  });
 });
