@@ -7,6 +7,14 @@ import { TaskHelperProcessClient } from "../../../src/modules/tasks/task-helper-
 import { TaskQueueWaitTimeoutError, TaskTimeoutError } from "../../../src/modules/tasks/task-types.js";
 
 describe("TaskHelperProcessClient", () => {
+  it("构造 client 时不会提前拉起 helper 子进程", () => {
+    const ensureChildSpy = vi.spyOn(TaskHelperProcessClient.prototype as any, "ensureChild");
+
+    new TaskHelperProcessClient();
+
+    expect(ensureChildSpy).not.toHaveBeenCalled();
+  });
+
   it("helper recycle 导致 stdout 关闭时会自动重试一次", async () => {
     let attempt = 0;
     const client = Object.create(TaskHelperProcessClient.prototype) as TaskHelperProcessClient & {
@@ -184,5 +192,47 @@ describe("TaskHelperProcessClient", () => {
 
     expect(reject).toHaveBeenCalledTimes(1);
     expect(reject.mock.calls[0]?.[0]).toBeInstanceOf(TaskQueueWaitTimeoutError);
+  });
+
+  it("helper 空闲一段时间后会主动回收子进程", async () => {
+    vi.useFakeTimers();
+    const kill = vi.fn();
+    const close = vi.fn();
+    const child = {
+      stdin: { destroyed: false },
+      stdout: { destroyed: false },
+      killed: false,
+      kill
+    } as unknown as ChildProcessWithoutNullStreams;
+    const client = Object.create(TaskHelperProcessClient.prototype) as TaskHelperProcessClient & {
+      disposed: boolean;
+      child: ChildProcessWithoutNullStreams | null;
+      stdoutReader: readline.Interface | null;
+      stdoutReaderChild: ChildProcessWithoutNullStreams | null;
+      pendingRequests: Map<string, unknown>;
+      inflightRemoteRequestIds: Set<string>;
+      idleRecycleTimer: NodeJS.Timeout | null;
+      lastTerminationReason: string | null;
+      lastExitAtMs: number | null;
+    };
+
+    client.disposed = false;
+    client.child = child;
+    client.stdoutReader = { close } as unknown as readline.Interface;
+    client.stdoutReaderChild = child;
+    client.pendingRequests = new Map();
+    client.inflightRemoteRequestIds = new Set();
+    client.idleRecycleTimer = null;
+    client.lastTerminationReason = null;
+    client.lastExitAtMs = null;
+
+    (TaskHelperProcessClient.prototype as any).armIdleRecycleTimerIfNeeded.call(client);
+    await vi.advanceTimersByTimeAsync(15_100);
+
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(client.child).toBeNull();
+    expect(client.lastTerminationReason).toBe("helper_idle_timeout");
+    vi.useRealTimers();
   });
 });

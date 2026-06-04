@@ -59,6 +59,7 @@ type HelperResponse =
     };
 
 const GLOBAL_TASK_HELPER_PROCESS_CLIENT_KEY = "__codingnsTaskHelperProcessClient__";
+const TASK_HELPER_IDLE_RECYCLE_MS = 15_000;
 
 let sharedTaskHelperProcessClient: TaskHelperProcessClient | null = null;
 
@@ -74,10 +75,7 @@ export class TaskHelperProcessClient {
   private lastHeartbeatAtMs: number | null = null;
   private lastExitAtMs: number | null = null;
   private lastTerminationReason: string | null = null;
-
-  constructor() {
-    this.ensureChild();
-  }
+  private idleRecycleTimer: NodeJS.Timeout | null = null;
 
   async execute<TResult>(
     handler: TaskHelperProcessHandlerName,
@@ -140,6 +138,7 @@ export class TaskHelperProcessClient {
     }
 
     const child = this.ensureChild();
+    this.clearIdleRecycleTimer();
     const id = String(this.nextRequestId++);
 
     return await new Promise<TResult>((resolve, reject) => {
@@ -219,6 +218,7 @@ export class TaskHelperProcessClient {
     }
 
     this.disposed = true;
+    this.clearIdleRecycleTimer();
     this.stdoutReader?.close();
 
     if (this.child && !this.child.killed) {
@@ -280,15 +280,18 @@ export class TaskHelperProcessClient {
 
     if (payload.ok) {
       pending.resolve(payload.result);
+      this.armIdleRecycleTimerIfNeeded();
       return;
     }
 
     if (payload.errorCode === "TASK_QUEUE_WAIT_TIMEOUT") {
       pending.reject(new TaskQueueWaitTimeoutError(payload.error));
+      this.armIdleRecycleTimerIfNeeded();
       return;
     }
 
     pending.reject(new Error(payload.error));
+    this.armIdleRecycleTimerIfNeeded();
   }
 
   private rejectAll(error: unknown): void {
@@ -298,6 +301,7 @@ export class TaskHelperProcessClient {
 
     this.pendingRequests.clear();
     this.inflightRemoteRequestIds.clear();
+    this.clearIdleRecycleTimer();
   }
 
   private async sendCancel(targetId: string): Promise<void> {
@@ -331,6 +335,7 @@ export class TaskHelperProcessClient {
 
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child && this.stdoutReader && !this.child.killed && !this.child.stdin.destroyed) {
+      this.clearIdleRecycleTimer();
       return this.child;
     }
 
@@ -403,6 +408,7 @@ export class TaskHelperProcessClient {
     this.lastHeartbeatAtMs = this.startedAtMs;
     this.lastExitAtMs = null;
     this.lastTerminationReason = null;
+    this.clearIdleRecycleTimer();
     return child;
   }
 
@@ -420,6 +426,7 @@ export class TaskHelperProcessClient {
     if (this.child === child) {
       this.child = null;
     }
+    this.clearIdleRecycleTimer();
 
     if (this.stdoutReader && this.stdoutReaderChild === child) {
       this.stdoutReader.close();
@@ -462,6 +469,7 @@ export class TaskHelperProcessClient {
     if (this.child === child) {
       this.child = null;
     }
+    this.clearIdleRecycleTimer();
 
     if (this.stdoutReader && this.stdoutReaderChild === child) {
       this.stdoutReader.close();
@@ -495,6 +503,66 @@ export class TaskHelperProcessClient {
       this.pendingRequests.delete(requestId);
       this.inflightRemoteRequestIds.delete(requestId);
       pending.reject(error);
+    }
+
+    this.armIdleRecycleTimerIfNeeded();
+  }
+
+  private armIdleRecycleTimerIfNeeded(): void {
+    if (
+      this.disposed
+      || !this.child
+      || this.pendingRequests.size > 0
+      || this.inflightRemoteRequestIds.size > 0
+    ) {
+      return;
+    }
+
+    this.clearIdleRecycleTimer();
+    this.idleRecycleTimer = setTimeout(() => {
+      this.idleRecycleTimer = null;
+      if (
+        this.disposed
+        || !this.child
+        || this.pendingRequests.size > 0
+        || this.inflightRemoteRequestIds.size > 0
+      ) {
+        return;
+      }
+      this.recycleIdleChild("helper_idle_timeout");
+    }, TASK_HELPER_IDLE_RECYCLE_MS);
+  }
+
+  private clearIdleRecycleTimer(): void {
+    if (!this.idleRecycleTimer) {
+      return;
+    }
+    clearTimeout(this.idleRecycleTimer);
+    this.idleRecycleTimer = null;
+  }
+
+  private recycleIdleChild(reason: string): void {
+    const child = this.child;
+    if (!child) {
+      return;
+    }
+
+    this.lastTerminationReason = reason;
+    this.lastExitAtMs = Date.now();
+    if (this.child === child) {
+      this.child = null;
+    }
+    if (this.stdoutReader && this.stdoutReaderChild === child) {
+      this.stdoutReader.close();
+      this.stdoutReader = null;
+      this.stdoutReaderChild = null;
+    }
+    if (!child.killed && typeof child.kill === "function") {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // 空闲回收失败不能影响主链路。
+      }
     }
   }
 }
