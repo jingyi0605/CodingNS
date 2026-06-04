@@ -4,6 +4,7 @@ import { createWindowRegistryStore } from "./window-registry";
 import {
   buildExternalWorkspaceWindowId,
   buildFilePreviewExternalWindowId,
+  openAffairsExternalWindow,
   openFilePreviewExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
@@ -17,6 +18,7 @@ describe("window-openers", () => {
     expect(buildExternalWorkspaceWindowId("git", "workspace-1")).toBe("git-workspace-1");
     expect(buildExternalWorkspaceWindowId("processes", "workspace-1")).toBe("processes-workspace-1");
     expect(buildExternalWorkspaceWindowId("terminals", "workspace-1")).toBe("terminals-workspace-1");
+    expect(buildExternalWorkspaceWindowId("affairs", "workspace-1")).toBe("affairs-workspace-1");
     expect(buildFilePreviewExternalWindowId("workspace-1", "docs/read me.md")).toBe(
       "file-preview-workspace-1-docs_2Fread_20me_md"
     );
@@ -204,6 +206,41 @@ describe("window-openers", () => {
     });
     expect(windows.getDescriptor("processes-workspace-1")).toBeNull();
     expect(windows.isWindowOpen("processes-workspace-1")).toBe(false);
+  });
+
+  it("openAffairsExternalWindow 会注册事务外部窗口 descriptor", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await openAffairsExternalWindow(
+      {
+        isDesktop: true,
+        bridge: {
+          supported: true,
+          createWindow
+        },
+        windows
+      } as never,
+      {
+        workspaceId: "workspace-1",
+        workspaceName: "项目一"
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: "affairs-workspace-1",
+        kind: "affairs",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        focusOwner: "affairs-workbench"
+      })
+    );
+    expect(windows.getDescriptor("affairs-workspace-1")).toMatchObject({
+      kind: "affairs",
+      mode: "external"
+    });
   });
 
   it("openTerminalsExternalWindow 会注册终端页外部窗口 descriptor", async () => {

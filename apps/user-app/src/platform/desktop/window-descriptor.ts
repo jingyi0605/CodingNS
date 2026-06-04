@@ -1,5 +1,5 @@
 // 多窗口类型在这里统一收口，后续新增类型只改这里即可。
-export const WINDOW_KINDS = ["chat", "files", "file-preview", "git", "processes", "terminals"] as const;
+export const WINDOW_KINDS = ["chat", "files", "file-preview", "git", "processes", "terminals", "affairs", "code"] as const;
 export const WINDOW_MODES = ["docked", "floating", "external"] as const;
 
 export type WindowKind = (typeof WINDOW_KINDS)[number];
@@ -17,6 +17,7 @@ export interface WindowBounds {
 export interface WindowDescriptorPayload {
   // 单文件预览窗口使用 workspace 相对路径。后续新增窗口上下文字段也统一放这里。
   filePath?: string | null;
+  routePath?: string | null;
 }
 
 export interface WindowDescriptor {
@@ -48,7 +49,8 @@ function normalizeWindowDescriptorPayload(
   payload: WindowDescriptorPayload | null | undefined
 ): WindowDescriptorPayload {
   return {
-    filePath: payload?.filePath ?? null
+    filePath: payload?.filePath ?? null,
+    routePath: payload?.routePath ?? null
   };
 }
 

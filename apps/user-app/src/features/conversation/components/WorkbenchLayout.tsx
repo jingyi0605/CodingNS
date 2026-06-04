@@ -58,6 +58,7 @@ import {
   type DesktopWindowDetachPreviewController
 } from "../../../platform/desktop/window-detach-animation";
 import {
+  openAffairsExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
   openProcessesExternalWindow
@@ -4591,6 +4592,37 @@ function SidebarContent({
   const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHostName = getActiveHost(runtimeConfig)?.name ?? "";
+  const openAffairsInExternalWindow = useCallback(async (workspaceId: string) => {
+    const result = await openAffairsExternalWindow(platform, {
+      workspaceId,
+      focusOwner: "affairs-workbench"
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("desktopWindow.invalidAffairsTarget"),
+        tone: "error"
+      });
+    }
+  }, [platform, showToast]);
+
+  const handleAffairsModeContextMenu = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (!platform.isDesktop || !platform.bridge.supported || !activeWorkspaceId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    await showDesktopContextMenu([
+      {
+        id: "open-affairs-new-window",
+        label: t("shell.workbenchModeAffairsOpenInNewWindow"),
+        onSelect: () => openAffairsInExternalWindow(activeWorkspaceId)
+      }
+    ]);
+  }, [activeWorkspaceId, openAffairsInExternalWindow, platform.bridge.supported, platform.isDesktop]);
+
   const showHostNameBadge =
     runtimeConfig.hosts.length + getVisibleDiscoveredHosts(runtimeConfig).length > 1
     && activeHostName.length > 0;
@@ -7025,6 +7057,9 @@ function SidebarContent({
                 role="tab"
                 aria-selected={activeWorkbenchMode === "affairs"}
                 onClick={() => onSelectWorkbenchMode("affairs")}
+                onContextMenu={(event) => {
+                  void handleAffairsModeContextMenu(event);
+                }}
               >
                 <span>{t("shell.workbenchModeAffairs")}</span>
               </button>

@@ -47,18 +47,21 @@ export {
 };
 
 const hoistedWindowMocks = vi.hoisted(() => ({
+  openAffairsExternalWindowMock: vi.fn(),
   openFilesExternalWindowMock: vi.fn(),
   openGitExternalWindowMock: vi.fn(),
   openProcessesExternalWindowMock: vi.fn(),
   showDesktopContextMenuMock: vi.fn()
 }));
 
+export const openAffairsExternalWindowMock = hoistedWindowMocks.openAffairsExternalWindowMock;
 export const openFilesExternalWindowMock = hoistedWindowMocks.openFilesExternalWindowMock;
 export const openGitExternalWindowMock = hoistedWindowMocks.openGitExternalWindowMock;
 export const openProcessesExternalWindowMock = hoistedWindowMocks.openProcessesExternalWindowMock;
 export const showDesktopContextMenuMock = hoistedWindowMocks.showDesktopContextMenuMock;
 
 vi.mock("../../../platform/desktop/window-openers", () => ({
+  openAffairsExternalWindow: hoistedWindowMocks.openAffairsExternalWindowMock,
   openFilesExternalWindow: hoistedWindowMocks.openFilesExternalWindowMock,
   openGitExternalWindow: hoistedWindowMocks.openGitExternalWindowMock,
   openProcessesExternalWindow: hoistedWindowMocks.openProcessesExternalWindowMock
@@ -218,6 +221,7 @@ export function registerWorkbenchLayoutTestHooks() {
     ];
 
     beforeEach(() => {
+      openAffairsExternalWindowMock.mockReset();
       openFilesExternalWindowMock.mockReset();
       openGitExternalWindowMock.mockReset();
       openProcessesExternalWindowMock.mockReset();
@@ -232,6 +236,12 @@ export function registerWorkbenchLayoutTestHooks() {
       mockedListButlerProjects.mockReset();
       mockedUpdateButlerNotificationArchive.mockReset();
       mockedUpdateButlerInboxItem.mockReset();
+      openAffairsExternalWindowMock.mockResolvedValue({
+        ok: true,
+        value: {
+          windowId: "affairs-workspace-1"
+        }
+      });
       openFilesExternalWindowMock.mockResolvedValue({
         ok: true,
         value: {

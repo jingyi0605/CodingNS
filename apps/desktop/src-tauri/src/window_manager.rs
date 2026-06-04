@@ -32,6 +32,7 @@ pub struct WindowDescriptor {
 #[serde(rename_all = "camelCase")]
 pub struct WindowDescriptorPayload {
     pub file_path: Option<String>,
+    pub route_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -44,6 +45,8 @@ pub enum WindowKind {
     Git,
     Processes,
     Terminals,
+    Affairs,
+    Code,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -138,6 +141,8 @@ impl WindowDescriptor {
                     | WindowKind::Git
                     | WindowKind::Processes
                     | WindowKind::Terminals
+                    | WindowKind::Affairs
+                    | WindowKind::Code
             )
     }
 }
@@ -234,5 +239,7 @@ mod tests {
         assert!(!create_descriptor("window-chat", WindowKind::Chat).supports_external_window());
         assert!(create_descriptor("window-git", WindowKind::Git).supports_external_window());
         assert!(create_descriptor("window-terminals", WindowKind::Terminals).supports_external_window());
+        assert!(create_descriptor("window-affairs", WindowKind::Affairs).supports_external_window());
+        assert!(create_descriptor("window-code", WindowKind::Code).supports_external_window());
     }
 }

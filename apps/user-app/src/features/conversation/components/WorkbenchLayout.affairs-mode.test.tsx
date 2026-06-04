@@ -38,6 +38,7 @@ import {
   getSessionCardByTitle,
   mockAffairsLibraryFetch,
   mockNavigator,
+  openAffairsExternalWindowMock,
   openFilesExternalWindowMock,
   openGitExternalWindowMock,
   openProcessesExternalWindowMock,
@@ -85,6 +86,56 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeInTheDocument();
   });
 
+
+  it("右键事务模式按钮可以在新窗口中打开事务视图", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    mockAffairsLibraryFetch();
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+
+    const affairsButton = await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") });
+    fireEvent.contextMenu(affairsButton, { clientX: 220, clientY: 120 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "open-affairs-new-window",
+      label: t("shell.workbenchModeAffairsOpenInNewWindow")
+    });
+
+    await items[0].onSelect();
+
+    expect(openAffairsExternalWindowMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        focusOwner: "affairs-workbench"
+      })
+    );
+  });
   it("顶层模式切到事务后会进入 affairs 路由，并保留切回代码能力", async () => {
     mockAffairsLibraryFetch();
     MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([

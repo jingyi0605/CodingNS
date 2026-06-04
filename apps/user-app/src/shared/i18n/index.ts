@@ -603,6 +603,8 @@ const extensionZhCN = {
     workbenchModeTabsLabel: "工作台模式",
     workbenchModeCode: "代码",
     workbenchModeAffairs: "事务",
+    workbenchModeCodeOpenInNewWindow: "在新窗口打开代码",
+    workbenchModeAffairsOpenInNewWindow: "在新窗口打开事务",
     affairsSectionGroupPrimary: "分区入口",
     affairsSectionGroupFavorites: "收藏",
     affairsSectionGroupRecent: "最近打开",
@@ -3036,7 +3038,9 @@ const extensionZhCN = {
     invalidWindowId: "\u7f3a\u5c11\u7a97\u53e3 ID\uff0c\u65e0\u6cd5\u52a0\u8f7d\u5916\u90e8\u7a97\u53e3\u3002",
     loadDescriptorFailed: "\u8bfb\u53d6\u7a97\u53e3\u63cf\u8ff0\u5931\u8d25\u3002",
     unsupportedKind: "\u6682\u4e0d\u652f\u6301\u6e32\u67d3 {kind} \u7a97\u53e3\u3002",
-    invalidFilePreviewTarget: "\u7f3a\u5c11\u8981\u9884\u89c8\u7684\u6587\u4ef6\uff0c\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u9884\u89c8\u7a97\u53e3\u3002"
+    invalidFilePreviewTarget: "\u7f3a\u5c11\u8981\u9884\u89c8\u7684\u6587\u4ef6\uff0c\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u9884\u89c8\u7a97\u53e3\u3002",
+    invalidAffairsTarget: "\u7f3a\u5c11\u4e8b\u52a1\u5de5\u4f5c\u533a\u6240\u9700\u7684\u5de5\u4f5c\u533a\u4fe1\u606f\uff0c\u65e0\u6cd5\u6253\u5f00\u4e8b\u52a1\u7a97\u53e3\u3002",
+    invalidCodeTarget: "\u7f3a\u5c11\u8981\u6253\u5f00\u7684\u4ee3\u7801\u8def\u5f84\uff0c\u65e0\u6cd5\u6253\u5f00\u4ee3\u7801\u7a97\u53e3\u3002"
   },
   git: {
     recentVersionsTitle: "\u6700\u8fd1\u7248\u672c",
@@ -3640,6 +3644,8 @@ const extensionEnUS = {
     workbenchModeTabsLabel: "Workbench Modes",
     workbenchModeCode: "Code",
     workbenchModeAffairs: "Affairs",
+    workbenchModeCodeOpenInNewWindow: "Open Code in New Window",
+    workbenchModeAffairsOpenInNewWindow: "Open Affairs in New Window",
     affairsSectionGroupPrimary: "Sections",
     affairsSectionGroupFavorites: "Pinned",
     affairsSectionGroupRecent: "Recent",
@@ -6082,7 +6088,9 @@ const extensionEnUS = {
     invalidWindowId: "The external window is missing a window id.",
     loadDescriptorFailed: "Failed to load the window descriptor.",
     unsupportedKind: "Rendering the {kind} window is not supported yet.",
-    invalidFilePreviewTarget: "The file preview window is missing its file target."
+    invalidFilePreviewTarget: "The file preview window is missing its file target.",
+    invalidAffairsTarget: "The affairs window is missing its workspace target.",
+    invalidCodeTarget: "The code window is missing its route target."
   },
   git: {
     recentVersionsTitle: "Recent Versions",

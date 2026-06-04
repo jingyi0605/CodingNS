@@ -7,7 +7,7 @@ import {
   type WindowKind
 } from "./window-descriptor";
 
-type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes" | "terminals">;
+type ExternalWindowKind = Extract<WindowKind, "files" | "git" | "processes" | "terminals" | "affairs" | "code">;
 type FilePreviewWindowKind = Extract<WindowKind, "file-preview">;
 
 export interface OpenExternalWorkspaceWindowInput {
@@ -15,6 +15,7 @@ export interface OpenExternalWorkspaceWindowInput {
   workspaceName?: string | null;
   sessionId?: string | null;
   focusOwner?: string | null;
+  routePath?: string | null;
 }
 
 export interface OpenFilePreviewExternalWindowInput extends OpenExternalWorkspaceWindowInput {
@@ -48,6 +49,16 @@ const EXTERNAL_WINDOW_KIND_CONFIG: Record<ExternalWindowKind, WindowKindConfig> 
     kind: "terminals",
     label: "终端",
     defaultFocusOwner: "terminal-page"
+  },
+  affairs: {
+    kind: "affairs",
+    label: "事务",
+    defaultFocusOwner: "affairs-workbench"
+  },
+  code: {
+    kind: "code",
+    label: "代码",
+    defaultFocusOwner: "code-workbench"
   }
 };
 
@@ -142,7 +153,10 @@ async function openExternalWorkspaceWindow(
     sessionId: input.sessionId ?? previousDescriptorSnapshot?.sessionId ?? null,
     mode: "external",
     bounds: previousDescriptorSnapshot?.bounds,
-    focusOwner: input.focusOwner ?? kindConfig.defaultFocusOwner
+    focusOwner: input.focusOwner ?? kindConfig.defaultFocusOwner,
+    payload: {
+      routePath: input.routePath ?? previousDescriptorSnapshot?.payload.routePath ?? null
+    }
   });
 
   platform.windows.registerDescriptor(descriptor);
@@ -262,6 +276,14 @@ export function buildProcessesExternalWindowId(workspaceId: string): string {
   return buildExternalWorkspaceWindowId("processes", workspaceId);
 }
 
+export function buildAffairsExternalWindowId(workspaceId: string): string {
+  return buildExternalWorkspaceWindowId("affairs", workspaceId);
+}
+
+export function buildCodeExternalWindowId(workspaceId: string): string {
+  return buildExternalWorkspaceWindowId("code", workspaceId);
+}
+
 export function buildTerminalsExternalWindowId(workspaceId: string): string {
   return buildExternalWorkspaceWindowId("terminals", workspaceId);
 }
@@ -292,6 +314,20 @@ export function openTerminalsExternalWindow(
   input: OpenExternalWorkspaceWindowInput
 ): Promise<DesktopBridgeResult<WindowDescriptor>> {
   return openExternalWorkspaceWindow(platform, "terminals", input);
+}
+
+export function openAffairsExternalWindow(
+  platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
+  input: OpenExternalWorkspaceWindowInput
+): Promise<DesktopBridgeResult<WindowDescriptor>> {
+  return openExternalWorkspaceWindow(platform, "affairs", input);
+}
+
+export function openCodeExternalWindow(
+  platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
+  input: OpenExternalWorkspaceWindowInput
+): Promise<DesktopBridgeResult<WindowDescriptor>> {
+  return openExternalWorkspaceWindow(platform, "code", input);
 }
 
 export function openFilePreviewExternalWindow(

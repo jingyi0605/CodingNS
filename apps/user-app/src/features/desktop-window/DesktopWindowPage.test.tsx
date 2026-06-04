@@ -40,6 +40,8 @@ const fileViewerPanelMock = vi.hoisted(() => vi.fn());
 const gitSidebarMock = vi.hoisted(() => vi.fn());
 const terminalManagerPanelMock = vi.hoisted(() => vi.fn());
 const terminalPageMock = vi.hoisted(() => vi.fn());
+const affairsWorkbenchViewMock = vi.hoisted(() => vi.fn());
+const affairsAuxiliaryPanelMock = vi.hoisted(() => vi.fn());
 const setTitleMock = vi.hoisted(() => vi.fn(async () => undefined));
 const realtimeStartMock = vi.hoisted(() => vi.fn());
 const realtimeCloseMock = vi.hoisted(() => vi.fn());
@@ -113,6 +115,18 @@ vi.mock("../workbench/components/TerminalManagerPanel", () => ({
         {props.navigationGroups.length}
       </div>
     );
+  }
+}));
+
+vi.mock("../workbench/components/AffairsWorkbenchView", () => ({
+  AffairsWorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  AffairsWorkbenchView: (props: { workspaceId: string }) => {
+    affairsWorkbenchViewMock(props);
+    return <div data-testid="desktop-affairs-window">{props.workspaceId}</div>;
+  },
+  AffairsAuxiliaryPanel: (props: { workspaceId: string }) => {
+    affairsAuxiliaryPanelMock(props);
+    return <div data-testid="desktop-affairs-aux">{props.workspaceId}</div>;
   }
 }));
 
@@ -413,6 +427,38 @@ describe("DesktopWindowPage", () => {
     expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Terminal（项目一）");
   });
 
+
+  it("会根据 descriptor 渲染事务外部窗口壳", async () => {
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "affairs-workspace-1",
+        kind: "affairs",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: null,
+        mode: "external",
+        bounds: {
+          x: null,
+          y: null,
+          width: 1200,
+          height: 780,
+          minWidth: 720,
+          minHeight: 480
+        },
+        focusOwner: "affairs-workbench",
+        payload: { filePath: null }
+      }
+    });
+
+    renderPage("/desktop-window/affairs-workspace-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-affairs-window")).toHaveTextContent("workspace-1");
+    });
+    expect(screen.getByTestId("desktop-affairs-aux")).toHaveTextContent("workspace-1");
+    expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Affairs（项目一）");
+  });
   it("descriptor 类型不在第一批范围内时会显示占位错误", async () => {
     getWindowDescriptorMock.mockResolvedValue({
       ok: true,
