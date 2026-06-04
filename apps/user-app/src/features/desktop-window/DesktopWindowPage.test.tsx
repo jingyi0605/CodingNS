@@ -1,5 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DesktopWindowPage } from "./DesktopWindowPage";
@@ -175,6 +175,11 @@ vi.mock("@tauri-apps/api/window", () => ({
   })
 }));
 
+function CurrentPathProbe() {
+  const location = useLocation();
+  return <div data-testid="current-path">{location.pathname}</div>;
+}
+
 describe("DesktopWindowPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -224,6 +229,8 @@ describe("DesktopWindowPage", () => {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/desktop-window/:windowId" element={<DesktopWindowPage />} />
+          <Route path="/workspaces/:workspaceId/sessions/:sessionId" element={<CurrentPathProbe />} />
+          <Route path="/workspaces/:workspaceId/sessions" element={<CurrentPathProbe />} />
         </Routes>
       </MemoryRouter>
     );
@@ -458,6 +465,29 @@ describe("DesktopWindowPage", () => {
     });
     expect(screen.getByTestId("desktop-affairs-aux")).toHaveTextContent("workspace-1");
     expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Affairs（项目一）");
+  });
+
+  it("代码外部窗口会跳转到 descriptor 指定路由", async () => {
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "code-workspace-1",
+        kind: "code",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: "session-1",
+        mode: "external",
+        bounds: { x: null, y: null, width: 1200, height: 780, minWidth: 720, minHeight: 480 },
+        focusOwner: "code-workbench",
+        payload: { filePath: null, routePath: "/workspaces/workspace-1/sessions/session-1" }
+      }
+    });
+
+    renderPage("/desktop-window/code-workspace-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
+    });
   });
   it("descriptor 类型不在第一批范围内时会显示占位错误", async () => {
     getWindowDescriptorMock.mockResolvedValue({

@@ -48,6 +48,7 @@ export {
 
 const hoistedWindowMocks = vi.hoisted(() => ({
   openAffairsExternalWindowMock: vi.fn(),
+  openCodeExternalWindowMock: vi.fn(),
   openFilesExternalWindowMock: vi.fn(),
   openGitExternalWindowMock: vi.fn(),
   openProcessesExternalWindowMock: vi.fn(),
@@ -55,6 +56,7 @@ const hoistedWindowMocks = vi.hoisted(() => ({
 }));
 
 export const openAffairsExternalWindowMock = hoistedWindowMocks.openAffairsExternalWindowMock;
+export const openCodeExternalWindowMock = hoistedWindowMocks.openCodeExternalWindowMock;
 export const openFilesExternalWindowMock = hoistedWindowMocks.openFilesExternalWindowMock;
 export const openGitExternalWindowMock = hoistedWindowMocks.openGitExternalWindowMock;
 export const openProcessesExternalWindowMock = hoistedWindowMocks.openProcessesExternalWindowMock;
@@ -62,6 +64,7 @@ export const showDesktopContextMenuMock = hoistedWindowMocks.showDesktopContextM
 
 vi.mock("../../../platform/desktop/window-openers", () => ({
   openAffairsExternalWindow: hoistedWindowMocks.openAffairsExternalWindowMock,
+  openCodeExternalWindow: hoistedWindowMocks.openCodeExternalWindowMock,
   openFilesExternalWindow: hoistedWindowMocks.openFilesExternalWindowMock,
   openGitExternalWindow: hoistedWindowMocks.openGitExternalWindowMock,
   openProcessesExternalWindow: hoistedWindowMocks.openProcessesExternalWindowMock
@@ -222,6 +225,7 @@ export function registerWorkbenchLayoutTestHooks() {
 
     beforeEach(() => {
       openAffairsExternalWindowMock.mockReset();
+      openCodeExternalWindowMock.mockReset();
       openFilesExternalWindowMock.mockReset();
       openGitExternalWindowMock.mockReset();
       openProcessesExternalWindowMock.mockReset();
@@ -240,6 +244,12 @@ export function registerWorkbenchLayoutTestHooks() {
         ok: true,
         value: {
           windowId: "affairs-workspace-1"
+        }
+      });
+      openCodeExternalWindowMock.mockResolvedValue({
+        ok: true,
+        value: {
+          windowId: "code-workspace-1"
         }
       });
       openFilesExternalWindowMock.mockResolvedValue({

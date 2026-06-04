@@ -39,6 +39,7 @@ import {
   mockAffairsLibraryFetch,
   mockNavigator,
   openAffairsExternalWindowMock,
+  openCodeExternalWindowMock,
   openFilesExternalWindowMock,
   openGitExternalWindowMock,
   openProcessesExternalWindowMock,
@@ -87,6 +88,56 @@ describe("WorkbenchLayout", () => {
   });
 
 
+
+  it("右键代码模式按钮可以在新窗口中打开代码视图", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const codeButton = await screen.findByRole("tab", { name: t("shell.workbenchModeCode") });
+    fireEvent.contextMenu(codeButton, { clientX: 200, clientY: 120 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const items = showDesktopContextMenuMock.mock.calls[0]?.[0] ?? [];
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "open-code-new-window",
+      label: t("shell.workbenchModeCodeOpenInNewWindow")
+    });
+
+    await items[0].onSelect();
+
+    expect(openCodeExternalWindowMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        focusOwner: "code-workbench",
+        routePath: "/workspaces/workspace-1/sessions/session-1"
+      })
+    );
+  });
   it("右键事务模式按钮可以在新窗口中打开事务视图", async () => {
     mockNavigator({
       userAgent:

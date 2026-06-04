@@ -5,6 +5,7 @@ import {
   buildExternalWorkspaceWindowId,
   buildFilePreviewExternalWindowId,
   openAffairsExternalWindow,
+  openCodeExternalWindow,
   openFilePreviewExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
@@ -19,6 +20,7 @@ describe("window-openers", () => {
     expect(buildExternalWorkspaceWindowId("processes", "workspace-1")).toBe("processes-workspace-1");
     expect(buildExternalWorkspaceWindowId("terminals", "workspace-1")).toBe("terminals-workspace-1");
     expect(buildExternalWorkspaceWindowId("affairs", "workspace-1")).toBe("affairs-workspace-1");
+    expect(buildExternalWorkspaceWindowId("code", "workspace-1")).toBe("code-workspace-1");
     expect(buildFilePreviewExternalWindowId("workspace-1", "docs/read me.md")).toBe(
       "file-preview-workspace-1-docs_2Fread_20me_md"
     );
@@ -103,7 +105,8 @@ describe("window-openers", () => {
           height: 640
         }),
         payload: {
-          filePath: "docs/readme.md"
+          filePath: "docs/readme.md",
+          routePath: null
         }
       })
     );
@@ -119,7 +122,8 @@ describe("window-openers", () => {
         minHeight: 480
       },
       payload: {
-        filePath: "docs/readme.md"
+        filePath: "docs/readme.md",
+        routePath: null
       }
     });
   });
@@ -328,3 +332,63 @@ describe("window-openers", () => {
     expect(windows.isWindowOpen("git-workspace-1")).toBe(true);
   });
 });
+
+
+  it("openCodeExternalWindow 会记录代码路由", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await openCodeExternalWindow(
+      {
+        isDesktop: true,
+        bridge: { supported: true, createWindow },
+        windows
+      } as never,
+      {
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        routePath: "/workspaces/workspace-1/sessions/session-1"
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: "code-workspace-1",
+        kind: "code",
+        payload: { filePath: null, routePath: "/workspaces/workspace-1/sessions/session-1" }
+      })
+    );
+  });
+
+  it("openAffairsExternalWindow 会复用已登记窗口的 bounds", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    windows.registerDescriptor({
+      windowId: "affairs-workspace-1",
+      kind: "affairs",
+      workspaceId: "workspace-1",
+      sessionId: null,
+      mode: "external",
+      bounds: { x: 88, y: 66, width: 1440, height: 920, minWidth: 720, minHeight: 480 },
+      focusOwner: "affairs-workbench",
+      payload: { filePath: null, routePath: null }
+    });
+
+    const result = await openAffairsExternalWindow(
+      {
+        isDesktop: true,
+        bridge: { supported: true, createWindow },
+        windows
+      } as never,
+      { workspaceId: "workspace-1", workspaceName: "项目一" }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bounds: expect.objectContaining({ x: 88, y: 66, width: 1440, height: 920 })
+      })
+    );
+  });

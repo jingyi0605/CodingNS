@@ -59,6 +59,7 @@ import {
 } from "../../../platform/desktop/window-detach-animation";
 import {
   openAffairsExternalWindow,
+  openCodeExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
   openProcessesExternalWindow
@@ -4592,6 +4593,23 @@ function SidebarContent({
   const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHostName = getActiveHost(runtimeConfig)?.name ?? "";
+  const openCodeInExternalWindow = useCallback(async (workspaceId: string) => {
+    const routePath = resolveValidWorkbenchModeLastPath(workspaceId, "code")
+      ?? buildWorkspaceSessionIndexPath(workspaceId);
+    const result = await openCodeExternalWindow(platform, {
+      workspaceId,
+      focusOwner: "code-workbench",
+      routePath
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("desktopWindow.invalidCodeTarget"),
+        tone: "error"
+      });
+    }
+  }, [platform, showToast]);
+
   const openAffairsInExternalWindow = useCallback(async (workspaceId: string) => {
     const result = await openAffairsExternalWindow(platform, {
       workspaceId,
@@ -4605,6 +4623,23 @@ function SidebarContent({
       });
     }
   }, [platform, showToast]);
+
+  const handleCodeModeContextMenu = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (!platform.isDesktop || !platform.bridge.supported || !activeWorkspaceId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    await showDesktopContextMenu([
+      {
+        id: "open-code-new-window",
+        label: t("shell.workbenchModeCodeOpenInNewWindow"),
+        onSelect: () => openCodeInExternalWindow(activeWorkspaceId)
+      }
+    ]);
+  }, [activeWorkspaceId, openCodeInExternalWindow, platform.bridge.supported, platform.isDesktop]);
 
   const handleAffairsModeContextMenu = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (!platform.isDesktop || !platform.bridge.supported || !activeWorkspaceId) {
@@ -7042,6 +7077,9 @@ function SidebarContent({
                 role="tab"
                 aria-selected={activeWorkbenchMode === "code"}
                 onClick={() => onSelectWorkbenchMode("code")}
+                onContextMenu={(event) => {
+                  void handleCodeModeContextMenu(event);
+                }}
               >
                 <span>{t("shell.workbenchModeCode")}</span>
               </button>
