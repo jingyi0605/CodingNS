@@ -155,6 +155,29 @@ describe("cors origins", () => {
     );
   });
 
+  it("受保护 API 的预检请求不会被鉴权重复回写", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const response = await hosted.app.inject({
+      method: "OPTIONS",
+      url: "/api/workspaces",
+      headers: {
+        origin: "tauri://localhost",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "Authorization"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.body).toBe("");
+    expect(response.headers["access-control-allow-origin"]).toBe("tauri://localhost");
+  });
+
   it("拒绝未知远端来源", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);

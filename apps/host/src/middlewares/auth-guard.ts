@@ -69,6 +69,14 @@ function isAllowedAssistantCaller(
 
 export function createAuthGuard(authService: AuthService) {
   return async function authGuard(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (reply.sent || reply.raw.headersSent) {
+      return;
+    }
+
+    if (request.method === "OPTIONS") {
+      return;
+    }
+
     const routePath = request.url.split("?")[0] ?? request.url;
 
     // 页面壳、静态资源和前端路由必须允许匿名访问，真正受保护的是 API。
