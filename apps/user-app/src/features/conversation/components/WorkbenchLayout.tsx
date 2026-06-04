@@ -220,6 +220,7 @@ import {
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
 import { AffairsAuxiliaryPanel, AffairsSectionMenu, AffairsSidebarPanel, AffairsWorkbenchProvider, AffairsWorkbenchView } from "../../workbench/components/AffairsWorkbenchView";
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
+import { ensureAffairsDashboardState } from "../../workbench/utils/affairs-dashboard-state";
 import {
   createDefaultAffairsViewState,
   createDefaultAffairsLibraryLandingState,
@@ -6004,15 +6005,19 @@ function SidebarContent({
     const nextAncestorHasNextSiblings =
       node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
     const parallelGroupId = session.parallelGroup?.groupId?.trim() || null;
+    const shouldProjectParallelAnchorChildren =
+      session.parallelGroup?.role === "anchor"
+      && session.parallelGroup?.sourceType === "new"
+      && Boolean(parallelGroupId);
     const directParallelMemberChildren =
-      session.parallelGroup?.role === "anchor" && parallelGroupId
+      shouldProjectParallelAnchorChildren && parallelGroupId
         ? visibleChildren.filter((childNode) => childNode.item.parallelGroup?.groupId === parallelGroupId)
         : [];
     const directNonParallelChildren = visibleChildren.filter(
       (childNode) => childNode.item.parallelGroup?.groupId !== parallelGroupId
     );
     const fullParallelMemberChildren =
-      session.parallelGroup?.role === "anchor" && parallelGroupId
+      shouldProjectParallelAnchorChildren && parallelGroupId
         ? childNodes.filter((childNode) => childNode.item.parallelGroup?.groupId === parallelGroupId)
         : [];
     const fullNonParallelChildren = childNodes.filter(
@@ -9066,6 +9071,7 @@ export function WorkbenchLayout({
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
+  const [affairsRightCollapsed, setAffairsRightCollapsed] = useState(true);
   const [parallelConversationTransition, setParallelConversationTransition] =
     useState<ParallelGroupTransitionSignal | null>(null);
   const [activeResizeSide, setActiveResizeSide] = useState<"left" | "right" | null>(null);
@@ -10739,6 +10745,13 @@ export function WorkbenchLayout({
   const shouldRenderAffairsWorkbench =
     routeWorkbenchMode === "affairs"
     && shouldUseAffairsShell;
+  const affairsPrimarySection = effectiveAffairsViewState?.primarySection ?? "library";
+  const shouldAllowAffairsAuxiliaryPanel =
+    shouldRenderAffairsWorkbench
+    && affairsPrimarySection !== "conversation";
+  const shouldShowAffairsAuxiliaryPanel =
+    shouldAllowAffairsAuxiliaryPanel
+    && !affairsRightCollapsed;
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
@@ -11004,6 +11017,14 @@ export function WorkbenchLayout({
   }, [currentWorkspaceId]);
 
   useEffect(() => {
+    if (!currentWorkspaceId || routeWorkbenchMode !== "affairs") {
+      return;
+    }
+
+    ensureAffairsDashboardState(currentWorkspaceId);
+  }, [currentWorkspaceId, routeWorkbenchMode]);
+
+  useEffect(() => {
     if (!affairsViewState) {
       return;
     }
@@ -11055,6 +11076,11 @@ export function WorkbenchLayout({
   }
 
   function openRightPanel() {
+    if (shouldUseAffairsShell) {
+      setAffairsRightCollapsed(false);
+      return;
+    }
+
     if (isParallelConversationActive) {
       return;
     }
@@ -11079,6 +11105,11 @@ export function WorkbenchLayout({
   }
 
   function toggleRightPanel() {
+    if (shouldUseAffairsShell) {
+      setAffairsRightCollapsed((current) => !current);
+      return;
+    }
+
     if (isParallelConversationActive) {
       return;
     }
@@ -11256,12 +11287,12 @@ export function WorkbenchLayout({
     shellElement.style.setProperty("--workbench-left-width", `${nextLeftWidth}px`);
     shellElement.style.setProperty(
       "--workbench-left-current-width",
-      leftCollapsed ? "0px" : `${nextLeftWidth}px`
+      effectiveLeftCollapsed ? "0px" : `${nextLeftWidth}px`
     );
     shellElement.style.setProperty("--workbench-right-width", `${nextRightWidth}px`);
     shellElement.style.setProperty(
       "--workbench-right-current-width",
-      rightCollapsed ? "0px" : `${nextRightWidth}px`
+      effectiveRightCollapsed ? "0px" : `${nextRightWidth}px`
     );
   }
 
@@ -11269,12 +11300,12 @@ export function WorkbenchLayout({
     overrides: Partial<NativeSidebarLayout> = {}
   ): NativeSidebarLayout {
     return {
-      leftWidth: overrides.leftWidth ?? (leftCollapsed ? 0 : leftPanelWidthRef.current),
+      leftWidth: overrides.leftWidth ?? (effectiveLeftCollapsed ? 0 : leftPanelWidthRef.current),
       rightWidth:
         overrides.rightWidth
-        ?? (shouldShowAuxiliaryPanel && !rightCollapsed ? rightPanelWidthRef.current : 0),
-      leftCollapsed: overrides.leftCollapsed ?? leftCollapsed,
-      rightCollapsed: overrides.rightCollapsed ?? (!shouldShowAuxiliaryPanel || rightCollapsed),
+        ?? (shouldShowAuxiliaryPanel && !effectiveRightCollapsed ? rightPanelWidthRef.current : 0),
+      leftCollapsed: overrides.leftCollapsed ?? effectiveLeftCollapsed,
+      rightCollapsed: overrides.rightCollapsed ?? (!shouldShowAuxiliaryPanel || effectiveRightCollapsed),
       prefersDarkAppearance: overrides.prefersDarkAppearance ?? theme !== "light",
       isResizing: overrides.isResizing ?? activeResizeSide !== null
     };
@@ -11629,21 +11660,6 @@ export function WorkbenchLayout({
     ]
   );
 
-  const shellStyle = {
-    "--workbench-left-width": `${leftPanelWidth}px`,
-    "--workbench-left-current-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
-    "--workbench-right-width": `${rightPanelWidth}px`,
-    "--workbench-right-current-width":
-      rightCollapsed || isParallelConversationActive ? "0px" : `${rightPanelWidth}px`,
-    "--workbench-right-sidebar-duration":
-      parallelConversationTransition && !rightCollapsed
-        ? `${parallelConversationTransition.sidebarCollapseDurationMs}ms`
-        : undefined,
-    "--workbench-right-sidebar-content-duration":
-      parallelConversationTransition && !rightCollapsed
-        ? `${Math.max(320, parallelConversationTransition.sidebarCollapseDurationMs - 120)}ms`
-        : undefined
-  } as CSSProperties;
   const auxiliaryPanelContent = activeCenterTab === "butler"
     ? customAuxiliaryPanel
     : (
@@ -11666,14 +11682,43 @@ export function WorkbenchLayout({
         onCleanupWorktree={applyWorktreeCleanup}
       />
     );
-  const shouldShowAuxiliaryPanel = activeWorkbenchMode === "affairs" ? true : auxiliaryPanelContent !== null;
-  const effectiveRightCollapsed = rightCollapsed || isParallelConversationActive;
+  const shouldShowAuxiliaryPanel = shouldRenderAffairsWorkbench
+    ? shouldShowAffairsAuxiliaryPanel
+    : auxiliaryPanelContent !== null;
+  const effectiveLeftCollapsed = leftCollapsed;
+  const effectiveRightCollapsed = shouldRenderAffairsWorkbench
+    ? affairsRightCollapsed
+    : rightCollapsed || isParallelConversationActive;
+  const shellRightCollapsed = effectiveRightCollapsed;
   const shouldKeepParallelAuxiliaryMounted =
     isParallelConversationActive
     && parallelConversationTransition !== null
     && !rightCollapsed;
+  const shellStyle = {
+    "--workbench-left-width": `${leftPanelWidth}px`,
+    "--workbench-left-current-width": effectiveLeftCollapsed ? "0px" : `${leftPanelWidth}px`,
+    "--workbench-right-width": `${rightPanelWidth}px`,
+    "--workbench-right-current-width":
+      effectiveRightCollapsed ? "0px" : `${rightPanelWidth}px`,
+    "--workbench-right-sidebar-duration":
+      parallelConversationTransition && !rightCollapsed
+        ? `${parallelConversationTransition.sidebarCollapseDurationMs}ms`
+        : undefined,
+    "--workbench-right-sidebar-content-duration":
+      parallelConversationTransition && !rightCollapsed
+        ? `${Math.max(320, parallelConversationTransition.sidebarCollapseDurationMs - 120)}ms`
+        : undefined
+  } as CSSProperties;
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
+
+  useEffect(() => {
+    if (!shouldUseAffairsShell || !effectiveAffairsViewState) {
+      return;
+    }
+
+    setAffairsRightCollapsed(effectiveAffairsViewState.primarySection !== "library");
+  }, [effectiveAffairsViewState?.primarySection, shouldUseAffairsShell]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
@@ -11727,9 +11772,9 @@ export function WorkbenchLayout({
 
   const nativeSidebarLayout = useMemo(
     () => ({
-      leftWidth: leftCollapsed ? 0 : leftPanelWidth,
+      leftWidth: effectiveLeftCollapsed ? 0 : leftPanelWidth,
       rightWidth: shouldShowAuxiliaryPanel && !effectiveRightCollapsed ? rightPanelWidth : 0,
-      leftCollapsed,
+      leftCollapsed: effectiveLeftCollapsed,
       rightCollapsed: !shouldShowAuxiliaryPanel || effectiveRightCollapsed,
       prefersDarkAppearance: theme !== "light",
       isResizing: activeResizeSide !== null
@@ -11737,7 +11782,7 @@ export function WorkbenchLayout({
     [
       activeResizeSide,
       effectiveRightCollapsed,
-      leftCollapsed,
+      effectiveLeftCollapsed,
       leftPanelWidth,
       rightPanelWidth,
       shouldShowAuxiliaryPanel,
@@ -12196,8 +12241,8 @@ export function WorkbenchLayout({
           onMouseDownCapture={handleUnifiedTitlebarMouseDownCapture}
           onDoubleClickCapture={handleUnifiedTitlebarDoubleClickCapture}
           data-nav-loading={navigationLoading}
-          data-left-collapsed={leftCollapsed}
-          data-right-collapsed={effectiveRightCollapsed}
+          data-left-collapsed={effectiveLeftCollapsed}
+          data-right-collapsed={shellRightCollapsed}
           data-info-ready={infoPanelReady}
           data-parallel-conversation-active={isParallelConversationActive ? "true" : undefined}
           data-parallel-sidebar-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
@@ -12215,7 +12260,7 @@ export function WorkbenchLayout({
                 onStateChange={setAffairsViewState}
                 onRefreshNavigation={refreshNavigation}
               >
-                <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
+                <aside className="workbench-nav surface-card" data-collapsed={effectiveLeftCollapsed}>
                   <SidebarContent
                     workspaceGroups={workspaceSidebarGroups}
                     workspaceVisualContextMap={workspaceVisualContextMap}
@@ -12271,7 +12316,9 @@ export function WorkbenchLayout({
                     onToggleNotificationPanel={() => {
                       setNotificationPanelOpen((current) => !current);
                     }}
-                    onToggleCollapse={() => setLeftCollapsed(true)}
+                    onToggleCollapse={() => {
+                      setLeftCollapsed(true);
+                    }}
                     affairsMenuSlot={<AffairsSectionMenu />}
                     affairsContentSlot={<AffairsSidebarPanel />}
                   />
@@ -12279,21 +12326,21 @@ export function WorkbenchLayout({
                 <div
                   className="workbench-side-resizer"
                   data-side="left"
-                  data-collapsed={leftCollapsed}
+                  data-collapsed={effectiveLeftCollapsed}
                   role="separator"
                   aria-label={t("shell.leftResizerLabel")}
                   onMouseDown={
-                    leftCollapsed
+                    effectiveLeftCollapsed
                       ? undefined
                       : (event) => beginResize("left", event)
                   }
                 />
 
                 <div className="workbench-main-shell">
-                  <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
+                  <div className="workbench-collapsed-rail" aria-hidden={!effectiveLeftCollapsed && !effectiveRightCollapsed}>
                     <div
                       className="workbench-collapsed-controls left"
-                      data-visible={leftCollapsed}
+                      data-visible={effectiveLeftCollapsed}
                     >
                       <SidebarDockButton
                         className="workbench-nav-toolbar-button workbench-collapsed-button"
@@ -12325,10 +12372,10 @@ export function WorkbenchLayout({
                       </button>
                     </div>
 
-                    {shouldRenderAffairsWorkbench && !isParallelConversationActive ? (
+                    {!isParallelConversationActive && shouldAllowAffairsAuxiliaryPanel ? (
                       <div
                         className="workbench-collapsed-controls right"
-                        data-visible={rightCollapsed}
+                        data-visible={effectiveRightCollapsed}
                       >
                         <SidebarDockButton
                           className="workbench-nav-toolbar-button workbench-collapsed-button"
@@ -12350,7 +12397,7 @@ export function WorkbenchLayout({
                   )}
                 </div>
 
-                {shouldRenderAffairsWorkbench ? (
+                {shouldShowAffairsAuxiliaryPanel ? (
                   <>
                     <div
                       className="workbench-side-resizer"
@@ -12371,7 +12418,7 @@ export function WorkbenchLayout({
                     >
                       <AffairsAuxiliaryPanel
                         workspaceId={currentWorkspaceId!}
-                        onToggleCollapse={() => setRightCollapsed(true)}
+                        onToggleCollapse={() => setAffairsRightCollapsed(true)}
                       />
                     </aside>
                   </>
@@ -12379,7 +12426,7 @@ export function WorkbenchLayout({
               </AffairsWorkbenchProvider>
             ) : (
               <>
-                <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
+                <aside className="workbench-nav surface-card" data-collapsed={effectiveLeftCollapsed}>
                   <SidebarContent
                     workspaceGroups={workspaceSidebarGroups}
                     workspaceVisualContextMap={workspaceVisualContextMap}
@@ -12435,27 +12482,29 @@ export function WorkbenchLayout({
                     onToggleNotificationPanel={() => {
                       setNotificationPanelOpen((current) => !current);
                     }}
-                    onToggleCollapse={() => setLeftCollapsed(true)}
+                    onToggleCollapse={() => {
+                      setLeftCollapsed(true);
+                    }}
                   />
                 </aside>
                 <div
                   className="workbench-side-resizer"
                   data-side="left"
-                  data-collapsed={leftCollapsed}
+                  data-collapsed={effectiveLeftCollapsed}
                   role="separator"
                   aria-label={t("shell.leftResizerLabel")}
                   onMouseDown={
-                    leftCollapsed
+                    effectiveLeftCollapsed
                       ? undefined
                       : (event) => beginResize("left", event)
                   }
                 />
 
                 <div className="workbench-main-shell">
-                  <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
+                  <div className="workbench-collapsed-rail" aria-hidden={!effectiveLeftCollapsed && !rightCollapsed}>
                     <div
                       className="workbench-collapsed-controls left"
-                      data-visible={leftCollapsed}
+                      data-visible={effectiveLeftCollapsed}
                     >
                       <SidebarDockButton
                         className="workbench-nav-toolbar-button workbench-collapsed-button"
