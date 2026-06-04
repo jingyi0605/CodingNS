@@ -27,6 +27,7 @@ import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
 import { MobileSheet } from "../../../components/MobileSheet";
 import { t } from "../../../shared/i18n";
+import { SettingsSwitch } from "../../../settings/SettingsSwitch";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
@@ -10425,25 +10426,16 @@ function AffairsLibraryConfigForm({
         <span className="affairs-binding-hint">{t("shell.affairsLibraryMirrorRootDesktopOnlyHint")}</span>
       ) : null}
       <div className="affairs-library-config-section">
-        <strong>{t("shell.affairsLibraryFolderOpenBehaviorLabel")}</strong>
-        <p>{t("shell.affairsLibraryFolderOpenBehaviorHint")}</p>
-        <div className="affairs-library-behavior-toggle" role="radiogroup" aria-label={t("shell.affairsLibraryFolderOpenBehaviorLabel")}>
-          <button
-            type="button"
-            className={folderOpenBehavior === "single_click" ? "secondary-button active" : "secondary-button"}
-            aria-pressed={folderOpenBehavior === "single_click"}
-            onClick={() => setFolderOpenBehavior("single_click")}
-          >
-            {t("shell.affairsLibraryFolderOpenBehaviorSingle")}
-          </button>
-          <button
-            type="button"
-            className={folderOpenBehavior === "double_click" ? "secondary-button active" : "secondary-button"}
-            aria-pressed={folderOpenBehavior === "double_click"}
-            onClick={() => setFolderOpenBehavior("double_click")}
-          >
-            {t("shell.affairsLibraryFolderOpenBehaviorDouble")}
-          </button>
+        <div className="affairs-library-behavior-switch-row">
+          <span className="affairs-library-behavior-switch-title">
+            {t("shell.affairsLibraryFolderOpenBehaviorSwitchLabel")}
+          </span>
+          <SettingsSwitch
+            checked={folderOpenBehavior === "single_click"}
+            label={t("shell.affairsLibraryFolderOpenBehaviorSwitchLabel")}
+            semanticRole="switch"
+            onChange={(checked) => setFolderOpenBehavior(checked ? "single_click" : "double_click")}
+          />
         </div>
       </div>
       <ModalField

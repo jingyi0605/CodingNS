@@ -4353,7 +4353,7 @@ describe("AffairsWorkbenchView", () => {
     renderWorkbench();
 
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibrarySettingsAction") }));
-    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryFolderOpenBehaviorSingle") }));
+    await userEvent.click(screen.getByRole("switch", { name: t("shell.affairsLibraryFolderOpenBehaviorSwitchLabel") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsLibraryConfigSaveAction") }));
 
     await waitFor(() => {

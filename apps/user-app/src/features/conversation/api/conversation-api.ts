@@ -129,6 +129,7 @@ export interface AffairsLibraryBindingDto {
   mirrorRoot: string | null;
   allowedExtensions: string[];
   includedHiddenPaths?: string[];
+  folderOpenBehavior?: "single_click" | "double_click";
   configRelativePath: string;
   exportMode: "v2";
   updatedAt: string;
@@ -139,6 +140,7 @@ export interface AffairsLibraryConfigDto {
   mirrorRoot: string | null;
   allowedExtensions: string[];
   includedHiddenPaths?: string[];
+  folderOpenBehavior?: "single_click" | "double_click";
   configRelativePath: string;
   canWrite: boolean;
   applyConfigTaskId?: string;
@@ -1549,6 +1551,7 @@ export function saveAffairsLibraryConfig(
     mirrorRoot?: string | null;
     allowedExtensions?: string[];
     includedHiddenPaths?: string[];
+    folderOpenBehavior?: "single_click" | "double_click";
   }
 ) {
   return httpClient.request<AffairsLibraryConfigDto>(

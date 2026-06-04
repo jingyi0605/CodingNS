@@ -9554,10 +9554,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 10px;
 }
 
-.affairs-library-behavior-toggle {
+.affairs-library-behavior-switch-row {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.affairs-library-behavior-switch-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
 }
 
 .affairs-extension-chip-list {

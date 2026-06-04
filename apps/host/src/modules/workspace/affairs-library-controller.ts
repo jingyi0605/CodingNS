@@ -22,6 +22,7 @@ interface SaveAffairsLibraryConfigBody {
   mirrorRoot?: string | null;
   allowedExtensions?: string[];
   includedHiddenPaths?: string[];
+  folderOpenBehavior?: "single_click" | "double_click";
 }
 
 interface SetAffairsLibraryEnabledBody {
@@ -171,7 +172,8 @@ export class AffairsLibraryController {
       this.affairsLibraryService.saveConfig(request.params.workspaceId, requireUserId(request), {
         mirrorRoot: request.body.mirrorRoot ?? null,
         allowedExtensions: Array.isArray(request.body.allowedExtensions) ? request.body.allowedExtensions : [],
-        includedHiddenPaths: Array.isArray(request.body.includedHiddenPaths) ? request.body.includedHiddenPaths : []
+        includedHiddenPaths: Array.isArray(request.body.includedHiddenPaths) ? request.body.includedHiddenPaths : [],
+        folderOpenBehavior: request.body.folderOpenBehavior === "single_click" ? "single_click" : "double_click"
       })
     );
   };

@@ -278,6 +278,7 @@ interface AffairsLibraryConfigPayload {
   allowedExtensions?: string[];
   mirrorRoot?: string;
   includedHiddenPaths?: string[];
+  folderOpenBehavior?: "single_click" | "double_click";
 }
 
 interface IndexStatusFilePayload {
@@ -658,6 +659,7 @@ export class AffairsLibraryService {
     mirrorRoot: string | null;
     allowedExtensions: string[];
     includedHiddenPaths?: string[];
+    folderOpenBehavior: "single_click" | "double_click";
     configRelativePath: string;
     canWrite: boolean;
   } {
@@ -668,6 +670,7 @@ export class AffairsLibraryService {
         mirrorRoot: null,
         allowedExtensions: [],
         includedHiddenPaths: [],
+        folderOpenBehavior: "double_click",
         configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
         canWrite: false
       };
@@ -679,6 +682,7 @@ export class AffairsLibraryService {
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
       includedHiddenPaths: config.includedHiddenPaths,
+      folderOpenBehavior: config.folderOpenBehavior,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       canWrite: true
     };
@@ -691,12 +695,14 @@ export class AffairsLibraryService {
       mirrorRoot?: string | null;
       allowedExtensions?: string[];
       includedHiddenPaths?: string[];
+      folderOpenBehavior?: "single_click" | "double_click";
     }
   ): Promise<{
     binding: AffairsLibraryBindingDto;
     mirrorRoot: string | null;
     allowedExtensions: string[];
     includedHiddenPaths?: string[];
+    folderOpenBehavior: "single_click" | "double_click";
     configRelativePath: string;
     canWrite: boolean;
     applyConfigTaskId: string;
@@ -712,9 +718,11 @@ export class AffairsLibraryService {
     const includedHiddenPaths = normalizeIncludedHiddenPaths(
       input.includedHiddenPaths ?? current.includedHiddenPaths ?? []
     );
+    const folderOpenBehavior = normalizeFolderOpenBehavior(input.folderOpenBehavior ?? current.folderOpenBehavior);
     const nextPayload: AffairsLibraryConfigPayload = {
       allowedExtensions,
       includedHiddenPaths,
+      folderOpenBehavior,
     };
 
     if (mirrorRoot) {
@@ -745,6 +753,7 @@ export class AffairsLibraryService {
       mirrorRoot,
       allowedExtensions,
       includedHiddenPaths,
+      folderOpenBehavior,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       canWrite: true,
       applyConfigTaskId: handle.taskId,
@@ -3691,13 +3700,15 @@ export class AffairsLibraryService {
     mirrorRoot: string | null;
     allowedExtensions: string[];
     includedHiddenPaths: string[];
+    folderOpenBehavior: "single_click" | "double_click";
   } {
     const configPath = path.join(rootDir, DEFAULT_CONFIG_RELATIVE_PATH);
     const payload = this.readRawConfigFile(configPath);
     return {
       mirrorRoot: normalizeOptionalAbsolutePath(payload.mirrorRoot),
       allowedExtensions: normalizeAllowedExtensions(payload.allowedExtensions ?? []),
-      includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? [])
+      includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? []),
+      folderOpenBehavior: normalizeFolderOpenBehavior(payload.folderOpenBehavior)
     };
   }
 
@@ -3734,6 +3745,7 @@ export class AffairsLibraryService {
       mirrorRoot: config.mirrorRoot,
       allowedExtensions: config.allowedExtensions,
       includedHiddenPaths: config.includedHiddenPaths,
+      folderOpenBehavior: config.folderOpenBehavior,
       configRelativePath: DEFAULT_CONFIG_RELATIVE_PATH,
       exportMode: DEFAULT_EXPORT_MODE,
       updatedAt: setting?.updatedAt ?? nowIso()
@@ -4351,10 +4363,15 @@ function readAffairsLibraryExportDataFromDisk(rootDir: string): AffairsLibraryEx
   };
 }
 
+function normalizeFolderOpenBehavior(value: unknown): "single_click" | "double_click" {
+  return value === "single_click" ? "single_click" : "double_click";
+}
+
 function readAffairsLibraryConfigSafe(rootDir: string): {
   mirrorRoot: string | null;
   allowedExtensions: string[];
   includedHiddenPaths: string[];
+  folderOpenBehavior: "single_click" | "double_click";
 } {
   const configPath = path.join(rootDir, DEFAULT_CONFIG_RELATIVE_PATH);
   const payload = fs.existsSync(configPath)
@@ -4363,7 +4380,8 @@ function readAffairsLibraryConfigSafe(rootDir: string): {
   return {
     mirrorRoot: normalizeOptionalAbsolutePath(payload.mirrorRoot),
     allowedExtensions: normalizeAllowedExtensions(payload.allowedExtensions ?? []),
-    includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? [])
+    includedHiddenPaths: normalizeIncludedHiddenPaths(payload.includedHiddenPaths ?? []),
+    folderOpenBehavior: normalizeFolderOpenBehavior(payload.folderOpenBehavior)
   };
 }
 
