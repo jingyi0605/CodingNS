@@ -3171,6 +3171,37 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("事务模式隐藏信息栏按钮会出现在整个右侧头部最左侧", async () => {
+    const onToggleCollapse = vi.fn();
+
+    render(
+      <AffairsWorkbenchProvider
+        workspaceId="workspace-1"
+        workspaceName="事务工作区"
+        navigationGroups={navigationGroupsWithBoundLibraryWorkspace}
+        state={{
+          ...createState(),
+          auxiliaryTab: "assistant"
+        }}
+        onStateChange={() => undefined}
+      >
+        <AffairsAuxiliaryPanel workspaceId="workspace-1" onToggleCollapse={onToggleCollapse} />
+      </AffairsWorkbenchProvider>
+    );
+
+    const hideButton = await screen.findByRole("button", { name: t("shell.hideInfoSidebar") });
+    const header = hideButton.closest(".workbench-auxiliary-header");
+    const tabs = screen.getByRole("tablist", { name: t("shell.affairsAuxiliaryTabsLabel") });
+    const toolbar = header?.querySelector(".affairs-auxiliary-header-tools");
+
+    expect(header).not.toBeNull();
+    expect(header?.firstElementChild).toBe(hideButton);
+    expect(tabs.previousElementSibling).toBe(hideButton);
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar as HTMLElement).getByRole("button", { name: t("shell.butlerHistoryAction") })).toBeInTheDocument();
+    expect(within(toolbar as HTMLElement).getByRole("button", { name: t("shell.butlerNewSessionAction") })).toBeInTheDocument();
+  });
+
   it("右侧事务助手点击历史会话时会在助手页内部切换，不会跳到事务对话主视图", async () => {
     const user = userEvent.setup();
     butlerRuntimeStateMock.setState({

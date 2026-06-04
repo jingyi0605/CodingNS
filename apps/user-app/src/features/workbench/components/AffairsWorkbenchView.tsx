@@ -9124,6 +9124,17 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
   return (
     <div className="affairs-auxiliary-shell">
       <div className="workbench-auxiliary-header">
+        {onToggleCollapse ? (
+          <button
+            type="button"
+            className="workbench-nav-toolbar-button"
+            aria-label={t("shell.hideInfoSidebar")}
+            title={t("shell.hideInfoSidebar")}
+            onClick={onToggleCollapse}
+          >
+            <AffairsSidebarCollapseIcon />
+          </button>
+        ) : null}
         <div className="workbench-info-tabs affairs-auxiliary-tabs" role="tablist" aria-label={t("shell.affairsAuxiliaryTabsLabel")}>
           {showDetailTab ? (
             <button
@@ -9231,17 +9242,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
             ) : null}
           </div>
           <AffairsDashboardLockToolbarButton />
-          {onToggleCollapse ? (
-            <button
-              type="button"
-              className="workbench-nav-toolbar-button"
-              aria-label={t("shell.hideInfoSidebar")}
-              title={t("shell.hideInfoSidebar")}
-              onClick={onToggleCollapse}
-            >
-              <AffairsSidebarCollapseIcon />
-            </button>
-          ) : null}
         </div>
       </div>
 
