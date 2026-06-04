@@ -16,8 +16,6 @@ export const HOST_TASK_TYPES = {
   serviceNpmGlobalUpdateInstall: "service.npm_global_update_install",
   assistantAutomationTick: "assistant.automation.tick",
   assistantAutomationEvaluate: "assistant.automation.evaluate",
-  assistantSandboxTick: "assistant.sandbox.tick",
-  assistantSandboxCleanup: "assistant.sandbox.cleanup",
   verificationRunExecute: "butler.verification_run.execute",
   officeBrowserTaskExecute: "office.browser_task.execute",
   officeDocumentExportExecute: "office.document_export.execute",

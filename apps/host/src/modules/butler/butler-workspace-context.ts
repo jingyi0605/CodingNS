@@ -35,7 +35,11 @@ export function syncButlerWorkspaceContext(input: {
   sourceCodexHomeDir: string | null;
   claudeCodeHomeDir: string | null;
   sourceClaudeCodeHomeDir: string | null;
-}): void {
+}): {
+  instructionWorkspacePath: string;
+  authFilePath: string;
+  providerInstructionFilePath: string;
+} {
   const workspacePath = resolveInstructionWorkspacePath(input.profile, input.workspacePath);
 
   fs.mkdirSync(workspacePath, { recursive: true });
@@ -56,6 +60,12 @@ export function syncButlerWorkspaceContext(input: {
     input.sourceClaudeCodeHomeDir,
     input.skillManagerService
   );
+
+  return {
+    instructionWorkspacePath: workspacePath,
+    authFilePath,
+    providerInstructionFilePath: resolveProviderInstructionFilePath(input.profile, workspacePath)
+  };
 }
 
 function writeInstructionFiles(
@@ -254,13 +264,13 @@ function composeSharedInstructionBody(
 
 ## 代码助手共享规则正文（系统自动生成）
 
-- 当前工作目录是当前助手会话的专用沙箱目录，只使用这里的助手规则，不回退到普通项目会话规则。
+- 当前工作目录就是当前助手会话绑定的工作区目录，只使用这里的助手规则，不回退到别的项目会话规则。
 - \`${BUTLER_SHARED_RULES_FILE_NAME}\` 是共享规则源；\`${BUTLER_AGENTS_FILE_NAME}\` 和 \`${BUTLER_CLAUDE_FILE_NAME}\` 都是从这里自动展开出来的下游文件。
-- 当前目录默认就是当前助手会话独占的临时沙箱。只要任务不涉及正式工作区，你可以直接在这里写脚本、写临时代码、生成文件、整理产物。
-- 当前沙箱不是正式工作区，也不是任何托管项目仓库。禁止把当前助手沙箱误当成正式项目目录。
-- 只要任务涉及正式工作区、项目仓库、已有项目会话里的代码修改，就绝对不能直接在那些目录里动手。必须先定位目标工作区和目标会话，再通过 \`codingns assistant sessions start / send / fork\` 或受控终端去推进。
-- 如果用户要求“修改代码”“继续实现”“修 bug”，先判断目标是不是正式工作区；如果是，就进入对应真实项目会话继续做；如果不是，而只是一次性脚本、临时样例、分析产物或独立文件，直接在当前助手沙箱里完成。
-- 如果用户没有指定工作区，但你判断需要落文件，默认直接落在当前助手沙箱，不要为了落文件再额外创建一层“沙箱会话”。
+- 当前目录默认就是当前助手会话绑定的真实工作区。只要任务范围在这个工作区内，你就直接在这里写脚本、改文件、生成产物、整理结果。
+- 当前目录就是这次助手会话要工作的正式工作区。不要再额外假设还有一层独立临时目录，也不要把别的项目目录误当成当前工作区。
+- 如果任务涉及别的工作区、别的项目仓库，或者明确要续写别的项目会话里的代码修改，先定位目标工作区和目标会话，再通过 \`codingns assistant sessions start / send / fork\` 或受控终端推进。
+- 如果用户要求“修改代码”“继续实现”“修 bug”，先判断目标是不是当前绑定工作区；如果是，就直接在当前工作区继续做；如果不是，就切到对应真实项目会话再做。
+- 如果用户没有额外指定别的工作区，但你判断需要落文件，默认直接落在当前绑定工作区，不要再创建任何临时沙箱目录。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域以 \`BUTLER_CONTEXT.md\` 的最新内容为准；这次生成时记录的是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。如果后续上下文文件已刷新，以文件里的当前作用域为准，不要被旧缓存绑死。
 - 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
@@ -361,7 +371,7 @@ function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: str
 
 ## 什么时候手工导出环境变量
 
-- 只有当你不在当前助手沙箱工作区、CLI 自动发现失败，或者要临时切到别的 Host / 凭证文件时，才手工导出环境变量。
+- 只有当你不在当前助手工作区、CLI 自动发现失败，或者要临时切到别的 Host / 凭证文件时，才手工导出环境变量。
 - 默认不要把“先 export 再执行”当成每轮固定动作。
 
 \`\`\`bash
@@ -372,7 +382,7 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 ## 默认读取顺序
 
 1. 先读 \`BUTLER_CONTEXT.md\` 的当前摘要。
-2. 先确认 CLI 认证入口可用；在当前助手沙箱工作区里默认直接执行即可，必要时再核对上面的凭证文件路径。
+2. 先确认 CLI 认证入口可用；在当前助手工作区里默认直接执行即可，必要时再核对上面的凭证文件路径。
 3. 认证入口可用后，再跑 \`codingns assistant capabilities list\`，确认当前开放能力。
 4. 不知道怎么查时，先跑 \`codingns assistant --help\`、\`codingns assistant help projects\`、\`codingns assistant help sessions\`、\`codingns assistant help terminals\`。
 5. 要找项目时，先 \`codingns assistant projects list\`，需要详情时再 \`projects get <projectId>\`。
@@ -391,8 +401,8 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 
 ## 执行边界
 
-- 当前目录就是当前助手会话自己的沙箱；如果任务只发生在这里，你可以直接写文件、写脚本、生成临时产物。
-- 你不能直接修改任何正式工作区或项目仓库代码，也不能把自己当成工作区执行会话。
+- 当前目录就是当前助手会话绑定的工作区；如果任务只发生在这里，你可以直接写文件、写脚本、生成产物。
+- 你当前就在正式工作区内工作，但不能越过当前绑定范围去修改别的工作区或别的项目仓库。
 - 需要推进正式工作区开发时，只能通过下面这些 CLI 命令驱动真实项目会话或受控终端。
 - 需要命令结果时，优先查终端历史；确实要执行命令，再向受控终端发送输入。
 - 需要分叉会话时，统一走 \`codingns assistant sessions fork\`，不要自己伪造一条“新上下文”继续编。
@@ -498,6 +508,14 @@ function resolveInstructionAgentsFilePath(profile: ButlerProfile, workspacePath:
   }
 
   return path.join(profile.workspacePath, BUTLER_AGENTS_FILE_NAME);
+}
+
+function resolveProviderInstructionFilePath(profile: ButlerProfile, workspacePath: string): string {
+  if (profile.providerId === "claude-code") {
+    return path.join(workspacePath, BUTLER_CLAUDE_FILE_NAME);
+  }
+
+  return resolveInstructionAgentsFilePath(profile, workspacePath);
 }
 
 function shouldSyncProfileAgentsFile(profile: ButlerProfile, workspacePath: string): boolean {

@@ -985,9 +985,6 @@ export type AssistantAutomationRunStatus =
   | "failed"
   | "cancelled"
   | "skipped";
-export type AssistantSandboxStatus = "active" | "archived" | "expired" | "orphaned" | "deleted";
-export type AssistantSandboxSourceKind = "blank" | "clone";
-export type AssistantSandboxVisibility = "assistant_only" | "pinned";
 export type ButlerControlEventKind = "action";
 export type ButlerControlActionType =
   | "open-project"
@@ -1202,24 +1199,6 @@ export interface AssistantAutomationRun {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
-}
-
-export interface AssistantSandboxWorkspace {
-  id: string;
-  userId: string;
-  workspaceId: string;
-  controlSessionId: string | null;
-  title: string;
-  description: string | null;
-  sourceKind: AssistantSandboxSourceKind;
-  sourceRef: string | null;
-  visibility: AssistantSandboxVisibility;
-  status: AssistantSandboxStatus;
-  purpose: string | null;
-  expiresAt: string | null;
-  promotedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface ButlerControlRelatedRef {

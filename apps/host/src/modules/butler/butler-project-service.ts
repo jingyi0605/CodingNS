@@ -5,7 +5,6 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ButlerProject } from "../../types/domain.js";
-import type { AssistantSandboxWorkspaceRepository } from "../../storage/repositories/assistant-sandbox-workspace-repository.js";
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
 import type { ButlerSessionRepository } from "../../storage/repositories/butler-session-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
@@ -34,11 +33,7 @@ export class ButlerProjectService {
     private readonly butlerProjectRepository: ButlerProjectRepository,
     private readonly butlerSessionRepository: ButlerSessionRepository,
     private readonly workspaceRepository: WorkspaceRepository,
-    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">,
-    private readonly assistantSandboxWorkspaceRepository?: Pick<
-      AssistantSandboxWorkspaceRepository,
-      "listManagedWorkspaceIds"
-    >
+    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">
   ) {}
 
   list(input?: {
@@ -193,14 +188,7 @@ export class ButlerProjectService {
   private syncManagedProjects(): void {
     const profile = this.butlerProfileService?.getProfile() ?? null;
     const butlerWorkspacePath = profile?.workspacePath ? path.resolve(profile.workspacePath) : null;
-    const sandboxWorkspaceIdSet = new Set(
-      this.assistantSandboxWorkspaceRepository?.listManagedWorkspaceIds() ?? []
-    );
     const activeWorkspaces = this.workspaceRepository.list().filter((workspace) => {
-      if (sandboxWorkspaceIdSet.has(workspace.id)) {
-        return false;
-      }
-
       if (!butlerWorkspacePath) {
         return true;
       }

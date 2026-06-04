@@ -52,6 +52,10 @@ interface ButlerSessionActionContextQuery {
   sessionId?: string;
 }
 
+interface ButlerCurrentControlSessionQuery {
+  workspaceId?: string;
+}
+
 interface ButlerInboxListQuery {
   workspaceId?: string;
   projectId?: string;
@@ -335,11 +339,14 @@ export class ButlerController {
   };
 
   readonly getCurrentControlSession = async (
-    request: FastifyRequest,
+    request: FastifyRequest<{ Querystring: ButlerCurrentControlSessionQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      controlSession: this.butlerControlSessionService.getCurrentSession(requireUserId(request))
+      controlSession: this.butlerControlSessionService.getCurrentSession(
+        requireUserId(request),
+        request.query.workspaceId
+      )
     });
   };
 

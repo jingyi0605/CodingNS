@@ -1417,31 +1417,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_automation_runs_seq
 CREATE INDEX IF NOT EXISTS idx_assistant_automation_runs_created_at
   ON assistant_automation_runs(automation_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS assistant_sandboxes (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL UNIQUE,
-  control_session_id TEXT,
-  title TEXT NOT NULL,
-  description TEXT,
-  source_kind TEXT NOT NULL CHECK (source_kind IN ('blank', 'clone')),
-  source_ref TEXT,
-  visibility TEXT NOT NULL CHECK (visibility IN ('assistant_only', 'pinned')),
-  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'expired', 'orphaned', 'deleted')),
-  purpose TEXT,
-  expires_at TEXT,
-  promoted_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_user_status
-  ON assistant_sandboxes(user_id, status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_assistant_sandboxes_workspace
-  ON assistant_sandboxes(workspace_id, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_control_events (
   id TEXT PRIMARY KEY,

@@ -3,7 +3,6 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthCallerKind } from "../auth/auth-service.js";
 import type { AssistantAutomationService } from "../butler/assistant-automation-service.js";
-import type { AssistantSandboxService } from "../butler/assistant-sandbox-service.js";
 import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
 import type { ButlerControlTimerService } from "../butler/butler-control-timer-service.js";
 import type { BrowserRuntimeService } from "../browser-runtime/browser-runtime-service.js";
@@ -175,7 +174,6 @@ export interface AssistantCapabilityReceipt<TPayload> {
       | "debug_target"
       | "debug_runtime"
       | "automation"
-      | "sandbox"
       | "timer"
       | "follow_up"
       | "none";
@@ -212,8 +210,7 @@ interface StartAssistantProjectSessionInput {
 
 type AssistantSessionTarget =
   | { kind: "project"; projectId: string }
-  | { kind: "workspace"; workspaceId: string }
-  | { kind: "sandbox"; sandboxId: string };
+  | { kind: "workspace"; workspaceId: string };
 
 interface StartAssistantSessionInput {
   target?: AssistantSessionTarget | null;
@@ -373,32 +370,6 @@ interface ListAssistantAutomationRunsInput {
   userId: string;
   controlSessionId?: string | null;
   limit?: number | null;
-}
-
-interface ListAssistantSandboxesInput {
-  userId: string;
-  status?: "active" | "archived" | "expired" | "orphaned" | "deleted";
-  controlSessionId?: string | null;
-}
-
-interface CreateAssistantSandboxInput {
-  userId: string;
-  title?: string | null;
-  description?: string | null;
-  purpose?: string | null;
-  expiresAt?: string | null;
-  sourceKind: "blank" | "clone";
-  repositoryUrl?: string | null;
-  directoryName?: string | null;
-  auth?: CloneWorkspaceInput["auth"];
-}
-
-interface PromoteAssistantSandboxInput {
-  sandboxId: string;
-  userId: string;
-  mode?: "pin" | "project";
-  projectName?: string | null;
-  defaultProvider?: "codex" | "claude-code" | null;
 }
 
 interface AnalyzeAssistantDebugTargetInput {
@@ -582,7 +553,7 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     name: "sessions.start",
     mode: "proxy_execute",
     enabled: true,
-    summary: "按 project/workspace/sandbox 目标新建真实会话；未指定目标时自动创建沙箱"
+    summary: "按 project 或 workspace 目标新建真实会话"
   },
   {
     name: "sessions.get",
@@ -691,36 +662,6 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     mode: "proxy_execute",
     enabled: true,
     summary: "回写跟进任务失败"
-  },
-  {
-    name: "sandboxes.list",
-    mode: "read",
-    enabled: true,
-    summary: "列出当前助手沙箱"
-  },
-  {
-    name: "sandboxes.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建新的助手沙箱"
-  },
-  {
-    name: "sandboxes.promote",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "保留或晋升助手沙箱"
-  },
-  {
-    name: "sandboxes.expire",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "标记助手沙箱过期"
-  },
-  {
-    name: "sandboxes.remove",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "清理助手沙箱"
   },
   {
     name: "timers.list",
@@ -1035,17 +976,6 @@ export class AssistantCapabilityService {
       | "skipCurrentWait"
       | "listRuns"
       | "listRecentRuns"
-    >,
-    private readonly assistantSandboxService: Pick<
-      AssistantSandboxService,
-      | "listSandboxes"
-      | "getSandbox"
-      | "createSandbox"
-      | "promoteSandbox"
-      | "expireSandbox"
-      | "removeSandbox"
-      | "resolveWorkspaceId"
-      | "markSandboxUsedByControlSession"
     >,
     private readonly butlerControlTimerService: Pick<
       ButlerControlTimerService,
@@ -1683,10 +1613,16 @@ export class AssistantCapabilityService {
     };
   }>> {
     const config = this.resolveSessionLaunchConfig(input);
-    const currentControlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
-    const target = input.target
-      ? this.resolveAssistantSessionTarget(input.target, input.userId)
-      : await this.createAutomaticSandboxTarget(input, currentControlSession);
+    if (!input.target) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "启动真实会话必须显式提供 projectId 或 workspaceId",
+        field: "projectId"
+      });
+    }
+
+    const target = this.resolveAssistantSessionTarget(input.target);
 
     if (target.kind === "project") {
       const session = await this.butlerSessionService.startSession(
@@ -1725,14 +1661,6 @@ export class AssistantCapabilityService {
         attachments: []
       }
     });
-
-    if (target.kind === "sandbox") {
-      this.assistantSandboxService.markSandboxUsedByControlSession(
-        target.id,
-        input.userId,
-        currentControlSession?.id ?? null
-      );
-    }
 
     return this.createReceipt("sessions.start", {
       kind: target.kind,
@@ -2212,111 +2140,6 @@ export class AssistantCapabilityService {
       id: input.taskId
     }, {
       task
-    });
-  }
-
-  listSandboxes(
-    input: ListAssistantSandboxesInput
-  ): AssistantCapabilityReceipt<{
-    items: ReturnType<AssistantSandboxService["listSandboxes"]>;
-  }> {
-    const items = this.assistantSandboxService.listSandboxes({
-      userId: input.userId,
-      controlSessionId: input.controlSessionId ?? null,
-      statuses: input.status ? [input.status] : undefined
-    });
-
-    return this.createReceipt("sandboxes.list", {
-      kind: "none",
-      id: null
-    }, {
-      items
-    });
-  }
-
-  async createSandbox(
-    input: CreateAssistantSandboxInput
-  ): Promise<AssistantCapabilityReceipt<{
-    sandbox: Awaited<ReturnType<AssistantSandboxService["createSandbox"]>>;
-  }>> {
-    const currentControlSession = this.butlerControlSessionService.getCurrentSession(input.userId);
-    const sandbox = await this.assistantSandboxService.createSandbox({
-      userId: input.userId,
-      controlSessionId: currentControlSession?.id ?? null,
-      title: input.title,
-      description: input.description,
-      purpose: input.purpose,
-      expiresAt: input.expiresAt,
-      source:
-        input.sourceKind === "clone"
-          ? {
-            kind: "clone",
-            repositoryUrl: requireAssistantRepositoryUrl(input.repositoryUrl),
-            directoryName: input.directoryName,
-            auth: input.auth
-          }
-          : {
-            kind: "blank",
-            directoryName: input.directoryName
-          }
-    });
-
-    return this.createReceipt("sandboxes.create", {
-      kind: "sandbox",
-      id: sandbox.id
-    }, {
-      sandbox
-    });
-  }
-
-  promoteSandbox(
-    input: PromoteAssistantSandboxInput
-  ): AssistantCapabilityReceipt<{
-    sandbox: ReturnType<AssistantSandboxService["promoteSandbox"]>;
-  }> {
-    const sandbox = this.assistantSandboxService.promoteSandbox(input.sandboxId, input.userId, {
-      mode: input.mode,
-      projectName: input.projectName,
-      defaultProvider: input.defaultProvider
-    });
-
-    return this.createReceipt("sandboxes.promote", {
-      kind: "sandbox",
-      id: input.sandboxId
-    }, {
-      sandbox
-    });
-  }
-
-  expireSandbox(
-    sandboxId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    sandbox: ReturnType<AssistantSandboxService["expireSandbox"]>;
-  }> {
-    const sandbox = this.assistantSandboxService.expireSandbox(sandboxId, userId);
-
-    return this.createReceipt("sandboxes.expire", {
-      kind: "sandbox",
-      id: sandboxId
-    }, {
-      sandbox
-    });
-  }
-
-  removeSandbox(
-    sandboxId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    sandbox: ReturnType<AssistantSandboxService["removeSandbox"]>;
-  }> {
-    const sandbox = this.assistantSandboxService.removeSandbox(sandboxId, userId);
-
-    return this.createReceipt("sandboxes.remove", {
-      kind: "sandbox",
-      id: sandboxId
-    }, {
-      sandbox
     });
   }
 
@@ -3239,8 +3062,7 @@ export class AssistantCapabilityService {
   }
 
   private resolveAssistantSessionTarget(
-    target: AssistantSessionTarget,
-    userId: string
+    target: AssistantSessionTarget
   ): {
     kind: AssistantSessionTarget["kind"];
     id: string;
@@ -3255,60 +3077,18 @@ export class AssistantCapabilityService {
       };
     }
 
-    if (target.kind === "workspace") {
-      return {
-        kind: "workspace",
-        id: target.workspaceId,
-        workspaceId: target.workspaceId
-      };
-    }
-
     return {
-      kind: "sandbox",
-      id: target.sandboxId,
-      workspaceId: this.assistantSandboxService.resolveWorkspaceId(target.sandboxId, userId)
+      kind: "workspace",
+      id: target.workspaceId,
+      workspaceId: target.workspaceId
     };
   }
 
-  private async createAutomaticSandboxTarget(
-    input: Pick<StartAssistantSessionInput, "userId" | "content">,
-    controlSession: ReturnType<ButlerControlSessionService["getCurrentSession"]>
-  ): Promise<{
-    kind: "sandbox";
-    id: string;
-    workspaceId: string;
-  }> {
-    const sandbox = await this.assistantSandboxService.createSandbox({
-      userId: input.userId,
-      controlSessionId: controlSession?.id ?? null,
-      title: inferAutomaticSandboxTitle(controlSession, input.content),
-      purpose: "当前任务未指定工作区，系统自动创建",
-      source: {
-        kind: "blank"
-      }
-    });
-
-    return {
-      kind: "sandbox",
-      id: sandbox.id,
-      workspaceId: sandbox.workspaceId
-    };
-  }
 }
 
 function normalizeAssistantText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
-}
-
-function inferAutomaticSandboxTitle(
-  controlSession: ReturnType<ButlerControlSessionService["getCurrentSession"]>,
-  content: string
-): string {
-  return normalizeAssistantText(controlSession?.title)
-    ?? normalizeAssistantText(controlSession?.lastSummary)
-    ?? summarizeAssistantText(content)
-    ?? "助手临时沙箱";
 }
 
 function summarizeAssistantText(content: string): string | null {
@@ -3473,20 +3253,6 @@ function buildAssistantAutomationTriggerInput(
   }
 }
 
-function requireAssistantRepositoryUrl(value: string | null | undefined): string {
-  const normalized = normalizeAssistantText(value);
-
-  if (!normalized) {
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: "clone 沙箱必须提供 repositoryUrl",
-      field: "repositoryUrl"
-    });
-  }
-
-  return normalized;
-}
 
 function requireAssistantConditionKind(
   value: CreateAssistantAutomationInput["conditionKind"]

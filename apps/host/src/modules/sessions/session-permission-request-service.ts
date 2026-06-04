@@ -2601,10 +2601,6 @@ function getSupportedAssistantCliActions(group: string | null): {
       readonly: new Set(["list", "get", "runs"]),
       mutating: new Set(["create", "cancel"])
     },
-    sandboxes: {
-      readonly: new Set(["list"]),
-      mutating: new Set(["create", "promote", "expire", "remove"])
-    },
     timers: {
       readonly: new Set(["list", "get"]),
       mutating: new Set(["create", "cancel"])

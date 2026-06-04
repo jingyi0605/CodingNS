@@ -12,8 +12,6 @@ import { AssistantCapabilityService } from "../modules/assistant-capability/assi
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
 import { AssistantAutomationService } from "../modules/butler/assistant-automation-service.js";
-import { AssistantSandboxService } from "../modules/butler/assistant-sandbox-service.js";
-import { AssistantSandboxCleanupScheduler } from "../modules/butler/assistant-sandbox-cleanup-scheduler.js";
 import { ButlerControlTimerScheduler } from "../modules/butler/butler-control-timer-scheduler.js";
 import { ButlerControlTimerService } from "../modules/butler/butler-control-timer-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
@@ -226,7 +224,6 @@ import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-clea
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
 import { AssistantAutomationRunRepository } from "../storage/repositories/assistant-automation-run-repository.js";
-import { AssistantSandboxWorkspaceRepository } from "../storage/repositories/assistant-sandbox-workspace-repository.js";
 import { AssistantAutomationTaskRepository } from "../storage/repositories/assistant-automation-task-repository.js";
 import { AuthDeviceRepository } from "../storage/repositories/auth-device-repository.js";
 import { AuthDeviceSessionRepository } from "../storage/repositories/auth-device-session-repository.js";
@@ -367,7 +364,6 @@ export function createServer(config: HostConfig) {
     authLoginAttemptRepository: new AuthLoginAttemptRepository(database.db),
     assistantAutomationTaskRepository: new AssistantAutomationTaskRepository(database.db),
     assistantAutomationRunRepository: new AssistantAutomationRunRepository(database.db),
-    assistantSandboxWorkspaceRepository: new AssistantSandboxWorkspaceRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
@@ -962,27 +958,8 @@ export function createServer(config: HostConfig) {
     repositories.butlerProjectRepository,
     repositories.butlerSessionRepository,
     repositories.workspaceRepository,
-    butlerProfileService,
-    repositories.assistantSandboxWorkspaceRepository
+    butlerProfileService
   );
-  const assistantSandboxService = new AssistantSandboxService(
-    repositories.assistantSandboxWorkspaceRepository,
-    butlerProfileService,
-    workspaceService,
-    butlerProjectService,
-    taskManager
-  );
-  sessionHistoryService.registerSessionDeletedObserver(async ({
-    workspaceId,
-    userId,
-    remainingWorkspaceSessionCount
-  }) => {
-    if (remainingWorkspaceSessionCount > 0) {
-      return;
-    }
-
-    assistantSandboxService.markSandboxOrphanedByWorkspaceId(workspaceId, userId);
-  });
   const butlerInboxService = new ButlerInboxService(
     repositories.butlerProjectRepository,
     repositories.butlerInboxItemRepository,
@@ -1141,17 +1118,6 @@ export function createServer(config: HostConfig) {
       schedulerMetrics
     }
   );
-  const assistantSandboxCleanupScheduler = new AssistantSandboxCleanupScheduler(
-    assistantSandboxService,
-    {
-      schedulerMetrics
-    }
-  );
-  const butlerFollowUpTerminalSubscription = sessionLiveRuntimeService.registerTerminalStateListener(
-    async (event) => {
-      await butlerFollowUpService.handleSessionTerminal(event.sessionId, event.timestamp);
-    }
-  );
   const butlerControlSessionService = new ButlerControlSessionService(
     butlerProfileService,
     repositories.butlerControlSessionRepository,
@@ -1166,7 +1132,6 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.claudeCodeHomeDir,
     config.claudeCodeHomeDir,
     repositories.sessionMessageOriginRepository,
-    assistantSandboxService,
     sessionProviderUsageLimitGuardService,
     repositories.providerControlRepository
   );
@@ -1240,6 +1205,11 @@ export function createServer(config: HostConfig) {
     butlerControlTimerService,
     {
       schedulerMetrics
+    }
+  );
+  const butlerFollowUpTerminalSubscription = sessionLiveRuntimeService.registerTerminalStateListener(
+    async (event) => {
+      await butlerFollowUpService.handleSessionTerminal(event.sessionId, event.timestamp);
     }
   );
   butlerInboxService.configureLifecycleServices({
@@ -1628,7 +1598,6 @@ export function createServer(config: HostConfig) {
       butlerSessionService,
       butlerControlSessionService,
       assistantAutomationService,
-      assistantSandboxService,
       butlerControlTimerService,
       sessionHistoryService,
       sessionLiveRuntimeService,
@@ -1805,7 +1774,6 @@ export function createServer(config: HostConfig) {
   patrolScheduler.start();
   sessionSummaryScheduler.start();
   butlerFollowUpScheduler.start();
-  assistantSandboxCleanupScheduler.start();
   butlerControlTimerScheduler.start();
   channelPollingScheduler.start();
   debugRuntimeReconciliationScheduler.start();
@@ -1823,7 +1791,6 @@ export function createServer(config: HostConfig) {
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
-    await assistantSandboxCleanupScheduler.dispose();
     await butlerControlTimerScheduler.dispose();
     await channelPollingScheduler.dispose();
     await debugRuntimeReconciliationScheduler.dispose();

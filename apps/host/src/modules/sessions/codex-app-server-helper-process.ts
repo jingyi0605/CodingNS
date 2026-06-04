@@ -701,10 +701,6 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
-  if (permissionOptions.sandboxMode) {
-    params.sandbox = permissionOptions.sandboxMode;
-  }
-
   if (request.options.model) {
     params.model = request.options.model;
   }
@@ -727,10 +723,6 @@ function createThreadResumeParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
-  }
-
-  if (permissionOptions.sandboxMode) {
-    params.sandbox = permissionOptions.sandboxMode;
   }
 
   if (request.options.model) {
@@ -867,19 +859,16 @@ function normalizeCodexTurnSteerError(error: unknown): Error {
 function createCodexThreadPermissionOptions(
   permissionMode: string | null
 ): {
-  sandboxMode?: string;
   approvalPolicy?: string;
 } {
   if (permissionMode === "bypassPermissions") {
     return {
-      sandboxMode: "danger-full-access",
       approvalPolicy: "never"
     };
   }
 
   if (permissionMode === "acceptEdits") {
     return {
-      sandboxMode: "workspace-write",
       approvalPolicy: "never"
     };
   }

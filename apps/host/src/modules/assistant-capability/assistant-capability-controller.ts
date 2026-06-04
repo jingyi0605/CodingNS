@@ -23,10 +23,6 @@ interface AssistantSessionParams {
   sessionId: string;
 }
 
-interface AssistantSandboxParams {
-  sandboxId: string;
-}
-
 interface AssistantTerminalParams {
   terminalId: string;
 }
@@ -71,11 +67,6 @@ interface AssistantFollowUpListQuery {
   projectId?: string;
   sessionId?: string;
   limit?: string;
-}
-
-interface AssistantSandboxListQuery {
-  status?: "active" | "archived" | "expired" | "orphaned" | "deleted";
-  controlSessionId?: string;
 }
 
 interface AssistantTerminalListQuery {
@@ -220,7 +211,6 @@ interface AssistantStartProjectSessionBody {
 interface AssistantStartSessionBody extends AssistantStartProjectSessionBody {
   projectId?: string | null;
   workspaceId?: string | null;
-  sandboxId?: string | null;
 }
 
 interface AssistantForkBody {
@@ -322,26 +312,6 @@ interface AssistantUpdateAutomationBody {
   pollIntervalSeconds?: number | string | null;
   expiresAt?: string | null;
   maxChecks?: number | string | null;
-}
-
-interface AssistantCreateSandboxBody {
-  title?: string | null;
-  description?: string | null;
-  purpose?: string | null;
-  expiresAt?: string | null;
-  sourceKind?: "blank" | "clone" | null;
-  repositoryUrl?: string | null;
-  directoryName?: string | null;
-  auth?:
-    | { mode?: "none" }
-    | { mode: "basic"; username?: string; password?: string }
-    | { mode: "token"; username?: string; token?: string };
-}
-
-interface AssistantPromoteSandboxBody {
-  mode?: "pin" | "project";
-  projectName?: string | null;
-  defaultProvider?: "codex" | "claude-code" | null;
 }
 
 interface AssistantCreateWorkspaceDirectoryBody {
@@ -928,67 +898,6 @@ export class AssistantCapabilityController {
       controlSessionId: normalizeNullableText(request.query.controlSessionId),
       limit: normalizeNullableInteger(request.query.limit, "limit")
     }));
-  };
-
-  readonly listSandboxes = async (
-    request: FastifyRequest<{ Querystring: AssistantSandboxListQuery }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.listSandboxes({
-      userId: requireUserId(request),
-      status: request.query.status,
-      controlSessionId: normalizeNullableText(request.query.controlSessionId)
-    }));
-  };
-
-  readonly createSandbox = async (
-    request: FastifyRequest<{ Body: AssistantCreateSandboxBody }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(await this.assistantCapabilityService.createSandbox({
-      userId: requireUserId(request),
-      title: normalizeNullableText(request.body.title),
-      description: normalizeNullableText(request.body.description),
-      purpose: normalizeNullableText(request.body.purpose),
-      expiresAt: normalizeNullableText(request.body.expiresAt),
-      sourceKind: request.body.sourceKind === "clone" ? "clone" : "blank",
-      repositoryUrl: normalizeNullableText(request.body.repositoryUrl),
-      directoryName: normalizeNullableText(request.body.directoryName),
-      auth: normalizeAssistantCloneAuth(request.body.auth)
-    }));
-  };
-
-  readonly promoteSandbox = async (
-    request: FastifyRequest<{ Params: AssistantSandboxParams; Body: AssistantPromoteSandboxBody }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.promoteSandbox({
-      sandboxId: request.params.sandboxId,
-      userId: requireUserId(request),
-      mode: request.body.mode,
-      projectName: normalizeNullableText(request.body.projectName),
-      defaultProvider: normalizeAssistantProviderId(request.body.defaultProvider)
-    }));
-  };
-
-  readonly expireSandbox = async (
-    request: FastifyRequest<{ Params: AssistantSandboxParams }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.expireSandbox(
-      request.params.sandboxId,
-      requireUserId(request)
-    ));
-  };
-
-  readonly removeSandbox = async (
-    request: FastifyRequest<{ Params: AssistantSandboxParams }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.removeSandbox(
-      request.params.sandboxId,
-      requireUserId(request)
-    ));
   };
 
   readonly listTerminals = async (
@@ -1951,54 +1860,36 @@ function normalizeAssistantProviderId(
 
 function resolveAssistantSessionTarget(body: AssistantStartSessionBody):
   | { kind: "project"; projectId: string }
-  | { kind: "workspace"; workspaceId: string }
-  | { kind: "sandbox"; sandboxId: string }
-  | null {
+  | { kind: "workspace"; workspaceId: string } {
   const projectId = normalizeNullableText(body.projectId);
   const workspaceId = normalizeNullableText(body.workspaceId);
-  const sandboxId = normalizeNullableText(body.sandboxId);
   const targets: Array<
     | { kind: "project"; projectId: string }
     | { kind: "workspace"; workspaceId: string }
-    | { kind: "sandbox"; sandboxId: string }
   > = [
     projectId ? { kind: "project" as const, projectId } : null,
-    workspaceId ? { kind: "workspace" as const, workspaceId } : null,
-    sandboxId ? { kind: "sandbox" as const, sandboxId } : null
+    workspaceId ? { kind: "workspace" as const, workspaceId } : null
   ].filter((target): target is NonNullable<typeof target> => target !== null);
 
   if (targets.length > 1) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: "启动真实会话最多只能提供 projectId、workspaceId、sandboxId 其中一个",
+      detail: "启动真实会话最多只能提供 projectId、workspaceId 其中一个",
       field: "projectId"
     });
   }
 
-  return targets[0] ?? null;
-}
-
-function normalizeAssistantCloneAuth(
-  auth: AssistantCreateSandboxBody["auth"]
-): AssistantCreateSandboxBody["auth"] | undefined {
-  if (!auth || auth.mode === undefined || auth.mode === "none") {
-    return auth?.mode === "none" ? { mode: "none" } : undefined;
+  if (targets.length === 0) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "启动真实会话必须提供 projectId 或 workspaceId",
+      field: "projectId"
+    });
   }
 
-  if (auth.mode === "basic") {
-    return {
-      mode: "basic",
-      username: normalizeNullableText(auth.username) ?? undefined,
-      password: normalizeNullableText(auth.password) ?? undefined
-    };
-  }
-
-  return {
-    mode: "token",
-    username: normalizeNullableText("username" in auth ? auth.username : undefined) ?? undefined,
-    token: normalizeNullableText("token" in auth ? auth.token : undefined) ?? undefined
-  };
+  return targets[0];
 }
 
 function normalizeCommandHints(value: unknown): string[] {

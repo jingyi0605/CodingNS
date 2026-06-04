@@ -41,11 +41,6 @@ export async function registerAssistantCapabilityRoutes(
   app.get("/api/assistant/sessions/:sessionId/runtime", assistantCapabilityController.getSessionRuntime);
   app.post("/api/assistant/sessions/:sessionId/messages", assistantCapabilityController.sendSessionMessage);
   app.post("/api/assistant/sessions/:sessionId/forks", assistantCapabilityController.forkSession);
-  app.get("/api/assistant/sandboxes", assistantCapabilityController.listSandboxes);
-  app.post("/api/assistant/sandboxes", assistantCapabilityController.createSandbox);
-  app.post("/api/assistant/sandboxes/:sandboxId/promote", assistantCapabilityController.promoteSandbox);
-  app.post("/api/assistant/sandboxes/:sandboxId/expire", assistantCapabilityController.expireSandbox);
-  app.delete("/api/assistant/sandboxes/:sandboxId", assistantCapabilityController.removeSandbox);
   app.get("/api/assistant/automations", assistantCapabilityController.listAutomations);
   app.get("/api/assistant/automations/runs/recent", assistantCapabilityController.listRecentAutomationRuns);
   app.get("/api/assistant/automations/:automationId", assistantCapabilityController.getAutomation);
