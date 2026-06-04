@@ -13411,7 +13411,6 @@ function AffairsDashboardView() {
           ) : null}
         </div>
         <div className="affairs-dashboard-tabbar-actions">
-          <AffairsDashboardLockToolbarButton />
         </div>
       </div>
 
