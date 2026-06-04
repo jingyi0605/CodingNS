@@ -1,6 +1,6 @@
 ---
 name: codingns-assistant
-description: Use when working inside CodingNS and needing to inspect托管项目、真实会话、受控终端，或通过 `codingns assistant ...` 代理推进任务。 This skill enforces the boundary “不直接修改工作区代码；涉及工作区时只通过会话或终端代理执行；纯助手沙箱任务可直接落文件”, and tells Codex to prepare auth first in Butler workspaces, then discover capabilities, query CLI help on demand, and run the minimum necessary CLI command.
+description: Use when working inside CodingNS and needing to inspect托管项目、真实会话、受控终端，或通过 `codingns assistant ...` 代理推进任务。 This skill enforces the boundary “不直接修改正式工作区代码；涉及工作区时只通过会话或终端代理执行”, and tells Codex to prepare auth first in Butler workspaces, then discover capabilities, query CLI help on demand, and run the minimum necessary CLI command.
 ---
 
 # CodingNS Assistant
@@ -14,15 +14,14 @@ description: Use when working inside CodingNS and needing to inspect托管项目
 ## 固定边界
 
 - 禁止直接修改任何正式工作区或项目仓库文件。
-- 如果任务只发生在当前助手沙箱，可以直接写文件或写临时代码。
 - 只要涉及正式工作区，就只能通过真实项目会话或受控终端代理执行。
 - 优先查事实，再决定要不要发送消息、发终端输入或 fork。
 - 不清楚命令参数时，先跑 help，再执行真正命令。
 
 ## 默认工作流
 
-1. 如果当前目录或任务里出现 `BUTLER_CONTEXT.md`、`BUTLER_API.md`、助手沙箱工作区，先读 `BUTLER_API.md`。
-2. 在当前助手沙箱工作区里，优先直接执行 `codingns assistant ...`；CLI 会按固定顺序自动读取 `--token`、环境变量、`CODINGNS_AUTH_FILE` / `BUTLER_AUTH_FILE`、当前目录及上级目录里的 `BUTLER_AUTH.json`。
+1. 如果当前目录或任务里出现 `BUTLER_CONTEXT.md`、`BUTLER_API.md`、助手真实工作区，先读 `BUTLER_API.md`。
+2. 在当前助手绑定的真实工作区里，优先直接执行 `codingns assistant ...`；CLI 会按固定顺序自动读取 `--token`、环境变量、`CODINGNS_AUTH_FILE` / `BUTLER_AUTH_FILE`、当前目录及上级目录里的 `BUTLER_AUTH.json`。
 3. 只有这些固定认证入口都不可用时，才回头核对 `BUTLER_API.md` 里的凭证文件路径，或向用户要 token。
 4. 认证入口可用后，再跑 `codingns assistant capabilities list`，确认当前环境开放了哪些能力。
 5. 要看工作区或工作树时，先跑 `codingns assistant workspaces --help`、`codingns assistant worktrees --help`。
@@ -30,7 +29,7 @@ description: Use when working inside CodingNS and needing to inspect托管项目
 7. 要查单次调试运行态时，先跑 `codingns assistant debug-runtimes --help`。
 8. 要找项目时，先跑 `codingns assistant projects --help`，再决定用 `list` 还是 `get`。
 9. 要找会话时，先跑 `codingns assistant sessions --help`，再决定用 `list / start / get / messages / runtime / send / fork`。
-10. 如果用户没指定工作区，但你只是需要落临时文件、写分析脚本、做独立样例，直接在当前助手沙箱里处理，不要额外新建一层会话。
+10. 如果用户没指定工作区，先补齐真实工作区或项目目标；不要再走独立沙箱。
 11. 要推进正式工作区开发时，如果明确是在续写已有真实会话，才用 `codingns assistant sessions send`；如果没有明确续写目标，优先用 `codingns assistant sessions start` 按当前助手配置新建真实会话。
 12. 如果要等待真实会话回复，或者未来某个具体时间后再继续，必须用 `codingns assistant timers create` 创建计时器，不能只在回答里说“稍后继续”。
 13. 只有明确需要终端链路时，才用 `codingns assistant terminals send` 或 `codingns assistant terminals close`。
@@ -38,10 +37,10 @@ description: Use when working inside CodingNS and needing to inspect托管项目
 
 ## Butler 认证补充
 
-- 在当前助手沙箱工作区里，不要先故意跑一条会失败的 `codingns assistant ...` 再回头找 token。
+- 在当前助手绑定的真实工作区里，不要先故意跑一条会失败的 `codingns assistant ...` 再回头找 token。
 - 优先顺序固定为：显式 `--token` / `CODINGNS_ACCESS_TOKEN` / `CODINGNS_AUTH_FILE` / 当前目录及上级目录里的 `BUTLER_AUTH.json`。
 - CLI 已能自动发现 `BUTLER_AUTH.json` 时，直接继续用 `codingns assistant ...`；不要再把手工导出环境变量当成默认流程。
-- 只有自动发现失败、当前目录不在当前助手沙箱工作区，或者你要切换到别的 Host / 凭证文件时，才手工导出环境变量。
+- 只有自动发现失败、当前目录不在当前助手绑定的真实工作区，或者你要切换到别的 Host / 凭证文件时，才手工导出环境变量。
 - 如果 `BUTLER_API.md` 已经写死凭证文件路径，就把它当成兜底事实来源，不要自己猜别的认证入口。
 
 ## 什么时候读 references

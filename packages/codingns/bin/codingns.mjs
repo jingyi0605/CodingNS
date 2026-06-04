@@ -169,7 +169,6 @@ async function runAssistantCommand(argv) {
         supportedOptions: [
           "project",
           "workspace",
-          "sandbox",
           "message",
           "provider",
           "model",
@@ -360,82 +359,6 @@ async function runAssistantCommand(argv) {
         path: `/api/assistant/automations/${requirePositional(automationId, "automationId")}/runs`,
         argv: tail,
         helpTopic: "automations.runs"
-      }));
-      return;
-    }
-    case "sandboxes:list":
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: "/api/assistant/sandboxes",
-        argv: rest,
-        supportedOptions: ["status"],
-        helpTopic: "sandboxes.list"
-      }, (options) => ({
-        status: readOptionalTrimmedValue(options.values.status)
-      })));
-      return;
-    case "sandboxes:create":
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: "/api/assistant/sandboxes",
-        argv: rest,
-        supportedOptions: [
-          "title",
-          "description",
-          "purpose",
-          "expires-at",
-          "source-kind",
-          "repository-url",
-          "directory-name",
-          "auth-mode",
-          "username",
-          "password",
-          "auth-token"
-        ],
-        helpTopic: "sandboxes.create"
-      }, (options) => ({
-        title: readOptionalTrimmedValue(options.values.title),
-        description: readOptionalTrimmedValue(options.values.description),
-        purpose: readOptionalTrimmedValue(options.values.purpose),
-        expiresAt: readOptionalTrimmedValue(options.values["expires-at"]),
-        sourceKind: readOptionalTrimmedValue(options.values["source-kind"]),
-        repositoryUrl: readOptionalTrimmedValue(options.values["repository-url"]),
-        directoryName: readOptionalTrimmedValue(options.values["directory-name"]),
-        auth: buildWorkspaceCloneAuth(options.values)
-      })));
-      return;
-    case "sandboxes:promote": {
-      const [sandboxId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}/promote`,
-        argv: tail,
-        supportedOptions: ["mode", "project-name", "provider"],
-        helpTopic: "sandboxes.promote"
-      }, (options) => ({
-        mode: readOptionalTrimmedValue(options.values.mode),
-        projectName: readOptionalTrimmedValue(options.values["project-name"]),
-        defaultProvider: readOptionalTrimmedValue(options.values.provider)
-      })));
-      return;
-    }
-    case "sandboxes:expire": {
-      const [sandboxId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}/expire`,
-        argv: tail,
-        helpTopic: "sandboxes.expire"
-      }));
-      return;
-    }
-    case "sandboxes:remove": {
-      const [sandboxId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "DELETE",
-        path: `/api/assistant/sandboxes/${requirePositional(sandboxId, "sandboxId")}`,
-        argv: tail,
-        helpTopic: "sandboxes.remove"
       }));
       return;
     }
@@ -2927,7 +2850,7 @@ codingns assistant sessions
 
 可用动作：
   list      列出指定项目下的会话
-  start     按 project/workspace/sandbox 目标新建真实会话
+  start     按 project/workspace 目标新建真实会话
   get       读取会话详情
   messages  读取消息窗口
   runtime   读取运行态
@@ -2955,10 +2878,10 @@ codingns assistant sessions list
 codingns assistant sessions start
 
 用途：
-  在指定 project/workspace/sandbox 目标下新建真实会话；如果不显式传 provider/model，会默认继承当前助手控制会话的配置。
+  在指定 project/workspace 目标下新建真实会话；如果不显式传 provider/model，会默认继承当前助手控制会话的配置。
 
 用法：
-  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId> | --sandbox <sandboxId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
 `.trim();
     case "sessions.get":
       return `
@@ -3019,71 +2942,6 @@ codingns assistant sessions fork
 
 用法：
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
-`.trim();
-    case "sandboxes":
-      return `
-codingns assistant sandboxes
-
-可用动作：
-  list     列出当前助手沙箱
-  create   创建新的临时沙箱工作区
-  promote  把沙箱保留为 pinned，或晋升成正式项目
-  expire   标记沙箱过期
-  remove   清理沙箱
-
-示例：
-  codingns assistant sandboxes list --status active --token <token>
-  codingns assistant sandboxes create --title "CodingNS 临时沙箱" --source-kind clone --repository-url <url> --token <token>
-`.trim();
-    case "sandboxes.list":
-      return `
-codingns assistant sandboxes list
-
-用途：
-  列出当前用户可见的助手沙箱。
-
-用法：
-  codingns assistant sandboxes list [--status active|archived|expired|deleted] --token <token>
-`.trim();
-    case "sandboxes.create":
-      return `
-codingns assistant sandboxes create
-
-用途：
-  创建新的临时沙箱工作区；默认空白沙箱，也可以直接 clone 仓库。
-
-用法：
-  codingns assistant sandboxes create [--title <title>] [--description <text>] [--purpose <text>] [--expires-at <isoTime>] [--source-kind blank|clone] [--repository-url <url>] [--directory-name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] --token <token>
-`.trim();
-    case "sandboxes.promote":
-      return `
-codingns assistant sandboxes promote
-
-用途：
-  把沙箱保留为 pinned，或者直接晋升成正式项目。
-
-用法：
-  codingns assistant sandboxes promote <sandboxId> [--mode pin|project] [--project-name <name>] [--provider <provider>] --token <token>
-`.trim();
-    case "sandboxes.expire":
-      return `
-codingns assistant sandboxes expire
-
-用途：
-  把指定沙箱标记为过期，后续不能再拿它启动会话。
-
-用法：
-  codingns assistant sandboxes expire <sandboxId> --token <token>
-`.trim();
-    case "sandboxes.remove":
-      return `
-codingns assistant sandboxes remove
-
-用途：
-  删除指定沙箱并尝试清理对应工作区入口。
-
-用法：
-  codingns assistant sandboxes remove <sandboxId> --token <token>
 `.trim();
     case "automations":
       return `
@@ -3547,7 +3405,7 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|sandboxes|automations|timers|follow-ups|terminals|office|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|automations|timers|follow-ups|terminals|office|debug-targets|debug-runtimes|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
@@ -3588,18 +3446,13 @@ codingns assistant 用法：
   codingns assistant workspaces nav-state <workspaceId> [--collapsed true|false] [--background-color #RRGGBB|none] [--base-url ...] --token <token>
   codingns assistant workspaces remove <workspaceId> [--base-url ...] --token <token>
   codingns assistant sessions list --project <projectId> [--base-url ...] --token <token>
-  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId> | --sandbox <sandboxId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+  codingns assistant sessions start (--project <projectId> | --workspace <workspaceId>) --message "..." [--provider <provider>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
   codingns assistant sessions runtime <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions delete <sessionId> [--base-url ...] --token <token>
   codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
   codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
-  codingns assistant sandboxes list [--status active|archived|expired|deleted] [--base-url ...] --token <token>
-  codingns assistant sandboxes create [--title <title>] [--description <text>] [--purpose <text>] [--expires-at <isoTime>] [--source-kind blank|clone] [--repository-url <url>] [--directory-name <name>] [--auth-mode none|basic|token] [--username <name>] [--password <password>] [--auth-token <token>] [--base-url ...] --token <token>
-  codingns assistant sandboxes promote <sandboxId> [--mode pin|project] [--project-name <name>] [--provider <provider>] [--base-url ...] --token <token>
-  codingns assistant sandboxes expire <sandboxId> [--base-url ...] --token <token>
-  codingns assistant sandboxes remove <sandboxId> [--base-url ...] --token <token>
   codingns assistant automations list [--status active|completed|cancelled|failed] [--control-session-id <id>] --token <token>
   codingns assistant automations get <automationId> [--base-url ...] --token <token>
   codingns assistant automations create --message "..." [--trigger once|interval|cron|condition] [--title <title>] [--due-at <isoTime> | --after-seconds <seconds>] [--every-seconds <n> | --every-minutes <n> | --every-hours <n>] [--stop-at <isoTime>] [--cron-minute <0-59>] [--cron-hour <0-23>] [--cron-day-of-week <0-6>] [--condition-kind git.remote_tag_changed|session.runtime_idle] [--repository-url <url>] [--condition-session-id <sessionId>] [--poll-interval-seconds <n>] [--expires-at <isoTime>] [--max-checks <n>] [--include-trigger-context] [--control-session-id <id>] [--project-id <projectId>] [--session-id <sessionId>] --token <token>
@@ -3797,15 +3650,13 @@ function buildAssistantHelpTopic(action, rest) {
 function resolveAssistantSessionStartTarget(values) {
   const projectId = readOptionalTrimmedValue(values.project);
   const workspaceId = readOptionalTrimmedValue(values.workspace);
-  const sandboxId = readOptionalTrimmedValue(values.sandbox);
   const targets = [
     projectId ? { projectId } : null,
-    workspaceId ? { workspaceId } : null,
-    sandboxId ? { sandboxId } : null
+    workspaceId ? { workspaceId } : null
   ].filter((item) => item !== null);
 
   if (targets.length !== 1) {
-    fail("sessions start 必须且只能提供 --project、--workspace、--sandbox 其中一个");
+    fail("sessions start 必须且只能提供 --project、--workspace 其中一个");
   }
 
   return targets[0];
