@@ -172,13 +172,13 @@ describe("ButlerProjectService", () => {
     expect(result[0]?.archivedAt).not.toBeNull();
   });
 
-  it("不会把助手沙箱工作区自动补成正式项目", () => {
-    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-sandbox-"));
+  it("不会把助手自己的工作目录自动补成正式项目", () => {
+    const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-managed-"));
     tempDirs.push(workspacePath);
     const workspaces: Workspace[] = [
       {
-        id: "workspace-sandbox",
-        name: "临时沙箱",
+        id: "workspace-managed",
+        name: "受管工作区",
         path: workspacePath,
         repoRoot: workspacePath,
         favorite: false,
@@ -200,9 +200,10 @@ describe("ButlerProjectService", () => {
       {
         list: vi.fn(() => workspaces)
       } satisfies Pick<WorkspaceRepository, "list"> as WorkspaceRepository,
-      undefined,
       {
-        listManagedWorkspaceIds: vi.fn(() => ["workspace-sandbox"])
+        getProfile: vi.fn(() => ({
+          workspacePath
+        }))
       } as any
     );
 

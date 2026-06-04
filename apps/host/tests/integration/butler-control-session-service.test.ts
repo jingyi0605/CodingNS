@@ -169,7 +169,6 @@ describe("ButlerControlSessionService", () => {
       null,
       null,
       null,
-      null,
       {
         get: vi.fn(() => ({
           providerId: "codex",
@@ -191,11 +190,12 @@ describe("ButlerControlSessionService", () => {
   it("启动控制会话时会复用真实 live runtime 并创建独立控制会话记录", async () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-control-"));
     tempDirs.push(workspacePath);
-    const sandboxWorkspacePath = path.join(workspacePath, "sandboxes", "control-session-1");
     const codexHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-codex-home-"));
     tempDirs.push(codexHomeDir);
     const claudeHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-claude-home-"));
     tempDirs.push(claudeHomeDir);
+    const defaultClaudeHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-default-claude-home-"));
+    tempDirs.push(defaultClaudeHomeDir);
     const defaultCodexHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-default-codex-home-"));
     tempDirs.push(defaultCodexHomeDir);
     const managedSkillRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-managed-skill-"));
@@ -228,6 +228,16 @@ describe("ButlerControlSessionService", () => {
       ].join("\n"),
       "utf8"
     );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "config.json"),
+      JSON.stringify({ primaryApiKey: "claude-default-key" }, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultClaudeHomeDir, "settings.json"),
+      JSON.stringify({ includeCoAuthoredBy: false }, null, 2),
+      "utf8"
+    );
     mkdirSync(path.join(workspacePath, ".git", "refs", "heads"), { recursive: true });
     writeFileSync(path.join(workspacePath, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
     writeFileSync(
@@ -256,10 +266,10 @@ describe("ButlerControlSessionService", () => {
       updatedAt: "2026-04-05T00:00:00.000Z"
     };
     const workspace: Workspace = {
-      id: "workspace-butler-sandbox",
+      id: "workspace-butler",
       name: "请先介绍当前职责",
-      path: sandboxWorkspacePath,
-      repoRoot: sandboxWorkspacePath,
+      path: workspacePath,
+      repoRoot: workspacePath,
       favorite: false,
       createdAt: "2026-04-05T00:00:00.000Z",
       updatedAt: "2026-04-05T00:00:00.000Z",
@@ -302,29 +312,6 @@ describe("ButlerControlSessionService", () => {
     const originRepository = {
       upsert: vi.fn()
     };
-    const assistantSandboxService = {
-      createSandbox: vi.fn(async () => ({
-        id: "sandbox-1",
-        userId: "user-1",
-        workspaceId: workspace.id,
-        controlSessionId: null,
-        title: "请先介绍当前职责",
-        description: "当前助手会话独占的临时工作区",
-        sourceKind: "blank" as const,
-        sourceRef: sandboxWorkspacePath,
-        visibility: "assistant_only" as const,
-        status: "active" as const,
-        purpose: "butler_control_session",
-        expiresAt: null,
-        promotedAt: null,
-        createdAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z",
-        workspace
-      })),
-      listSandboxes: vi.fn(() => []),
-      markSandboxUsedByControlSession: vi.fn(),
-      removeSandbox: vi.fn()
-    };
 
     const service = new ButlerControlSessionService(
       {
@@ -340,8 +327,9 @@ describe("ButlerControlSessionService", () => {
         update: vi.fn((record: ButlerControlSession) => record)
       } as unknown as ButlerControlSessionRepository,
       {
-        importWorkspace: vi.fn(() => workspace)
-      } as unknown as Pick<WorkspaceService, "importWorkspace">,
+        importWorkspace: vi.fn(() => workspace),
+        getWorkspaceOrThrow: vi.fn(() => workspace)
+      } as unknown as Pick<WorkspaceService, "importWorkspace" | "getWorkspaceOrThrow">,
       {
         getSession: vi.fn(() => session),
         resumeSession: vi.fn()
@@ -448,9 +436,8 @@ describe("ButlerControlSessionService", () => {
       codexHomeDir,
       defaultCodexHomeDir,
       claudeHomeDir,
-      null,
-      originRepository,
-      assistantSandboxService
+      defaultClaudeHomeDir,
+      originRepository
     );
 
     const started = await service.startSession("user-1", {
@@ -461,56 +448,50 @@ describe("ButlerControlSessionService", () => {
     expect(started.session.sessionId).toBe("session-1");
     expect(savedControlSession?.sessionId).toBe("session-1");
     expect(savedControlSession?.lastContextVersion).toBe("ctx-overview-v1");
-    expect(assistantSandboxService.createSandbox).toHaveBeenCalledTimes(1);
-    expect(assistantSandboxService.markSandboxUsedByControlSession).toHaveBeenCalledWith(
-      "sandbox-1",
-      "user-1",
-      savedControlSession?.id
-    );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain("作用域：全局总览");
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain("作用域：全局总览");
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "codingns assistant capabilities list"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "codingns assistant help sessions"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "BUTLER_AUTH.json"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
-      "当前目录就是当前助手会话自己的沙箱"
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
+      "当前目录就是当前助手会话绑定的工作区"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "AGENTS.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "AGENTS.md"), "utf8")).toContain(
       "## Codex 增量覆盖"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "CLAUDE.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "CLAUDE.md"), "utf8")).toContain(
       "## Claude Code 增量覆盖"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
       "共享规则源"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
-      "默认直接落在当前助手沙箱"
+    expect(readFileSync(path.join(workspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
+      "当前目录默认就是当前助手会话绑定的真实工作区"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_RULES.md"), "utf8")).toContain(
       "codingns assistant office"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "ops-task-execute"
     );
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_API.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "task-approval-reply"
     );
-    expect(JSON.parse(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_AUTH.json"), "utf8")).accessToken).toBe(
+    expect(JSON.parse(readFileSync(path.join(workspacePath, "BUTLER_AUTH.json"), "utf8")).accessToken).toBe(
       "token-1"
     );
-    expect(execFileSync("git", ["-C", sandboxWorkspacePath, "rev-parse", "--show-toplevel"], {
+    expect(execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       encoding: "utf8"
-    }).trim()).toBe(realpathSync.native(sandboxWorkspacePath));
+    }).trim()).toBe(realpathSync.native(workspacePath));
     const codexConfig = readFileSync(path.join(codexHomeDir, "config.toml"), "utf8");
     expect(codexConfig).toContain('model_provider = "gmn"');
     expect(codexConfig).toContain('approval_policy = "never"');
-    expect(codexConfig).toContain(`model_instructions_file = "${path.join(sandboxWorkspacePath, "AGENTS.md")}"`);
+    expect(codexConfig).toContain(`model_instructions_file = "${path.join(workspacePath, "AGENTS.md")}"`);
     expect(readFileSync(path.join(codexHomeDir, "auth.json"), "utf8")).toBe(
       readFileSync(path.join(defaultCodexHomeDir, "auth.json"), "utf8")
     );
@@ -531,6 +512,157 @@ describe("ButlerControlSessionService", () => {
       createdAt: "2026-04-05T00:00:10.000Z",
       updatedAt: "2026-04-05T00:00:10.000Z"
     }));
+  });
+
+  it("显式传入 workspaceId 启动控制会话时，会按目标 workspace 路径同步上下文而不是旧 profile 路径", async () => {
+    const profileWorkspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-profile-workspace-"));
+    tempDirs.push(profileWorkspacePath);
+    const targetWorkspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-target-workspace-"));
+    tempDirs.push(targetWorkspacePath);
+    const codexHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-codex-home-"));
+    tempDirs.push(codexHomeDir);
+    const profile: ButlerProfile = {
+      id: "default",
+      providerId: "codex",
+      workspacePath: profileWorkspacePath,
+      agentsMode: "inline",
+      agentsFilePath: null,
+      agentsContent: "# AGENTS.md\n你是代码助手",
+      persona: {
+        tone: "direct",
+        language: "zh-CN",
+        summaryStyle: "brief"
+      },
+      focus: {
+        projectIds: [],
+        riskPreference: "conservative",
+        reportPriority: ["risk"]
+      },
+      initializedAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z"
+    };
+    const targetWorkspace: Workspace = {
+      id: "workspace-target",
+      name: "文档库工作区",
+      path: targetWorkspacePath,
+      repoRoot: targetWorkspacePath,
+      favorite: false,
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      removedAt: null
+    };
+    const session: SessionListItem = {
+      sessionId: "session-target-1",
+      workspaceId: targetWorkspace.id,
+      provider: "codex",
+      providerSessionId: "provider-target-1",
+      rawStoreRef: "raw-target-1",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "文档库事务助手",
+      messageCount: 1,
+      lastMessageAt: "2026-04-05T00:00:10.000Z",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:10.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-05T00:00:10.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: "2026-04-05T00:00:10.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+
+    const service = new ButlerControlSessionService(
+      {
+        ensureInitialized: vi.fn(() => profile)
+      } as unknown as ButlerProfileService,
+      {
+        findLatestOpenByProvider: vi.fn(() => null),
+        findLatestByProvider: vi.fn(() => null),
+        create: vi.fn((record: ButlerControlSession) => record),
+        update: vi.fn((record: ButlerControlSession) => record)
+      } as unknown as ButlerControlSessionRepository,
+      {
+        importWorkspace: vi.fn(),
+        getWorkspaceOrThrow: vi.fn(() => targetWorkspace)
+      } as unknown as Pick<WorkspaceService, "importWorkspace" | "getWorkspaceOrThrow">,
+      {
+        getSession: vi.fn(() => session),
+        resumeSession: vi.fn()
+      } as unknown as Pick<SessionHistoryService, "getSession" | "resumeSession">,
+      {
+        startLiveSession: vi.fn(async () => ({
+          sessionId: session.sessionId,
+          provider: "codex",
+          providerSessionId: session.providerSessionId,
+          acceptedAt: "2026-04-05T00:00:10.000Z",
+          clientRequestId: null,
+          message: {
+            messageId: "msg-target-1",
+            role: "user",
+            content: "请分析文档库",
+            timestamp: "2026-04-05T00:00:10.000Z",
+            sequence: 1,
+            attachments: []
+          }
+        })),
+        sendLiveMessage: vi.fn()
+      } as unknown as Pick<SessionLiveRuntimeService, "startLiveSession" | "sendLiveMessage">,
+      {
+        resolvePromptContext: vi.fn(async () => ({
+          version: "ctx-target-v1",
+          generatedAt: "2026-04-05T00:00:05.000Z",
+          scope: "project",
+          projectId: null,
+          prompt: "# 代码助手当前上下文\n\n- 作用域：文档库"
+        }))
+      } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
+      {
+        ensureWorkspaceCredential: vi.fn((workspacePath: string) => {
+          const credential = {
+            apiBaseUrl: "http://127.0.0.1:3002",
+            accessToken: "token-target",
+            issuedAt: "2026-04-05T00:00:00.000Z",
+            expiresAt: "2026-10-05T00:00:00.000Z",
+            userId: "user-1"
+          };
+          writeFileSync(
+            path.join(workspacePath, "BUTLER_AUTH.json"),
+            `${JSON.stringify(credential, null, 2)}\n`,
+            "utf8"
+          );
+          return credential;
+        }),
+        getCredentialFilePath: vi.fn((workspacePath: string) => path.join(workspacePath, "BUTLER_AUTH.json"))
+      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub(),
+      codexHomeDir,
+      codexHomeDir,
+      null,
+      null
+    );
+
+    await service.startSession("user-1", {
+      workspaceId: targetWorkspace.id,
+      content: "请分析文档库"
+    });
+
+    expect(existsSync(path.join(targetWorkspacePath, "AGENTS.md"))).toBe(true);
+    expect(existsSync(path.join(targetWorkspacePath, "BUTLER_CONTEXT.md"))).toBe(true);
+    expect(existsSync(path.join(profileWorkspacePath, "BUTLER_CONTEXT.md"))).toBe(false);
   });
 
   it("使用 claude-code 启动控制会话时会继承默认 Claude 配置并覆盖默认规则", async () => {
@@ -806,7 +938,6 @@ describe("ButlerControlSessionService", () => {
   it("发送消息时会直接调用现有 session runtime", async () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-control-"));
     tempDirs.push(workspacePath);
-    const sandboxWorkspacePath = path.join(workspacePath, "sandboxes", "control-session-2");
     const profile: ButlerProfile = {
       id: "default",
       providerId: "codex",
@@ -888,6 +1019,7 @@ describe("ButlerControlSessionService", () => {
       {
         findLatestOpenByProvider: vi.fn(() => currentSession),
         findLatestByProvider: vi.fn(() => currentSession),
+        findById: vi.fn(() => currentSession),
         create: vi.fn(),
         update: vi.fn((record: ButlerControlSession) => {
           updatedControlSession = record;
@@ -895,8 +1027,18 @@ describe("ButlerControlSessionService", () => {
         })
       } as unknown as ButlerControlSessionRepository,
       {
-        importWorkspace: vi.fn()
-      } as unknown as Pick<WorkspaceService, "importWorkspace">,
+        importWorkspace: vi.fn(),
+        getWorkspaceOrThrow: vi.fn(() => ({
+          id: "workspace-butler",
+          name: "当前助手会话",
+          path: workspacePath,
+          repoRoot: workspacePath,
+          favorite: false,
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:00:00.000Z",
+          removedAt: null
+        }))
+      } as unknown as Pick<WorkspaceService, "importWorkspace" | "getWorkspaceOrThrow">,
       {
         getSession: vi.fn(() => session),
         resumeSession: vi.fn()
@@ -937,56 +1079,22 @@ describe("ButlerControlSessionService", () => {
             expiresAt: "2026-10-05T00:00:00.000Z",
             userId: "user-1"
           };
-          mkdirSync(sandboxWorkspacePath, { recursive: true });
+          mkdirSync(workspacePath, { recursive: true });
           writeFileSync(
-            path.join(sandboxWorkspacePath, "BUTLER_AUTH.json"),
+            path.join(workspacePath, "BUTLER_AUTH.json"),
             `${JSON.stringify(credential, null, 2)}\n`,
             "utf8"
           );
           return credential;
         }),
-        getCredentialFilePath: vi.fn(() => path.join(sandboxWorkspacePath, "BUTLER_AUTH.json"))
+        getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
       } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
       createSkillManagerStub(),
       null,
       null,
       null,
       null,
-      originRepository,
-      {
-        createSandbox: vi.fn(),
-        listSandboxes: vi.fn(() => [
-          {
-            id: "sandbox-2",
-            userId: "user-1",
-            workspaceId: "workspace-sandbox-2",
-            controlSessionId: "control-1",
-            title: "当前助手会话",
-            description: null,
-            sourceKind: "blank" as const,
-            sourceRef: sandboxWorkspacePath,
-            visibility: "assistant_only" as const,
-            status: "active" as const,
-            purpose: "butler_control_session",
-            expiresAt: null,
-            promotedAt: null,
-            createdAt: "2026-04-05T00:00:00.000Z",
-            updatedAt: "2026-04-05T00:00:00.000Z",
-            workspace: {
-              id: "workspace-sandbox-2",
-              name: "当前助手会话",
-              path: sandboxWorkspacePath,
-              repoRoot: sandboxWorkspacePath,
-              favorite: false,
-              createdAt: "2026-04-05T00:00:00.000Z",
-              updatedAt: "2026-04-05T00:00:00.000Z",
-              removedAt: null
-            }
-          }
-        ]),
-        markSandboxUsedByControlSession: vi.fn(),
-        removeSandbox: vi.fn()
-      }
+      originRepository
     );
 
     const sent = await service.sendMessage("user-1", {
@@ -998,7 +1106,7 @@ describe("ButlerControlSessionService", () => {
     expect(sent.controlSession.id).toBe("control-1");
     expect(updatedControlSession?.lastSummary).toContain("继续汇总当前风险");
     expect(updatedControlSession?.lastContextVersion).toBe("ctx-project-v2");
-    expect(readFileSync(path.join(sandboxWorkspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain(
+    expect(readFileSync(path.join(workspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain(
       "作用域：项目 project-1"
     );
     expect(originRepository.upsert).toHaveBeenCalledTimes(2);
@@ -1103,7 +1211,6 @@ describe("ButlerControlSessionService", () => {
         getCredentialFilePath: vi.fn()
       } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
       createSkillManagerStub(),
-      null,
       null,
       null,
       null,

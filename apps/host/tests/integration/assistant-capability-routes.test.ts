@@ -567,29 +567,9 @@ describe("assistant capability routes", () => {
     });
   });
 
-  it("通用 sessions.start 在没有显式 target 时会交给服务自动落到沙箱", async () => {
+  it("通用 sessions.start 在没有显式 target 时会直接返回参数错误", async () => {
     const assistantCapabilityService = {
-      startSession: vi.fn(async () => ({
-        ok: true,
-        capability: "sessions.start",
-        auditId: "audit-session-start-auto-sandbox",
-        timestamp: "2026-04-17T02:05:00.000Z",
-        targetRef: {
-          kind: "sandbox",
-          id: "sandbox-auto-1"
-        },
-        payload: {
-          session: {
-            sessionId: "session-auto-1"
-          },
-          target: {
-            kind: "sandbox",
-            id: "sandbox-auto-1",
-            workspaceId: "workspace-sandbox-auto-1"
-          }
-        }
-      })),
-      createSandbox: vi.fn()
+      startSession: vi.fn()
     };
 
     const app = await createAssistantApp(assistantCapabilityService);
@@ -602,17 +582,12 @@ describe("assistant capability routes", () => {
       }
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(assistantCapabilityService.startSession).toHaveBeenCalledWith({
-      target: null,
-      userId: "user-1",
-      content: "请继续处理这个问题，但我没指定项目或工作区",
-      providerId: null,
-      model: null,
-      reasoningLevel: null,
-      permissionMode: null
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error_code: "INVALID_INPUT",
+      detail: "启动真实会话必须提供 projectId 或 workspaceId"
     });
-    expect(assistantCapabilityService.createSandbox).not.toHaveBeenCalled();
+    expect(assistantCapabilityService.startSession).not.toHaveBeenCalled();
   });
 
   it("provider 被禁用时，助手会话 start|send|fork 和 follow-up create 路由会统一返回 PROVIDER_DISABLED", async () => {
@@ -876,84 +851,6 @@ describe("assistant capability routes", () => {
       userId: "user-1",
       controlSessionId: "control-1",
       limit: 20
-    });
-  });
-
-  it("沙箱路由会把创建和晋升参数清洗后传给服务", async () => {
-    const assistantCapabilityService = {
-      createSandbox: vi.fn(async () => ({
-        ok: true,
-        capability: "sandboxes.create",
-        auditId: "audit-sandbox-create",
-        timestamp: "2026-04-17T02:10:00.000Z",
-        targetRef: {
-          kind: "sandbox",
-          id: "sandbox-1"
-        },
-        payload: {
-          sandbox: {
-            id: "sandbox-1"
-          }
-        }
-      })),
-      promoteSandbox: vi.fn(() => ({
-        ok: true,
-        capability: "sandboxes.promote",
-        auditId: "audit-sandbox-promote",
-        timestamp: "2026-04-17T02:11:00.000Z",
-        targetRef: {
-          kind: "sandbox",
-          id: "sandbox-1"
-        },
-        payload: {
-          sandbox: {
-            id: "sandbox-1"
-          }
-        }
-      }))
-    };
-    const app = await createAssistantApp(assistantCapabilityService);
-
-    const createResponse = await app.inject({
-      method: "POST",
-      url: "/api/assistant/sandboxes",
-      payload: {
-        title: "  CodingNS 临时沙箱  ",
-        purpose: "  验证新自动化链路  ",
-        sourceKind: "clone",
-        repositoryUrl: "  https://github.com/jingyi0605/codingns.git  ",
-        directoryName: "  codingns-sbx  "
-      }
-    });
-    expect(createResponse.statusCode).toBe(200);
-    expect(assistantCapabilityService.createSandbox).toHaveBeenCalledWith({
-      userId: "user-1",
-      title: "CodingNS 临时沙箱",
-      description: null,
-      purpose: "验证新自动化链路",
-      expiresAt: null,
-      sourceKind: "clone",
-      repositoryUrl: "https://github.com/jingyi0605/codingns.git",
-      directoryName: "codingns-sbx",
-      auth: undefined
-    });
-
-    const promoteResponse = await app.inject({
-      method: "POST",
-      url: "/api/assistant/sandboxes/sandbox-1/promote",
-      payload: {
-        mode: "project",
-        projectName: "  CodingNS 沙箱项目  ",
-        defaultProvider: "  codex  "
-      }
-    });
-    expect(promoteResponse.statusCode).toBe(200);
-    expect(assistantCapabilityService.promoteSandbox).toHaveBeenCalledWith({
-      sandboxId: "sandbox-1",
-      userId: "user-1",
-      mode: "project",
-      projectName: "CodingNS 沙箱项目",
-      defaultProvider: "codex"
     });
   });
 
