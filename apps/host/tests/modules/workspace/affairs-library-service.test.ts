@@ -98,6 +98,24 @@ function createService(options: {
     createdAt: string;
     updatedAt: string;
   } | null;
+  listEnabledUserAffairsLibraries?: Array<{
+    userId: string;
+    rootDir: string | null;
+    enabled: boolean;
+    favoritesJson: string | null;
+    lastWorkspaceId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  findEnabledUserAffairsLibraryByWorkspaceId?: () => {
+    userId: string;
+    rootDir: string | null;
+    enabled: boolean;
+    favoritesJson: string | null;
+    lastWorkspaceId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
   peek?: (taskType: string, key: string) => TaskSnapshot | null;
   enqueue?: ReturnType<typeof vi.fn>;
   cancel?: ReturnType<typeof vi.fn>;
@@ -150,6 +168,29 @@ function createService(options: {
     } as never,
     {
       findByUserId: vi.fn(() => options.currentGlobalSetting ?? null),
+      listEnabled: vi.fn(() => options.listEnabledUserAffairsLibraries ?? (
+        options.listEnabledAffairsLibraries ?? []
+      ).map((item) => ({
+        userId: item.userId,
+        rootDir: item.affairsLibraryRootPath ?? null,
+        enabled: item.affairsLibraryEnabled === true,
+        favoritesJson: item.affairsLibraryFavoritesJson ?? null,
+        lastWorkspaceId: item.workspaceId,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt
+      }))),
+      findEnabledByWorkspaceId: vi.fn(
+        options.findEnabledUserAffairsLibraryByWorkspaceId
+        ?? (() => ({
+          userId: "user-1",
+          rootDir: options.rootDir,
+          enabled: true,
+          favoritesJson: "[]",
+          lastWorkspaceId: "workspace-1",
+          createdAt: "2026-05-31T06:00:00.000Z",
+          updatedAt: "2026-05-31T06:00:00.000Z"
+        }))
+      ),
       upsert: vi.fn((record) => record)
     } as never,
     {
@@ -2069,19 +2110,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2115,19 +2149,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2159,19 +2186,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2210,19 +2230,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2257,19 +2270,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2306,19 +2312,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-periodic-"));
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2351,19 +2350,12 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
     const events: AffairsLibraryWatchDirtyEvent[] = [];
     const service = new AffairsLibraryDirtyWatchService(
-      {
-        listEnabledAffairsLibraries: vi.fn(() => []),
-        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => ({
-          workspaceId: "workspace-1",
-          userId: "user-1",
-          collapsed: false,
-          backgroundColor: null,
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-          affairsLibraryFavoritesJson: "[]",
-          updatedAt: "2026-05-31T06:00:00.000Z"
-        }))
-      } as never,
+      () => [],
+      (_workspaceId) => ({
+        workspaceId: "workspace-1",
+        rootDir,
+        enabled: true
+      }),
       (_workspaceId, event) => {
         events.push(event);
       },
@@ -2537,7 +2529,7 @@ describe("AffairsLibraryService global binding", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("全局收藏接口会更新用户级收藏并保持旧兼容镜像", () => {
+  it("全局收藏接口只更新用户级收藏，不再写 legacy 镜像", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-favorites-"));
     const upsert = vi.fn((record) => record);
     const legacyUpsert = vi.fn();
@@ -2607,11 +2599,7 @@ describe("AffairsLibraryService global binding", () => {
       favoritesJson: JSON.stringify(favorites),
       lastWorkspaceId: "workspace-1"
     }));
-    expect(legacyUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: "workspace-1",
-      userId: "workspace-session-user",
-      affairsLibraryFavoritesJson: JSON.stringify(favorites)
-    }));
+    expect(legacyUpsert).not.toHaveBeenCalled();
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });

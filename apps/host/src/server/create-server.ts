@@ -1356,7 +1356,8 @@ export function createServer(config: HostConfig) {
     });
   });
   const affairsLibraryDirtyWatchService = new AffairsLibraryDirtyWatchService(
-    repositories.workspaceNavigationStateRepository,
+    () => affairsLibraryService.listEnabledBindingsForWatch(),
+    (workspaceId) => affairsLibraryService.getBindingForWatch(workspaceId),
     (workspaceId, event) => {
       if (event.kind === "config") {
         affairsLibraryService.scheduleAutoApplyConfig(workspaceId, event.reason);
@@ -1468,7 +1469,8 @@ export function createServer(config: HostConfig) {
     patrolExecutionService,
     verificationRunService,
     butlerActionContextService,
-    butlerControlTimerService
+    butlerControlTimerService,
+    affairsLibraryService
   );
   const sessionController = new SessionController(
     sessionHistoryService,

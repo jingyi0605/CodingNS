@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import {
   isIncludedHiddenPath,
   normalizeIncludedHiddenPaths
@@ -30,6 +29,12 @@ interface PendingWorkspaceDirtyState {
   indexChanged: boolean;
   reasons: Set<string>;
   indexTargets: Set<string>;
+}
+
+interface AffairsLibraryWatchBinding {
+  workspaceId: string | null;
+  rootDir: string | null;
+  enabled: boolean;
 }
 
 const CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
@@ -82,19 +87,25 @@ export class AffairsLibraryDirtyWatchService {
   private readonly pendingDirtyStateByWorkspace = new Map<string, PendingWorkspaceDirtyState>();
 
   constructor(
-    private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
+    private readonly listEnabledBindings: () => AffairsLibraryWatchBinding[],
+    private readonly getEnabledBindingByWorkspaceId: (workspaceId: string) => AffairsLibraryWatchBinding | null,
     private readonly onWorkspaceDirty: (workspaceId: string, event: AffairsLibraryWatchDirtyEvent) => void,
     private readonly logger: AffairsLibraryDirtyWatchLogger
   ) {}
 
   syncAll(): void {
-    const enabledStates = this.workspaceNavigationStateRepository.listEnabledAffairsLibraries();
-    const activeWorkspaceIds = new Set(enabledStates.map((item) => item.workspaceId));
+    const enabledBindings = this.listEnabledBindings();
+    const activeWorkspaceIds = new Set(
+      enabledBindings
+        .map((item) => item.workspaceId?.trim() ?? "")
+        .filter(Boolean)
+    );
 
-    for (const state of enabledStates) {
-      const rootDir = state.affairsLibraryRootPath?.trim() ?? "";
-      if (rootDir) {
-        this.ensureWorkspaceWatch(state.workspaceId, rootDir);
+    for (const binding of enabledBindings) {
+      const workspaceId = binding.workspaceId?.trim() ?? "";
+      const rootDir = binding.rootDir?.trim() ?? "";
+      if (workspaceId && rootDir && binding.enabled) {
+        this.ensureWorkspaceWatch(workspaceId, rootDir);
       }
     }
 
@@ -106,8 +117,8 @@ export class AffairsLibraryDirtyWatchService {
   }
 
   syncWorkspace(workspaceId: string): void {
-    const state = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = state?.affairsLibraryRootPath?.trim() ?? "";
+    const state = this.getEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = state?.rootDir?.trim() ?? "";
 
     if (!rootDir) {
       this.stopWorkspaceWatch(workspaceId);

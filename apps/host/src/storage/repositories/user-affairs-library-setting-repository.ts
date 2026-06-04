@@ -17,6 +17,36 @@ export class UserAffairsLibrarySettingRepository {
     return row ? mapUserAffairsLibrarySettingRow(row) : null;
   }
 
+  findEnabledByWorkspaceId(workspaceId: string): UserAffairsLibrarySettingRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT user_id, root_dir, enabled, favorites_json, last_workspace_id, created_at, updated_at
+         FROM user_affairs_library_settings
+         WHERE last_workspace_id = ?
+           AND enabled = 1
+           AND root_dir IS NOT NULL
+           AND TRIM(root_dir) <> ''
+         ORDER BY datetime(updated_at) DESC
+         LIMIT 1`
+      )
+      .get(workspaceId) as UserAffairsLibrarySettingRow | undefined;
+
+    return row ? mapUserAffairsLibrarySettingRow(row) : null;
+  }
+
+  listEnabled(): UserAffairsLibrarySettingRecord[] {
+    return this.db
+      .prepare(
+        `SELECT user_id, root_dir, enabled, favorites_json, last_workspace_id, created_at, updated_at
+         FROM user_affairs_library_settings
+         WHERE enabled = 1
+           AND root_dir IS NOT NULL
+           AND TRIM(root_dir) <> ''`
+      )
+      .all()
+      .map((row) => mapUserAffairsLibrarySettingRow(row as UserAffairsLibrarySettingRow));
+  }
+
   upsert(record: UserAffairsLibrarySettingRecord): UserAffairsLibrarySettingRecord {
     this.db
       .prepare(

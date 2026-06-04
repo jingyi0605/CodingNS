@@ -246,17 +246,6 @@ interface AffairsLibraryLogger {
   warn?(bindings: Record<string, unknown>, message: string): void;
 }
 
-interface WorkspaceNavigationStateLike {
-  workspaceId: string;
-  userId: string;
-  collapsed: boolean;
-  backgroundColor: string | null;
-  affairsLibraryRootPath?: string | null;
-  affairsLibraryEnabled?: boolean;
-  affairsLibraryFavoritesJson?: string | null;
-  updatedAt: string;
-}
-
 interface UserAffairsLibrarySettingLike {
   userId: string;
   rootDir: string | null;
@@ -264,15 +253,6 @@ interface UserAffairsLibrarySettingLike {
   favoritesJson: string | null;
   lastWorkspaceId: string | null;
   createdAt: string;
-  updatedAt: string;
-}
-
-interface WorkspaceNavigationBindingSource {
-  workspaceId: string;
-  userId: string;
-  affairsLibraryRootPath?: string | null;
-  affairsLibraryEnabled?: boolean;
-  affairsLibraryFavoritesJson?: string | null;
   updatedAt: string;
 }
 
@@ -515,11 +495,6 @@ export class AffairsLibraryService {
       createdAt: currentSetting?.createdAt ?? timestamp,
       updatedAt: timestamp
     });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir: normalizedRootDir,
-      enabled: true,
-      favoritesJson: nextSetting.favoritesJson
-    });
     this.syncLightweightReconcileTimers();
     if (workspaceId) {
       this.scheduleAutoRefresh(workspaceId, "binding_saved");
@@ -553,11 +528,6 @@ export class AffairsLibraryService {
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir,
-      enabled,
-      favoritesJson: nextSetting.favoritesJson
-    });
     this.syncLightweightReconcileTimers();
     if (enabled && workspaceId) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
@@ -582,11 +552,6 @@ export class AffairsLibraryService {
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir: nextSetting.rootDir,
-      enabled: nextSetting.enabled,
-      favoritesJson: nextSetting.favoritesJson
-    });
 
     return normalizedFavorites;
   }
@@ -605,11 +570,6 @@ export class AffairsLibraryService {
       lastWorkspaceId: workspaceId,
       createdAt: currentSetting?.createdAt ?? timestamp,
       updatedAt: timestamp
-    });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir: normalizedRootDir,
-      enabled: true,
-      favoritesJson: nextSetting.favoritesJson
     });
     this.syncLightweightReconcileTimers();
     this.scheduleAutoRefresh(workspaceId, "binding_saved");
@@ -642,11 +602,6 @@ export class AffairsLibraryService {
       lastWorkspaceId: workspaceId,
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
-    });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir,
-      enabled,
-      favoritesJson: nextSetting.favoritesJson
     });
     this.syncLightweightReconcileTimers();
     if (enabled) {
@@ -1299,11 +1254,6 @@ export class AffairsLibraryService {
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
-    this.mirrorLegacyWorkspaceBindingIfPossible(workspaceId, userId, {
-      rootDir: nextSetting.rootDir,
-      enabled: nextSetting.enabled,
-      favoritesJson: nextSetting.favoritesJson
-    });
 
     return normalizedFavorites;
   }
@@ -1789,9 +1739,9 @@ export class AffairsLibraryService {
       return;
     }
 
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(normalizedWorkspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
-    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+    const binding = this.findEnabledBindingByWorkspaceId(normalizedWorkspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
+    if (!rootDir || binding?.enabled !== true) {
       return;
     }
 
@@ -1882,17 +1832,18 @@ export class AffairsLibraryService {
   }
 
   private syncLightweightReconcileTimers(): void {
-    const enabledStates = this.workspaceNavigationStateRepository.listEnabledAffairsLibraries();
+    const enabledSettings = this.listEnabledSettingsWithWorkspace();
     const activeWorkspaceIds = new Set<string>();
 
-    for (const state of enabledStates) {
-      const rootDir = state.affairsLibraryRootPath?.trim() ?? "";
-      if (!rootDir || state.affairsLibraryEnabled !== true) {
+    for (const setting of enabledSettings) {
+      const rootDir = setting.rootDir?.trim() ?? "";
+      const workspaceId = setting.lastWorkspaceId?.trim() ?? "";
+      if (!workspaceId || !rootDir || setting.enabled !== true) {
         continue;
       }
 
-      activeWorkspaceIds.add(state.workspaceId);
-      this.ensureLightweightReconcileTimer(state.workspaceId);
+      activeWorkspaceIds.add(workspaceId);
+      this.ensureLightweightReconcileTimer(workspaceId);
     }
 
     for (const workspaceId of [...this.lightweightReconcileTimers.keys()]) {
@@ -1924,9 +1875,9 @@ export class AffairsLibraryService {
   }
 
   private scheduleLightweightReconcile(workspaceId: string, triggerReason: string): void {
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
-    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
+    if (!rootDir || binding?.enabled !== true) {
       this.clearLightweightReconcileTimer(workspaceId);
       return;
     }
@@ -2014,9 +1965,9 @@ export class AffairsLibraryService {
   }
 
   schedulePeriodicAudit(workspaceId: string, triggerReason: string): void {
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
-    if (!rootDir || binding?.affairsLibraryEnabled !== true) {
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
+    if (!rootDir || binding?.enabled !== true) {
       return;
     }
 
@@ -2467,8 +2418,8 @@ export class AffairsLibraryService {
   }
 
   private markHotDirectoryCacheDirty(workspaceId: string, directoryPath: string, reason: string): void {
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
     if (!rootDir) {
       return;
     }
@@ -2499,8 +2450,8 @@ export class AffairsLibraryService {
   }
 
   private scheduleDirectoryHintRefresh(workspaceId: string, directoryPath: string, reason: string): void {
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
     if (!rootDir) {
       return;
     }
@@ -2997,14 +2948,19 @@ export class AffairsLibraryService {
   }
 
   private resumeEnabledBindings(): void {
-    for (const state of this.workspaceNavigationStateRepository.listEnabledAffairsLibraries()) {
-      const binding = this.getBinding(state.workspaceId, state.userId);
-      const status = this.readIndexStatus(state.workspaceId, binding);
+    for (const setting of this.listEnabledSettingsWithWorkspace()) {
+      const workspaceId = setting.lastWorkspaceId?.trim() ?? "";
+      const userId = setting.userId?.trim() ?? "";
+      if (!workspaceId || !userId) {
+        continue;
+      }
+      const binding = this.getBinding(workspaceId, userId);
+      const status = this.readIndexStatus(workspaceId, binding);
       if (status.state === "fresh" || status.state === "cooldown" || status.state === "queued" || status.state === "running") {
         this.logger.info(
           {
-            workspaceId: state.workspaceId,
-            rootDir: binding?.rootDir ?? state.affairsLibraryRootPath ?? null,
+            workspaceId,
+            rootDir: binding?.rootDir ?? setting.rootDir ?? null,
             status: status.state,
             source: "affairs_library.startup_resume"
           },
@@ -3013,7 +2969,7 @@ export class AffairsLibraryService {
         continue;
       }
 
-      this.scheduleAutoRefresh(state.workspaceId, "startup_resume");
+      this.scheduleAutoRefresh(workspaceId, "startup_resume");
     }
   }
 
@@ -3037,8 +2993,8 @@ export class AffairsLibraryService {
       return;
     }
 
-    const binding = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(workspaceId);
-    const rootDir = binding?.affairsLibraryRootPath?.trim() ?? "";
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
 
     if (!rootDir) {
       this.logger.info(
@@ -3776,6 +3732,38 @@ export class AffairsLibraryService {
     return this.userAffairsLibrarySettingRepository.findByUserId(userId);
   }
 
+  getEnabledBindingForWorkspace(workspaceId: string): UserAffairsLibrarySettingLike | null {
+    return this.findEnabledBindingByWorkspaceId(workspaceId);
+  }
+
+  listEnabledBindingsForWatch(): Array<{
+    workspaceId: string | null;
+    rootDir: string | null;
+    enabled: boolean;
+  }> {
+    return this.listEnabledSettingsWithWorkspace().map((item) => ({
+      workspaceId: item.lastWorkspaceId ?? null,
+      rootDir: item.rootDir ?? null,
+      enabled: item.enabled === true
+    }));
+  }
+
+  getBindingForWatch(workspaceId: string): {
+    workspaceId: string | null;
+    rootDir: string | null;
+    enabled: boolean;
+  } | null {
+    const binding = this.findEnabledBindingByWorkspaceId(workspaceId);
+    if (!binding) {
+      return null;
+    }
+    return {
+      workspaceId: binding.lastWorkspaceId ?? null,
+      rootDir: binding.rootDir ?? null,
+      enabled: binding.enabled === true
+    };
+  }
+
   private buildBindingFromSetting(
     setting: UserAffairsLibrarySettingLike | null,
     fallbackWorkspaceId: string | null
@@ -3829,7 +3817,7 @@ export class AffairsLibraryService {
       workspaceScope
         ? this.workspaceNavigationStateRepository.findLatestAffairsLibraryByWorkspaceId(workspaceScope)
         : null
-    )) as WorkspaceNavigationBindingSource | null;
+    )) ?? null;
     const legacyFromUser = !workspaceScope
       ? this.workspaceNavigationStateRepository
         .listByUserId(userId)
@@ -3864,6 +3852,53 @@ export class AffairsLibraryService {
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     });
+  }
+
+  private listEnabledSettingsWithWorkspace(): UserAffairsLibrarySettingLike[] {
+    if (typeof this.userAffairsLibrarySettingRepository.listEnabled === "function") {
+      return this.userAffairsLibrarySettingRepository
+        .listEnabled()
+        .filter((item) => Boolean(item.lastWorkspaceId?.trim() && item.rootDir?.trim()));
+    }
+
+    return this.workspaceNavigationStateRepository
+      .listEnabledAffairsLibraries()
+      .map((item) => ({
+        userId: item.userId,
+        rootDir: item.affairsLibraryRootPath ?? null,
+        enabled: item.affairsLibraryEnabled === true,
+        favoritesJson: item.affairsLibraryFavoritesJson ?? null,
+        lastWorkspaceId: item.workspaceId,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt
+      }))
+      .filter((item) => Boolean(item.lastWorkspaceId?.trim() && item.rootDir?.trim()));
+  }
+
+  private findEnabledBindingByWorkspaceId(workspaceId: string): UserAffairsLibrarySettingLike | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return null;
+    }
+
+    if (typeof this.userAffairsLibrarySettingRepository.findEnabledByWorkspaceId === "function") {
+      return this.userAffairsLibrarySettingRepository.findEnabledByWorkspaceId(normalizedWorkspaceId);
+    }
+
+    const legacy = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(normalizedWorkspaceId);
+    if (!legacy?.affairsLibraryRootPath?.trim()) {
+      return null;
+    }
+
+    return {
+      userId: legacy.userId,
+      rootDir: legacy.affairsLibraryRootPath ?? null,
+      enabled: legacy.affairsLibraryEnabled === true,
+      favoritesJson: legacy.affairsLibraryFavoritesJson ?? null,
+      lastWorkspaceId: legacy.workspaceId,
+      createdAt: legacy.updatedAt,
+      updatedAt: legacy.updatedAt
+    };
   }
 
   private normalizeAndValidateBindingRootDir(rootDir: string): string {
@@ -3921,32 +3956,6 @@ export class AffairsLibraryService {
     }
 
     return this.workspaceService.list()[0]?.id ?? null;
-  }
-
-  private mirrorLegacyWorkspaceBindingIfPossible(
-    workspaceId: string | null,
-    userId: string,
-    input: {
-      rootDir: string | null;
-      enabled: boolean;
-      favoritesJson: string | null;
-    }
-  ): void {
-    if (!workspaceId?.trim()) {
-      return;
-    }
-    const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const currentState = this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
-    this.workspaceNavigationStateRepository.upsert({
-      workspaceId,
-      userId,
-      collapsed: currentState?.collapsed ?? false,
-      backgroundColor: currentState?.backgroundColor ?? workspace.backgroundColor ?? null,
-      affairsLibraryRootPath: input.rootDir?.trim() || null,
-      affairsLibraryEnabled: input.enabled === true,
-      affairsLibraryFavoritesJson: input.favoritesJson ?? null,
-      updatedAt: nowIso()
-    });
   }
 
   private ensureLibraryEnabled(binding: AffairsLibraryBindingDto): void {

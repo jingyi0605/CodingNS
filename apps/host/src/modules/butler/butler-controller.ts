@@ -31,6 +31,7 @@ import type { PatrolExecutionService } from "./patrol-execution-service.js";
 import type { PatrolRunService } from "./patrol-run-service.js";
 import type { ProjectMemoryService } from "./project-memory-service.js";
 import type { VerificationRunService } from "./verification-run-service.js";
+import type { AffairsLibraryService } from "../workspace/affairs-library-service.js";
 
 interface ButlerProjectListQuery {
   workspaceId?: string;
@@ -302,14 +303,17 @@ export class ButlerController {
     private readonly butlerControlTimerService?: Pick<
       ButlerControlTimerService,
       "listTimers" | "getTimer" | "createTimer" | "cancelTimer"
-    >
+    >,
+    private readonly affairsLibraryService?: Pick<AffairsLibraryService, "getGlobalBinding">
   ) {}
 
-  readonly getProfile = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  readonly getProfile = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const profile = this.butlerProfileService.getProfile();
+    const userId = requireUserId(request);
 
     reply.send({
       initialized: profile?.setupCompleted === true,
+      affairsSetupCompleted: this.resolveAffairsSetupCompleted(userId, profile?.setupCompleted === true),
       profile
     });
   };
@@ -319,9 +323,11 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     const profile = this.butlerProfileService.initProfile(request.body ?? {});
+    const userId = requireUserId(request);
 
     reply.status(201).send({
       initialized: true,
+      affairsSetupCompleted: this.resolveAffairsSetupCompleted(userId, true),
       profile
     });
   };
@@ -331,12 +337,23 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     const profile = this.butlerProfileService.updateProfile(request.body ?? {});
+    const userId = requireUserId(request);
 
     reply.send({
       initialized: true,
+      affairsSetupCompleted: this.resolveAffairsSetupCompleted(userId, true),
       profile
     });
   };
+
+  private resolveAffairsSetupCompleted(userId: string, butlerInitialized: boolean): boolean {
+    if (!butlerInitialized) {
+      return false;
+    }
+
+    const binding = this.affairsLibraryService?.getGlobalBinding?.(userId) ?? null;
+    return Boolean(binding?.rootDir?.trim());
+  }
 
   readonly getCurrentControlSession = async (
     request: FastifyRequest<{ Querystring: ButlerCurrentControlSessionQuery }>,
