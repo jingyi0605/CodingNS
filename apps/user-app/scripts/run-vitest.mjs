@@ -1,14 +1,13 @@
 import { spawn } from "node:child_process";
 
-// pnpm run test -- <patterns> 会把额外的 `--` 传进来，这里统一剥离，避免误触发全量测试。
 const rawArgs = process.argv.slice(2).filter((arg) => arg !== "--");
 const TEST_TIMEOUT_MS = resolveTimeoutMs();
 const VITEST_TEST_TIMEOUT_MS = resolveVitestTimeoutMs();
 const VITEST_HOOK_TIMEOUT_MS = resolveVitestHookTimeoutMs();
 
 if (rawArgs.length === 0) {
-  console.error("[host test] 默认禁止全量测试。请传入本次改动相关的测试文件、目录或过滤参数。\n示例：pnpm --dir apps/host test tests/integration/butler-profile-service.test.ts");
-  console.error("[host test] 如需全量测试，请显式执行：pnpm --dir apps/host test:all");
+  console.error("[user-app test] 默认禁止全量测试。请传入本次改动相关的测试文件、目录或过滤参数。\n示例：pnpm --dir apps/user-app test src/features/workbench/components/AffairsWorkbenchView.test.tsx");
+  console.error("[user-app test] 如需全量测试，请显式执行：pnpm --dir apps/user-app test:all");
   process.exit(1);
 }
 
@@ -27,7 +26,7 @@ const child = spawn(command, [
 let timedOut = false;
 const timeoutId = setTimeout(() => {
   timedOut = true;
-  console.error(`[host test] 超时退出：${Math.round(TEST_TIMEOUT_MS / 1000)} 秒内未结束。`);
+  console.error(`[user-app test] 超时退出：${Math.round(TEST_TIMEOUT_MS / 1000)} 秒内未结束。`);
   child.kill("SIGTERM");
   setTimeout(() => {
     child.kill("SIGKILL");

@@ -30,9 +30,13 @@
     "package:apps": "bash scripts/package-apps.sh",
     "publish:npm": "bash scripts/publish-npm-package.sh",
     "publish:npm:dry-run": "bash scripts/publish-npm-package.sh --dry-run",
-    "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
+    "test:host": "pnpm --dir packages/session-sync-core build && pnpm --dir apps/host test",
     "build:user-app": "pnpm --dir apps/user-app build",
-    "test:user-app": "pnpm --dir apps/user-app test"
+    "test:user-app": "pnpm --dir apps/user-app test",
+    "test:host:all": "pnpm --dir packages/session-sync-core build && pnpm --dir apps/host test:all",
+    "test:user-app:all": "pnpm --dir apps/user-app test:all",
+    "test:related": "node scripts/run-related-tests.mjs",
+    "test:changed": "node scripts/run-related-tests.mjs"
   },
   "devDependencies": {
     "concurrently": "9.2.1",

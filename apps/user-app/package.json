@@ -8,12 +8,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "test": "vitest run",
+    "test": "node scripts/run-vitest.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "bash ../../scripts/build-user-app-macos.sh",
     "tauri:build:raw": "tauri build",
     "tauri:android:init": "tauri android init",
-    "tauri:android:build": "tauri android build"
+    "tauri:android:build": "tauri android build",
+    "test:all": "vitest run",
+    "test:related": "vitest related",
+    "test:changed": "vitest --changed"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
