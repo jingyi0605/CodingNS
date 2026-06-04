@@ -4804,7 +4804,24 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 }
 
 .affairs-auxiliary-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.affairs-auxiliary-header-tools {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.affairs-auxiliary-header-tools > .workbench-nav-toolbar-button,
+.affairs-auxiliary-header-actions > .workbench-nav-toolbar-button {
+  flex: 0 0 auto;
 }
 
 .affairs-auxiliary-header-actions {
@@ -4812,9 +4829,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 62px;
-  margin-left: auto;
 }
 
 .affairs-auxiliary-header-actions[data-visible="false"] {

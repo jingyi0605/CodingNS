@@ -9146,101 +9146,103 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
             {t("shell.affairsAssistantTitle")}
           </button>
         </div>
-        <div
-          className="affairs-auxiliary-header-actions"
-          data-visible={auxiliaryTab === "assistant" ? "true" : "false"}
-          aria-hidden={auxiliaryTab === "assistant" ? undefined : "true"}
-        >
-          {auxiliaryTab === "assistant" ? (
-            <>
-              <button
-                ref={assistantHistoryButtonRef}
-                type="button"
-                className="workbench-nav-toolbar-button"
-                aria-label={t("shell.butlerHistoryAction")}
-                title={t("shell.butlerHistoryAction")}
-                aria-haspopup="dialog"
-                aria-expanded={assistantHistoryOpen}
-                onClick={handleOpenAssistantHistory}
-              >
-                <AffairsAssistantHistoryIcon />
-              </button>
-              <ButlerAnchoredPopover
-                open={assistantHistoryOpen && assistantHistoryButtonRef.current !== null}
-                className="affairs-assistant-history-popover"
-                anchorRef={assistantHistoryButtonRef}
-                popoverRef={assistantHistoryPopoverRef}
-                role="dialog"
-                labelledBy="affairs-assistant-history-title"
-                maxWidth={420}
-                gap={8}
-              >
-                <div className="affairs-assistant-history-popover-card">
-                  <div className="affairs-assistant-history-popover-header">
-                    <strong id="affairs-assistant-history-title">{t("shell.affairsConversationSidebarTitle")}</strong>
-                    <span>{assistantHistoryItems.length}</span>
-                  </div>
-                  {assistantHistoryLoading && assistantHistoryItems.length === 0 ? (
-                    <div className="affairs-assistant-history-empty">{t("common.loading")}</div>
-                  ) : assistantHistoryItems.length === 0 ? (
-                    <div className="affairs-assistant-history-empty">{t("shell.affairsConversationCreateHint")}</div>
-                  ) : (
-                    <div className="affairs-assistant-history-list" role="list">
-                      {assistantHistoryItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="listitem"
-                          className="affairs-assistant-history-item"
-                          data-active={state.selectedNodeId === item.id ? "true" : undefined}
-                          onClick={() => handleOpenAssistantSession(item)}
-                        >
-                          <div className="affairs-assistant-history-item-main">
-                            <div className="affairs-assistant-history-item-title-row">
-                              <span className="affairs-assistant-history-item-title" title={item.session.title}>
-                                {item.session.title}
-                              </span>
-                              {item.session.isFavorite ? (
-                                <span className="affairs-assistant-history-item-favorite" aria-hidden="true">★</span>
-                              ) : null}
-                            </div>
-                            <div className="affairs-assistant-history-item-meta">
-                              {[resolveAffairsConversationKindLabel(item.kind), buildAffairsConversationMeta(item.session)].filter(Boolean).join(" · ")}
-                            </div>
-                          </div>
-                          <span className={`session-provider-badge ${item.session.provider}`}>
-                            {formatAffairsConversationProviderBadge(item.session.provider)}
-                          </span>
-                        </button>
-                      ))}
+        <div className="affairs-auxiliary-header-tools">
+          <div
+            className="affairs-auxiliary-header-actions"
+            data-visible={auxiliaryTab === "assistant" ? "true" : "false"}
+            aria-hidden={auxiliaryTab === "assistant" ? undefined : "true"}
+          >
+            {auxiliaryTab === "assistant" ? (
+              <>
+                <button
+                  ref={assistantHistoryButtonRef}
+                  type="button"
+                  className="workbench-nav-toolbar-button"
+                  aria-label={t("shell.butlerHistoryAction")}
+                  title={t("shell.butlerHistoryAction")}
+                  aria-haspopup="dialog"
+                  aria-expanded={assistantHistoryOpen}
+                  onClick={handleOpenAssistantHistory}
+                >
+                  <AffairsAssistantHistoryIcon />
+                </button>
+                <ButlerAnchoredPopover
+                  open={assistantHistoryOpen && assistantHistoryButtonRef.current !== null}
+                  className="affairs-assistant-history-popover"
+                  anchorRef={assistantHistoryButtonRef}
+                  popoverRef={assistantHistoryPopoverRef}
+                  role="dialog"
+                  labelledBy="affairs-assistant-history-title"
+                  maxWidth={420}
+                  gap={8}
+                >
+                  <div className="affairs-assistant-history-popover-card">
+                    <div className="affairs-assistant-history-popover-header">
+                      <strong id="affairs-assistant-history-title">{t("shell.affairsConversationSidebarTitle")}</strong>
+                      <span>{assistantHistoryItems.length}</span>
                     </div>
-                  )}
-                </div>
-              </ButlerAnchoredPopover>
-              <button
-                type="button"
-                className="workbench-nav-toolbar-button"
-                aria-label={t("shell.butlerNewSessionAction")}
-                title={t("shell.butlerNewSessionAction")}
-                onClick={() => openConversationCreateModal({ mode: "agent-only" })}
-              >
-                <AffairsConversationPlusIcon />
-              </button>
-            </>
+                    {assistantHistoryLoading && assistantHistoryItems.length === 0 ? (
+                      <div className="affairs-assistant-history-empty">{t("common.loading")}</div>
+                    ) : assistantHistoryItems.length === 0 ? (
+                      <div className="affairs-assistant-history-empty">{t("shell.affairsConversationCreateHint")}</div>
+                    ) : (
+                      <div className="affairs-assistant-history-list" role="list">
+                        {assistantHistoryItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="listitem"
+                            className="affairs-assistant-history-item"
+                            data-active={state.selectedNodeId === item.id ? "true" : undefined}
+                            onClick={() => handleOpenAssistantSession(item)}
+                          >
+                            <div className="affairs-assistant-history-item-main">
+                              <div className="affairs-assistant-history-item-title-row">
+                                <span className="affairs-assistant-history-item-title" title={item.session.title}>
+                                  {item.session.title}
+                                </span>
+                                {item.session.isFavorite ? (
+                                  <span className="affairs-assistant-history-item-favorite" aria-hidden="true">★</span>
+                                ) : null}
+                              </div>
+                              <div className="affairs-assistant-history-item-meta">
+                                {[resolveAffairsConversationKindLabel(item.kind), buildAffairsConversationMeta(item.session)].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                            <span className={`session-provider-badge ${item.session.provider}`}>
+                              {formatAffairsConversationProviderBadge(item.session.provider)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </ButlerAnchoredPopover>
+                <button
+                  type="button"
+                  className="workbench-nav-toolbar-button"
+                  aria-label={t("shell.butlerNewSessionAction")}
+                  title={t("shell.butlerNewSessionAction")}
+                  onClick={() => openConversationCreateModal({ mode: "agent-only" })}
+                >
+                  <AffairsConversationPlusIcon />
+                </button>
+              </>
+            ) : null}
+          </div>
+          <AffairsDashboardLockToolbarButton />
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              className="workbench-nav-toolbar-button"
+              aria-label={t("shell.hideInfoSidebar")}
+              title={t("shell.hideInfoSidebar")}
+              onClick={onToggleCollapse}
+            >
+              <AffairsSidebarCollapseIcon />
+            </button>
           ) : null}
         </div>
-        <AffairsDashboardLockToolbarButton />
-        {onToggleCollapse ? (
-          <button
-            type="button"
-            className="workbench-nav-toolbar-button"
-            aria-label={t("shell.hideInfoSidebar")}
-            title={t("shell.hideInfoSidebar")}
-            onClick={onToggleCollapse}
-          >
-            <AffairsSidebarCollapseIcon />
-          </button>
-        ) : null}
       </div>
 
       <div
