@@ -112,6 +112,7 @@ import {
   getAffairsLibraryPreviewWithOptions,
   getAffairsLibrarySnapshot,
   downloadAffairsLibraryFile,
+  listAffairsLibraryFiles,
   listAffairsLibraryDocuments,
   operateAffairsLibraryFile,
   requestAffairsLibraryRefresh,
@@ -13525,12 +13526,17 @@ function AffairsDashboardView() {
                   </div>
                   <p className="affairs-dashboard-inline-help">{t("shell.affairsWorkbenchHtmlVariantHelper")}</p>
                 </div>
-                <WorkspaceHtmlSourcePicker
+                <WorkspaceShortcutFilePicker
                   sourceOption={selectedHtmlSourceWorkspaceOption}
+                  workspaceLabel={selectedHtmlSourceWorkspaceOption?.label}
                   inputId="affairs-dashboard-widget-source"
                   value={htmlEntryPath}
                   onChange={setHtmlEntryPath}
+                  mode="html"
+                  label={t("shell.affairsWorkbenchHtmlSourceSelectField")}
+                  placeholder={t("shell.affairsWorkbenchHtmlSourceSelectPlaceholder")}
                   helpText={t("shell.affairsWorkbenchHtmlSourceHelper")}
+                  listFailedMessage={t("shell.affairsWorkbenchHtmlSourceListFailed")}
                 />
               </>
             ) : null}
@@ -14241,6 +14247,7 @@ function WorkspaceShortcutFilePicker({
   inputId,
   value,
   onChange,
+  mode = "file",
   helpText,
   label,
   placeholder,
@@ -14251,6 +14258,7 @@ function WorkspaceShortcutFilePicker({
   inputId: string;
   value: string;
   onChange: (value: string) => void;
+  mode?: "html" | "file";
   helpText: string;
   label?: string;
   placeholder?: string;
@@ -14282,27 +14290,29 @@ function WorkspaceShortcutFilePicker({
 
     setLoadingDirectories((current) => (current.includes(cacheKey) ? current : [...current, cacheKey]));
     try {
-      if (requestTokenRef.current !== currentToken) {
-        return;
-      }
       if (sourceOption.kind === "affairs_library") {
-        const payload = await listAffairsLibraryDocuments(sourceOption.workspaceId, {
-          browseMode: "folder",
-          offset: 0,
+        const response = await listAffairsLibraryFiles(sourceOption.workspaceId, {
+          path: directoryPath ?? null,
           limit: 1000
         });
         if (requestTokenRef.current !== currentToken) {
           return;
         }
-        const builtTree = buildAffairsLibraryFileTree(payload.items);
-        setRootItems(builtTree.rootItems);
-        setTreeCache(builtTree.treeCache);
+        const nextItems = (response.items ?? []).filter((item) => item.kind === "directory" || mode === "file" || isWorkspaceHtmlEntryPath(item.path));
+        if (directoryPath) {
+          setTreeCache((current) => ({
+            ...current,
+            [directoryPath]: nextItems
+          }));
+        } else {
+          setRootItems(nextItems);
+        }
       } else {
         const response = await getFileTree(sourceOption.workspaceId, directoryPath || undefined);
         if (requestTokenRef.current !== currentToken) {
           return;
         }
-        const nextItems = response.items ?? [];
+        const nextItems = (response.items ?? []).filter((item) => item.kind === "directory" || mode === "file" || isWorkspaceHtmlEntryPath(item.path));
         if (directoryPath) {
           setTreeCache((current) => ({
             ...current,
@@ -14323,7 +14333,7 @@ function WorkspaceShortcutFilePicker({
         setLoadingDirectories((current) => current.filter((item) => item !== cacheKey));
       }
     }
-  }, [listFailedMessage, sourceOption]);
+  }, [listFailedMessage, mode, sourceOption]);
 
   const initializeTree = useCallback(async () => {
     requestTokenRef.current += 1;
@@ -14359,10 +14369,10 @@ function WorkspaceShortcutFilePicker({
       : [...expandedDirectories, directoryPath];
     setExpandedDirectories(nextExpanded);
 
-    if (sourceOption?.kind !== "affairs_library" && !expandedDirectories.includes(directoryPath) && !treeCache[directoryPath]) {
+    if (!expandedDirectories.includes(directoryPath) && !treeCache[directoryPath]) {
       await loadDirectory(directoryPath);
     }
-  }, [expandedDirectories, loadDirectory, sourceOption?.kind, treeCache]);
+  }, [expandedDirectories, loadDirectory, treeCache]);
 
   const confirmSelection = useCallback(() => {
     if (!selectedPath) {

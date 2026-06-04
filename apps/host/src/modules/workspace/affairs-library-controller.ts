@@ -48,6 +48,11 @@ interface ListAffairsLibraryDocumentsQuery {
   limit?: string;
 }
 
+interface ListAffairsLibraryFilesQuery {
+  path?: string;
+  limit?: string;
+}
+
 interface AffairsLibraryPreviewQuery {
   path?: string;
   displayMode?: string;
@@ -256,6 +261,20 @@ export class AffairsLibraryController {
         }
       )
     );
+  };
+
+  readonly listFiles = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Querystring: ListAffairsLibraryFilesQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.affairsLibraryService.listFiles(
+        request.params.workspaceId,
+        requireUserId(request),
+        request.query.path?.trim() ?? null,
+        request.query.limit ? Number(request.query.limit) : undefined
+      )
+    });
   };
 
   readonly previewDocument = async (

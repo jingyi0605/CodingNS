@@ -1046,6 +1046,33 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("列目录树时不会被文档库扩展名配置限制成只剩 html", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-tree-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.writeFileSync(
+      path.join(rootDir, ".ai-index", "doc-semantic-index.config.json"),
+      JSON.stringify({
+        allowedExtensions: [".html"]
+      })
+    );
+    fs.writeFileSync(path.join(rootDir, "notes", "index.html"), "<html></html>");
+    fs.writeFileSync(path.join(rootDir, "notes", "logo.png"), "png");
+    fs.writeFileSync(path.join(rootDir, "notes", "readme.md"), "# readme");
+
+    const service = createService({ rootDir });
+    const items = service.listFiles("workspace-1", "user-1", "notes");
+
+    expect(items.map((item) => item.path)).toEqual([
+      "notes/index.html",
+      "notes/logo.png",
+      "notes/readme.md"
+    ]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("配置里放行的 hidden 文件会进入当前目录实时列表", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-hidden-live-"));
     fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });

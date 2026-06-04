@@ -220,6 +220,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLibraryPreviewWithOptions: vi.fn(),
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
+  listAffairsLibraryFiles: vi.fn(),
   listAffairsLightweightSessions: vi.fn(),
   markAffairsLightweightSessionSeen: vi.fn(),
   operateAffairsLibraryFile: vi.fn(),
@@ -283,6 +284,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLibraryPreviewWithOptions: conversationApiMock.getAffairsLibraryPreviewWithOptions,
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
+    listAffairsLibraryFiles: conversationApiMock.listAffairsLibraryFiles,
     listAffairsLightweightSessions: conversationApiMock.listAffairsLightweightSessions,
     markAffairsLightweightSessionSeen: conversationApiMock.markAffairsLightweightSessionSeen,
     operateAffairsLibraryFile: conversationApiMock.operateAffairsLibraryFile,
@@ -1111,6 +1113,7 @@ beforeEach(() => {
   conversationApiMock.getAffairsLibrarySnapshot.mockReset();
   conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
   conversationApiMock.getProviderCapabilities.mockReset();
+  conversationApiMock.listAffairsLibraryFiles.mockReset();
   conversationApiMock.listAffairsLibraryDocuments.mockReset();
   conversationApiMock.getAffairsLibraryPreview.mockReset();
   conversationApiMock.downloadAffairsLibraryFile.mockReset();
@@ -1400,6 +1403,7 @@ beforeEach(() => {
     canWrite: true
   });
 
+  conversationApiMock.listAffairsLibraryFiles.mockResolvedValue({ items: [] });
   conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
   conversationApiMock.downloadAffairsLibraryFile.mockResolvedValue({
     workspaceId: "workspace-1",

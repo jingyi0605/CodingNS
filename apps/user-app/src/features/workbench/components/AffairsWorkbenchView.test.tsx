@@ -221,6 +221,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLibraryPreviewWithOptions: vi.fn(),
   getAffairsLibrarySnapshot: vi.fn(),
   downloadAffairsLibraryFile: vi.fn(),
+  listAffairsLibraryFiles: vi.fn(),
   listAffairsLightweightSessions: vi.fn(),
   markAffairsLightweightSessionSeen: vi.fn(),
   operateAffairsLibraryFile: vi.fn(),
@@ -301,6 +302,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLibraryPreviewWithOptions: conversationApiMock.getAffairsLibraryPreviewWithOptions,
     getAffairsLibrarySnapshot: conversationApiMock.getAffairsLibrarySnapshot,
     downloadAffairsLibraryFile: conversationApiMock.downloadAffairsLibraryFile,
+    listAffairsLibraryFiles: conversationApiMock.listAffairsLibraryFiles,
     listAffairsLightweightSessions: conversationApiMock.listAffairsLightweightSessions,
     markAffairsLightweightSessionSeen: conversationApiMock.markAffairsLightweightSessionSeen,
     operateAffairsLibraryFile: conversationApiMock.operateAffairsLibraryFile,
@@ -338,13 +340,13 @@ vi.mock("../../conversation/api/conversation-api", async () => {
 
 const butlerApiMock = vi.hoisted(() => ({
   getButlerSessionTarget: vi.fn(),
-  listAssistantAutomations: vi.fn().mockResolvedValue({ items: [] }),
+  listAssistantAutomations: vi.fn().mockResolvedValue({ payload: { items: [] } }),
   listButlerControlSessions: vi.fn(async () => ({ items: butlerControlSessionsCatalogMock.items })),
   listButlerFollowUpTasks: vi.fn().mockResolvedValue({ items: [] }),
   listButlerInboxItems: vi.fn().mockResolvedValue({ items: [] }),
   listButlerProjectSessions: vi.fn(),
   listButlerProjects: vi.fn(),
-  listRecentAssistantAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
+  listRecentAssistantAutomationRuns: vi.fn().mockResolvedValue({ payload: { items: [] } }),
   resumeButlerProjectSession: vi.fn()
 }));
 
@@ -1305,6 +1307,7 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
     conversationApiMock.getProviderCapabilities.mockReset();
+    conversationApiMock.listAffairsLibraryFiles.mockReset();
     conversationApiMock.listAffairsLibraryDocuments.mockReset();
     conversationApiMock.getAffairsLibraryPreview.mockReset();
     conversationApiMock.downloadAffairsLibraryFile.mockReset();
@@ -1601,6 +1604,7 @@ describe("AffairsWorkbenchView", () => {
       canWrite: true
     });
 
+    conversationApiMock.listAffairsLibraryFiles.mockResolvedValue({ items: [] });
     conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
     conversationApiMock.downloadAffairsLibraryFile.mockResolvedValue({
       workspaceId: "workspace-1",
@@ -6095,26 +6099,77 @@ describe("AffairsWorkbenchView", () => {
       rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
-      binding: boundLibraryBinding
+      binding: boundLibraryBinding,
+      folders: [
+        {
+          path: "Obsidian",
+          name: "Obsidian",
+          parentPath: null,
+          depth: 0,
+          directDocumentCount: 0,
+          documentCount: 1,
+          createdAt: "2026-06-04T09:00:00.000Z",
+          updatedAt: "2026-06-04T09:30:00.000Z"
+        },
+        {
+          path: "Obsidian/Tools",
+          name: "Tools",
+          parentPath: "Obsidian",
+          depth: 1,
+          directDocumentCount: 1,
+          documentCount: 1,
+          createdAt: "2026-06-04T09:00:00.000Z",
+          updatedAt: "2026-06-04T09:30:00.000Z"
+        }
+      ]
     }));
     conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(boundLibraryBinding);
-    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
-      {
-        documentId: "doc-html-1",
-        path: "Obsidian/Jackson-Obsi/Tools/会员管理.html",
-        title: "会员管理",
-        summary: "HTML 工具",
-        updatedAt: "2026-06-04T09:30:00.000Z",
-        createdAt: "2026-06-04T09:20:00.000Z",
-        sizeBytes: 4096,
-        tags: [],
-        derivedTags: [],
-        isFavorite: false
+    conversationApiMock.listAffairsLibraryFiles.mockImplementation(async (_workspaceId: string, query?: { path?: string | null }) => {
+      const selectedPath = query?.path?.trim() ?? "";
+      if (!selectedPath) {
+        return {
+          items: [
+            {
+              path: "Obsidian",
+              name: "Obsidian",
+              kind: "directory",
+              size: null,
+              updatedAt: "2026-06-04T09:30:00.000Z"
+            }
+          ]
+        };
       }
-    ]));
+      if (selectedPath === "Obsidian") {
+        return {
+          items: [
+            {
+              path: "Obsidian/Tools",
+              name: "Tools",
+              kind: "directory",
+              size: null,
+              updatedAt: "2026-06-04T09:30:00.000Z"
+            }
+          ]
+        };
+      }
+      if (selectedPath === "Obsidian/Tools") {
+        return {
+          items: [
+            {
+              path: "Obsidian/Tools/会员管理.html",
+              name: "会员管理.html",
+              kind: "file",
+              size: 4096,
+              updatedAt: "2026-06-04T09:30:00.000Z"
+            }
+          ]
+        };
+      }
+      return { items: [] };
+    });
     conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
       workspaceId: "workspace-1",
-      path: "Obsidian/Jackson-Obsi/Tools/会员管理.html",
+      path: "Obsidian/Tools/会员管理.html",
       supported: true,
       kind: "html",
       reason: null,
@@ -6122,8 +6177,8 @@ describe("AffairsWorkbenchView", () => {
       version: "preview-1",
       size: 4096,
       updatedAt: "2026-06-04T09:30:00.000Z",
-      previewPath: "/preview/affairs-files/mock/Obsidian/Jackson-Obsi/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
-      previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Obsidian/Jackson-Obsi/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      previewPath: "/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
       onlyOffice: null,
       capabilities: {
         canEdit: false,
@@ -6152,16 +6207,23 @@ describe("AffairsWorkbenchView", () => {
     expect(currentLibraryOption).toHaveValue("__affairs_current_library__");
     expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("__affairs_current_library__");
     expect(screen.getByText("当前文档库路径：/Users/jackson/SynologyDrive。下面的文件列表直接来自这份全局文档库配置。")).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceSelectField")), "Obsidian/Jackson-Obsi/Tools/会员管理.html");
+    await userEvent.click(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceSelectField")));
+    await userEvent.click(await screen.findByRole("button", { name: "Obsidian" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
+    await userEvent.click(await screen.findByRole("button", { name: "会员管理.html" }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailSourcePickerConfirmAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
 
     await waitFor(() => {
-      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-1", "Obsidian/Jackson-Obsi/Tools/会员管理.html");
+      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-1", "Obsidian/Tools/会员管理.html");
     });
     await waitFor(() => {
-      expect(screen.getByText("Obsidian/Jackson-Obsi/Tools/会员管理.html")).toBeInTheDocument();
+      expect(screen.getByText("Obsidian/Tools/会员管理.html")).toBeInTheDocument();
     });
     expect(fileContextApiMock.getFilePreview).not.toHaveBeenCalled();
+    expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
+      path: "Obsidian/Tools"
+    }));
   });
 
   it("当前文档库来源选项直接读取全局 rootDir，不再映射成某个工作区名", async () => {
@@ -6213,6 +6275,66 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
 
     expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("__affairs_current_library__");
+  });
+
+  it("当前文档库文件选择器会按真实目录列出非 HTML 文件", async () => {
+    const boundLibraryBinding = {
+      ...baseLibrarySnapshot().binding,
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/SynologyDrive"
+    };
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      binding: boundLibraryBinding
+    }));
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(boundLibraryBinding);
+    conversationApiMock.listAffairsLibraryFiles.mockImplementation(async (_workspaceId: string, query?: { path?: string | null }) => {
+      const selectedPath = query?.path?.trim() ?? "";
+      if (!selectedPath) {
+        return {
+          items: [
+            {
+              path: "Apps",
+              name: "Apps",
+              kind: "directory",
+              size: null,
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            }
+          ]
+        };
+      }
+      if (selectedPath === "Apps") {
+        return {
+          items: [
+            {
+              path: "Apps/logo.png",
+              name: "logo.png",
+              kind: "file",
+              size: 2048,
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            },
+            {
+              path: "Apps/index.html",
+              name: "index.html",
+              kind: "file",
+              size: 1024,
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            }
+          ]
+        };
+      }
+      return { items: [] };
+    });
+
+    renderWorkbenchWithCustomNavigationGroups(createState(), navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+    await userEvent.click(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")));
+    await userEvent.click(await screen.findByRole("button", { name: "Apps" }));
+
+    expect(await screen.findByRole("button", { name: "logo.png" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "index.html" })).toBeInTheDocument();
   });
 
   it("打开快捷应用时会继承快捷应用自己的来源工作区权限", async () => {

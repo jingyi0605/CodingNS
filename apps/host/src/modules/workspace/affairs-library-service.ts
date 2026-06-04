@@ -1060,6 +1060,51 @@ export class AffairsLibraryService {
     };
   }
 
+  listFiles(
+    workspaceId: string,
+    userId: string,
+    requestedPath: string | null | undefined,
+    limit = 200
+  ): FileNode[] {
+    const resolved = this.resolvePreviewFile(workspaceId, userId, requestedPath ?? "", {
+      mustExist: true,
+      kind: "directory"
+    });
+
+    return fs
+      .readdirSync(resolved.absolutePath, { withFileTypes: true })
+      .filter((entry) => !entry.isSymbolicLink())
+      .map((entry) => {
+        const childRelativePath = resolved.relativePath
+          ? `${resolved.relativePath}/${entry.name}`
+          : entry.name;
+        const normalizedChildPath = childRelativePath.replace(/\\/g, "/");
+        if (normalizedChildPath === ".ai-index" || normalizedChildPath.startsWith(".ai-index/")) {
+          return null;
+        }
+
+        const childAbsolutePath = path.join(resolved.absolutePath, entry.name);
+        const childStats = fs.statSync(childAbsolutePath);
+
+        return {
+          path: normalizedChildPath,
+          name: entry.name,
+          kind: entry.isDirectory() ? "directory" : "file",
+          size: entry.isDirectory() ? null : childStats.size,
+          updatedAt: childStats.mtime.toISOString()
+        } satisfies FileNode;
+      })
+      .filter((item): item is FileNode => item !== null)
+      .slice(0, limit)
+      .sort((left, right) => {
+        if (left.kind !== right.kind) {
+          return left.kind === "directory" ? -1 : 1;
+        }
+
+        return left.name.localeCompare(right.name, "zh-Hans-CN");
+      });
+  }
+
   private decideLiveDirectoryScan(
     indexStatus: AffairsLibraryIndexStatusDto,
     directoryStatus: AffairsLibraryDirectoryStatusDto | null,

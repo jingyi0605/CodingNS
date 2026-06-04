@@ -1,5 +1,6 @@
 import { httpClient } from "../../../network/http-client";
 import { ApiError } from "../../../shared/network/api-error";
+import type { FileNodeDto } from "./file-context-api";
 
 export type BuiltinProviderId =
   | "claude-code"
@@ -1602,6 +1603,27 @@ export function listAffairsLibraryDocuments(
   }
   return httpClient.request<AffairsLibraryDocumentListDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-documents?${search.toString()}`
+  );
+}
+
+export function listAffairsLibraryFiles(
+  workspaceId: string,
+  query?: {
+    path?: string | null;
+    limit?: number;
+  }
+) {
+  const search = new URLSearchParams();
+  if (query?.path?.trim()) {
+    search.set("path", query.path.trim());
+  }
+  if (typeof query?.limit === "number") {
+    search.set("limit", String(query.limit));
+  }
+
+  const suffix = search.toString();
+  return httpClient.request<{ items: FileNodeDto[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-files${suffix ? `?${suffix}` : ""}`
   );
 }
 

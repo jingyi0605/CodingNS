@@ -26,6 +26,7 @@ export async function registerWorkspaceRoutes(
   app.put("/api/workspaces/:workspaceId/affairs/library-config", affairsLibraryController.saveConfig);
   app.get("/api/workspaces/:workspaceId/affairs/library-snapshot", affairsLibraryController.getSnapshot);
   app.get("/api/workspaces/:workspaceId/affairs/library-documents", affairsLibraryController.listDocuments);
+  app.get("/api/workspaces/:workspaceId/affairs/library-files", affairsLibraryController.listFiles);
   app.get("/api/workspaces/:workspaceId/affairs/library-preview", affairsLibraryController.previewDocument);
   app.get("/api/workspaces/:workspaceId/affairs/library-download", affairsLibraryController.downloadFile);
   app.post("/api/workspaces/:workspaceId/affairs/library-ops", affairsLibraryController.operateFile);
