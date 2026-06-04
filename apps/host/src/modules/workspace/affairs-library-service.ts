@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { UserAffairsLibrarySettingRepository } from "../../storage/repositories/user-affairs-library-setting-repository.js";
+import type { FileNode } from "../../types/domain.js";
 import {
   MAX_PREVIEW_FILE_BYTES,
   MAX_RESOURCE_PREVIEW_FILE_BYTES
@@ -1068,35 +1069,36 @@ export class AffairsLibraryService {
   ): FileNode[] {
     const resolved = this.resolvePreviewFile(workspaceId, userId, requestedPath ?? "", {
       mustExist: true,
-      kind: "directory"
+      kind: "directory",
+      allowRoot: true
     });
 
-    return fs
+    const items = fs
       .readdirSync(resolved.absolutePath, { withFileTypes: true })
       .filter((entry) => !entry.isSymbolicLink())
-      .map((entry) => {
+      .reduce<FileNode[]>((result, entry) => {
         const childRelativePath = resolved.relativePath
           ? `${resolved.relativePath}/${entry.name}`
           : entry.name;
         const normalizedChildPath = childRelativePath.replace(/\\/g, "/");
         if (normalizedChildPath === ".ai-index" || normalizedChildPath.startsWith(".ai-index/")) {
-          return null;
+          return result;
         }
 
         const childAbsolutePath = path.join(resolved.absolutePath, entry.name);
         const childStats = fs.statSync(childAbsolutePath);
 
-        return {
+        result.push({
           path: normalizedChildPath,
           name: entry.name,
           kind: entry.isDirectory() ? "directory" : "file",
           size: entry.isDirectory() ? null : childStats.size,
           updatedAt: childStats.mtime.toISOString()
-        } satisfies FileNode;
-      })
-      .filter((item): item is FileNode => item !== null)
-      .slice(0, limit)
-      .sort((left, right) => {
+        });
+        return result;
+      }, []);
+
+    return items.slice(0, limit).sort((left, right) => {
         if (left.kind !== right.kind) {
           return left.kind === "directory" ? -1 : 1;
         }
@@ -1559,6 +1561,7 @@ export class AffairsLibraryService {
     options: {
       mustExist?: boolean;
       kind?: "file" | "directory" | "any";
+      allowRoot?: boolean;
     } = {}
   ): AffairsLibraryResolvedPreviewFile {
     const binding = this.requireBinding(workspaceId, userId);
@@ -1566,7 +1569,7 @@ export class AffairsLibraryService {
     this.assertLibraryRootDir(binding.rootDir);
 
     const rootRealPath = fs.realpathSync.native(binding.rootDir);
-    const relativePath = normalizeRelativePath(requestedPath, false);
+    const relativePath = normalizeRelativePath(requestedPath, options.allowRoot ?? false);
     const absolutePath = path.resolve(binding.rootDir, relativePath);
     const relativeToRoot = path.relative(binding.rootDir, absolutePath);
 

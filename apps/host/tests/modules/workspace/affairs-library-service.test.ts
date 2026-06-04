@@ -1073,6 +1073,24 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("列目录树时允许空 path 直接读取文档库根目录", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-root-tree-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, ".ai-index"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "readme.md"), "# root readme");
+
+    const service = createService({ rootDir });
+    const items = service.listFiles("workspace-1", "user-1", null);
+
+    expect(items.map((item) => item.path)).toEqual([
+      "notes",
+      "readme.md"
+    ]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("配置里放行的 hidden 文件会进入当前目录实时列表", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-hidden-live-"));
     fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
