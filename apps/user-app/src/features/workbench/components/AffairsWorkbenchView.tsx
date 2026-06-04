@@ -1329,7 +1329,7 @@ function resolveAffairsLibrarySourceWorkspaceOption(
   currentWorkspaceId: string
 ): WorkspaceHtmlSourceScopeOption | null {
   const rootDir = binding?.rootDir?.trim() ?? "";
-  const workspaceId = currentWorkspaceId.trim();
+  const workspaceId = binding?.workspaceId?.trim() || currentWorkspaceId.trim();
   if (!rootDir || !workspaceId) {
     return null;
   }

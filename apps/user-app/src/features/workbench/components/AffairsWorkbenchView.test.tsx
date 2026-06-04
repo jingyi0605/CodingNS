@@ -6095,7 +6095,7 @@ describe("AffairsWorkbenchView", () => {
     vi.stubGlobal("open", openMock);
     const boundLibraryBinding = {
       ...baseLibrarySnapshot().binding,
-      workspaceId: "workspace-1",
+      workspaceId: "workspace-2",
       rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
@@ -6168,7 +6168,7 @@ describe("AffairsWorkbenchView", () => {
       return { items: [] };
     });
     conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
-      workspaceId: "workspace-1",
+      workspaceId: "workspace-2",
       path: "Obsidian/Tools/会员管理.html",
       supported: true,
       kind: "html",
@@ -6215,13 +6215,13 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
 
     await waitFor(() => {
-      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-1", "Obsidian/Tools/会员管理.html");
+      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-2", "Obsidian/Tools/会员管理.html");
     });
     await waitFor(() => {
       expect(screen.getByText("Obsidian/Tools/会员管理.html")).toBeInTheDocument();
     });
     expect(fileContextApiMock.getFilePreview).not.toHaveBeenCalled();
-    expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
+    expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-2", expect.objectContaining({
       path: "Obsidian/Tools"
     }));
   });
@@ -6229,7 +6229,7 @@ describe("AffairsWorkbenchView", () => {
   it("当前文档库来源选项直接读取全局 rootDir，不再映射成某个工作区名", async () => {
     const libraryBindingWithoutWorkspace = {
       ...baseLibrarySnapshot().binding,
-      workspaceId: "workspace-1",
+      workspaceId: "workspace-2",
       rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
@@ -6260,7 +6260,7 @@ describe("AffairsWorkbenchView", () => {
   it("添加快捷应用时默认选中当前文档库来源", async () => {
     const boundLibraryBinding = {
       ...baseLibrarySnapshot().binding,
-      workspaceId: "workspace-1",
+      workspaceId: "workspace-2",
       rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
@@ -6280,7 +6280,7 @@ describe("AffairsWorkbenchView", () => {
   it("当前文档库文件选择器会按真实目录列出非 HTML 文件", async () => {
     const boundLibraryBinding = {
       ...baseLibrarySnapshot().binding,
-      workspaceId: "workspace-1",
+      workspaceId: "workspace-2",
       rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
@@ -6335,6 +6335,9 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByRole("button", { name: "logo.png" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "index.html" })).toBeInTheDocument();
+    expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-2", expect.objectContaining({
+      path: "Apps"
+    }));
   });
 
   it("打开快捷应用时会继承快捷应用自己的来源工作区权限", async () => {
