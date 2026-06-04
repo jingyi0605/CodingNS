@@ -6612,6 +6612,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   --panel-border: rgba(15, 23, 42, 0.035);
   --panel-border-strong: rgba(15, 23, 42, 0.052);
   --panel-separator: rgba(15, 23, 42, 0.04);
+  --mac-segmented-shell-bg: rgba(255, 255, 255, 0.05);
+  --mac-segmented-shell-border: transparent;
+  --mac-segmented-shell-shadow:
+    inset 0 -0.5px 0 rgba(15, 23, 42, 0.08),
+    0 4px 12px rgba(15, 23, 42, 0.04);
+  --mac-segmented-shell-blur: blur(26px) saturate(165%);
+  --mac-segmented-active-bg: rgba(24, 27, 33, 0.1);
+  --mac-segmented-active-border: transparent;
+  --mac-segmented-active-shadow:
+    inset 0 -0.5px 0 rgba(15, 23, 42, 0.12),
+    0 1px 2px rgba(15, 23, 42, 0.08);
+  --mac-segmented-active-blur: blur(30px) saturate(175%);
+  --mac-segmented-label: rgba(60, 60, 67, 0.82);
+  --mac-segmented-label-active: rgba(28, 28, 30, 0.94);
   padding: 0;
   background: transparent;
   font-family:
@@ -6649,6 +6663,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   --inspector-surface: transparent;
   --panel-bg: rgba(43, 50, 58, 0.34);
   --panel-bg-strong: rgba(49, 57, 66, 0.5);
+  --mac-segmented-shell-bg: rgba(255, 255, 255, 0.03);
+  --mac-segmented-shell-border: transparent;
+  --mac-segmented-shell-shadow:
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.28),
+    0 4px 14px rgba(0, 0, 0, 0.12);
+  --mac-segmented-shell-blur: blur(26px) saturate(175%);
+  --mac-segmented-active-bg: rgba(12, 14, 18, 0.26);
+  --mac-segmented-active-border: transparent;
+  --mac-segmented-active-shadow:
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.14);
+  --mac-segmented-active-blur: blur(30px) saturate(190%);
+  --mac-segmented-label: rgba(255, 255, 255, 0.72);
+  --mac-segmented-label-active: rgba(255, 255, 255, 0.96);
 }
 
 [data-theme="sky-blue"] .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
@@ -6656,6 +6684,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   --inspector-surface: transparent;
   --panel-bg: rgba(12, 24, 56, 0.4);
   --panel-bg-strong: rgba(12, 24, 56, 0.62);
+  --mac-segmented-shell-bg: rgba(255, 255, 255, 0.03);
+  --mac-segmented-shell-border: transparent;
+  --mac-segmented-shell-shadow:
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.28),
+    0 4px 14px rgba(0, 0, 0, 0.12);
+  --mac-segmented-shell-blur: blur(28px) saturate(190%);
+  --mac-segmented-active-bg: rgba(10, 13, 18, 0.24);
+  --mac-segmented-active-border: transparent;
+  --mac-segmented-active-shadow:
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.14);
+  --mac-segmented-active-blur: blur(30px) saturate(195%);
+  --mac-segmented-label: rgba(255, 255, 255, 0.74);
+  --mac-segmented-label-active: rgba(255, 255, 255, 0.96);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav,
@@ -6799,6 +6841,69 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   background: color-mix(in srgb, var(--panel-separator) 22%, transparent);
   border-color: transparent;
   box-shadow: none;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-pair[data-variant="mode"] {
+  display: grid;
+  align-items: center;
+  gap: 0;
+  padding: 1px;
+  box-sizing: border-box;
+  min-height: 34px;
+  border-radius: 13px;
+  background: var(--mac-segmented-shell-bg);
+  border: none;
+  box-shadow: var(--mac-segmented-shell-shadow);
+  backdrop-filter: var(--mac-segmented-shell-blur);
+  -webkit-backdrop-filter: var(--mac-segmented-shell-blur);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"] {
+  align-self: center;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 18px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 590;
+  color: var(--mac-segmented-label);
+  border: none;
+  box-shadow: none;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]::before,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]::after {
+  content: none !important;
+  display: none !important;
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]:not(.active) {
+  background: transparent;
+  color: var(--mac-segmented-label);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"].active,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"][data-open="true"] {
+  background: var(--mac-segmented-active-bg);
+  color: var(--mac-segmented-label-active);
+  border: none;
+  box-shadow: var(--mac-segmented-active-shadow);
+  background-clip: padding-box;
+  backdrop-filter: var(--mac-segmented-active-blur);
+  -webkit-backdrop-filter: var(--mac-segmented-active-blur);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]:hover {
+  background: transparent;
+  color: var(--mac-segmented-label);
+}
+
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"].active:hover,
+.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"][data-open="true"]:hover {
+  background: var(--mac-segmented-active-bg);
+  color: var(--mac-segmented-label-active);
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree-item:hover,
