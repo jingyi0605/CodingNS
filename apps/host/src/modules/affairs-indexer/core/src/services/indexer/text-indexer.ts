@@ -160,6 +160,7 @@ export class TextIndexer {
       errorCode: string;
       message: string;
     }> = [];
+    const seenPaths = options.reconcileMode === "none" ? null : new Set<string>();
     const successEntries: IndexedDocumentBatchEntry[] = [];
     const skippedEntries: Array<{
       file: FileScanResult;
@@ -171,7 +172,6 @@ export class TextIndexer {
       file: FileScanResult;
       error: Error;
     }> = [];
-    const unchangedEntries: FileScanResult[] = [];
     let scannedCount = 0;
     let indexedCount = 0;
     let unchangedCount = 0;
@@ -223,7 +223,7 @@ export class TextIndexer {
         pendingSuccessEntries: successEntries.length,
         pendingSkippedEntries: skippedEntries.length,
         pendingFailureEntries: failureEntries.length,
-        pendingUnchangedEntries: unchangedEntries.length,
+        pendingUnchangedEntries: 0,
         maxIndexConcurrency,
       });
     };
@@ -282,14 +282,6 @@ export class TextIndexer {
       skipBatchCount += 1;
       skippedEntries.length = 0;
       maybeLogWriteProgress("skip");
-    };
-
-    const flushUnchanged = (): void => {
-      if (unchangedEntries.length === 0) {
-        return;
-      }
-      writer.batchTouchActiveFiles(unchangedEntries, runObservedAt);
-      unchangedEntries.length = 0;
     };
 
     const isUnchangedFile = (
@@ -493,14 +485,11 @@ export class TextIndexer {
         }
         const file = next.value;
         scannedCount += 1;
+        seenPaths?.add(normalizeRelativePath(file.relativePath));
         maybeLogParseProgress();
         const existing = writer.getActiveIndexedFileState(file.relativePath);
         if (isUnchangedFile(file, existing)) {
           unchangedCount += 1;
-          unchangedEntries.push(file);
-          if (unchangedEntries.length >= this.config.writeBatchSize) {
-            flushUnchanged();
-          }
           emitProgress();
           continue;
         }
@@ -520,7 +509,6 @@ export class TextIndexer {
       flushSuccess();
       flushSkipped();
       flushFailures();
-      flushUnchanged();
       emitProgress();
     } finally {
       skipRepository.endSession();
@@ -548,6 +536,7 @@ export class TextIndexer {
       reconcile = writer.reconcileScope(
         resolveReconcileScope(this.config.rootDir, targetPath),
         runObservedAt,
+        { seenPaths: seenPaths ?? undefined }
       );
       reconcileMs = performance.now() - reconcileStartedAt;
     }

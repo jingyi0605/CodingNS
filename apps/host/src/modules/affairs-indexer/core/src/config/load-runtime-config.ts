@@ -25,6 +25,7 @@ interface RuntimeConfigFilePayload {
   allowedExtensions?: string[];
   includedHiddenPaths?: string[];
   writeBatchSize?: number;
+  maxIndexConcurrency?: number;
   logLevel?: LogLevel;
 }
 
@@ -271,9 +272,23 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
       ?? 200,
   );
 
-  if (!logLevel || watchDebounceMs === undefined || parserTimeoutMs === undefined || writeBatchSize === undefined) {
+  const maxIndexConcurrency = readPositiveNumber(
+    args.maxIndexConcurrency
+      ?? args["max-index-concurrency"]
+      ?? env.DOC_SEMANTIC_INDEX_MAX_INDEX_CONCURRENCY
+      ?? configFile.maxIndexConcurrency
+      ?? 1,
+  );
+
+  if (
+    !logLevel
+    || watchDebounceMs === undefined
+    || parserTimeoutMs === undefined
+    || writeBatchSize === undefined
+    || maxIndexConcurrency === undefined
+  ) {
     throw new AppError(
-      "运行时配置中存在非法值，请检查 logLevel / watchDebounceMs / parserTimeoutMs / writeBatchSize。",
+      "运行时配置中存在非法值，请检查 logLevel / watchDebounceMs / parserTimeoutMs / writeBatchSize / maxIndexConcurrency。",
       APP_ERROR_CODES.CONFIG_INVALID_VALUE,
       {
         details: {
@@ -281,6 +296,7 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
           watchDebounceMs,
           parserTimeoutMs,
           writeBatchSize,
+          maxIndexConcurrency,
           configFilePath,
         },
       },
@@ -299,6 +315,7 @@ export function loadRuntimeConfig(cwd: string, options: LoadRuntimeConfigOptions
     allowedExtensions,
     includedHiddenPaths,
     writeBatchSize,
+    maxIndexConcurrency,
     logLevel,
   };
 }

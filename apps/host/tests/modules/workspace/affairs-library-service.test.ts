@@ -176,6 +176,7 @@ function createService(options: {
 
 describe("AffairsLibraryService auto tasks", () => {
   afterEach(() => {
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     delete (globalThis as Record<string, unknown>).__codingnsTaskHelperPool__;
@@ -1977,6 +1978,8 @@ describe("AffairsLibraryService auto tasks", () => {
 
 describe("AffairsLibraryService export cache fallback", () => {
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -2007,6 +2010,7 @@ describe("AffairsLibraryService export cache fallback", () => {
 
 describe("AffairsLibraryDirtyWatchService", () => {
   afterEach(() => {
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -2344,6 +2348,8 @@ describe("AffairsLibraryDirtyWatchService", () => {
 
 describe("AffairsLibraryService global binding", () => {
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 

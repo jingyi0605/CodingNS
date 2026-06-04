@@ -12,5 +12,6 @@ export interface RuntimeConfig {
   allowedExtensions: string[];
   includedHiddenPaths: string[];
   writeBatchSize: number;
+  maxIndexConcurrency: number;
   logLevel: LogLevel;
 }

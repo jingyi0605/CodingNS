@@ -45,6 +45,9 @@ interface AffairsIndexerRootLockHandle {
 }
 
 const DEFAULT_RUNTIME_HEARTBEAT_MS = 3_000;
+const DEFAULT_RUNTIME_PROGRESS_FLUSH_INTERVAL_MS = 1_500;
+const DEFAULT_RUNTIME_PROGRESS_FLUSH_SCANNED_DELTA = 500;
+const DEFAULT_RUNTIME_PROGRESS_FLUSH_RESULT_DELTA = 100;
 
 export interface AffairsIndexerCommandResult<TResult = unknown> {
   ok: true;
@@ -230,15 +233,38 @@ export async function runAffairsIndexerCommand(
           signal: options.signal,
           onProgress: (progress) => runtimeStageWriter.setProgress(progress),
         });
-        runtimeStageWriter.write("running", "export");
-        const exportResult = await new ExportBuilder(config).build({
-          dirtyScope: indexResult.dirtyScope,
-          signal: options.signal,
-          onStageChange: (stage) => runtimeStageWriter.write("running", stage),
-          commandName: command,
-          reason: options.reason,
-          targetPath: options.targetPath
-        });
+        let exportResult: Awaited<ReturnType<ExportBuilder["build"]>> | null = null;
+        const exportSkipped = shouldSkipExportAfterIndex(indexResult);
+        if (exportSkipped) {
+          writeAffairsLibraryDebugLog({
+            event: "watch_touch_export_skipped_no_changes",
+            processRole: "helper",
+            rootDir,
+            command,
+            reason: options.reason,
+            targetPath: options.targetPath,
+            status: "finished",
+            resultSummary: summarizeDirtyScope(indexResult.dirtyScope),
+            details: {
+              scannedCount: indexResult.scannedCount,
+              indexedCount: indexResult.indexedCount,
+              unchangedCount: indexResult.unchangedCount,
+              skippedCount: indexResult.skipStats.skippedCount,
+              failedCount: indexResult.failedCount,
+              deletedCount: indexResult.deletedCount
+            }
+          });
+        } else {
+          runtimeStageWriter.write("running", "export");
+          exportResult = await new ExportBuilder(config).build({
+            dirtyScope: indexResult.dirtyScope,
+            signal: options.signal,
+            onStageChange: (stage) => runtimeStageWriter.write("running", stage),
+            commandName: command,
+            reason: options.reason,
+            targetPath: options.targetPath
+          });
+        }
         runtimeStageWriter.write("running", "sqlite");
         new CatalogWriteRepository(config.dbPath).setSchemaMeta(
           "watcher.last_touch",
@@ -253,6 +279,7 @@ export async function runAffairsIndexerCommand(
         result = {
           targetPath: targetPath ?? null,
           reason: options.reason?.trim() || "watch_touch",
+          exportSkipped,
           indexResult: {
             scannedCount: indexResult.scannedCount,
             indexedCount: indexResult.indexedCount,
@@ -267,9 +294,13 @@ export async function runAffairsIndexerCommand(
           },
           exportResult
         };
-        message = targetPath
-          ? `检测到文件变动，已按范围增量刷新：${targetPath}`
-          : "检测到文件变动，已执行一次全库增量刷新。";
+        message = exportSkipped
+          ? targetPath
+            ? `检测到文件检查完成，本轮没有变化，沿用现有导出结果：${targetPath}`
+            : "检测到文件检查完成，本轮没有变化，沿用现有导出结果。"
+          : targetPath
+            ? `检测到文件变动，已按范围增量刷新：${targetPath}`
+            : "检测到文件变动，已执行一次全库增量刷新。";
         break;
       }
       default:
@@ -473,8 +504,16 @@ function createRuntimeStageWriter(
   let currentStage: AffairsIndexerRuntimeStage = "init";
   let currentErrorSummary: string | null = null;
   let currentProgress: RuntimeProgressPayload | null = null;
+  let lastProgressFlushAtMs = 0;
+  let lastFlushedProgress: RuntimeProgressPayload | null = null;
+
+  const captureFlushedProgressSnapshot = (flushedAtMs: number): void => {
+    lastProgressFlushAtMs = flushedAtMs;
+    lastFlushedProgress = currentProgress ? { ...currentProgress } : null;
+  };
 
   const flush = () => {
+    const flushedAtMs = Date.now();
     fs.mkdirSync(path.dirname(runtimeStatusPath), { recursive: true });
     fs.writeFileSync(
       runtimeStatusPath,
@@ -495,6 +534,7 @@ function createRuntimeStageWriter(
       }, null, 2)}\n`,
       "utf8"
     );
+    captureFlushedProgressSnapshot(flushedAtMs);
   };
 
   return {
@@ -510,7 +550,9 @@ function createRuntimeStageWriter(
     },
     setProgress: (progress: RuntimeProgressPayload | null) => {
       currentProgress = progress;
-      flush();
+      if (shouldFlushRuntimeProgress(progress, lastFlushedProgress, lastProgressFlushAtMs, Date.now())) {
+        flush();
+      }
     },
     startHeartbeat: () => {
       if (heartbeatTimer) {
@@ -533,6 +575,45 @@ function createRuntimeStageWriter(
   };
 }
 
+function shouldFlushRuntimeProgress(
+  next: RuntimeProgressPayload | null,
+  previous: RuntimeProgressPayload | null,
+  lastFlushAtMs: number,
+  nowMs: number
+): boolean {
+  if (!next) {
+    return true;
+  }
+  if (!previous) {
+    return true;
+  }
+  if (nowMs - lastFlushAtMs >= resolveRuntimeProgressFlushIntervalMs()) {
+    return true;
+  }
+  if (next.scannedCount - previous.scannedCount >= resolveRuntimeProgressFlushScannedDelta()) {
+    return true;
+  }
+  if (
+    hasRuntimeProgressResultDelta(next, previous, resolveRuntimeProgressFlushResultDelta())
+    || next.totalCount !== previous.totalCount
+    || next.maxConcurrency !== previous.maxConcurrency
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function hasRuntimeProgressResultDelta(
+  next: RuntimeProgressPayload,
+  previous: RuntimeProgressPayload,
+  threshold: number
+): boolean {
+  return Math.abs(next.indexedCount - previous.indexedCount) >= threshold
+    || Math.abs(next.skippedCount - previous.skippedCount) >= threshold
+    || Math.abs(next.failedCount - previous.failedCount) >= threshold
+    || Math.abs(next.unchangedCount - previous.unchangedCount) >= threshold;
+}
+
 function resolveRuntimeHeartbeatIntervalMs(): number {
   const raw = process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS?.trim();
   if (!raw) {
@@ -543,6 +624,46 @@ function resolveRuntimeHeartbeatIntervalMs(): number {
     return DEFAULT_RUNTIME_HEARTBEAT_MS;
   }
   return Math.max(100, Math.floor(parsed));
+}
+
+function resolveRuntimeProgressFlushIntervalMs(): number {
+  return resolvePositiveIntegerEnv(
+    process.env.CODINGNS_AFFAIRS_RUNTIME_PROGRESS_FLUSH_MS,
+    DEFAULT_RUNTIME_PROGRESS_FLUSH_INTERVAL_MS,
+    100
+  );
+}
+
+function resolveRuntimeProgressFlushScannedDelta(): number {
+  return resolvePositiveIntegerEnv(
+    process.env.CODINGNS_AFFAIRS_RUNTIME_PROGRESS_FLUSH_SCANNED_DELTA,
+    DEFAULT_RUNTIME_PROGRESS_FLUSH_SCANNED_DELTA,
+    1
+  );
+}
+
+function resolveRuntimeProgressFlushResultDelta(): number {
+  return resolvePositiveIntegerEnv(
+    process.env.CODINGNS_AFFAIRS_RUNTIME_PROGRESS_FLUSH_RESULT_DELTA,
+    DEFAULT_RUNTIME_PROGRESS_FLUSH_RESULT_DELTA,
+    1
+  );
+}
+
+function resolvePositiveIntegerEnv(
+  rawValue: string | undefined,
+  fallback: number,
+  minimum: number
+): number {
+  const raw = rawValue?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.max(minimum, Math.floor(parsed));
 }
 
 function normalizeAffairsIndexerError(

@@ -11,6 +11,7 @@ import { TagRecomputeService } from "../../../src/modules/affairs-indexer/core/s
 import { createAffairsIndexerRuntimeConfig } from "../../../src/modules/affairs-indexer/internal-command-runner.js";
 import { SimpleTagInferenceEngine } from "../../../src/modules/affairs-indexer/core/src/tagging/simple-tag-inference.js";
 import { openDatabase } from "../../../src/modules/affairs-indexer/core/src/sqlite/open-database.js";
+import { ExportBuilder } from "../../../src/modules/affairs-indexer/core/src/services/export/export-builder.js";
 
 function createRootDir() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-tag-service-"));
@@ -53,21 +54,23 @@ describe("AffairsTagService", () => {
   });
 
   function createService() {
+    const affairsLibraryService = {
+      getBinding: vi.fn(() => ({
+        rootDir,
+        enabled: true,
+      })),
+      resolvePreviewFile: vi.fn(() => ({ exists: true })),
+    };
+    const taskManager = {
+      has: vi.fn(() => false),
+      register: vi.fn(),
+      enqueue,
+      peek: vi.fn(() => null),
+    };
     return new AffairsTagService(
       { getWorkspaceOrThrow: vi.fn(() => ({ id: "workspace-1" })) } as never,
-      {
-        findByWorkspaceIdAndUserId: vi.fn(() => ({
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
-        })),
-      } as never,
-      { resolvePreviewFile: vi.fn(() => ({ exists: true })) } as never,
-      {
-        has: vi.fn(() => false),
-        register: vi.fn(),
-        enqueue,
-        peek: vi.fn(() => null),
-      } as never,
+      affairsLibraryService as never,
+      taskManager as never,
     );
   }
 
@@ -255,6 +258,83 @@ describe("AffairsTagService", () => {
     expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toEqual(expect.arrayContaining([
       "人工确认:manual_document",
     ]));
+  });
+
+  it("recomputeResolvedTags 重复写入相同结果时会跳过无变化文档", () => {
+    const writer = new CatalogWriteRepository(path.join(rootDir, ".ai-index", "catalog.db"));
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const tagId = writer.saveTagDefinition({
+      path: "人工确认",
+      name: "人工确认",
+      rootType: "人工确认",
+      status: "active",
+      createdBy: "test",
+    }).id;
+    const db = openDatabase(path.join(rootDir, ".ai-index", "catalog.db"));
+    try {
+      writer.recomputeResolvedTags([
+        {
+          documentId: document.documentId,
+          tagPath: "人工确认",
+          sourceType: "manual_document",
+          confidence: 1,
+          sourceRef: "manual-test",
+          evidence: "manual",
+        },
+      ], "2026-06-04T00:00:00.000Z", [document.documentId]);
+      const firstRow = db.prepare(`
+        SELECT updated_at
+        FROM document_tags
+        WHERE document_id = ?
+      `).get(document.documentId) as { updated_at?: string } | undefined;
+      const secondResult = writer.recomputeResolvedTags([
+        {
+          documentId: document.documentId,
+          tagPath: "人工确认",
+          sourceType: "manual_document",
+          confidence: 1,
+          sourceRef: "manual-test",
+          evidence: "manual",
+        },
+      ], "2026-06-04T00:00:10.000Z", [document.documentId]);
+      const secondRow = db.prepare(`
+        SELECT updated_at
+        FROM document_tags
+        WHERE document_id = ?
+      `).get(document.documentId) as { updated_at?: string } | undefined;
+
+      expect(firstRow?.updated_at).toBe("2026-06-04T00:00:00.000Z");
+      expect(secondRow?.updated_at).toBe("2026-06-04T00:00:00.000Z");
+      expect(secondResult.updatedCount).toBe(0);
+      expect(tagId).toBeTruthy();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TagRecomputeService 重复跑相同结果时会跳过导出", async () => {
+    const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
+    const service = createService();
+    const manualTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "人工确认",
+    });
+    service.saveDocumentTagBindings("workspace-1", "user-1", document.documentId, [manualTag.id]);
+
+    const exportSpy = vi.spyOn(ExportBuilder.prototype, "build");
+    const recomputeService = new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir));
+    await recomputeService.run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+    exportSpy.mockClear();
+
+    const secondResult = await recomputeService.run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+
+    expect(secondResult.updatedCount).toBe(0);
+    expect(secondResult.exportResult).toBeNull();
+    expect(secondResult.timingsMs.export).toBe(0);
+    expect(exportSpy).not.toHaveBeenCalled();
   });
 
   it("可以发起全量标签重算恢复任务", () => {
@@ -459,18 +539,18 @@ describe("AffairsTagService", () => {
     const service = new AffairsTagService(
       { getWorkspaceOrThrow: vi.fn(() => ({ id: "workspace-1" })) } as never,
       {
-        findByWorkspaceIdAndUserId: vi.fn(() => ({
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
+        getBinding: vi.fn(() => ({
+          rootDir,
+          enabled: true,
         })),
+        resolvePreviewFile,
       } as never,
-      { resolvePreviewFile } as never,
       {
         has: vi.fn(() => false),
         register: vi.fn(),
         enqueue,
         peek: vi.fn(() => null),
-      } as never,
+      } as never
     );
     const folderTag = service.saveTagDefinition("workspace-1", "user-1", {
       name: "根目录标签",
@@ -491,18 +571,18 @@ describe("AffairsTagService", () => {
     const service = new AffairsTagService(
       { getWorkspaceOrThrow: vi.fn(() => ({ id: "workspace-1" })) } as never,
       {
-        findByWorkspaceIdAndUserId: vi.fn(() => ({
-          affairsLibraryRootPath: rootDir,
-          affairsLibraryEnabled: true,
+        getBinding: vi.fn(() => ({
+          rootDir,
+          enabled: true,
         })),
+        resolvePreviewFile,
       } as never,
-      { resolvePreviewFile } as never,
       {
         has: vi.fn(() => false),
         register: vi.fn(),
         enqueue,
         peek: vi.fn(() => null),
-      } as never,
+      } as never
     );
 
     service.getFolderTagDetails("workspace-1", "user-1", "客户A");

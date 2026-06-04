@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runAffairsIndexerCommand } from "../../src/modules/affairs-indexer/internal-command-runner.js";
 import { acquireAffairsIndexerRootLock } from "../../src/modules/affairs-indexer/core/src/utils/root-command-lock.js";
@@ -47,6 +48,21 @@ describe("runAffairsIndexerCommand", () => {
 
     try {
       await runAffairsIndexerCommand(rootDir, "index");
+      const dbPath = path.join(rootDir, ".ai-index", "catalog.db");
+      const getLastSeenAt = (): string | null => {
+        const db = new DatabaseSync(dbPath);
+        try {
+          const row = db.prepare(`SELECT last_seen_at FROM files WHERE path = ?`).get("未变化文档.md") as {
+            last_seen_at?: string | null;
+          } | undefined;
+          return row?.last_seen_at ?? null;
+        } finally {
+          db.close();
+        }
+      };
+      const firstLastSeenAt = getLastSeenAt();
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
       const secondResult = await runAffairsIndexerCommand(rootDir, "index");
       const payload = secondResult.result as {
         indexResult?: {
@@ -66,6 +82,7 @@ describe("runAffairsIndexerCommand", () => {
           maxConcurrency?: number;
         };
       };
+      const secondLastSeenAt = getLastSeenAt();
 
       expect(payload.indexResult?.scannedCount).toBe(1);
       expect(payload.indexResult?.indexedCount).toBe(0);
@@ -76,7 +93,147 @@ describe("runAffairsIndexerCommand", () => {
       expect(runtimeStatus.progress?.unchangedCount).toBe(1);
       expect(runtimeStatus.progress?.totalCount).toBe(1);
       expect(runtimeStatus.progress?.maxConcurrency).toBeGreaterThanOrEqual(1);
+      expect(firstLastSeenAt).toBeTruthy();
+      expect(secondLastSeenAt).toBe(firstLastSeenAt);
     } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("高频 progress 不会把 runtime-status.json 写成每次都落盘", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-index-progress-throttle-"));
+    const statusPath = path.join(rootDir, ".ai-index", "runtime-status.json");
+    const originalHeartbeatMs = process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS;
+    process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS = "60000";
+    const writeSpy = vi.spyOn(fs, "writeFileSync");
+
+    const { TextIndexer } = await import("../../src/modules/affairs-indexer/core/src/services/indexer/text-indexer.js");
+    const originalIndex = TextIndexer.prototype.index;
+    TextIndexer.prototype.index = async function patchedIndex(_targetPath, options = {}) {
+      for (let scannedCount = 1; scannedCount <= 60; scannedCount += 1) {
+        options.onProgress?.({
+          scannedCount,
+          indexedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          unchangedCount: scannedCount,
+          totalCount: 60,
+          maxConcurrency: 1,
+        });
+      }
+      return {
+        scannedCount: 60,
+        indexedCount: 0,
+        unchangedCount: 60,
+        indexedPaths: [],
+        skippedPaths: [],
+        failedPaths: [],
+        failedCount: 0,
+        failures: [],
+        failureOverflowCount: 0,
+        deletedCount: 0,
+        deletedPaths: [],
+        dirtyScope: {
+          trigger: "full",
+          changedPaths: [],
+          dirtyDirectories: [],
+          dirtyTagPaths: [],
+          dirtyRelations: [],
+        },
+        timingsMs: {
+          scanFs: 0,
+          parse: 0,
+          tagInference: 0,
+          skipCatalog: 0,
+          writeIndexed: 0,
+          writeSkipped: 0,
+          scanAndParse: 0,
+          writeSuccess: 0,
+          writeFailure: 0,
+          scanLoop: 0,
+          cleanup: 0,
+          reconcile: 0,
+          dirtyScope: 0,
+          total: 0,
+        },
+        batchStats: {
+          writeBatchSize: 1,
+          successBatchCount: 0,
+          failureBatchCount: 0,
+        },
+        tagStats: {
+          directAssignedCount: 0,
+          derivedAssignedCount: 0,
+          avgDirectPerIndexedDocument: 0,
+          avgDerivedPerIndexedDocument: 0,
+        },
+        skipStats: {
+          skippedCount: 0,
+          skippedByExtension: {},
+          skipCatalogRecords: 0,
+        },
+      };
+    };
+
+    try {
+      await runAffairsIndexerCommand(rootDir, "index");
+      const runtimeStatusWrites = writeSpy.mock.calls.filter(([filePath]) => filePath === statusPath).length;
+      const runtimeStatus = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
+        progress?: {
+          scannedCount?: number;
+          unchangedCount?: number;
+        };
+      };
+
+      expect(runtimeStatusWrites).toBeLessThan(10);
+      expect(runtimeStatus.progress?.scannedCount).toBe(60);
+      expect(runtimeStatus.progress?.unchangedCount).toBe(60);
+    } finally {
+      TextIndexer.prototype.index = originalIndex;
+      writeSpy.mockRestore();
+      if (originalHeartbeatMs === undefined) {
+        delete process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS;
+      } else {
+        process.env.CODINGNS_AFFAIRS_RUNTIME_HEARTBEAT_MS = originalHeartbeatMs;
+      }
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("watch-touch 遇到 unchanged 文件时会跳过静态导出", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-watch-touch-skip-export-"));
+    const documentDir = path.join(rootDir, "notes");
+    const documentPath = path.join(documentDir, "a.md");
+    fs.mkdirSync(documentDir, { recursive: true });
+    fs.writeFileSync(documentPath, "# a\n", "utf8");
+
+    const { ExportBuilder } = await import("../../src/modules/affairs-indexer/core/src/services/export/export-builder.js");
+    const exportSpy = vi.spyOn(ExportBuilder.prototype, "build");
+
+    try {
+      await runAffairsIndexerCommand(rootDir, "index");
+      exportSpy.mockClear();
+
+      const result = await runAffairsIndexerCommand(rootDir, "watch-touch", {
+        targetPath: "notes/a.md",
+        reason: "test_watch_touch_skip_export",
+      });
+      const payload = result.result as {
+        exportSkipped?: boolean;
+        exportResult?: unknown;
+        indexResult?: {
+          indexedCount?: number;
+          unchangedCount?: number;
+        };
+      };
+
+      expect(payload.indexResult?.indexedCount).toBe(0);
+      expect(payload.indexResult?.unchangedCount).toBe(1);
+      expect(payload.exportSkipped).toBe(true);
+      expect(payload.exportResult).toBeNull();
+      expect(exportSpy).not.toHaveBeenCalled();
+    } finally {
+      exportSpy.mockRestore();
       fs.rmSync(rootDir, { recursive: true, force: true });
     }
   });

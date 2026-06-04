@@ -71,7 +71,6 @@ interface PreparedStatements {
   listActiveFilesPrefix: ReturnType<DatabaseSync["prepare"]>;
   countActiveIndexedDocuments: ReturnType<DatabaseSync["prepare"]>;
   selectActiveIndexedFileStateByPath: ReturnType<DatabaseSync["prepare"]>;
-  touchActiveFileByPath: ReturnType<DatabaseSync["prepare"]>;
 }
 
 export interface SkippedDocumentEntry {
@@ -140,6 +139,23 @@ export interface RecomputedResolvedTagEntry {
   confidence: number;
   sourceRef?: string | null;
   evidence?: string | null;
+}
+
+interface CurrentResolvedDocumentTagRow {
+  tag_id: string;
+  confidence: number;
+  source: string;
+  source_ref: string | null;
+  evidence: string | null;
+  manual_override: number;
+}
+
+interface CurrentResolvedDerivedTagRow {
+  tag_id: string;
+  source: string;
+  source_ref: string | null;
+  rule_name: string;
+  evidence: string | null;
 }
 
 export interface SaveTagDefinitionInput {
@@ -534,13 +550,6 @@ export class CatalogWriteRepository {
           AND f.status = 'active'
           AND d.index_status IN ('indexed', 'failed', 'skipped')
         LIMIT 1
-      `),
-      touchActiveFileByPath: db.prepare(`
-        UPDATE files
-        SET last_seen_at = ?,
-            status = 'active'
-        WHERE path = ?
-          AND status = 'active'
       `),
     };
   }
@@ -1456,33 +1465,13 @@ export class CatalogWriteRepository {
     });
   }
 
-  batchTouchActiveFiles(entries: FileScanResult[], observedAt: string): number {
-    if (entries.length === 0) {
-      return 0;
-    }
-
-    return this.withConnection((db, statements) => {
-      try {
-        db.exec("BEGIN IMMEDIATE");
-        const touchedPaths = new Set<string>();
-        for (const entry of entries) {
-          const normalizedPath = this.normalizeRelativePath(entry.relativePath);
-          if (!normalizedPath || touchedPaths.has(normalizedPath)) {
-            continue;
-          }
-          touchedPaths.add(normalizedPath);
-          statements.touchActiveFileByPath.run(observedAt, normalizedPath);
-        }
-        db.exec("COMMIT");
-        return touchedPaths.size;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    });
-  }
-
-  reconcileScope(scope: ReconcileScope, observedAt: string): { deletedCount: number; deletedPaths: string[] } {
+  reconcileScope(
+    scope: ReconcileScope,
+    observedAt: string,
+    options: {
+      seenPaths?: ReadonlySet<string>;
+    } = {}
+  ): { deletedCount: number; deletedPaths: string[] } {
     return this.withConnection((db, statements) => {
       const now = new Date().toISOString();
 
@@ -1501,7 +1490,7 @@ export class CatalogWriteRepository {
 
         const deletedPaths: string[] = [];
         for (const row of rows) {
-          if (row.last_seen_at === observedAt) {
+          if (options.seenPaths?.has(row.path) || row.last_seen_at === observedAt) {
             continue;
           }
           if (this.deleteDocumentInConnection(db, statements, row.path, now)) {
@@ -1840,17 +1829,29 @@ export class CatalogWriteRepository {
     entries: RecomputedResolvedTagEntry[],
     observedAt = new Date().toISOString(),
     documentIds: string[] = [],
-  ): { updatedCount: number } {
+  ): { updatedCount: number; updatedDocumentIds: string[] } {
     const normalizedDocumentIds = [...new Set([
       ...documentIds,
       ...entries.map(item => item.documentId),
     ].map(item => item.trim()).filter(Boolean))];
     if (normalizedDocumentIds.length === 0) {
-      return { updatedCount: 0 };
+      return { updatedCount: 0, updatedDocumentIds: [] };
     }
 
     return this.withConnection((db, statements) => {
       const tagCache = new Map(this.tagIdCache);
+      const selectCurrentDocumentTags = db.prepare(`
+        SELECT tag_id, confidence, source, source_ref, evidence, manual_override
+        FROM document_tags
+        WHERE document_id = ?
+        ORDER BY tag_id, source, COALESCE(source_ref, ''), COALESCE(evidence, '')
+      `);
+      const selectCurrentDerivedTags = db.prepare(`
+        SELECT tag_id, source, source_ref, rule_name, evidence
+        FROM derived_document_tags
+        WHERE document_id = ?
+        ORDER BY tag_id, source, COALESCE(source_ref, ''), rule_name, COALESCE(evidence, '')
+      `);
       try {
         db.exec("BEGIN IMMEDIATE");
         const groupedByDocument = new Map<string, RecomputedResolvedTagEntry[]>();
@@ -1860,10 +1861,12 @@ export class CatalogWriteRepository {
           groupedByDocument.set(entry.documentId, current);
         });
 
+        let updatedCount = 0;
+        const updatedDocumentIds: string[] = [];
         for (const documentId of normalizedDocumentIds) {
           const documentEntries = groupedByDocument.get(documentId) ?? [];
-          statements.deleteDocumentTags.run(documentId);
-          statements.deleteDerivedDocumentTags.run(documentId);
+          const nextDocumentTags: CurrentResolvedDocumentTagRow[] = [];
+          const nextDerivedTags: CurrentResolvedDerivedTagRow[] = [];
 
           for (const entry of documentEntries) {
             const tagId = this.ensureTagInConnection(
@@ -1874,35 +1877,72 @@ export class CatalogWriteRepository {
               entry.sourceType,
             );
             if (entry.sourceType === "system_derived") {
-              statements.upsertDerivedTag.run(
-                makeStableId("derived_tag", `${documentId}:${tagId}`),
-                documentId,
-                tagId,
-                entry.sourceType,
-                entry.sourceRef ?? null,
-                entry.sourceRef ?? "system_derived",
-                entry.evidence ?? null,
-                observedAt,
-                observedAt,
-              );
+              nextDerivedTags.push({
+                tag_id: tagId,
+                source: entry.sourceType,
+                source_ref: entry.sourceRef ?? null,
+                rule_name: entry.sourceRef ?? "system_derived",
+                evidence: entry.evidence ?? null,
+              });
             } else {
-              statements.upsertDocumentTag.run(
-                makeStableId("doc_tag", `${documentId}:${tagId}`),
-                documentId,
-                tagId,
-                entry.confidence,
-                entry.sourceType,
-                entry.sourceRef ?? null,
-                entry.evidence ?? null,
-                entry.sourceType === "manual_document" ? 1 : 0,
-                observedAt,
-              );
+              nextDocumentTags.push({
+                tag_id: tagId,
+                confidence: entry.confidence,
+                source: entry.sourceType,
+                source_ref: entry.sourceRef ?? null,
+                evidence: entry.evidence ?? null,
+                manual_override: entry.sourceType === "manual_document" ? 1 : 0,
+              });
             }
           }
+
+          nextDocumentTags.sort(compareCurrentResolvedDocumentTagRow);
+          nextDerivedTags.sort(compareCurrentResolvedDerivedTagRow);
+          const currentDocumentTags = selectCurrentDocumentTags.all(documentId) as unknown as CurrentResolvedDocumentTagRow[];
+          const currentDerivedTags = selectCurrentDerivedTags.all(documentId) as unknown as CurrentResolvedDerivedTagRow[];
+          if (
+            areResolvedDocumentTagRowsEqual(currentDocumentTags, nextDocumentTags)
+            && areResolvedDerivedTagRowsEqual(currentDerivedTags, nextDerivedTags)
+          ) {
+            continue;
+          }
+
+          statements.deleteDocumentTags.run(documentId);
+          statements.deleteDerivedDocumentTags.run(documentId);
+
+          for (const nextDocumentTag of nextDocumentTags) {
+            statements.upsertDocumentTag.run(
+              makeStableId("doc_tag", `${documentId}:${nextDocumentTag.tag_id}`),
+              documentId,
+              nextDocumentTag.tag_id,
+              nextDocumentTag.confidence,
+              nextDocumentTag.source,
+              nextDocumentTag.source_ref,
+              nextDocumentTag.evidence,
+              nextDocumentTag.manual_override,
+              observedAt,
+            );
+          }
+
+          for (const nextDerivedTag of nextDerivedTags) {
+            statements.upsertDerivedTag.run(
+              makeStableId("derived_tag", `${documentId}:${nextDerivedTag.tag_id}`),
+              documentId,
+              nextDerivedTag.tag_id,
+              nextDerivedTag.source,
+              nextDerivedTag.source_ref,
+              nextDerivedTag.rule_name,
+              nextDerivedTag.evidence,
+              observedAt,
+              observedAt,
+            );
+          }
+          updatedCount += 1;
+          updatedDocumentIds.push(documentId);
         }
 
         db.exec("COMMIT");
-        return { updatedCount: normalizedDocumentIds.length };
+        return { updatedCount, updatedDocumentIds };
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -1924,6 +1964,79 @@ function buildDocumentContentHash(text: string): string | null {
     return null;
   }
   return crypto.createHash("sha1").update(text).digest("hex");
+}
+
+function compareCurrentResolvedDocumentTagRow(
+  left: CurrentResolvedDocumentTagRow,
+  right: CurrentResolvedDocumentTagRow
+): number {
+  return compareComparableTuples([
+    left.tag_id,
+    String(left.confidence),
+    left.source,
+    left.source_ref ?? "",
+    left.evidence ?? "",
+    String(left.manual_override),
+  ], [
+    right.tag_id,
+    String(right.confidence),
+    right.source,
+    right.source_ref ?? "",
+    right.evidence ?? "",
+    String(right.manual_override),
+  ]);
+}
+
+function compareCurrentResolvedDerivedTagRow(
+  left: CurrentResolvedDerivedTagRow,
+  right: CurrentResolvedDerivedTagRow
+): number {
+  return compareComparableTuples([
+    left.tag_id,
+    left.source,
+    left.source_ref ?? "",
+    left.rule_name,
+    left.evidence ?? "",
+  ], [
+    right.tag_id,
+    right.source,
+    right.source_ref ?? "",
+    right.rule_name,
+    right.evidence ?? "",
+  ]);
+}
+
+function areResolvedDocumentTagRowsEqual(
+  currentRows: CurrentResolvedDocumentTagRow[],
+  nextRows: CurrentResolvedDocumentTagRow[]
+): boolean {
+  if (currentRows.length !== nextRows.length) {
+    return false;
+  }
+  return currentRows.every((row, index) => compareCurrentResolvedDocumentTagRow(row, nextRows[index]!) === 0);
+}
+
+function areResolvedDerivedTagRowsEqual(
+  currentRows: CurrentResolvedDerivedTagRow[],
+  nextRows: CurrentResolvedDerivedTagRow[]
+): boolean {
+  if (currentRows.length !== nextRows.length) {
+    return false;
+  }
+  return currentRows.every((row, index) => compareCurrentResolvedDerivedTagRow(row, nextRows[index]!) === 0);
+}
+
+function compareComparableTuples(left: string[], right: string[]): number {
+  const maxLength = Math.max(left.length, right.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftValue = left[index] ?? "";
+    const rightValue = right[index] ?? "";
+    if (leftValue === rightValue) {
+      continue;
+    }
+    return leftValue < rightValue ? -1 : 1;
+  }
+  return 0;
 }
 
 function doesSiblingPathStillExist(file: FileScanResult, candidateRelativePath: string): boolean {

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { RuntimeConfig } from "../../../../contracts/src/index.js";
@@ -125,12 +126,13 @@ export class TagRecomputeService {
 
   async run(input: TagRecomputeRunInput = {}): Promise<TagRecomputeResult> {
     const startedAt = performance.now();
-    const repository = new CatalogRepository(this.config.dbPath);
+    const repository = new CatalogRepository(this.config.dbPath, {
+      tempStore: "MEMORY",
+    });
     const writer = new CatalogWriteRepository(this.config.dbPath);
     const tagger = new SimpleTagInferenceEngine();
     const observedAt = new Date().toISOString();
     const scope = input.scope ?? { kind: "full" as const };
-    const dirtyTagPaths = new Set<string>();
     let scannedCount = 0;
     let updatedCount = 0;
     let directAssignedCount = 0;
@@ -188,9 +190,6 @@ export class TagRecomputeService {
       accumulators.set(row.documentId, accumulator);
       directAssignedCount += accumulator.entries.filter(item => item.sourceType !== "system_derived").length;
       derivedAssignedCount += accumulator.entries.filter(item => item.sourceType === "system_derived").length;
-      accumulator.entries.forEach(entry => {
-        collectTagAncestors(entry.tagPath).forEach(tagPath => dirtyTagPaths.add(tagPath));
-      });
       scannedCount += 1;
       if (scannedCount === 1 || scannedCount === totalDocuments || scannedCount % 25 === 0) {
         this.emitProgress(input, {
@@ -227,28 +226,48 @@ export class TagRecomputeService {
     updatedCount += written.updatedCount;
 
     throwIfAborted(input.signal, "事务文档库标签重算已取消");
+    const updatedDocumentIdSet = new Set(written.updatedDocumentIds);
+    const updatedEntries = [...accumulators.values()]
+      .filter((item) => updatedDocumentIdSet.has(item.documentId))
+      .flatMap(item => item.entries);
+    const dirtyTagPathsForChanges = new Set<string>();
+    updatedEntries.forEach((entry) => {
+      collectTagAncestors(entry.tagPath).forEach(tagPath => dirtyTagPathsForChanges.add(tagPath));
+    });
     const dirtyScope = this.buildDirtyScopeFromResolvedEntries(
-      [...accumulators.values()].flatMap(item => item.entries),
-      dirtyTagPaths,
+      updatedEntries,
+      dirtyTagPathsForChanges,
     );
-    this.emitProgress(input, {
-      phase: "export",
-      label: "正在刷新标签结果",
-      detail: "马上就好",
-      current: totalDocuments,
-      total: Math.max(totalDocuments, 1),
-      percent: resolveProgressPercent("export", totalDocuments, totalDocuments),
-    });
-    const exportStartedAt = performance.now();
-    const exportResult = await new ExportBuilder(this.config).build({
-      dirtyScope: {
-        ...dirtyScope,
-        trigger: "full",
-      },
-      light: true,
-      signal: input.signal,
-    });
-    const exportMs = performance.now() - exportStartedAt;
+    const hasTagDefinitionDrift = this.hasTagDefinitionDriftSinceLastExport(repository);
+    const shouldRefreshExport = updatedCount > 0 || !isDirtyScopeEmpty(dirtyScope) || hasTagDefinitionDrift;
+    let exportResult: TagRecomputeResult["exportResult"] = null;
+    let exportMs = 0;
+    if (shouldRefreshExport) {
+      this.emitProgress(input, {
+        phase: "export",
+        label: "正在刷新标签结果",
+        detail: "马上就好",
+        current: totalDocuments,
+        total: Math.max(totalDocuments, 1),
+        percent: resolveProgressPercent("export", totalDocuments, totalDocuments),
+      });
+      const exportStartedAt = performance.now();
+      const exported = await new ExportBuilder(this.config).build({
+        dirtyScope: {
+          ...dirtyScope,
+          trigger: "full",
+        },
+        light: true,
+        signal: input.signal,
+      });
+      exportMs = performance.now() - exportStartedAt;
+      exportResult = {
+        metaShardCount: exported.metaShardCount,
+        detailShardCount: exported.detailShardCount,
+        tagShardCount: exported.tagShardCount,
+        exportedAt: exported.exportedAt,
+      };
+    }
     this.emitProgress(input, {
       phase: "finished",
       label: "标签分配已完成",
@@ -264,12 +283,7 @@ export class TagRecomputeService {
       directAssignedCount,
       derivedAssignedCount,
       dirtyScope,
-      exportResult: {
-        metaShardCount: exportResult.metaShardCount,
-        detailShardCount: exportResult.detailShardCount,
-        tagShardCount: exportResult.tagShardCount,
-        exportedAt: exportResult.exportedAt,
-      },
+      exportResult,
       timingsMs: {
         infer: Number(inferMs.toFixed(2)),
         write: Number(writeMs.toFixed(2)),
@@ -474,6 +488,33 @@ export class TagRecomputeService {
   private emitProgress(input: TagRecomputeRunInput, progress: TagRecomputeProgressSnapshot): void {
     input.onProgress?.(progress);
   }
+
+  private hasTagDefinitionDriftSinceLastExport(repository: CatalogRepository): boolean {
+    const statusPath = path.join(this.config.exportDir, "status.json");
+    if (!fs.existsSync(statusPath)) {
+      return true;
+    }
+    try {
+      const raw = JSON.parse(fs.readFileSync(statusPath, "utf8")) as { exported_at?: string };
+      const exportedAt = typeof raw.exported_at === "string" ? raw.exported_at : "";
+      if (!exportedAt) {
+        return true;
+      }
+      return repository.listTagDefinitions(true).some((definition) => definition.updatedAt > exportedAt);
+    } catch {
+      return true;
+    }
+  }
+}
+
+function isDirtyScopeEmpty(scope: DirtyScope): boolean {
+  return scope.changedPaths.length === 0
+    && scope.dirtyDirectories.length === 0
+    && scope.dirtyTagPaths.length === 0
+    && scope.dirtyMetaShards.length === 0
+    && scope.dirtyDetailShards.length === 0
+    && scope.dirtyPostingBuckets.length === 0
+    && scope.dirtyRelations.length === 0;
 }
 
 function isFolderBindingOnlyScope(scope: RecomputeScope): boolean {

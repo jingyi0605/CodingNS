@@ -1,4 +1,7 @@
-import { openDatabase } from "../sqlite/open-database.js";
+import {
+  openDatabase,
+  type OpenDatabaseOptions,
+} from "../sqlite/open-database.js";
 
 export interface DocumentContextResult {
   documentId: string;
@@ -320,10 +323,13 @@ function fetchDocumentTagsForIds(
  * 第二阶段继续承接只读查询，并补最小增量导出所需查询。
  */
 export class CatalogRepository {
-  constructor(private readonly dbPath: string) {}
+  constructor(
+    private readonly dbPath: string,
+    private readonly dbOptions: OpenDatabaseOptions = {},
+  ) {}
 
   listTagDefinitions(includeDisabled = false): TagDefinitionRow[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const rows = db.prepare(`
         SELECT
@@ -364,7 +370,7 @@ export class CatalogRepository {
   }
 
   getTagDefinitionById(tagId: string): TagDefinitionRow | null {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const row = db.prepare(`
         SELECT
@@ -411,7 +417,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedIds.map(() => "?").join(", ");
       const rows = db.prepare(`
@@ -441,7 +447,7 @@ export class CatalogRepository {
   }
 
   listAllEnabledTagRules(): TagRuleRow[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const rows = db.prepare(`
         SELECT
@@ -476,7 +482,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedIds.map(() => "?").join(", ");
       const documentRows = db.prepare(`
@@ -559,7 +565,7 @@ export class CatalogRepository {
   }
 
   getManualTagBindingStats(): ManualTagBindingStats {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const row = db.prepare(`
         WITH legacy_active AS (
@@ -754,7 +760,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedPaths.map(() => "?").join(", ");
       const rows = db.prepare(`
@@ -792,7 +798,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const valuePlaceholders = normalizedPaths.map(() => "(?)").join(", ");
       const rows = db.prepare(`
@@ -841,7 +847,7 @@ export class CatalogRepository {
 
   listEffectiveFolderTagBindingsForFolderScope(folderPath: string): EffectiveFolderTagBindingRow[] {
     const normalizedFolderPath = normalizeScopedFolderPath(folderPath);
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const whereClause = normalizedFolderPath === "."
         ? ""
@@ -895,7 +901,7 @@ export class CatalogRepository {
     if (normalizedIds.length === 0) {
       return [];
     }
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedIds.map(() => "?").join(", ");
       const directRows = db.prepare(`
@@ -945,7 +951,7 @@ export class CatalogRepository {
   }
 
   listRecomputeCandidateDocuments(scope: RecomputeScope): TagRecomputeDocumentRow[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       if (scope.kind === "document" && scope.documentId) {
         const rows = db.prepare(`
@@ -1030,7 +1036,7 @@ export class CatalogRepository {
       throw new Error("documentId 或 filePath 至少提供一个");
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       let row: Record<string, unknown> | undefined;
 
@@ -1092,7 +1098,7 @@ export class CatalogRepository {
   }
 
   browseTags(rootType?: string, parentPath?: string): BrowseTagNodeResult[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       let sql = `
         SELECT id, path, name, root_type, parent_id
@@ -1154,7 +1160,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const keyword = `%${normalizedQuery}%`;
       const rows = db.prepare(`
@@ -1191,7 +1197,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedIds.map(() => "?").join(", ");
       const documentRows = db.prepare(`
@@ -1222,7 +1228,7 @@ export class CatalogRepository {
   }
 
   listExportDocuments(): ExportDocumentRecord[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const documentRows = db.prepare(`
         SELECT d.id AS document_id, f.path, COALESCE(d.title, f.name) AS title,
@@ -1255,7 +1261,7 @@ export class CatalogRepository {
   }
 
   listActiveFileExtensions(): string[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const rows = db.prepare(`
         SELECT DISTINCT extension
@@ -1277,7 +1283,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedPaths.map(() => "?").join(", ");
       const documentRows = db.prepare(`
@@ -1331,7 +1337,7 @@ export class CatalogRepository {
       return [];
     }
 
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const placeholders = normalizedExtensions.map(() => "?").join(", ");
       const documentRows = db.prepare(`
@@ -1362,7 +1368,7 @@ export class CatalogRepository {
   }
 
   listExportTags(): ExportTagRecord[] {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       const rows = db.prepare(`
         SELECT t.path, t.name, t.root_type, parent.path AS parent_path
@@ -1390,7 +1396,7 @@ export class CatalogRepository {
   }
 
   *iterateExportDocuments(batchSize = 1000): Generator<ExportDocumentRow[]> {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       let lastPath = "";
       while (true) {
@@ -1419,7 +1425,7 @@ export class CatalogRepository {
   }
 
   *iterateExportDocumentRecords(batchSize = 1000): Generator<ExportDocumentRecord[]> {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       let lastPath = "";
       while (true) {
@@ -1453,7 +1459,7 @@ export class CatalogRepository {
   }
 
   *iterateDocumentTagRows(batchSize = 5000): Generator<ExportDocumentTagRow[]> {
-    const db = openDatabase(this.dbPath);
+    const db = openDatabase(this.dbPath, this.dbOptions);
     try {
       let offset = 0;
       while (true) {

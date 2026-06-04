@@ -59,6 +59,7 @@ function createEmptyIncrementalIndexResult(dirtyScope: DirtyScope) {
   return {
     scannedCount: 0,
     indexedCount: 0,
+    unchangedCount: 0,
     indexedPaths: [] as string[],
     skippedPaths: [] as string[],
     failedPaths: [] as string[],
