@@ -1102,4 +1102,12 @@ describe("ButlerRuntimeStore", () => {
     expect(store.getState().runtimeHasActiveRun).toBe(false);
     expect(store.getState().runtimeCanInterrupt).toBe(false);
   });
+
+  it("初始化当前控制会话时会按当前 workspaceId 读取，而不是捡全局 provider 会话", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+
+    await store.initialize();
+
+    expect(mockedGetCurrentButlerControlSession).toHaveBeenCalledWith("workspace-1");
+  });
 });

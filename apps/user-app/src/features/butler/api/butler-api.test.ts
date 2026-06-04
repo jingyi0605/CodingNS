@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../../shared/network/api-error";
 import {
-  createAssistantSandbox,
+  cancelAssistantAutomation,
   listAssistantAutomations,
-  listAssistantSandboxes,
   resetAssistantCapabilityCompatibilityCacheForTesting
 } from "./butler-api";
 import { httpClient } from "../../../network/http-client";
@@ -39,22 +38,16 @@ describe("butler assistant api", () => {
   });
 
   it("助手能力写请求会保留原方法和 body，并带上来源头", async () => {
-    await createAssistantSandbox({
-      title: "临时沙箱",
-      sourceKind: "blank"
-    });
+    await cancelAssistantAutomation("automation-1");
 
     const [, options] = vi.mocked(httpClient.request).mock.calls[0] ?? [];
     const headers = new Headers(options?.headers);
 
     expect(vi.mocked(httpClient.request)).toHaveBeenCalledWith(
-      "/api/assistant/sandboxes",
+      "/api/assistant/automations/automation-1/cancel",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          title: "临时沙箱",
-          sourceKind: "blank"
-        })
+        body: JSON.stringify({})
       })
     );
     expect(headers.get("X-CodingNS-Assistant-Source")).toBe("butler-ui");
@@ -71,12 +64,6 @@ describe("butler assistant api", () => {
         items: []
       }
     });
-
-    await expect(listAssistantSandboxes()).resolves.toEqual({
-      payload: {
-        items: []
-      }
-    });
     expect(vi.mocked(httpClient.request)).toHaveBeenCalledTimes(1);
   });
 
@@ -86,9 +73,6 @@ describe("butler assistant api", () => {
       error_code: "HTTP_ERROR"
     }));
 
-    await expect(createAssistantSandbox({
-      title: "临时沙箱",
-      sourceKind: "blank"
-    })).rejects.toThrow("当前 Host 版本不支持新版助手接口，请先升级 Host。");
+    await expect(cancelAssistantAutomation("automation-1")).rejects.toThrow("当前 Host 版本不支持新版助手接口，请先升级 Host。");
   });
 });

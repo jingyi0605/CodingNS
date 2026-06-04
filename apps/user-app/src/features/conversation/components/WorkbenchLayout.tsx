@@ -218,7 +218,14 @@ import {
   SessionProviderPicker
 } from "./SessionProviderPicker";
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
-import { AffairsAuxiliaryPanel, AffairsSectionMenu, AffairsSidebarPanel, AffairsWorkbenchProvider, AffairsWorkbenchView } from "../../workbench/components/AffairsWorkbenchView";
+import {
+  AffairsAuxiliaryPanel,
+  AffairsDashboardLockToolbarButton,
+  AffairsSectionMenu,
+  AffairsSidebarPanel,
+  AffairsWorkbenchProvider,
+  AffairsWorkbenchView
+} from "../../workbench/components/AffairsWorkbenchView";
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
 import { ensureAffairsDashboardState } from "../../workbench/utils/affairs-dashboard-state";
 import {
@@ -12377,6 +12384,7 @@ export function WorkbenchLayout({
                         className="workbench-collapsed-controls right"
                         data-visible={effectiveRightCollapsed}
                       >
+                        <AffairsDashboardLockToolbarButton className="workbench-nav-toolbar-button workbench-collapsed-button" />
                         <SidebarDockButton
                           className="workbench-nav-toolbar-button workbench-collapsed-button"
                           ariaLabel={t("shell.showInfoSidebar")}

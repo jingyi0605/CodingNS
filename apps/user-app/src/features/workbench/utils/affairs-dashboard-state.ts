@@ -2,15 +2,19 @@ import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-
 import { t } from "../../../shared/i18n";
 import type {
   AffairsWorkbenchDashboardState,
+  DashboardHtmlWidgetVariant,
   DashboardTabState,
   DashboardWidgetLayout,
+  DashboardWidgetSourceRef,
   DashboardWidgetState,
-  DashboardWidgetType
+  DashboardWidgetType,
+  ShortcutAppState
 } from "../types/workbench-mode";
 
 const AFFAIRS_DASHBOARD_STATE_KEY_PREFIX = "workbench.affairs.dashboard.";
-const AFFAIRS_DASHBOARD_STATE_VERSION = 1;
+const AFFAIRS_DASHBOARD_STATE_VERSION = 5;
 const AFFAIRS_DASHBOARD_STATE_CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+const WORKSPACE_HTML_PATH_PATTERN = /\.(html?|HTML?)$/;
 
 function buildAffairsDashboardStateKey(workspaceId: string) {
   return `${AFFAIRS_DASHBOARD_STATE_KEY_PREFIX}${workspaceId}`;
@@ -36,42 +40,104 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 0;
 }
 
-function isDashboardWidgetType(value: unknown): value is DashboardWidgetType {
-  return (
-    value === "todo"
-    || value === "automation"
-    || value === "html_app"
-    || value === "html_stat"
-    || value === "html_embed"
-  );
+function resolvePathLeafName(path: string): string {
+  const normalized = path.trim().replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+export function isWorkspaceHtmlEntryPath(path: string | null | undefined): boolean {
+  const normalizedPath = path?.trim() ?? "";
+  return normalizedPath.length > 0 && WORKSPACE_HTML_PATH_PATTERN.test(normalizedPath);
+}
+
+function resolveDefaultWidgetTitle(
+  type: DashboardWidgetType,
+  sourceId?: string,
+  variant: DashboardHtmlWidgetVariant = "embed"
+): string {
+  if (type === "todo") {
+    return t("shell.affairsTodoAllFilter");
+  }
+
+  if (type === "automation") {
+    return t("shell.affairsAutomationStageTitle");
+  }
+
+  if (sourceId?.trim()) {
+    return resolvePathLeafName(sourceId);
+  }
+
+  return resolveDefaultDashboardHtmlWidgetTitle(variant);
+}
+
+function resolveDefaultDashboardHtmlWidgetTitle(variant: DashboardHtmlWidgetVariant): string {
+  if (variant === "app") {
+    return t("shell.affairsWorkbenchHtmlAppDefaultTitle");
+  }
+
+  if (variant === "stat") {
+    return t("shell.affairsWorkbenchHtmlStatDefaultTitle");
+  }
+
+  return t("shell.affairsWorkbenchHtmlEmbedDefaultTitle");
+}
+
+export function createAffairsDashboardWidgetState(
+  input: {
+    type: DashboardWidgetType;
+    variant?: DashboardHtmlWidgetVariant;
+    title?: string;
+    sourceRef?: DashboardWidgetSourceRef;
+    config?: Record<string, unknown>;
+  },
+  timestamp = new Date().toISOString()
+): DashboardWidgetState {
+  const variant = input.type === "html" ? normalizeDashboardHtmlWidgetVariant(input.variant) ?? "embed" : undefined;
+
+  return {
+    id: createDashboardEntityId("dashboard-widget"),
+    type: input.type,
+    variant,
+    title: input.title?.trim() || resolveDefaultWidgetTitle(input.type, input.sourceRef?.sourceId, variant),
+    sourceRef: input.sourceRef
+      ? {
+          ...input.sourceRef,
+          workspaceId: input.sourceRef.workspaceId?.trim() || undefined
+        }
+      : undefined,
+    config: isRecord(input.config) ? input.config : {},
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
 }
 
 function createDefaultTodoWidget(timestamp: string): DashboardWidgetState {
-  return {
-    id: createDashboardEntityId("dashboard-widget"),
-    type: "todo",
-    title: t("shell.affairsTodoAllFilter"),
-    config: {
-      filter: "all",
-      view: "compact"
+  return createAffairsDashboardWidgetState(
+    {
+      type: "todo",
+      title: t("shell.affairsTodoAllFilter"),
+      config: {
+        filter: "all",
+        view: "compact"
+      }
     },
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
+    timestamp
+  );
 }
 
 function createDefaultAutomationWidget(timestamp: string): DashboardWidgetState {
-  return {
-    id: createDashboardEntityId("dashboard-widget"),
-    type: "automation",
-    title: t("shell.affairsAutomationStageTitle"),
-    config: {
-      scope: "all",
-      view: "list"
+  return createAffairsDashboardWidgetState(
+    {
+      type: "automation",
+      title: t("shell.affairsAutomationStageTitle"),
+      config: {
+        scope: "all",
+        view: "list"
+      }
     },
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
+    timestamp
+  );
 }
 
 function createDefaultLayoutForWidgets(widgets: DashboardWidgetState[]): DashboardWidgetLayout[] {
@@ -116,6 +182,30 @@ export function createDefaultAffairsDashboardTabState(timestamp = new Date().toI
   };
 }
 
+export function createAffairsShortcutAppState(
+  input: {
+    title?: string;
+    workspaceId: string;
+    sourceId?: string;
+    entryPath: string;
+  },
+  timestamp = new Date().toISOString()
+): ShortcutAppState {
+  const entryPath = input.entryPath.trim();
+  const workspaceId = input.workspaceId.trim();
+  const sourceId = input.sourceId?.trim() || entryPath;
+
+  return {
+    id: createDashboardEntityId("shortcut-app"),
+    title: input.title?.trim() || resolvePathLeafName(entryPath),
+    workspaceId,
+    sourceId,
+    entryPath,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
 export function createDefaultAffairsDashboardState(
   workspaceId: string,
   timestamp = new Date().toISOString()
@@ -125,8 +215,10 @@ export function createDefaultAffairsDashboardState(
   return {
     workspaceId,
     version: AFFAIRS_DASHBOARD_STATE_VERSION,
+    layoutLocked: true,
     activeTabId: defaultTab.id,
     tabs: [defaultTab],
+    shortcutApps: [],
     updatedAt: timestamp
   };
 }
@@ -135,31 +227,49 @@ function normalizeDashboardWidgetState(
   rawWidget: unknown,
   timestampFallback: string
 ): DashboardWidgetState | null {
-  if (!isRecord(rawWidget) || !isDashboardWidgetType(rawWidget.type)) {
+  if (!isRecord(rawWidget)) {
+    return null;
+  }
+
+  const normalizedType = normalizeDashboardWidgetType(
+    rawWidget.type,
+    isRecord(rawWidget.config) ? rawWidget.config.variant : undefined,
+    rawWidget.variant
+  );
+  if (!normalizedType) {
+    return null;
+  }
+
+  const sourceRef = isRecord(rawWidget.sourceRef)
+    ? {
+        kind: rawWidget.sourceRef.kind === "html_shortcut" ? "html_shortcut" as const : "plugin_runtime" as const,
+        workspaceId: typeof rawWidget.sourceRef.workspaceId === "string" && rawWidget.sourceRef.workspaceId.trim()
+          ? rawWidget.sourceRef.workspaceId.trim()
+          : undefined,
+        sourceId: typeof rawWidget.sourceRef.sourceId === "string" ? rawWidget.sourceRef.sourceId.trim() : "",
+        entryId: typeof rawWidget.sourceRef.entryId === "string" && rawWidget.sourceRef.entryId.trim()
+          ? rawWidget.sourceRef.entryId.trim()
+          : undefined
+      }
+    : undefined;
+
+  if (normalizedType.type === "html" && !sourceRef?.sourceId) {
     return null;
   }
 
   const id = typeof rawWidget.id === "string" && rawWidget.id.trim()
     ? rawWidget.id.trim()
     : createDashboardEntityId("dashboard-widget");
-  const title = typeof rawWidget.title === "string" && rawWidget.title.trim()
-    ? rawWidget.title.trim()
-    : (rawWidget.type === "todo" ? t("shell.affairsTodoAllFilter") : t("shell.affairsAutomationStageTitle"));
-
-  const sourceRef = isRecord(rawWidget.sourceRef)
-    ? {
-        kind: rawWidget.sourceRef.kind === "html_shortcut" ? "html_shortcut" as const : "plugin_runtime" as const,
-        sourceId: typeof rawWidget.sourceRef.sourceId === "string" ? rawWidget.sourceRef.sourceId : "",
-        entryId: typeof rawWidget.sourceRef.entryId === "string" ? rawWidget.sourceRef.entryId : undefined
-      }
-    : undefined;
 
   return {
     id,
-    type: rawWidget.type,
-    title,
+    type: normalizedType.type,
+    variant: normalizedType.variant,
+    title: typeof rawWidget.title === "string" && rawWidget.title.trim()
+      ? rawWidget.title.trim()
+      : resolveDefaultWidgetTitle(normalizedType.type, sourceRef?.sourceId, normalizedType.variant ?? "embed"),
     sourceRef,
-    config: isRecord(rawWidget.config) ? rawWidget.config : {},
+    config: stripDashboardWidgetLegacyConfig(isRecord(rawWidget.config) ? rawWidget.config : {}),
     createdAt: typeof rawWidget.createdAt === "string" && rawWidget.createdAt.trim() ? rawWidget.createdAt : timestampFallback,
     updatedAt: typeof rawWidget.updatedAt === "string" && rawWidget.updatedAt.trim() ? rawWidget.updatedAt : timestampFallback
   };
@@ -192,6 +302,40 @@ function normalizeDashboardWidgetLayout(
   };
 }
 
+function normalizeShortcutAppState(rawShortcut: unknown, timestampFallback: string): ShortcutAppState | null {
+  if (!isRecord(rawShortcut)) {
+    return null;
+  }
+
+  const workspaceId = typeof rawShortcut.workspaceId === "string" ? rawShortcut.workspaceId.trim() : "";
+  const entryPath = typeof rawShortcut.entryPath === "string" ? rawShortcut.entryPath.trim() : "";
+  if (!workspaceId || !entryPath) {
+    return null;
+  }
+
+  const sourceId = typeof rawShortcut.sourceId === "string" && rawShortcut.sourceId.trim()
+    ? rawShortcut.sourceId.trim()
+    : entryPath;
+
+  return {
+    id: typeof rawShortcut.id === "string" && rawShortcut.id.trim()
+      ? rawShortcut.id.trim()
+      : createDashboardEntityId("shortcut-app"),
+    title: typeof rawShortcut.title === "string" && rawShortcut.title.trim()
+      ? rawShortcut.title.trim()
+      : resolvePathLeafName(entryPath),
+    workspaceId,
+    sourceId,
+    entryPath,
+    createdAt: typeof rawShortcut.createdAt === "string" && rawShortcut.createdAt.trim()
+      ? rawShortcut.createdAt
+      : timestampFallback,
+    updatedAt: typeof rawShortcut.updatedAt === "string" && rawShortcut.updatedAt.trim()
+      ? rawShortcut.updatedAt
+      : timestampFallback
+  };
+}
+
 function normalizeDashboardTabState(rawTab: unknown, timestampFallback: string): DashboardTabState | null {
   if (!isRecord(rawTab)) {
     return null;
@@ -199,13 +343,7 @@ function normalizeDashboardTabState(rawTab: unknown, timestampFallback: string):
 
   const normalizedWidgets = (Array.isArray(rawTab.widgets) ? rawTab.widgets : [])
     .map((widget) => normalizeDashboardWidgetState(widget, timestampFallback))
-    .filter((widget): widget is DashboardWidgetState => widget !== null)
-    .filter((widget) => {
-      if (widget.type === "html_app" || widget.type === "html_stat" || widget.type === "html_embed") {
-        return Boolean(widget.sourceRef?.sourceId?.trim());
-      }
-      return true;
-    });
+    .filter((widget): widget is DashboardWidgetState => widget !== null);
 
   const layoutByWidgetId = new Map(
     (Array.isArray(rawTab.layout) ? rawTab.layout : [])
@@ -237,9 +375,15 @@ function normalizeAffairsDashboardState(
   const tabs = (Array.isArray(snapshot.tabs) ? snapshot.tabs : [])
     .map((tab) => normalizeDashboardTabState(tab, timestampFallback))
     .filter((tab): tab is DashboardTabState => tab !== null);
+  const shortcutApps = (Array.isArray(snapshot.shortcutApps) ? snapshot.shortcutApps : [])
+    .map((item) => normalizeShortcutAppState(item, timestampFallback))
+    .filter((item): item is ShortcutAppState => item !== null);
 
   if (tabs.length === 0) {
-    return createDefaultAffairsDashboardState(workspaceId, timestampFallback);
+    return {
+      ...createDefaultAffairsDashboardState(workspaceId, timestampFallback),
+      shortcutApps
+    };
   }
 
   const activeTabIdCandidate = typeof snapshot.activeTabId === "string" ? snapshot.activeTabId.trim() : "";
@@ -249,15 +393,74 @@ function normalizeAffairsDashboardState(
 
   return {
     workspaceId,
-    version: Number.isInteger(snapshot.version) && Number(snapshot.version) > 0
-      ? Number(snapshot.version)
-      : AFFAIRS_DASHBOARD_STATE_VERSION,
+    version: AFFAIRS_DASHBOARD_STATE_VERSION,
+    layoutLocked: typeof snapshot.layoutLocked === "boolean" ? snapshot.layoutLocked : true,
     activeTabId,
     tabs,
+    shortcutApps,
     updatedAt: typeof snapshot.updatedAt === "string" && snapshot.updatedAt.trim()
       ? snapshot.updatedAt
       : timestampFallback
   };
+}
+
+function normalizeDashboardHtmlWidgetVariant(value: unknown): DashboardHtmlWidgetVariant | null {
+  return value === "app" || value === "stat" || value === "embed"
+    ? value
+    : null;
+}
+
+function resolveLegacyDashboardHtmlWidgetVariant(value: unknown): DashboardHtmlWidgetVariant | null {
+  if (value === "html_app") {
+    return "app";
+  }
+  if (value === "html_stat") {
+    return "stat";
+  }
+  if (value === "html_embed") {
+    return "embed";
+  }
+  return null;
+}
+
+function normalizeDashboardWidgetType(
+  value: unknown,
+  configVariant: unknown,
+  rawVariant: unknown
+): { type: DashboardWidgetType; variant?: DashboardHtmlWidgetVariant } | null {
+  if (value === "todo" || value === "automation") {
+    return {
+      type: value
+    };
+  }
+
+  if (value === "html") {
+    return {
+      type: "html",
+      variant: normalizeDashboardHtmlWidgetVariant(rawVariant)
+        ?? normalizeDashboardHtmlWidgetVariant(configVariant)
+        ?? "embed"
+    };
+  }
+
+  const legacyVariant = resolveLegacyDashboardHtmlWidgetVariant(value);
+  if (legacyVariant) {
+    return {
+      type: "html",
+      variant: legacyVariant
+    };
+  }
+
+  return null;
+}
+
+function stripDashboardWidgetLegacyConfig(config: Record<string, unknown>): Record<string, unknown> {
+  if (!("variant" in config)) {
+    return config;
+  }
+
+  const { variant: _variant, ...restConfig } = config;
+  return restConfig;
 }
 
 export function readAffairsDashboardState(workspaceId: string | null | undefined): AffairsWorkbenchDashboardState | null {

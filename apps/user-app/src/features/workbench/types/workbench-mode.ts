@@ -7,14 +7,15 @@ export type AffairsAuxiliaryTab = "detail" | "assistant";
 export type DashboardWidgetType =
   | "todo"
   | "automation"
-  | "html_app"
-  | "html_stat"
-  | "html_embed";
+  | "html";
+
+export type DashboardHtmlWidgetVariant = "app" | "stat" | "embed";
 
 export type DashboardWidgetSourceKind = "plugin_runtime" | "html_shortcut";
 
 export interface DashboardWidgetSourceRef {
   kind: DashboardWidgetSourceKind;
+  workspaceId?: string;
   sourceId: string;
   entryId?: string;
 }
@@ -22,6 +23,7 @@ export interface DashboardWidgetSourceRef {
 export interface DashboardWidgetState {
   id: string;
   type: DashboardWidgetType;
+  variant?: DashboardHtmlWidgetVariant;
   title: string;
   sourceRef?: DashboardWidgetSourceRef;
   config: Record<string, unknown>;
@@ -48,11 +50,23 @@ export interface DashboardTabState {
   updatedAt: string;
 }
 
+export interface ShortcutAppState {
+  id: string;
+  title: string;
+  workspaceId: string;
+  sourceId: string;
+  entryPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AffairsWorkbenchDashboardState {
   workspaceId: string;
   version: number;
+  layoutLocked: boolean;
   activeTabId: string;
   tabs: DashboardTabState[];
+  shortcutApps: ShortcutAppState[];
   updatedAt: string;
 }
 

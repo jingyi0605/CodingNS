@@ -98,7 +98,7 @@ export class ButlerRuntimeStore {
     expiresAt: number;
   } | null = null;
 
-  constructor(private readonly workspaceId: string) {
+  constructor(private readonly workspaceId: string | null) {
     this.state = {
       loading: true,
       sending: false,
@@ -366,7 +366,7 @@ export class ButlerRuntimeStore {
   ): Promise<void> {
     const normalizedContent = content.trim();
 
-    if (!normalizedContent || !this.state.initialized) {
+    if (!normalizedContent || !this.state.initialized || !this.workspaceId?.trim()) {
       return;
     }
 
@@ -409,6 +409,7 @@ export class ButlerRuntimeStore {
 
       if (!currentControlSession) {
         const started = await startButlerControlSession({
+          workspaceId: this.workspaceId,
           content: normalizedContent,
           model: options?.model ?? null,
           reasoningLevel: options?.reasoningLevel ?? null,
@@ -687,7 +688,7 @@ export class ButlerRuntimeStore {
     try {
       const response = controlSessionId
         ? await getButlerControlSession(controlSessionId)
-        : await getCurrentButlerControlSession();
+        : await getCurrentButlerControlSession(this.workspaceId);
       const controlSession = response.controlSession;
 
       if (!controlSession) {
@@ -794,6 +795,12 @@ export class ButlerRuntimeStore {
   }
 
   private async refreshCapabilities(providerId: ButlerProviderId): Promise<void> {
+    if (!this.workspaceId?.trim()) {
+      this.patch({
+        capabilities: createButlerFallbackCapabilities(providerId)
+      });
+      return;
+    }
     try {
       const capabilities = await getProviderCapabilities(providerId, this.workspaceId);
       this.patch({

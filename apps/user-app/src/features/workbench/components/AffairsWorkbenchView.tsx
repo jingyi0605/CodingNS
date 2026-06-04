@@ -1,4 +1,5 @@
 import {
+  Component,
   useCallback,
   createContext,
   Fragment,
@@ -32,14 +33,18 @@ import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
+  createAffairsDashboardWidgetState,
+  createAffairsShortcutAppState,
   createEmptyAffairsDashboardTabState,
   ensureAffairsDashboardState,
+  isWorkspaceHtmlEntryPath,
   writeAffairsDashboardState
 } from "../utils/affairs-dashboard-state";
 import { buildWorkspaceAffairsPath } from "../utils/workbench-navigation";
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
+  ButlerControlSessionDto,
   ButlerManagedSessionDto,
   ButlerProfilePayload,
   ButlerFollowUpTaskDto,
@@ -82,6 +87,7 @@ import type {
   ProviderCapabilitiesDto,
   ProviderId,
   SessionSummaryDto,
+  WorkspaceDto,
 } from "../../conversation/api/conversation-api";
 import {
   deleteAffairsLightweightSession,
@@ -155,6 +161,7 @@ import {
   isDraftProviderSupported
 } from "../../conversation/capability/provider-ui";
 import { getPathLeafName } from "../../conversation/components/file-entry-visibility";
+import { getFilePreview, getFilePreviewLink } from "../../conversation/api/file-context-api";
 import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import {
   createPendingMessage,
@@ -167,6 +174,8 @@ import {
   type DesktopContextMenuItem
 } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
+import { listWorkspaceBridgeDir } from "../../../platform/preview/codingns-workspace-bridge";
+import { createHtmlPreviewWorkspaceBridge } from "../../../platform/preview/html-preview-workspace-bridge";
 import { resolveContextMenuPosition } from "../utils/context-menu-position";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
@@ -182,9 +191,16 @@ import {
 import type {
   AffairsWorkbenchDashboardState,
   AffairsAuxiliaryTab,
+  DashboardHtmlWidgetVariant,
   AffairsObjectContext,
   AffairsPrimarySection,
-  AffairsViewState
+  AffairsViewState,
+  DashboardTabState,
+  DashboardWidgetLayout,
+  DashboardWidgetSourceRef,
+  DashboardWidgetState,
+  DashboardWidgetType,
+  ShortcutAppState
 } from "../types/workbench-mode";
 
 interface AffairsWorkbenchProviderProps {
@@ -580,6 +596,7 @@ type AffairsSelectedObject =
 interface AffairsWorkbenchContextValue {
   workspaceId: string;
   workspaceName: string | null;
+  navigationGroups: WorkspaceSessionGroup[];
   agentWorkspaceId: string | null;
   agentProjectId: string | null;
   agentWorkspacePath: string | null;
@@ -594,6 +611,7 @@ interface AffairsWorkbenchContextValue {
   libraryDocumentTotal: number;
   libraryDocumentHasMore: boolean;
   binding: AffairsLibraryBindingDto | null;
+  globalLibraryBinding: AffairsLibraryBindingDto | null;
   libraryConfig: AffairsLibraryConfigDto | null;
   indexStatus: AffairsLibraryIndexStatusDto | null;
   currentDirectoryStatus: AffairsLibraryDocumentListDto["directoryStatus"];
@@ -677,6 +695,12 @@ interface AffairsWorkbenchContextValue {
   openConversationCreateModal: (input?: { mode?: AffairsConversationCreateModalMode }) => void;
   closeConversationCreateModal: () => void;
   prepareAssistantConversation: (provider: "codex" | "claude-code") => Promise<void>;
+  rememberConversationDraft: (draft: AffairsConversationDraftSelection) => void;
+  rememberConversationSession: (input: {
+    kind: AffairsConversationKind;
+    session: SessionSummaryDto;
+    bootstrapMessages: HistoryMessageDto[];
+  }) => void;
   butlerStore: ButlerRuntimeStore;
   archiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
   unarchiveConversationSession: (input: { kind: AffairsConversationKind; session: SessionSummaryDto }) => Promise<void>;
@@ -707,6 +731,556 @@ interface AffairsWorkbenchContextValue {
     session: SessionSummaryDto;
     bootstrapMessages: HistoryMessageDto[];
   }) => void;
+}
+
+type DashboardWidgetSizePreset = "small" | "medium" | "large";
+type DashboardWidgetPaletteType = "todo" | "automation" | "html";
+
+type WorkspaceHtmlSourceOption = {
+  path: string;
+  title: string;
+  updatedAt: number | null;
+  size: number | null;
+};
+
+interface AffairsDashboardContextValue {
+  dashboardState: AffairsWorkbenchDashboardState;
+  activeDashboardTab: DashboardTabState | null;
+  layoutLocked: boolean;
+  selectDashboardTab: (tabId: string) => void;
+  addDashboardTab: () => void;
+  renameDashboardTab: (tabId: string, title: string) => void;
+  removeDashboardTab: (tabId: string) => void;
+  toggleDashboardLayoutLocked: () => void;
+  addDashboardWidget: (input: {
+    type: DashboardWidgetType;
+    variant?: DashboardHtmlWidgetVariant;
+    title?: string;
+    sourceRef?: DashboardWidgetSourceRef;
+    config?: Record<string, unknown>;
+  }) => void;
+  updateDashboardWidgetConfig: (widgetId: string, patch: Record<string, unknown>) => void;
+  setDashboardWidgetLayout: (widgetId: string, nextLayout: Partial<DashboardWidgetLayout>) => void;
+  removeDashboardWidget: (widgetId: string) => void;
+  resetActiveDashboardLayout: () => void;
+  addShortcutApp: (input: { title?: string; workspaceId: string; entryPath: string }) => void;
+  updateShortcutApp: (shortcutId: string, input: { title?: string; workspaceId: string; entryPath: string }) => void;
+  removeShortcutApp: (shortcutId: string) => void;
+}
+
+const DASHBOARD_GRID_COLUMNS = 12;
+const DASHBOARD_GRID_ROW_HEIGHT_PX = 44;
+const DASHBOARD_GRID_GAP_PX = 12;
+const DASHBOARD_GRID_SNAP_THRESHOLD_COLS = 0.6;
+const DASHBOARD_GRID_SNAP_THRESHOLD_ROWS = 0.6;
+
+const DASHBOARD_WIDGET_SIZE_PRESETS: Record<DashboardWidgetSizePreset, Omit<DashboardWidgetLayout, "widgetId" | "x" | "y">> = {
+  small: {
+    w: 4,
+    h: 4,
+    minW: 4,
+    minH: 3
+  },
+  medium: {
+    w: 6,
+    h: 5,
+    minW: 4,
+    minH: 3
+  },
+  large: {
+    w: 12,
+    h: 7,
+    minW: 6,
+    minH: 4
+  }
+};
+
+const DEFAULT_HTML_PREVIEW_SANDBOX = "allow-forms allow-modals allow-scripts";
+const CROSS_ORIGIN_HTML_PREVIEW_SANDBOX = `${DEFAULT_HTML_PREVIEW_SANDBOX} allow-same-origin`;
+
+const AffairsDashboardContext = createContext<AffairsDashboardContextValue | null>(null);
+
+function resolveDashboardHtmlWidgetVariant(
+  widget: Pick<DashboardWidgetState, "type" | "variant">
+): DashboardHtmlWidgetVariant | null {
+  if (widget.type !== "html") {
+    return null;
+  }
+
+  return widget.variant ?? "embed";
+}
+
+function resolveDefaultDashboardWidgetSize(widget: Pick<DashboardWidgetState, "type" | "variant">): DashboardWidgetSizePreset {
+  const htmlVariant = resolveDashboardHtmlWidgetVariant(widget);
+  if (htmlVariant === "stat") {
+    return "small";
+  }
+
+  if (htmlVariant === "app" || htmlVariant === "embed") {
+    return "large";
+  }
+
+  return "medium";
+}
+
+function buildDefaultDashboardLayoutDraft(
+  widgets: DashboardWidgetState[],
+  previousLayoutByWidgetId: Map<string, DashboardWidgetLayout>,
+  forceDefaultSize: boolean
+): DashboardWidgetLayout[] {
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowHeight = 0;
+
+  return widgets.map((widget) => {
+    const fallbackPreset = DASHBOARD_WIDGET_SIZE_PRESETS[resolveDefaultDashboardWidgetSize(widget)];
+    const previousLayout = previousLayoutByWidgetId.get(widget.id);
+    const width = Math.max(1, Math.min(DASHBOARD_GRID_COLUMNS, forceDefaultSize ? fallbackPreset.w : (previousLayout?.w ?? fallbackPreset.w)));
+    const height = Math.max(3, forceDefaultSize ? fallbackPreset.h : (previousLayout?.h ?? fallbackPreset.h));
+    const minW = Math.max(1, Math.min(width, forceDefaultSize ? (fallbackPreset.minW ?? width) : (previousLayout?.minW ?? fallbackPreset.minW ?? width)));
+    const minH = Math.max(1, Math.min(height, forceDefaultSize ? (fallbackPreset.minH ?? height) : (previousLayout?.minH ?? fallbackPreset.minH ?? height)));
+
+    if (cursorX > 0 && cursorX + width > DASHBOARD_GRID_COLUMNS) {
+      cursorY += rowHeight;
+      cursorX = 0;
+      rowHeight = 0;
+    }
+
+    const layout: DashboardWidgetLayout = {
+      widgetId: widget.id,
+      x: cursorX,
+      y: cursorY,
+      w: width,
+      h: height,
+      minW,
+      minH
+    };
+
+    cursorX += width;
+    rowHeight = Math.max(rowHeight, height);
+
+    if (cursorX >= DASHBOARD_GRID_COLUMNS) {
+      cursorY += rowHeight;
+      cursorX = 0;
+      rowHeight = 0;
+    }
+
+    return layout;
+  });
+}
+
+function clampDashboardWidgetLayout(layout: DashboardWidgetLayout): DashboardWidgetLayout {
+  const width = Math.max(1, Math.min(DASHBOARD_GRID_COLUMNS, layout.w));
+  const height = Math.max(1, layout.h);
+  const minW = Math.max(1, Math.min(width, layout.minW ?? width));
+  const minH = Math.max(1, Math.min(height, layout.minH ?? height));
+
+  return {
+    ...layout,
+    x: Math.max(0, Math.min(DASHBOARD_GRID_COLUMNS - width, layout.x)),
+    y: Math.max(0, layout.y),
+    w: width,
+    h: height,
+    minW,
+    minH
+  };
+}
+
+function doDashboardWidgetLayoutsOverlap(left: DashboardWidgetLayout, right: DashboardWidgetLayout): boolean {
+  return !(
+    left.x + left.w <= right.x
+    || right.x + right.w <= left.x
+    || left.y + left.h <= right.y
+    || right.y + right.h <= left.y
+  );
+}
+
+function resolveDashboardSnapDelta(value: number, guides: number[], threshold: number): number {
+  let bestDelta = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const guide of guides) {
+    const delta = guide - value;
+    const distance = Math.abs(delta);
+    if (distance > threshold || distance >= bestDistance) {
+      continue;
+    }
+    bestDelta = delta;
+    bestDistance = distance;
+  }
+
+  return Number.isFinite(bestDistance) ? bestDelta : 0;
+}
+
+function buildDashboardSnapGuides(layouts: DashboardWidgetLayout[], widgetId: string): {
+  x: number[];
+  y: number[];
+} {
+  const xGuides = [0, DASHBOARD_GRID_COLUMNS];
+  const yGuides = [0];
+
+  layouts.forEach((layout) => {
+    if (layout.widgetId === widgetId) {
+      return;
+    }
+    xGuides.push(layout.x, layout.x + layout.w);
+    yGuides.push(layout.y, layout.y + layout.h);
+  });
+
+  return {
+    x: xGuides,
+    y: yGuides
+  };
+}
+
+function applyDashboardMoveSnap(
+  layout: Pick<DashboardWidgetLayout, "x" | "y" | "w" | "h">,
+  guides: { x: number[]; y: number[] }
+): { x: number; y: number } {
+  const leftDelta = resolveDashboardSnapDelta(layout.x, guides.x, DASHBOARD_GRID_SNAP_THRESHOLD_COLS);
+  const rightDelta = resolveDashboardSnapDelta(layout.x + layout.w, guides.x, DASHBOARD_GRID_SNAP_THRESHOLD_COLS);
+  const topDelta = resolveDashboardSnapDelta(layout.y, guides.y, DASHBOARD_GRID_SNAP_THRESHOLD_ROWS);
+  const bottomDelta = resolveDashboardSnapDelta(layout.y + layout.h, guides.y, DASHBOARD_GRID_SNAP_THRESHOLD_ROWS);
+
+  return {
+    x: layout.x + (Math.abs(leftDelta) <= Math.abs(rightDelta) ? leftDelta : rightDelta),
+    y: layout.y + (Math.abs(topDelta) <= Math.abs(bottomDelta) ? topDelta : bottomDelta)
+  };
+}
+
+function applyDashboardResizeSnap(
+  layout: Pick<DashboardWidgetLayout, "x" | "y" | "w" | "h">,
+  guides: { x: number[]; y: number[] },
+  resizeMode: "x" | "y" | "xy"
+): { w: number; h: number } {
+  const rightDelta = resizeMode === "x" || resizeMode === "xy"
+    ? resolveDashboardSnapDelta(layout.x + layout.w, guides.x, DASHBOARD_GRID_SNAP_THRESHOLD_COLS)
+    : 0;
+  const bottomDelta = resizeMode === "y" || resizeMode === "xy"
+    ? resolveDashboardSnapDelta(layout.y + layout.h, guides.y, DASHBOARD_GRID_SNAP_THRESHOLD_ROWS)
+    : 0;
+
+  return {
+    w: layout.w + rightDelta,
+    h: layout.h + bottomDelta
+  };
+}
+
+function resolveDashboardWidgetLayouts(
+  widgets: DashboardWidgetState[],
+  draftLayouts: DashboardWidgetLayout[],
+  priorityWidgetId?: string | null
+): DashboardWidgetLayout[] {
+  const widgetIdSet = new Set(widgets.map((widget) => widget.id));
+  const layoutsByWidgetId = new Map(
+    draftLayouts
+      .filter((layout) => widgetIdSet.has(layout.widgetId))
+      .map((layout) => [layout.widgetId, clampDashboardWidgetLayout(layout)] as const)
+  );
+  const preferredOrder = [
+    ...(priorityWidgetId ? [priorityWidgetId] : []),
+    ...widgets.map((widget) => widget.id).filter((widgetId) => widgetId !== priorityWidgetId)
+  ];
+  const placedLayouts: DashboardWidgetLayout[] = [];
+
+  for (const widgetId of preferredOrder) {
+    const baseLayout = layoutsByWidgetId.get(widgetId);
+    if (!baseLayout) {
+      continue;
+    }
+
+    const nextLayout = {
+      ...baseLayout
+    };
+
+    while (placedLayouts.some((layout) => doDashboardWidgetLayoutsOverlap(layout, nextLayout))) {
+      const overlappedBottom = placedLayouts
+        .filter((layout) => doDashboardWidgetLayoutsOverlap(layout, nextLayout))
+        .reduce((maxValue, layout) => Math.max(maxValue, layout.y + layout.h), nextLayout.y + 1);
+      nextLayout.y = overlappedBottom;
+    }
+
+    placedLayouts.push(nextLayout);
+  }
+
+  const resolvedByWidgetId = new Map(placedLayouts.map((layout) => [layout.widgetId, layout] as const));
+  return widgets.map((widget) => resolvedByWidgetId.get(widget.id)).filter((layout): layout is DashboardWidgetLayout => Boolean(layout));
+}
+
+function buildDashboardWidgetLayout(
+  widgets: DashboardWidgetState[],
+  previousLayout: DashboardWidgetLayout[] = [],
+  forceDefaultSize = false,
+  priorityWidgetId?: string | null
+): DashboardWidgetLayout[] {
+  const previousLayoutByWidgetId = new Map(previousLayout.map((item) => [item.widgetId, item] as const));
+  const defaultDrafts = buildDefaultDashboardLayoutDraft(widgets, previousLayoutByWidgetId, forceDefaultSize);
+  const nextDrafts = widgets.map((widget, index) => {
+    const fallbackDraft = defaultDrafts[index];
+    if (forceDefaultSize) {
+      return fallbackDraft;
+    }
+
+    const previous = previousLayoutByWidgetId.get(widget.id);
+    if (!previous) {
+      return fallbackDraft;
+    }
+
+    return clampDashboardWidgetLayout({
+      ...fallbackDraft,
+      ...previous,
+      widgetId: widget.id,
+      minW: previous.minW ?? fallbackDraft.minW,
+      minH: previous.minH ?? fallbackDraft.minH
+    });
+  });
+
+  return resolveDashboardWidgetLayouts(widgets, nextDrafts, priorityWidgetId);
+}
+
+function updateDashboardTabById(
+  state: AffairsWorkbenchDashboardState,
+  tabId: string,
+  updater: (tab: DashboardTabState, timestamp: string) => DashboardTabState
+): AffairsWorkbenchDashboardState {
+  const timestamp = new Date().toISOString();
+  let matched = false;
+  const tabs = state.tabs.map((tab) => {
+    if (tab.id !== tabId) {
+      return tab;
+    }
+    matched = true;
+    return updater(tab, timestamp);
+  });
+
+  if (!matched) {
+    return state;
+  }
+
+  return {
+    ...state,
+    tabs,
+    updatedAt: timestamp
+  };
+}
+
+function buildDashboardPreviewUrl(previewUrl: string): string {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}_preview=0`;
+  }
+
+  try {
+    const url = new URL(previewUrl, window.location.origin);
+    url.searchParams.set("_preview", "0");
+    return url.toString();
+  } catch {
+    return `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}_preview=0`;
+  }
+}
+
+function resolveDashboardHtmlPreviewSandbox(src: string): string {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return DEFAULT_HTML_PREVIEW_SANDBOX;
+  }
+
+  try {
+    const previewUrl = new URL(src, window.location.origin);
+    if (previewUrl.origin !== window.location.origin) {
+      return CROSS_ORIGIN_HTML_PREVIEW_SANDBOX;
+    }
+  } catch {
+    return DEFAULT_HTML_PREVIEW_SANDBOX;
+  }
+
+  return DEFAULT_HTML_PREVIEW_SANDBOX;
+}
+
+function resolveErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof ApiError) {
+    return error.message?.trim() || fallbackMessage;
+  }
+
+  if (error instanceof Error) {
+    return error.message?.trim() || fallbackMessage;
+  }
+
+  return fallbackMessage;
+}
+
+function resolveWorkspaceHtmlSourceTitle(path: string, title?: string | null): string {
+  const nextTitle = title?.trim() ?? "";
+  if (nextTitle) {
+    return nextTitle;
+  }
+  return getPathLeafName(path.trim()) || path.trim();
+}
+
+function resolveShortcutAppIconText(title: string): string {
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    return "应用";
+  }
+
+  const cjkChars = Array.from(normalizedTitle).filter((char) => /[㐀-鿿]/.test(char));
+  if (cjkChars.length > 0) {
+    return cjkChars.slice(0, 2).join("");
+  }
+
+  const wordChars = normalizedTitle
+    .split(/[\s\-_/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .filter(Boolean);
+  if (wordChars.length > 0) {
+    return wordChars.slice(0, 2).join("");
+  }
+
+  return Array.from(normalizedTitle).slice(0, 2).join("").toUpperCase();
+}
+
+function resolveShortcutAppIconStyle(title: string): CSSProperties {
+  const normalizedTitle = title.trim() || "快捷应用";
+  let hash = 0;
+  for (const char of normalizedTitle) {
+    hash = ((hash << 5) - hash) + char.charCodeAt(0);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  const accentHue = (hue + 28) % 360;
+  return {
+    background: `linear-gradient(135deg, hsl(${hue} 82% 91%), hsl(${accentHue} 78% 85%))`,
+    color: `hsl(${hue} 46% 20%)`
+  };
+}
+
+async function validateWorkspaceHtmlSource(workspaceId: string, entryPath: string): Promise<{ path: string; title: string }> {
+  const normalizedPath = entryPath.trim();
+
+  if (!isWorkspaceHtmlEntryPath(normalizedPath)) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceInvalid"));
+  }
+
+  const preview = await getFilePreview(workspaceId, normalizedPath);
+  if (!preview.supported || preview.kind !== "html" || !preview.previewUrl) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceUnsupported"));
+  }
+
+  return {
+    path: normalizedPath,
+    title: resolveWorkspaceHtmlSourceTitle(normalizedPath)
+  };
+}
+
+async function validateWorkspaceShortcutSource(workspaceId: string, entryPath: string): Promise<{ path: string; title: string }> {
+  const normalizedPath = entryPath.trim();
+
+  if (!normalizedPath) {
+    throw new Error(t("shell.affairsShortcutRailSourceInvalid"));
+  }
+
+  const preview = await getFilePreview(workspaceId, normalizedPath);
+  if (!preview.supported) {
+    throw new Error(t("shell.affairsShortcutRailSourceUnsupported"));
+  }
+
+  return {
+    path: normalizedPath,
+    title: resolveWorkspaceHtmlSourceTitle(normalizedPath)
+  };
+}
+
+function buildWorkspaceHtmlSourceWorkspaceOptions(
+  navigationGroups: WorkspaceSessionGroup[],
+  currentWorkspaceId: string,
+  currentLibraryWorkspace?: {
+    workspaceId: string;
+    label: string;
+  } | null
+): Array<{ workspaceId: string; label: string }> {
+  const seenWorkspaceIds = new Set<string>();
+  const options: Array<{ workspaceId: string; label: string }> = [];
+  const appendOption = (workspaceId: string, label: string) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId || seenWorkspaceIds.has(normalizedWorkspaceId)) {
+      return;
+    }
+    seenWorkspaceIds.add(normalizedWorkspaceId);
+    options.push({
+      workspaceId: normalizedWorkspaceId,
+      label
+    });
+  };
+
+  if (currentLibraryWorkspace?.workspaceId?.trim()) {
+    appendOption(currentLibraryWorkspace.workspaceId, currentLibraryWorkspace.label.trim() || currentLibraryWorkspace.workspaceId.trim());
+  }
+
+  navigationGroups.forEach((group) => {
+    const workspaceId = group.workspace.id.trim();
+    if (!workspaceId || seenWorkspaceIds.has(workspaceId)) {
+      return;
+    }
+    appendOption(workspaceId, group.workspace.name?.trim() || group.workspace.path || workspaceId);
+  });
+
+  if (!seenWorkspaceIds.has(currentWorkspaceId)) {
+    options.unshift({
+      workspaceId: currentWorkspaceId,
+      label: navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name?.trim() || currentWorkspaceId
+    });
+  }
+
+  return options;
+}
+
+function resolveAffairsLibrarySourceWorkspaceOption(
+  binding: AffairsLibraryBindingDto | null,
+  navigationGroups: WorkspaceSessionGroup[]
+): { workspaceId: string; label: string } | null {
+  const workspaceId = resolveAffairsAgentWorkspaceId(binding?.rootDir?.trim() ?? null, navigationGroups);
+  if (!workspaceId) {
+    return null;
+  }
+  const matchedGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
+  const fallbackWorkspacePath = binding?.rootDir?.trim() || "";
+  const fallbackWorkspaceLabel = fallbackWorkspacePath.split("/").filter(Boolean).at(-1) ?? "";
+  const workspaceLabel =
+    matchedGroup?.workspace.name?.trim() ||
+    matchedGroup?.workspace.path ||
+    fallbackWorkspaceLabel ||
+    workspaceId;
+  return {
+    workspaceId,
+    label: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", {
+      workspace: workspaceLabel
+    })
+  };
+}
+
+function resolveWorkspaceHtmlSourceDefaultWorkspaceId(input: {
+  currentWorkspaceId: string;
+  currentLibraryWorkspace: { workspaceId: string; label: string } | null;
+  options: Array<{ workspaceId: string; label: string }>;
+}): string {
+  const currentLibraryWorkspaceId = input.currentLibraryWorkspace?.workspaceId?.trim() ?? "";
+  if (currentLibraryWorkspaceId && input.options.some((option) => option.workspaceId === currentLibraryWorkspaceId)) {
+    return currentLibraryWorkspaceId;
+  }
+
+  const currentWorkspaceId = input.currentWorkspaceId.trim();
+  if (currentWorkspaceId && input.options.some((option) => option.workspaceId === currentWorkspaceId)) {
+    return currentWorkspaceId;
+  }
+
+  return input.options[0]?.workspaceId ?? currentWorkspaceId;
+}
+
+function resolveDashboardSourceWorkspaceId(
+  sourceRef: DashboardWidgetSourceRef | undefined,
+  fallbackWorkspaceId: string
+): string {
+  return sourceRef?.workspaceId?.trim() || fallbackWorkspaceId;
 }
 
 const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
@@ -818,6 +1392,7 @@ export function AffairsWorkbenchProvider({
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [todoError, setTodoError] = useState<string | null>(null);
   const [automationError, setAutomationError] = useState<string | null>(null);
+  const [globalLibraryBinding, setGlobalLibraryBinding] = useState<AffairsLibraryBindingDto | null>(null);
   const [librarySnapshot, setLibrarySnapshot] = useState<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
   const [libraryConfig, setLibraryConfig] = useState<AffairsLibraryConfigDto | null>(initialLibraryConfig);
   const [libraryDocumentPage, setLibraryDocumentPage] = useState<AffairsLibraryDocumentListDto | null>(initialLibraryDocumentPage);
@@ -838,6 +1413,11 @@ export function AffairsWorkbenchProvider({
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
+  const [dashboardState, setDashboardState] = useState<AffairsWorkbenchDashboardState>(() => ensureAffairsDashboardState(workspaceId));
+  const activeDashboardTab = useMemo(
+    () => dashboardState.tabs.find((tab) => tab.id === dashboardState.activeTabId) ?? dashboardState.tabs[0] ?? null,
+    [dashboardState]
+  );
   const binding = librarySnapshot?.binding ?? null;
   const agentWorkspacePath = useMemo(
     () => resolveAffairsAgentWorkspacePath(binding),
@@ -852,8 +1432,8 @@ export function AffairsWorkbenchProvider({
     [matchedAgentWorkspaceId, workspaceGroup?.affairsAssistantProjectWorkspaceId]
   );
   const butlerStore = useMemo(
-    () => new ButlerRuntimeStore(agentWorkspaceId ?? workspaceId),
-    [agentWorkspaceId, workspaceId]
+    () => new ButlerRuntimeStore(agentWorkspaceId),
+    [agentWorkspaceId]
   );
   const butlerInitLoading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
   const butlerInitialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
@@ -897,7 +1477,9 @@ export function AffairsWorkbenchProvider({
   const directoryHintBootstrappedRef = useRef(false);
 
   const effectiveAuxiliaryTab = resolveAffairsAuxiliaryTabForSection(activeSection, state.auxiliaryTab);
-  const shouldInitializeButler = activeSection === "conversation" || effectiveAuxiliaryTab === "assistant";
+  const shouldInitializeButler =
+    agentWorkspaceId !== null
+    && (activeSection === "conversation" || effectiveAuxiliaryTab === "assistant");
 
   useEffect(() => {
     if (!shouldInitializeButler) {
@@ -911,17 +1493,6 @@ export function AffairsWorkbenchProvider({
   useEffect(() => () => {
     butlerStore.dispose();
   }, [butlerStore]);
-
-  useEffect(() => {
-    const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
-    const normalizedProfileWorkspacePath = butlerProfile?.workspacePath?.trim() ?? "";
-    if (!butlerInitialized || !normalizedAgentWorkspacePath || normalizedAgentWorkspacePath === normalizedProfileWorkspacePath) {
-      return;
-    }
-    void butlerStore.updateProfile({
-      workspacePath: normalizedAgentWorkspacePath
-    }).catch(() => undefined);
-  }, [agentWorkspacePath, butlerInitialized, butlerProfile?.workspacePath, butlerStore]);
 
   useEffect(() => {
     setLastObjectAssistantContext(null);
@@ -1522,6 +2093,30 @@ export function AffairsWorkbenchProvider({
         if (!cachedConfig) {
           setLibraryConfig(null);
         }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void getGlobalAffairsLibraryBinding()
+      .then((bindingResponse) => {
+        if (disposed) {
+          return;
+        }
+        setGlobalLibraryBinding((previous) => (
+          areAffairsLibraryBindingsEqual(previous, bindingResponse) ? previous : bindingResponse
+        ));
+      })
+      .catch(() => {
+        if (disposed) {
+          return;
+        }
+        setGlobalLibraryBinding(null);
       });
 
     return () => {
@@ -2157,7 +2752,7 @@ export function AffairsWorkbenchProvider({
         ].filter(Boolean).join(" · "),
         tone: "conversation"
       }));
-      const currentAgentSession = isAffairsWorkspacePathMatch(butlerProfile?.workspacePath, agentWorkspacePath)
+      const currentAgentSession = isAffairsControlSessionMatchWorkspaceId(butlerControlSession, agentWorkspaceId)
         ? (butlerControlSession?.session ?? null)
         : null;
       const safeAgentConversationSessions = Array.isArray(agentConversationSessions) ? agentConversationSessions : [];
@@ -2223,9 +2818,9 @@ export function AffairsWorkbenchProvider({
   }, [
     agentWorkspacePath,
     activeSection,
+    agentWorkspaceId,
     automationRecords,
     butlerControlSession,
-    butlerProfile?.workspacePath,
     documentRecords.length,
     favoriteEntries,
     folderRecords,
@@ -2236,9 +2831,335 @@ export function AffairsWorkbenchProvider({
     workspaceSessions
   ]);
 
+  const rememberConversationDraft = useCallback((draft: AffairsConversationDraftSelection) => {
+    lastConversationNodeIdRef.current = buildAffairsConversationDraftNodeId(draft);
+    setConversationRuntimeSeed(null);
+    setSelectedConversationSession(null);
+    setSelectedConversationDraft(draft);
+  }, []);
+
+  const rememberConversationSession = useCallback((input: {
+    kind: AffairsConversationKind;
+    session: SessionSummaryDto;
+    bootstrapMessages: HistoryMessageDto[];
+  }) => {
+    const seenAt = new Date().toISOString();
+    const nextSession = markAffairsSessionSeen(input.session, seenAt);
+    if (input.kind === "lightweight") {
+      setLightweightConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+      setAgentConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
+    } else {
+      setLightweightConversationSessions((current) => current.map((item) => (
+        item.sessionId === nextSession.sessionId ? nextSession : item
+      )));
+      setAgentConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
+    }
+    setSelectedConversationDraft(null);
+    setConversationRuntimeSeed({
+      kind: input.kind,
+      session: nextSession,
+      bootstrapMessages: input.bootstrapMessages
+    });
+    setSelectedConversationSession({
+      kind: input.kind,
+      sessionId: nextSession.sessionId
+    });
+    lastConversationNodeIdRef.current = buildAffairsConversationSessionNodeId(input.kind, nextSession.sessionId);
+    void Promise.resolve(
+      input.kind === "lightweight"
+        ? markAffairsLightweightSessionSeen(workspaceId, nextSession.sessionId, seenAt)
+        : markSessionSeen(nextSession.sessionId)
+    ).catch(() => undefined);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setDashboardState(ensureAffairsDashboardState(workspaceId));
+  }, [workspaceId]);
+
+  useEffect(() => {
+    writeAffairsDashboardState(dashboardState);
+  }, [dashboardState]);
+
+  const selectDashboardTab = useCallback((tabId: string) => {
+    setDashboardState((current) => {
+      if (!current.tabs.some((tab) => tab.id === tabId) || current.activeTabId === tabId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        activeTabId: tabId,
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }, []);
+
+  const addDashboardTab = useCallback(() => {
+    setDashboardState((current) => {
+      const timestamp = new Date().toISOString();
+      const nextTab = createEmptyAffairsDashboardTabState(
+        t("shell.affairsWorkbenchNewTabTitle", { count: current.tabs.length + 1 }),
+        timestamp
+      );
+
+      return {
+        ...current,
+        activeTabId: nextTab.id,
+        tabs: [...current.tabs, nextTab],
+        updatedAt: timestamp
+      };
+    });
+  }, []);
+
+  const renameDashboardTab = useCallback((tabId: string, title: string) => {
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) {
+      return;
+    }
+
+    setDashboardState((current) => updateDashboardTabById(current, tabId, (tab, timestamp) => {
+      if (tab.title === normalizedTitle) {
+        return tab;
+      }
+      return {
+        ...tab,
+        title: normalizedTitle,
+        updatedAt: timestamp
+      };
+    }));
+  }, []);
+
+  const removeDashboardTab = useCallback((tabId: string) => {
+    setDashboardState((current) => {
+      if (current.tabs.length <= 1 || !current.tabs.some((tab) => tab.id === tabId)) {
+        return current;
+      }
+
+      const timestamp = new Date().toISOString();
+      const removedIndex = current.tabs.findIndex((tab) => tab.id === tabId);
+      const tabs = current.tabs.filter((tab) => tab.id !== tabId);
+      const nextActiveTabId = current.activeTabId === tabId
+        ? (tabs[Math.max(0, removedIndex - 1)]?.id ?? tabs[0]?.id ?? current.activeTabId)
+        : current.activeTabId;
+
+      return {
+        ...current,
+        tabs,
+        activeTabId: nextActiveTabId,
+        updatedAt: timestamp
+      };
+    });
+  }, []);
+
+  const toggleDashboardLayoutLocked = useCallback(() => {
+    setDashboardState((current) => ({
+      ...current,
+      layoutLocked: !current.layoutLocked,
+      updatedAt: new Date().toISOString()
+    }));
+  }, []);
+
+  const addDashboardWidget = useCallback((input: {
+    type: DashboardWidgetType;
+    variant?: DashboardHtmlWidgetVariant;
+    title?: string;
+    sourceRef?: DashboardWidgetSourceRef;
+    config?: Record<string, unknown>;
+  }) => {
+    setDashboardState((current) => updateDashboardTabById(current, current.activeTabId, (tab, timestamp) => {
+      const nextWidget = createAffairsDashboardWidgetState(
+        {
+          type: input.type,
+          variant: input.variant,
+          title: input.title,
+          sourceRef: input.sourceRef,
+          config: input.config,
+        },
+        timestamp
+      );
+      const widgets = [...tab.widgets, nextWidget];
+      return {
+        ...tab,
+        widgets,
+        layout: buildDashboardWidgetLayout(widgets, tab.layout),
+        updatedAt: timestamp
+      };
+    }));
+  }, []);
+
+  const updateDashboardWidgetConfig = useCallback((widgetId: string, patch: Record<string, unknown>) => {
+    setDashboardState((current) => updateDashboardTabById(current, current.activeTabId, (tab, timestamp) => ({
+      ...tab,
+      widgets: tab.widgets.map((widget) => widget.id === widgetId
+        ? {
+            ...widget,
+            config: {
+              ...widget.config,
+              ...patch
+            },
+            updatedAt: timestamp
+          }
+        : widget),
+      updatedAt: timestamp
+    })));
+  }, []);
+
+  const setDashboardWidgetLayout = useCallback((widgetId: string, nextLayout: Partial<DashboardWidgetLayout>) => {
+    setDashboardState((current) => updateDashboardTabById(current, current.activeTabId, (tab, timestamp) => {
+      const widgets = tab.widgets;
+      const currentLayout = tab.layout.find((item) => item.widgetId === widgetId);
+      if (!currentLayout) {
+        return tab;
+      }
+
+      const layout = buildDashboardWidgetLayout(
+        widgets,
+        tab.layout.map((item) => item.widgetId === widgetId ? { ...item, ...nextLayout, widgetId } : item),
+        false,
+        widgetId
+      );
+      return {
+        ...tab,
+        layout,
+        updatedAt: timestamp
+      };
+    }));
+  }, []);
+
+  const removeDashboardWidget = useCallback((widgetId: string) => {
+    setDashboardState((current) => updateDashboardTabById(current, current.activeTabId, (tab, timestamp) => {
+      const widgets = tab.widgets.filter((widget) => widget.id !== widgetId);
+      return {
+        ...tab,
+        widgets,
+        layout: buildDashboardWidgetLayout(widgets, tab.layout),
+        updatedAt: timestamp
+      };
+    }));
+  }, []);
+
+  const resetActiveDashboardLayout = useCallback(() => {
+    setDashboardState((current) => updateDashboardTabById(current, current.activeTabId, (tab, timestamp) => ({
+      ...tab,
+      layout: buildDashboardWidgetLayout(tab.widgets, tab.layout, true),
+      updatedAt: timestamp
+    })));
+  }, []);
+
+  const addShortcutApp = useCallback((input: { title?: string; workspaceId: string; entryPath: string }) => {
+    setDashboardState((current) => {
+      const sourceWorkspaceId = input.workspaceId.trim();
+      const normalizedPath = input.entryPath.trim();
+      const timestamp = new Date().toISOString();
+      const existingIndex = current.shortcutApps.findIndex((item) => (
+        item.workspaceId === sourceWorkspaceId && item.entryPath === normalizedPath
+      ));
+
+      if (existingIndex >= 0) {
+        const nextShortcut = {
+          ...current.shortcutApps[existingIndex],
+          title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+          workspaceId: sourceWorkspaceId,
+          updatedAt: timestamp
+        };
+        const shortcutApps = [...current.shortcutApps];
+        shortcutApps.splice(existingIndex, 1);
+        shortcutApps.unshift(nextShortcut);
+        return {
+          ...current,
+          shortcutApps,
+          updatedAt: timestamp
+        };
+      }
+
+      return {
+        ...current,
+        shortcutApps: [
+          createAffairsShortcutAppState(
+            {
+              title: input.title,
+              workspaceId: sourceWorkspaceId,
+              entryPath: normalizedPath,
+              sourceId: normalizedPath,
+            },
+            timestamp
+          ),
+          ...current.shortcutApps,
+        ],
+        updatedAt: timestamp
+      };
+    });
+  }, []);
+
+  const updateShortcutApp = useCallback((shortcutId: string, input: { title?: string; workspaceId: string; entryPath: string }) => {
+    setDashboardState((current) => {
+      const sourceWorkspaceId = input.workspaceId.trim();
+      const normalizedPath = input.entryPath.trim();
+      const timestamp = new Date().toISOString();
+      const targetShortcut = current.shortcutApps.find((item) => item.id === shortcutId);
+      if (!targetShortcut) {
+        return current;
+      }
+
+      const duplicateShortcut = current.shortcutApps.find((item) => (
+        item.id !== shortcutId
+        && item.workspaceId === sourceWorkspaceId
+        && item.entryPath === normalizedPath
+      ));
+
+      const nextShortcut = {
+        ...targetShortcut,
+        title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+        workspaceId: sourceWorkspaceId,
+        entryPath: normalizedPath,
+        sourceId: normalizedPath,
+        updatedAt: timestamp
+      };
+
+      return {
+        ...current,
+        shortcutApps: [
+          nextShortcut,
+          ...current.shortcutApps.filter((item) => item.id !== shortcutId && item.id !== duplicateShortcut?.id)
+        ],
+        updatedAt: timestamp
+      };
+    });
+  }, []);
+
+  const removeShortcutApp = useCallback((shortcutId: string) => {
+    setDashboardState((current) => ({
+      ...current,
+      shortcutApps: current.shortcutApps.filter((item) => item.id !== shortcutId),
+      updatedAt: new Date().toISOString()
+    }));
+  }, []);
+
+  const dashboardContextValue: AffairsDashboardContextValue = {
+    dashboardState,
+    activeDashboardTab,
+    layoutLocked: dashboardState.layoutLocked,
+    selectDashboardTab,
+    addDashboardTab,
+    renameDashboardTab,
+    removeDashboardTab,
+    toggleDashboardLayoutLocked,
+    addDashboardWidget,
+    updateDashboardWidgetConfig,
+    setDashboardWidgetLayout,
+    removeDashboardWidget,
+    resetActiveDashboardLayout,
+    addShortcutApp,
+    updateShortcutApp,
+    removeShortcutApp
+  };
+
   const contextValue = useMemo<AffairsWorkbenchContextValue>(() => ({
     workspaceId,
     workspaceName,
+    navigationGroups,
     agentWorkspaceId,
     agentProjectId,
     agentWorkspacePath,
@@ -2253,6 +3174,7 @@ export function AffairsWorkbenchProvider({
     libraryDocumentTotal: libraryDocumentPage?.total ?? 0,
     libraryDocumentHasMore: (libraryDocumentPage?.items.length ?? 0) < (libraryDocumentPage?.total ?? 0),
     binding,
+    globalLibraryBinding,
     libraryConfig,
     indexStatus,
     currentDirectoryStatus,
@@ -2470,22 +3392,28 @@ export function AffairsWorkbenchProvider({
       });
     },
     saveLibraryBinding: async (rootDir) => {
-      await saveGlobalAffairsLibraryBinding({ rootDir });
-      const [snapshot, config] = await Promise.all([
+      const [globalBindingResponse, snapshot, config] = await Promise.all([
+        saveGlobalAffairsLibraryBinding({ rootDir }),
         getAffairsLibrarySnapshot(workspaceId),
         getAffairsLibraryConfig(workspaceId)
       ]);
+      setGlobalLibraryBinding((previous) => (
+        areAffairsLibraryBindingsEqual(previous, globalBindingResponse) ? previous : globalBindingResponse
+      ));
       setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
       setLibraryConfig((previous) => areLibraryConfigsEqual(previous, config) ? previous : config);
       writeCachedLibrarySnapshot(workspaceId, snapshot);
       writeCachedLibraryConfig(workspaceId, config);
     },
     setLibraryEnabled: async (enabled) => {
-      await setGlobalAffairsLibraryEnabled({ enabled });
-      const [snapshot, config] = await Promise.all([
+      const [globalBindingResponse, snapshot, config] = await Promise.all([
+        setGlobalAffairsLibraryEnabled({ enabled }),
         getAffairsLibrarySnapshot(workspaceId),
         getAffairsLibraryConfig(workspaceId)
       ]);
+      setGlobalLibraryBinding((previous) => (
+        areAffairsLibraryBindingsEqual(previous, globalBindingResponse) ? previous : globalBindingResponse
+      ));
       setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
       setLibraryConfig((previous) => areLibraryConfigsEqual(previous, config) ? previous : config);
       writeCachedLibrarySnapshot(workspaceId, snapshot);
@@ -2659,8 +3587,13 @@ export function AffairsWorkbenchProvider({
       setConversationCreateModalMode("all");
     },
     prepareAssistantConversation: async (provider) => {
-      setConversationRuntimeSeed(null);
-      setSelectedConversationDraft(null);
+      if (!agentWorkspaceId) {
+        return;
+      }
+      rememberConversationDraft({
+        kind: "agent",
+        provider
+      });
       if (!butlerStore.getState().initialized && typeof butlerStore.initialize === "function") {
         await butlerStore.initialize();
       }
@@ -2676,15 +3609,9 @@ export function AffairsWorkbenchProvider({
       } else if (controlSessionId || hasMessages) {
         await butlerStore.startFreshSession();
       }
-
-      const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
-      const normalizedProfileWorkspacePath = butlerStore.getState().profile?.workspacePath?.trim() ?? "";
-      if (normalizedAgentWorkspacePath && normalizedAgentWorkspacePath !== normalizedProfileWorkspacePath) {
-        await butlerStore.updateProfile({
-          workspacePath: normalizedAgentWorkspacePath
-        });
-      }
     },
+    rememberConversationDraft,
+    rememberConversationSession,
     butlerStore,
     archiveConversationSession: async (input) => {
       const nextSession = input.kind === "lightweight"
@@ -2878,8 +3805,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     },
     selectedConversationDraft,
     selectConversationDraft: (draft) => {
-      setConversationRuntimeSeed(null);
-      setSelectedConversationDraft(draft);
+      rememberConversationDraft(draft);
       onStateChange({
         ...state,
         primarySection: "conversation",
@@ -2899,37 +3825,11 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     agentConversationSessionsLoading,
     reloadAgentConversationSessions,
     activateConversationSession: (input) => {
-      const seenAt = new Date().toISOString();
-      const nextSession = markAffairsSessionSeen(input.session, seenAt);
-      if (input.kind === "lightweight") {
-        setLightweightConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
-        setAgentConversationSessions((current) => current.map((item) => (
-          item.sessionId === nextSession.sessionId ? nextSession : item
-        )));
-      } else {
-        setLightweightConversationSessions((current) => current.map((item) => (
-          item.sessionId === nextSession.sessionId ? nextSession : item
-        )));
-        setAgentConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
-      }
-      setConversationRuntimeSeed({
-        kind: input.kind,
-        session: nextSession,
-        bootstrapMessages: input.bootstrapMessages
-      });
-      setSelectedConversationSession({
-        kind: input.kind,
-        sessionId: nextSession.sessionId
-      });
-      void Promise.resolve(
-        input.kind === "lightweight"
-          ? markAffairsLightweightSessionSeen(workspaceId, nextSession.sessionId)
-          : markSessionSeen(nextSession.sessionId)
-      ).catch(() => undefined);
+      rememberConversationSession(input);
       onStateChange({
         ...state,
         primarySection: "conversation",
-        selectedNodeId: buildAffairsConversationSessionNodeId(input.kind, nextSession.sessionId),
+        selectedNodeId: buildAffairsConversationSessionNodeId(input.kind, input.session.sessionId),
         selectedObjectId: null,
         selectedDocumentId: null
       });
@@ -2942,6 +3842,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     automationRecords,
     automationRuns,
     binding,
+    globalLibraryBinding,
     butlerActiveProvider,
     butlerControlSession,
     butlerStore,
@@ -2996,6 +3897,8 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     fullTagRecomputeTaskMonitor,
     tagRecoveryStatus,
     documentTagTaskMonitor,
+    rememberConversationDraft,
+    rememberConversationSession,
     refreshLibraryNow,
     reloadTagManagement,
     syncDocumentTaskRecord,
@@ -3009,6 +3912,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
 
   return (
     <AffairsWorkbenchContext.Provider value={contextValue}>
+      <AffairsDashboardContext.Provider value={dashboardContextValue}>
       {children}
       <AffairsConversationCreateModal />
       <AffairsConversationRenameModal
@@ -3113,6 +4017,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
         viewerState={viewerState}
         onClose={() => setViewerState(null)}
       />
+      </AffairsDashboardContext.Provider>
     </AffairsWorkbenchContext.Provider>
   );
 }
@@ -3156,19 +4061,302 @@ export function AffairsSectionMenu() {
   );
 }
 
-function AffairsShortcutAppsRail() {
+function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean }) {
+  const { workspaceId, navigationGroups, globalLibraryBinding } = useAffairsWorkbenchInternal();
+  const { dashboardState, addShortcutApp, updateShortcutApp, removeShortcutApp } = useAffairsDashboardInternal();
+  const { showToast } = useToast();
+  const platform = usePlatform();
+  const [editing, setEditing] = useState(false);
+  const [addingShortcut, setAddingShortcut] = useState(false);
+  const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(!standalone);
+  const currentLibraryWorkspaceOption = useMemo(
+    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, navigationGroups),
+    [globalLibraryBinding, navigationGroups]
+  );
+  const sourceWorkspaceOptions = useMemo(
+    () => buildWorkspaceHtmlSourceWorkspaceOptions(
+      navigationGroups,
+      workspaceId,
+      currentLibraryWorkspaceOption
+    ),
+    [currentLibraryWorkspaceOption, navigationGroups, workspaceId]
+  );
+  const defaultSourceWorkspaceId = useMemo(
+    () => resolveWorkspaceHtmlSourceDefaultWorkspaceId({
+      currentWorkspaceId: workspaceId,
+      currentLibraryWorkspace: currentLibraryWorkspaceOption,
+      options: sourceWorkspaceOptions
+    }),
+    [currentLibraryWorkspaceOption, sourceWorkspaceOptions, workspaceId]
+  );
+  const [sourceWorkspaceId, setSourceWorkspaceId] = useState(defaultSourceWorkspaceId);
+  const [entryPath, setEntryPath] = useState("");
+  const [title, setTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [previewingShortcut, setPreviewingShortcut] = useState<ShortcutAppState | null>(null);
+
+  useEffect(() => {
+    if (!addingShortcut) {
+      setSourceWorkspaceId(defaultSourceWorkspaceId);
+      setEntryPath("");
+      setTitle("");
+      setEditingShortcutId(null);
+    }
+  }, [addingShortcut, defaultSourceWorkspaceId]);
+
+  useEffect(() => {
+    setCollapsed(!standalone);
+    setEditing(false);
+    setAddingShortcut(false);
+    setEditingShortcutId(null);
+  }, [standalone]);
+
+  const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const source = await validateWorkspaceShortcutSource(sourceWorkspaceId, entryPath);
+      const resolvedTitle = resolveWorkspaceHtmlSourceTitle(source.path, title);
+      if (editingShortcutId) {
+        updateShortcutApp(editingShortcutId, {
+          title: resolvedTitle,
+          workspaceId: sourceWorkspaceId,
+          entryPath: source.path
+        });
+      } else {
+        addShortcutApp({
+          title: resolvedTitle,
+          workspaceId: sourceWorkspaceId,
+          entryPath: source.path
+        });
+      }
+      setSourceWorkspaceId(defaultSourceWorkspaceId);
+      setEntryPath("");
+      setTitle("");
+      setAddingShortcut(false);
+      showToast({
+        title: editingShortcutId ? t("shell.affairsShortcutRailUpdatedTitle") : t("shell.affairsShortcutRailAddedTitle"),
+        description: resolvedTitle,
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: resolveErrorMessage(error, editingShortcutId ? t("shell.affairsShortcutRailUpdateFailed") : t("shell.affairsShortcutRailAddFailed")),
+        tone: "error"
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [addShortcutApp, defaultSourceWorkspaceId, editingShortcutId, entryPath, showToast, sourceWorkspaceId, submitting, title, updateShortcutApp]);
+
+  const openShortcutApp = useCallback((shortcut: ShortcutAppState) => {
+    if (editing) {
+      setEditingShortcutId(shortcut.id);
+      setSourceWorkspaceId(shortcut.workspaceId);
+      setEntryPath(shortcut.entryPath);
+      setTitle(shortcut.title);
+      setAddingShortcut(true);
+      return;
+    }
+    setPreviewingShortcut(shortcut);
+  }, [editing]);
+
+  const handleDetachShortcutPreview = useCallback(async () => {
+    if (!previewingShortcut) {
+      return;
+    }
+
+    try {
+      const previewLink = await getFilePreviewLink(previewingShortcut.workspaceId, previewingShortcut.entryPath);
+      window.open(buildDashboardPreviewUrl(previewLink.previewUrl), "_blank", "noopener,noreferrer");
+    } catch (error) {
+      showToast({
+        title: resolveErrorMessage(error, t("shell.affairsShortcutRailOpenFailed")),
+        description: previewingShortcut.title,
+        tone: "error"
+      });
+    }
+  }, [previewingShortcut, showToast]);
+
   return (
     <section
-      className="workbench-section-block affairs-shortcut-rail"
+      className={standalone
+        ? "workbench-section-block affairs-shortcut-rail affairs-shortcut-rail-standalone"
+        : "workbench-section-block affairs-shortcut-rail"}
+      data-collapsed={!standalone && collapsed ? "true" : undefined}
       aria-label={t("shell.affairsShortcutRailTitle")}
     >
-      <div className="affairs-sidebar-block-header">
+      <div className="affairs-sidebar-block-header affairs-shortcut-rail-header">
         <div>
           <h2>{t("shell.affairsShortcutRailTitle")}</h2>
-          <p>{t("shell.affairsShortcutRailDescription")}</p>
+        </div>
+        <div className="affairs-shortcut-rail-header-actions">
+          <span className="affairs-sidebar-block-count">{dashboardState.shortcutApps.length}</span>
+          {(standalone || !collapsed) && editing ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-label={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
+              title={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
+              onClick={() => {
+                setAddingShortcut((current) => {
+                  const nextOpen = !current;
+                  if (nextOpen) {
+                    setEditingShortcutId(null);
+                    setSourceWorkspaceId(defaultSourceWorkspaceId);
+                    setEntryPath("");
+                    setTitle("");
+                  }
+                  return nextOpen;
+                });
+              }}
+            >
+              {addingShortcut ? <AffairsDashboardRemoveIcon /> : <AffairsDashboardAddTabIcon />}
+            </button>
+          ) : null}
+          {standalone || !collapsed ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-label={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
+              title={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
+              onClick={() => {
+                setEditing((current) => {
+                  const nextEditing = !current;
+                  if (!nextEditing) {
+                    setAddingShortcut(false);
+                  }
+                  return nextEditing;
+                });
+              }}
+            >
+              {editing ? <AffairsShortcutDoneIcon /> : <AffairsShortcutEditIcon />}
+            </button>
+          ) : null}
+          {!standalone ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
+              title={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
+              onClick={() => setCollapsed((current) => !current)}
+            >
+              <CollapsePreviewIcon collapsed={collapsed} />
+            </button>
+          ) : null}
         </div>
       </div>
-      <div className="affairs-shortcut-rail-empty">{t("shell.affairsShortcutRailEmpty")}</div>
+
+      {!collapsed && editing && addingShortcut ? (
+        <form className="affairs-shortcut-rail-editor" onSubmit={handleSubmit}>
+          <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-source-workspace">
+            <span>{t("shell.affairsWorkbenchHtmlSourceWorkspaceField")}</span>
+            <select
+              id="affairs-shortcut-source-workspace"
+              className="affairs-dashboard-inline-select"
+              value={sourceWorkspaceId}
+              onChange={(event) => {
+                setSourceWorkspaceId(event.currentTarget.value);
+                setEntryPath("");
+              }}
+            >
+              {sourceWorkspaceOptions.map((option) => (
+                <option key={option.workspaceId} value={option.workspaceId}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <WorkspaceHtmlSourcePicker
+            workspaceId={sourceWorkspaceId}
+            inputId="affairs-shortcut-entry-path"
+            value={entryPath}
+            onChange={setEntryPath}
+            mode="file"
+            label={t("shell.affairsShortcutRailSourceSelectField")}
+            placeholder={t("shell.affairsShortcutRailSourceSelectPlaceholder")}
+            helpText={t("shell.affairsShortcutRailSourceHelper")}
+            listFailedMessage={t("shell.affairsShortcutRailSourceListFailed")}
+          />
+          <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-title">
+            <span>{t("shell.affairsShortcutRailTitleField")}</span>
+            <input
+              id="affairs-shortcut-title"
+              className="affairs-dashboard-inline-input"
+              value={title}
+              onChange={(event) => setTitle(event.currentTarget.value)}
+              placeholder={t("shell.affairsShortcutRailTitlePlaceholder")}
+            />
+          </label>
+          <div className="affairs-dashboard-inline-actions">
+            <button type="submit" className="secondary-button" disabled={submitting}>
+              {submitting
+                ? t("common.loading")
+                : (editingShortcutId ? t("shell.affairsShortcutRailConfirmEditAction") : t("shell.affairsShortcutRailConfirmAddAction"))}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {!collapsed ? (
+        dashboardState.shortcutApps.length === 0 ? (
+          <div className="affairs-shortcut-rail-empty">{t("shell.affairsShortcutRailEmpty")}</div>
+        ) : (
+          <div className="affairs-shortcut-rail-list" data-editing={editing ? "true" : undefined}>
+            {dashboardState.shortcutApps.map((shortcut) => (
+              <div key={shortcut.id} className="affairs-shortcut-rail-item">
+                {editing ? (
+                  <button
+                    type="button"
+                    className="affairs-shortcut-rail-remove-button"
+                    aria-label={t("shell.affairsShortcutRailRemoveAction")}
+                    onClick={() => removeShortcutApp(shortcut.id)}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="affairs-shortcut-rail-launcher"
+                  aria-label={editing
+                    ? t("shell.affairsShortcutRailEditEntryAction", { title: shortcut.title })
+                    : t("shell.affairsShortcutRailLaunchAction", { title: shortcut.title })}
+                  onClick={() => openShortcutApp(shortcut)}
+                >
+                  <span
+                    className="affairs-shortcut-rail-icon"
+                    style={resolveShortcutAppIconStyle(shortcut.title)}
+                    aria-hidden="true"
+                  >
+                    {resolveShortcutAppIconText(shortcut.title)}
+                  </span>
+                  <span className="affairs-shortcut-rail-copy">
+                    <strong>{shortcut.title}</strong>
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {previewingShortcut ? (
+        <FileViewerPanel
+          workspaceId={previewingShortcut.workspaceId}
+          filePath={previewingShortcut.entryPath}
+          open
+          onClose={() => setPreviewingShortcut(null)}
+          onSaved={() => undefined}
+          windowTitle={previewingShortcut.title}
+          saveDisabledReason={t("shell.affairsShortcutRailPreviewEditDisabled")}
+          showDetachAction={platform.isDesktop && platform.bridge.supported}
+          onDetach={() => void handleDetachShortcutPreview()}
+        />
+      ) : null}
     </section>
   );
 }
@@ -3647,7 +4835,7 @@ function AffairsConversationSessionCard({
 export function AffairsSidebarPanel() {
   const {
     activeSection,
-    agentWorkspacePath,
+    agentWorkspaceId,
     agentConversationSessions,
     agentConversationSessionsLoading,
     binding,
@@ -3682,7 +4870,6 @@ export function AffairsSidebarPanel() {
     exportConversationSession
   } = useAffairsWorkbenchInternal();
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
-  const butlerProfileWorkspacePath = useButlerRuntimeStore(butlerStore, (value) => value.profile?.workspacePath ?? null);
   const platform = usePlatform();
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const { showToast } = useToast();
@@ -3737,7 +4924,7 @@ export function AffairsSidebarPanel() {
   }
 
   if (activeSection === "conversation") {
-    const currentAgentSession = isAffairsWorkspacePathMatch(butlerProfileWorkspacePath, agentWorkspacePath)
+    const currentAgentSession = isAffairsControlSessionMatchWorkspaceId(butlerControlSession, agentWorkspaceId)
       ? (butlerControlSession?.session ?? null)
       : null;
     const agentItems =
@@ -3937,6 +5124,14 @@ export function AffairsSidebarPanel() {
           </DesktopModal>
         )}
       </>
+    );
+  }
+
+  if (activeSection === "workbench") {
+    return (
+      <div className="affairs-sidebar-shell">
+        <AffairsShortcutAppsRail standalone />
+      </div>
     );
   }
 
@@ -5400,7 +6595,6 @@ function AffairsAgentConversationState(input: {
     butlerStore,
     reloadAgentConversationSessions,
     agentProjectId,
-    agentWorkspacePath,
     agentConversationSessions
   } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
@@ -5420,7 +6614,7 @@ function AffairsAgentConversationState(input: {
   const sending = useButlerRuntimeStore(butlerStore, (value) => value.sending);
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const requestedProvider = input.draft?.provider ?? null;
-  const scopedControlSession = isAffairsWorkspacePathMatch(profile?.workspacePath, agentWorkspacePath)
+  const scopedControlSession = isAffairsControlSessionMatchWorkspaceId(controlSession, input.workspaceId)
     ? controlSession
     : null;
   const effectiveProvider = scopedControlSession?.session.provider ?? requestedProvider ?? activeProvider;
@@ -5607,14 +6801,6 @@ function AffairsAgentConversationState(input: {
               await butlerStore.switchProvider(targetProvider);
             } else if (shouldResetDraftSession) {
               await butlerStore.startFreshSession();
-            }
-
-            const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
-            const normalizedProfileWorkspacePath = butlerStore.getState().profile?.workspacePath?.trim() ?? "";
-            if (normalizedAgentWorkspacePath && normalizedAgentWorkspacePath !== normalizedProfileWorkspacePath) {
-              await butlerStore.updateProfile({
-                workspacePath: normalizedAgentWorkspacePath
-              });
             }
 
             await butlerStore.sendMessage(`${buildAffairsAssistantPrefix(assistantContext)}${content}`, {
@@ -7555,10 +8741,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
 export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: AffairsAuxiliaryPanelProps) {
   const {
     activeSection,
-    activateConversationSession,
     agentConversationSessions,
     agentConversationSessionsLoading,
-    agentWorkspacePath,
+    agentProjectId,
+    agentWorkspaceId,
     binding,
     assistantContext,
     auxiliaryTab,
@@ -7572,13 +8758,11 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     initGuard,
     indexStatus,
     libraryConfig,
-    lightweightConversationSessions,
-    lightweightConversationSessionsLoading,
     markConversationSessionSeen,
     navigateLibraryFolder,
     openConversationCreateModal,
     reloadAgentConversationSessions,
-    reloadLightweightConversationSessions,
+    rememberConversationSession,
     selectAuxiliaryTab,
     toggleDetailViewerCollapsed,
     selectedObject,
@@ -7587,7 +8771,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     selectedTagPaths
   } = useAffairsWorkbenchInternal();
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
-  const butlerProfileWorkspacePath = useButlerRuntimeStore(butlerStore, (value) => value.profile?.workspacePath ?? null);
   const [viewerReady, setViewerReady] = useState(false);
   const conversationGuardActive = activeSection === "conversation" && !initGuard.initialized;
   const assistantHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -7626,10 +8809,10 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     [documentRecord, libraryConfig?.mirrorRoot]
   );
   const currentAgentSession = useMemo(
-    () => isAffairsWorkspacePathMatch(butlerProfileWorkspacePath, agentWorkspacePath)
+    () => isAffairsControlSessionMatchWorkspaceId(butlerControlSession, agentWorkspaceId)
       ? (butlerControlSession?.session ?? null)
       : null,
-    [agentWorkspacePath, butlerControlSession?.session, butlerProfileWorkspacePath]
+    [agentWorkspaceId, butlerControlSession]
   );
   const assistantHistoryItems = useMemo(() => {
     const agentItems =
@@ -7637,25 +8820,19 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
       && agentConversationSessions.every((session) => session.sessionId !== currentAgentSession.sessionId)
         ? [currentAgentSession, ...agentConversationSessions]
         : agentConversationSessions;
-    return [
-      ...lightweightConversationSessions.map((session) => ({
-        id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
-        kind: "lightweight" as const,
-        session
-      })),
-      ...agentItems.map((session) => ({
+    return agentItems.map((session) => ({
         id: buildAffairsConversationSessionNodeId("agent", session.sessionId),
         kind: "agent" as const,
         session
       }))
-    ].sort((left, right) => {
+      .sort((left, right) => {
       if (left.session.isFavorite !== right.session.isFavorite) {
         return left.session.isFavorite ? -1 : 1;
       }
       return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
     }).filter((item) => item.session.isArchived !== true);
-  }, [agentConversationSessions, currentAgentSession, lightweightConversationSessions]);
-  const assistantHistoryLoading = lightweightConversationSessionsLoading || agentConversationSessionsLoading;
+  }, [agentConversationSessions, currentAgentSession]);
+  const assistantHistoryLoading = agentConversationSessionsLoading;
   const { showToast } = useToast();
   const [documentSummaryExpanded, setDocumentSummaryExpanded] = useState(false);
 
@@ -7720,19 +8897,64 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
 
   const handleOpenAssistantHistory = useCallback(() => {
     setAssistantHistoryOpen((current) => !current);
-    void reloadLightweightConversationSessions().catch(() => undefined);
     void reloadAgentConversationSessions().catch(() => undefined);
-  }, [reloadAgentConversationSessions, reloadLightweightConversationSessions]);
+  }, [reloadAgentConversationSessions]);
 
-  const handleOpenAssistantSession = useCallback((item: AffairsConversationListItem) => {
+  const handleOpenAssistantSession = useCallback(async (item: AffairsConversationListItem) => {
+    if (item.kind !== "agent") {
+      return;
+    }
+
     markConversationSessionSeen(item.kind, item.session.sessionId);
-    activateConversationSession({
-      kind: item.kind,
-      session: item.session,
-      bootstrapMessages: []
-    });
     setAssistantHistoryOpen(false);
-  }, [activateConversationSession, markConversationSessionSeen]);
+
+    const currentControlSession = butlerStore.getState().controlSession;
+    if (currentControlSession?.session.sessionId === item.session.sessionId) {
+      rememberConversationSession({
+        kind: "agent",
+        session: currentControlSession.session,
+        bootstrapMessages: []
+      });
+      return;
+    }
+
+    try {
+      const controlSessions = await listButlerControlSessions();
+      let matchedControlSession = controlSessions.items.find(
+        (controlSessionItem) => controlSessionItem.session.sessionId === item.session.sessionId
+      ) ?? null;
+
+      if (!matchedControlSession) {
+        const butlerSessionId = extractButlerManagedSessionIdFromRawStoreRef(item.session.rawStoreRef ?? null);
+
+        if (!agentProjectId || !butlerSessionId) {
+          throw new Error(t("shell.butlerLoadFailed"));
+        }
+
+        const resumed = await resumeButlerProjectSession(agentProjectId, butlerSessionId);
+        const refreshedControlSessions = await listButlerControlSessions();
+        matchedControlSession = refreshedControlSessions.items.find(
+          (controlSessionItem) => controlSessionItem.session.sessionId === resumed.resumed.session.sessionId
+        ) ?? null;
+      }
+
+      if (!matchedControlSession) {
+        throw new Error(t("shell.butlerLoadFailed"));
+      }
+
+      await butlerStore.openControlSession(matchedControlSession.id);
+      rememberConversationSession({
+        kind: "agent",
+        session: matchedControlSession.session,
+        bootstrapMessages: []
+      });
+    } catch (error) {
+      showToast({
+        title: getErrorMessage(error, t("shell.butlerLoadFailed")),
+        tone: "error"
+      });
+    }
+  }, [agentProjectId, butlerStore, markConversationSessionSeen, rememberConversationSession, showToast]);
 
   if (activeSection === "conversation" && initGuard.loading) {
     return (
@@ -7765,17 +8987,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
   return (
     <div className="affairs-auxiliary-shell">
       <div className="workbench-auxiliary-header">
-        {onToggleCollapse ? (
-          <button
-            type="button"
-            className="workbench-nav-toolbar-button"
-            aria-label={t("shell.hideInfoSidebar")}
-            title={t("shell.hideInfoSidebar")}
-            onClick={onToggleCollapse}
-          >
-            <AffairsSidebarCollapseIcon />
-          </button>
-        ) : null}
         <div className="workbench-info-tabs affairs-auxiliary-tabs" role="tablist" aria-label={t("shell.affairsAuxiliaryTabsLabel")}>
           {showDetailTab ? (
             <button
@@ -7820,15 +9031,12 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
               <ButlerAnchoredPopover
                 open={assistantHistoryOpen && assistantHistoryButtonRef.current !== null}
                 className="affairs-assistant-history-popover"
-                backdropClassName="affairs-assistant-history-backdrop"
                 anchorRef={assistantHistoryButtonRef}
                 popoverRef={assistantHistoryPopoverRef}
                 role="dialog"
                 labelledBy="affairs-assistant-history-title"
                 maxWidth={420}
                 gap={8}
-                showBackdrop={true}
-                onBackdropClick={() => setAssistantHistoryOpen(false)}
               >
                 <div className="affairs-assistant-history-popover-card">
                   <div className="affairs-assistant-history-popover-header">
@@ -7884,9 +9092,25 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
             </>
           ) : null}
         </div>
+        <AffairsDashboardLockToolbarButton />
+        {onToggleCollapse ? (
+          <button
+            type="button"
+            className="workbench-nav-toolbar-button"
+            aria-label={t("shell.hideInfoSidebar")}
+            title={t("shell.hideInfoSidebar")}
+            onClick={onToggleCollapse}
+          >
+            <AffairsSidebarCollapseIcon />
+          </button>
+        ) : null}
       </div>
 
-      <div className="workbench-auxiliary-body" data-scrollbar-autohide="true">
+      <div
+        className="workbench-auxiliary-body"
+        data-scrollbar-autohide="true"
+        data-affairs-auxiliary-tab={auxiliaryTab}
+      >
         {conversationGuardActive ? (
           auxiliaryTab === "assistant"
             ? <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
@@ -11191,8 +12415,8 @@ function UniversalAssistantBridge({
   context: AffairsObjectContext | null;
 }) {
   const {
-    agentWorkspacePath,
     butlerStore: store,
+    rememberConversationSession,
     reloadAgentConversationSessions
   } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(store, (value) => value.initialized);
@@ -11222,6 +12446,7 @@ function UniversalAssistantBridge({
     () => createAffairsAgentFallbackCapabilities(fallbackProvider),
     [fallbackProvider]
   );
+  const hasStartedConversation = Boolean(controlSession?.session?.sessionId?.trim()) || messages.length > 0;
   const contextVisual = useMemo(
     () => resolveAffairsAssistantContextVisual(context),
     [context]
@@ -11257,7 +12482,7 @@ function UniversalAssistantBridge({
             </div>
           </div>
         </section>
-      ) : (
+      ) : !hasStartedConversation ? (
         <section className="workbench-section-block affairs-detail-block affairs-assistant-context-block">
           <div className="affairs-assistant-context-card empty" data-object-type="empty">
             <div className="affairs-assistant-context-icon" data-tone="neutral">
@@ -11272,7 +12497,7 @@ function UniversalAssistantBridge({
             </div>
           </div>
         </section>
-      )}
+      ) : null}
       <PermissionRequestList
         requests={permissionRequests}
         replyingRequestId={replyingPermissionRequestId}
@@ -11324,19 +12549,20 @@ function UniversalAssistantBridge({
             if (targetProvider && store.getState().activeProvider !== targetProvider) {
               await store.switchProvider(targetProvider);
             }
-            const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
-            const normalizedProfileWorkspacePath = store.getState().profile?.workspacePath?.trim() ?? "";
-            if (normalizedAgentWorkspacePath && normalizedAgentWorkspacePath !== normalizedProfileWorkspacePath) {
-              await store.updateProfile({
-                workspacePath: normalizedAgentWorkspacePath
-              });
-            }
             await store.sendMessage(`${buildAffairsAssistantPrefix(context)}${content}`, {
               model: options?.model ?? null,
               reasoningLevel: options?.reasoningLevel ?? null,
               permissionMode: null
             });
             await reloadAgentConversationSessions();
+            const nextSession = store.getState().controlSession?.session ?? null;
+            if (nextSession) {
+              rememberConversationSession({
+                kind: "agent",
+                session: nextSession,
+                bootstrapMessages: []
+              });
+            }
           }}
         />
       </div>
@@ -11508,39 +12734,222 @@ function AffairsDashboardAddTabIcon() {
   );
 }
 
+function AffairsDashboardEditTabIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="m12 20 7-7-3-3-7 7-1 4z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="m14.5 8.5 3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsShortcutEditIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path
+        d="M9 5.75H8a3.25 3.25 0 0 0-3.25 3.25V16A3.25 3.25 0 0 0 8 19.25h8A3.25 3.25 0 0 0 19.25 16v-1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m13.2 7.55 3.25-3.25a1.6 1.6 0 0 1 2.27 2.27l-3.25 3.25-3.4.85z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AffairsDashboardRemoveIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M18 6 6 18" strokeLinecap="round" />
+      <path d="m6 6 12 12" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AffairsShortcutDoneIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="m5 12 4.2 4.2L19 6.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function resolveDashboardTabTitleLabel(tabTitle: string): string {
+  return tabTitle === t("shell.affairsWorkbenchDefaultTabTitle")
+    ? t("shell.affairsWorkbenchDefaultTabShortTitle")
+    : tabTitle;
+}
+
+function resolveDashboardWidgetHint(widget: Pick<DashboardWidgetState, "type" | "variant">): string {
+  if (widget.type === "todo") {
+    return t("shell.affairsWorkbenchWidgetTodoHint");
+  }
+  if (widget.type === "automation") {
+    return t("shell.affairsWorkbenchWidgetAutomationHint");
+  }
+
+  const htmlVariant = resolveDashboardHtmlWidgetVariant(widget);
+  if (htmlVariant === "app") {
+    return t("shell.affairsWorkbenchWidgetHtmlAppHint");
+  }
+  if (htmlVariant === "stat") {
+    return t("shell.affairsWorkbenchWidgetHtmlStatHint");
+  }
+  return t("shell.affairsWorkbenchWidgetHtmlEmbedHint");
+}
+
+function resolveDashboardWidgetBadgeLabel(
+  widget: DashboardWidgetState,
+  todoCount: number,
+  automationCount: number
+): string {
+  if (widget.type === "todo") {
+    return t("shell.affairsWorkbenchWidgetCountValue", { count: todoCount });
+  }
+  if (widget.type === "automation") {
+    return t("shell.affairsWorkbenchWidgetCountValue", { count: automationCount });
+  }
+  return t("shell.affairsWorkbenchHtmlWidgetBadge");
+}
+
+function AffairsDashboardLockedIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 1 1 8 0v3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AffairsDashboardUnlockedIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M15 11V8a4 4 0 0 0-7.5-2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function AffairsDashboardLockToolbarButton({ className }: { className?: string }) {
+  const { activeSection } = useAffairsWorkbenchInternal();
+  const { layoutLocked, toggleDashboardLayoutLocked } = useAffairsDashboardInternal();
+
+  if (activeSection !== "workbench") {
+    return null;
+  }
+
+  return (
+    <button
+      type="button"
+      className={className ?? "workbench-nav-toolbar-button"}
+      aria-label={layoutLocked ? t("shell.affairsWorkbenchUnlockLayoutAction") : t("shell.affairsWorkbenchLockLayoutAction")}
+      title={layoutLocked ? t("shell.affairsWorkbenchUnlockLayoutAction") : t("shell.affairsWorkbenchLockLayoutAction")}
+      aria-pressed={!layoutLocked}
+      onClick={toggleDashboardLayoutLocked}
+    >
+      {layoutLocked ? <AffairsDashboardLockedIcon /> : <AffairsDashboardUnlockedIcon />}
+    </button>
+  );
+}
+
 function AffairsDashboardView() {
   const {
-    workspaceId,
     filteredTodoRecords,
     automationRecords,
-    selectSidebarNode
+    automationRuns,
+    selectSidebarNode,
+    workspaceId,
+    navigationGroups,
+    globalLibraryBinding
   } = useAffairsWorkbenchInternal();
-  const [dashboardState, setDashboardState] = useState<AffairsWorkbenchDashboardState>(() => ensureAffairsDashboardState(workspaceId));
-
-  useEffect(() => {
-    setDashboardState(ensureAffairsDashboardState(workspaceId));
-  }, [workspaceId]);
-
-  useEffect(() => {
-    writeAffairsDashboardState(dashboardState);
-  }, [dashboardState]);
-
-  const activeTab = useMemo(
-    () => dashboardState.tabs.find((tab) => tab.id === dashboardState.activeTabId) ?? dashboardState.tabs[0] ?? null,
-    [dashboardState]
+  const {
+    dashboardState,
+    activeDashboardTab,
+    layoutLocked,
+    selectDashboardTab,
+    addDashboardTab,
+    renameDashboardTab,
+    removeDashboardTab,
+    addDashboardWidget,
+    updateDashboardWidgetConfig,
+    setDashboardWidgetLayout,
+    removeDashboardWidget,
+    resetActiveDashboardLayout
+  } = useAffairsDashboardInternal();
+  const { showToast } = useToast();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabTitle, setEditingTabTitle] = useState("");
+  const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetPaletteType>("todo");
+  const [selectedHtmlVariant, setSelectedHtmlVariant] = useState<DashboardHtmlWidgetVariant>("embed");
+  const currentLibraryWorkspaceOption = useMemo(
+    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, navigationGroups),
+    [globalLibraryBinding, navigationGroups]
   );
+  const htmlSourceWorkspaceOptions = useMemo(
+    () => buildWorkspaceHtmlSourceWorkspaceOptions(
+      navigationGroups,
+      workspaceId,
+      currentLibraryWorkspaceOption
+    ),
+    [currentLibraryWorkspaceOption, navigationGroups, workspaceId]
+  );
+  const defaultHtmlSourceWorkspaceId = useMemo(
+    () => resolveWorkspaceHtmlSourceDefaultWorkspaceId({
+      currentWorkspaceId: workspaceId,
+      currentLibraryWorkspace: currentLibraryWorkspaceOption,
+      options: htmlSourceWorkspaceOptions
+    }),
+    [currentLibraryWorkspaceOption, htmlSourceWorkspaceOptions, workspaceId]
+  );
+  const [htmlSourceWorkspaceId, setHtmlSourceWorkspaceId] = useState(defaultHtmlSourceWorkspaceId);
+  const [htmlEntryPath, setHtmlEntryPath] = useState("");
+  const [widgetTitle, setWidgetTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [activeGesture, setActiveGesture] = useState<{ widgetId: string; kind: "move" | "resize" } | null>(null);
+  const canvasGridRef = useRef<HTMLDivElement | null>(null);
+  const gestureRef = useRef<{
+    kind: "move" | "resize";
+    resizeMode: "x" | "y" | "xy";
+    widgetId: string;
+    startX: number;
+    startY: number;
+    startLayout: DashboardWidgetLayout;
+    columnPitch: number;
+    rowPitch: number;
+    snapGuides: {
+      x: number[];
+      y: number[];
+    };
+  } | null>(null);
 
   const widgetLayoutById = useMemo(
-    () => new Map((activeTab?.layout ?? []).map((layout) => [layout.widgetId, layout])),
-    [activeTab]
+    () => new Map((activeDashboardTab?.layout ?? []).map((layout) => [layout.widgetId, layout])),
+    [activeDashboardTab]
   );
+  useEffect(() => {
+    if (!editorOpen) {
+      setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
+      setHtmlEntryPath("");
+    }
+  }, [defaultHtmlSourceWorkspaceId, editorOpen]);
+
+  useEffect(() => {
+    if (layoutLocked) {
+      setEditingTabId(null);
+      setEditingTabTitle("");
+    }
+  }, [layoutLocked]);
 
   const sortedWidgets = useMemo(() => {
-    if (!activeTab) {
+    if (!activeDashboardTab) {
       return [];
     }
 
-    return [...activeTab.widgets].sort((left, right) => {
+    return [...activeDashboardTab.widgets].sort((left, right) => {
       const leftLayout = widgetLayoutById.get(left.id);
       const rightLayout = widgetLayoutById.get(right.id);
       const leftY = leftLayout?.y ?? 0;
@@ -11552,58 +12961,300 @@ function AffairsDashboardView() {
         return leftY - rightY;
       }
 
-      return leftX - rightX;
+      if (leftX !== rightX) {
+        return leftX - rightX;
+      }
+
+      return activeDashboardTab.widgets.findIndex((widget) => widget.id === left.id)
+        - activeDashboardTab.widgets.findIndex((widget) => widget.id === right.id);
     });
-  }, [activeTab, widgetLayoutById]);
+  }, [activeDashboardTab, widgetLayoutById]);
 
-  const addDashboardTab = useCallback(() => {
-    const nextIndex = dashboardState.tabs.length + 1;
-    const timestamp = new Date().toISOString();
-    const nextTab = createEmptyAffairsDashboardTabState(
-      t("shell.affairsWorkbenchNewTabTitle", { count: nextIndex }),
-      timestamp
-    );
-
-    setDashboardState((current) => ({
-      ...current,
-      activeTabId: nextTab.id,
-      tabs: [...current.tabs, nextTab],
-      updatedAt: timestamp
-    }));
-  }, [dashboardState.tabs.length]);
-
-  const resolveDashboardTabTitle = useCallback((tabTitle: string) => {
-    return tabTitle === t("shell.affairsWorkbenchDefaultTabTitle") ? t("shell.affairsWorkbenchDefaultTabShortTitle") : tabTitle;
+  const stopGesture = useCallback(() => {
+    gestureRef.current = null;
+    setActiveGesture(null);
   }, []);
 
-  if (!activeTab) {
-    return (
-      <div className="affairs-stage-empty">{t("shell.affairsWorkbenchEmpty")}</div>
-    );
+  useEffect(() => {
+    if (layoutLocked && editorOpen) {
+      setEditorOpen(false);
+    }
+  }, [editorOpen, layoutLocked]);
+
+  useEffect(() => {
+    if (layoutLocked && activeGesture) {
+      stopGesture();
+    }
+  }, [activeGesture, layoutLocked, stopGesture]);
+
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent) {
+      const currentGesture = gestureRef.current;
+      if (!currentGesture) {
+        return;
+      }
+
+      event.preventDefault();
+      const deltaCols = Math.round((event.clientX - currentGesture.startX) / currentGesture.columnPitch);
+      const deltaRows = Math.round((event.clientY - currentGesture.startY) / currentGesture.rowPitch);
+
+      if (currentGesture.kind === "move") {
+        const nextLayout = {
+          x: Math.max(0, Math.min(DASHBOARD_GRID_COLUMNS - currentGesture.startLayout.w, currentGesture.startLayout.x + deltaCols)),
+          y: Math.max(0, currentGesture.startLayout.y + deltaRows),
+          w: currentGesture.startLayout.w,
+          h: currentGesture.startLayout.h
+        };
+        const snapped = applyDashboardMoveSnap(nextLayout, currentGesture.snapGuides);
+        setDashboardWidgetLayout(currentGesture.widgetId, {
+          x: Math.max(0, Math.min(DASHBOARD_GRID_COLUMNS - currentGesture.startLayout.w, Math.round(snapped.x))),
+          y: Math.max(0, Math.round(snapped.y))
+        });
+        return;
+      }
+
+      const draftLayout = {
+        x: currentGesture.startLayout.x,
+        y: currentGesture.startLayout.y,
+        w: currentGesture.resizeMode === "x" || currentGesture.resizeMode === "xy"
+          ? Math.max(
+              currentGesture.startLayout.minW ?? 1,
+              Math.min(DASHBOARD_GRID_COLUMNS - currentGesture.startLayout.x, currentGesture.startLayout.w + deltaCols)
+            )
+          : currentGesture.startLayout.w,
+        h: currentGesture.resizeMode === "y" || currentGesture.resizeMode === "xy"
+          ? Math.max(currentGesture.startLayout.minH ?? 1, currentGesture.startLayout.h + deltaRows)
+          : currentGesture.startLayout.h
+      };
+      const snapped = applyDashboardResizeSnap(draftLayout, currentGesture.snapGuides, currentGesture.resizeMode);
+      setDashboardWidgetLayout(currentGesture.widgetId, {
+        ...(currentGesture.resizeMode === "x" || currentGesture.resizeMode === "xy"
+          ? {
+              w: Math.max(
+                currentGesture.startLayout.minW ?? 1,
+                Math.min(DASHBOARD_GRID_COLUMNS - currentGesture.startLayout.x, Math.round(snapped.w))
+              )
+            }
+          : {}),
+        ...(currentGesture.resizeMode === "y" || currentGesture.resizeMode === "xy"
+          ? {
+              h: Math.max(currentGesture.startLayout.minH ?? 1, Math.round(snapped.h))
+            }
+          : {})
+      });
+    }
+
+    function handlePointerUp() {
+      stopGesture();
+    }
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [setDashboardWidgetLayout, stopGesture]);
+
+  const beginWidgetGesture = useCallback((
+    event: ReactPointerEvent<HTMLElement>,
+    widgetId: string,
+    kind: "move" | "resize",
+    resizeMode: "x" | "y" | "xy" = "xy"
+  ) => {
+    if (layoutLocked) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+
+    const layout = widgetLayoutById.get(widgetId);
+    const container = canvasGridRef.current;
+    if (!layout || !container) {
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const columnWidth = (containerRect.width - DASHBOARD_GRID_GAP_PX * (DASHBOARD_GRID_COLUMNS - 1)) / DASHBOARD_GRID_COLUMNS;
+    const columnPitch = columnWidth + DASHBOARD_GRID_GAP_PX;
+    const rowPitch = DASHBOARD_GRID_ROW_HEIGHT_PX + DASHBOARD_GRID_GAP_PX;
+    const snapGuides = buildDashboardSnapGuides(activeDashboardTab?.layout ?? [], widgetId);
+
+    gestureRef.current = {
+      kind,
+      widgetId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLayout: layout,
+      columnPitch,
+      rowPitch,
+      resizeMode,
+      snapGuides
+    };
+    setActiveGesture({ widgetId, kind });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }, [activeDashboardTab?.layout, layoutLocked, widgetLayoutById]);
+
+  const handleAddWidget = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (selectedWidgetType === "todo") {
+        addDashboardWidget({
+          type: "todo",
+          title: widgetTitle.trim() || t("shell.affairsTodoAllFilter"),
+          config: {
+            filter: "all",
+            view: "compact"
+          }
+        });
+      } else if (selectedWidgetType === "automation") {
+        addDashboardWidget({
+          type: "automation",
+          title: widgetTitle.trim() || t("shell.affairsAutomationStageTitle"),
+          config: {
+            scope: "all",
+            view: "list"
+          }
+        });
+      } else {
+        const source = await validateWorkspaceHtmlSource(htmlSourceWorkspaceId, htmlEntryPath);
+        addDashboardWidget({
+          type: "html",
+          variant: selectedHtmlVariant,
+          title: resolveWorkspaceHtmlSourceTitle(source.path, widgetTitle),
+          sourceRef: {
+            kind: "html_shortcut",
+            workspaceId: htmlSourceWorkspaceId,
+            sourceId: source.path,
+          },
+          config: {}
+        });
+      }
+      setWidgetTitle("");
+      setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
+      setHtmlEntryPath("");
+      setEditorOpen(false);
+    } catch (error) {
+      showToast({
+        title: resolveErrorMessage(error, t("shell.affairsWorkbenchAddWidgetFailed")),
+        tone: "error"
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    addDashboardWidget,
+    htmlEntryPath,
+    htmlSourceWorkspaceId,
+    selectedHtmlVariant,
+    selectedWidgetType,
+    showToast,
+    submitting,
+    widgetTitle,
+    defaultHtmlSourceWorkspaceId
+  ]);
+
+  if (!activeDashboardTab) {
+    return <div className="affairs-stage-empty">{t("shell.affairsWorkbenchEmpty")}</div>;
   }
+
+  const startEditingTab = (tab: DashboardTabState) => {
+    setEditingTabId(tab.id);
+    setEditingTabTitle(tab.title);
+  };
+
+  const commitEditingTab = () => {
+    if (!editingTabId) {
+      return;
+    }
+    renameDashboardTab(editingTabId, editingTabTitle);
+    setEditingTabId(null);
+    setEditingTabTitle("");
+  };
 
   return (
     <div className="affairs-dashboard-shell">
-      <div className="affairs-dashboard-tabbar">
-        <div className="affairs-dashboard-tablist" role="tablist" aria-label={t("shell.affairsWorkbenchNav")}>
-          {dashboardState.tabs.map((tab) => (
+      <div className="affairs-dashboard-tabbar" role="tablist" aria-label={t("shell.affairsWorkbenchNav")}>
+        {dashboardState.tabs.map((tab) => (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeDashboardTab.id}
+            className={tab.id === activeDashboardTab.id ? "affairs-dashboard-tab active" : "affairs-dashboard-tab"}
+          >
             <button
-              key={tab.id}
               type="button"
-              role="tab"
-              aria-selected={tab.id === activeTab.id}
-              className={tab.id === activeTab.id ? "affairs-dashboard-tab active" : "affairs-dashboard-tab"}
-              onClick={() => {
-                setDashboardState((current) => ({
-                  ...current,
-                  activeTabId: tab.id,
-                  updatedAt: new Date().toISOString()
-                }));
-              }}
+              className="affairs-dashboard-tab-main"
+              onClick={() => selectDashboardTab(tab.id)}
             >
-              <span className="affairs-dashboard-tab-title">{resolveDashboardTabTitle(tab.title)}</span>
+              {editingTabId === tab.id ? (
+                <input
+                  autoFocus
+                  className="affairs-dashboard-tab-input"
+                  value={editingTabTitle}
+                  onChange={(event) => setEditingTabTitle(event.currentTarget.value)}
+                  onBlur={commitEditingTab}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitEditingTab();
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEditingTabId(null);
+                      setEditingTabTitle("");
+                    }
+                  }}
+                  aria-label={t("shell.affairsWorkbenchRenameTabAction")}
+                />
+              ) : (
+                <span className="affairs-dashboard-tab-title">{resolveDashboardTabTitleLabel(tab.title)}</span>
+              )}
             </button>
-          ))}
+            {!layoutLocked ? (
+              <div className="affairs-dashboard-tab-actions">
+                <button
+                  type="button"
+                  className="affairs-dashboard-tab-action"
+                  aria-label={t("shell.affairsWorkbenchRenameTabAction")}
+                  title={t("shell.affairsWorkbenchRenameTabAction")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    startEditingTab(tab);
+                  }}
+                >
+                  <AffairsDashboardEditTabIcon />
+                </button>
+                <button
+                  type="button"
+                  className="affairs-dashboard-tab-action"
+                  aria-label={t("shell.affairsWorkbenchDeleteTabAction")}
+                  title={t("shell.affairsWorkbenchDeleteTabAction")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeDashboardTab(tab.id);
+                  }}
+                  disabled={dashboardState.tabs.length <= 1}
+                >
+                  <AffairsDashboardRemoveIcon />
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {!layoutLocked ? (
           <button
             type="button"
             className="affairs-dashboard-add-tab"
@@ -11613,19 +13264,137 @@ function AffairsDashboardView() {
           >
             <AffairsDashboardAddTabIcon />
           </button>
-        </div>
+        ) : null}
       </div>
 
       <section className="workbench-section-block affairs-dashboard-canvas-block">
+        {layoutLocked ? null : (
+          <div className="affairs-dashboard-canvas-header affairs-dashboard-canvas-header-with-actions">
+            <div className="affairs-dashboard-canvas-actions">
+              <button
+                type="button"
+                className="workbench-secondary-button"
+                onClick={() => {
+                  setEditorOpen((current) => {
+                    const nextOpen = !current;
+                    if (nextOpen) {
+                      setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
+                      setHtmlEntryPath("");
+                    }
+                    return nextOpen;
+                  });
+                }}
+              >
+                {editorOpen ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsWorkbenchAddWidgetAction")}
+              </button>
+              <button
+                type="button"
+                className="workbench-secondary-button"
+                onClick={resetActiveDashboardLayout}
+                disabled={sortedWidgets.length === 0}
+              >
+                {t("shell.affairsWorkbenchResetLayoutAction")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!layoutLocked && editorOpen ? (
+          <form className="affairs-dashboard-editor-panel" onSubmit={handleAddWidget}>
+            <div className="affairs-dashboard-editor-types" role="tablist" aria-label={t("shell.affairsWorkbenchAddWidgetAction")}>
+              {(["todo", "automation", "html"] as DashboardWidgetPaletteType[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={type === selectedWidgetType ? "affairs-dashboard-editor-type active" : "affairs-dashboard-editor-type"}
+                  onClick={() => {
+                    setSelectedWidgetType(type);
+                    if (type === "html") {
+                      setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
+                      setHtmlEntryPath("");
+                    }
+                  }}
+                >
+                  {type === "todo"
+                    ? t("shell.affairsWorkbenchWidgetTypeTodo")
+                    : type === "automation"
+                      ? t("shell.affairsWorkbenchWidgetTypeAutomation")
+                      : t("shell.affairsWorkbenchWidgetTypeHtml")}
+                </button>
+              ))}
+            </div>
+            <label className="affairs-dashboard-inline-field" htmlFor="affairs-dashboard-widget-title">
+              <span>{t("shell.affairsWorkbenchWidgetTitleField")}</span>
+              <input
+                id="affairs-dashboard-widget-title"
+                className="affairs-dashboard-inline-input"
+                value={widgetTitle}
+                onChange={(event) => setWidgetTitle(event.currentTarget.value)}
+                placeholder={t("shell.affairsWorkbenchWidgetTitlePlaceholder")}
+              />
+            </label>
+            {selectedWidgetType === "html" ? (
+              <>
+                <div className="affairs-dashboard-inline-field-group">
+                  <label className="affairs-dashboard-inline-field" htmlFor="affairs-dashboard-widget-source-workspace">
+                    <span>{t("shell.affairsWorkbenchHtmlSourceWorkspaceField")}</span>
+                    <select
+                      id="affairs-dashboard-widget-source-workspace"
+                      className="affairs-dashboard-inline-select"
+                      value={htmlSourceWorkspaceId}
+                      onChange={(event) => {
+                        setHtmlSourceWorkspaceId(event.currentTarget.value);
+                        setHtmlEntryPath("");
+                      }}
+                    >
+                      {htmlSourceWorkspaceOptions.map((option) => (
+                        <option key={option.workspaceId} value={option.workspaceId}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="affairs-dashboard-inline-help">{t("shell.affairsWorkbenchHtmlSourceWorkspaceHelper")}</p>
+                </div>
+                <div className="affairs-dashboard-inline-field-group">
+                  <div className="affairs-dashboard-inline-field">
+                    <span>{t("shell.affairsWorkbenchHtmlVariantField")}</span>
+                    <div className="affairs-dashboard-editor-types" role="tablist" aria-label={t("shell.affairsWorkbenchHtmlVariantField")}>
+                      {(["app", "stat", "embed"] as DashboardHtmlWidgetVariant[]).map((variant) => (
+                        <button
+                          key={variant}
+                          type="button"
+                          className={variant === selectedHtmlVariant ? "affairs-dashboard-editor-type active" : "affairs-dashboard-editor-type"}
+                          onClick={() => setSelectedHtmlVariant(variant)}
+                        >
+                          {variant === "app"
+                            ? t("shell.affairsWorkbenchHtmlVariantApp")
+                            : variant === "stat"
+                              ? t("shell.affairsWorkbenchHtmlVariantStat")
+                              : t("shell.affairsWorkbenchHtmlVariantEmbed")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="affairs-dashboard-inline-help">{t("shell.affairsWorkbenchHtmlVariantHelper")}</p>
+                </div>
+                <WorkspaceHtmlSourcePicker
+                  workspaceId={htmlSourceWorkspaceId}
+                  inputId="affairs-dashboard-widget-source"
+                  value={htmlEntryPath}
+                  onChange={setHtmlEntryPath}
+                  helpText={t("shell.affairsWorkbenchHtmlSourceHelper")}
+                />
+              </>
+            ) : null}
+            <div className="affairs-dashboard-inline-actions">
+              <button type="submit" className="secondary-button" disabled={submitting}>
+                {submitting ? t("common.loading") : t("shell.affairsWorkbenchConfirmAddWidgetAction")}
+              </button>
+            </div>
+          </form>
+        ) : null}
+
         {sortedWidgets.length === 0 ? (
           <section className="workbench-empty-guide surface-card affairs-dashboard-empty-guide">
-            <div className="affairs-dashboard-canvas-header">
-              <div className="affairs-detail-headline compact">
-                <h2>{t("shell.affairsWorkbenchCanvasTitle")}</h2>
-                <p>{t("shell.affairsWorkbenchCanvasDescription")}</p>
-              </div>
-              <p className="workbench-empty-eyebrow">{activeTab.title}</p>
-            </div>
             <div className="workbench-empty-main affairs-conversation-empty-main">
               <div className="workbench-empty-copy affairs-conversation-empty-copy">
                 <h2>{t("shell.affairsWorkbenchCanvasEmptyTitle")}</h2>
@@ -11634,101 +13403,563 @@ function AffairsDashboardView() {
             </div>
           </section>
         ) : (
-          <>
-            <div className="affairs-dashboard-canvas-header">
-              <div className="affairs-detail-headline compact">
-                <h2>{t("shell.affairsWorkbenchCanvasTitle")}</h2>
-                <p>{t("shell.affairsWorkbenchCanvasDescription")}</p>
-              </div>
-            </div>
-            <div className="affairs-dashboard-canvas-grid">
+          <div ref={canvasGridRef} className="affairs-dashboard-canvas-grid">
             {sortedWidgets.map((widget) => {
               const layout = widgetLayoutById.get(widget.id);
               const itemStyle: CSSProperties = {
-                gridColumn: `span ${Math.max(1, Math.min(12, layout?.w ?? 6))}`,
-                minHeight: `${Math.max(180, (layout?.h ?? 5) * 44)}px`
+                gridColumnStart: (layout?.x ?? 0) + 1,
+                gridColumnEnd: `span ${Math.max(1, Math.min(DASHBOARD_GRID_COLUMNS, layout?.w ?? 6))}`,
+                gridRowStart: (layout?.y ?? 0) + 1,
+                gridRowEnd: `span ${Math.max(1, layout?.h ?? 5)}`,
+                minHeight: `${Math.max(180, (layout?.h ?? 5) * DASHBOARD_GRID_ROW_HEIGHT_PX)}px`
               };
 
               return (
-                <section key={widget.id} className="affairs-dashboard-widget" style={itemStyle}>
-                  <div className="affairs-dashboard-widget-header">
-                    <div>
-                      <h3>{widget.title}</h3>
-                      <p>
-                        {widget.type === "todo"
-                          ? t("shell.affairsWorkbenchWidgetTodoHint")
-                          : widget.type === "automation"
-                            ? t("shell.affairsWorkbenchWidgetAutomationHint")
-                            : t("shell.affairsWorkbenchEmptyBody")}
-                      </p>
-                    </div>
-                    <span className="affairs-inline-pill">
-                      {widget.type === "todo"
-                        ? t("shell.affairsWorkbenchWidgetCountValue", { count: filteredTodoRecords.length })
-                        : widget.type === "automation"
-                          ? t("shell.affairsWorkbenchWidgetCountValue", { count: automationRecords.length })
-                          : t("shell.affairsWorkbenchNav")}
-                    </span>
-                  </div>
-
-                  <div className="affairs-dashboard-widget-body">
-                    {widget.type === "todo" ? (
-                      <>
-                        <div className="affairs-dashboard-widget-preview-list">
-                          {filteredTodoRecords.slice(0, 3).map((record) => (
-                            <div key={record.id} className="affairs-dashboard-widget-preview-item">
-                              <strong>{record.title}</strong>
-                              <span>{record.statusLabel}</span>
-                            </div>
-                          ))}
-                          {filteredTodoRecords.length === 0 ? (
-                            <div className="affairs-stage-empty compact">{t("shell.affairsTodoEmpty")}</div>
-                          ) : null}
-                        </div>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => selectSidebarNode("workbench:todo:all")}
-                        >
-                          {t("shell.affairsWorkbenchWidgetOpenTodoAction")}
-                        </button>
-                      </>
-                    ) : widget.type === "automation" ? (
-                      <>
-                        <div className="affairs-dashboard-widget-preview-list">
-                          {automationRecords.slice(0, 3).map((record) => (
-                            <div key={record.id} className="affairs-dashboard-widget-preview-item">
-                              <strong>{record.title}</strong>
-                              <span>{record.statusLabel}</span>
-                            </div>
-                          ))}
-                          {automationRecords.length === 0 ? (
-                            <div className="affairs-stage-empty compact">{t("shell.affairsAutomationEmpty")}</div>
-                          ) : null}
-                        </div>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => selectSidebarNode(
-                            automationRecords[0]
-                              ? `workbench:automation:item:${automationRecords[0].id}`
-                              : "workbench:overview"
-                          )}
-                        >
-                          {t("shell.affairsWorkbenchWidgetOpenAutomationAction")}
-                        </button>
-                      </>
-                    ) : (
-                      <div className="affairs-stage-empty compact">{t("shell.affairsWorkbenchEmptyBody")}</div>
+                <AffairsDashboardWidgetCard
+                  key={widget.id}
+                  widget={widget}
+                  style={itemStyle}
+                  editable={!layoutLocked}
+                  todoCount={filteredTodoRecords.length}
+                  automationCount={automationRecords.length}
+                  gestureKind={activeGesture?.widgetId === widget.id ? activeGesture.kind : null}
+                  onMovePointerDown={(event) => beginWidgetGesture(event, widget.id, "move")}
+                  onResizePointerDown={(event, resizeMode) => beginWidgetGesture(event, widget.id, "resize", resizeMode)}
+                  onRemove={() => removeDashboardWidget(widget.id)}
+                >
+                  <AffairsDashboardWidgetHost
+                    widget={widget}
+                    workspaceId={workspaceId}
+                    todoRecords={filteredTodoRecords}
+                    automationRecords={automationRecords}
+                    automationRuns={automationRuns}
+                    onUpdateConfig={(patch) => updateDashboardWidgetConfig(widget.id, patch)}
+                    onOpenTodo={() => selectSidebarNode("workbench:todo:all")}
+                    onOpenAutomation={() => selectSidebarNode(
+                      automationRecords[0]
+                        ? `workbench:automation:item:${automationRecords[0].id}`
+                        : "workbench:overview"
                     )}
-                  </div>
-                </section>
+                  />
+                </AffairsDashboardWidgetCard>
               );
             })}
-            </div>
-          </>
+          </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function AffairsDashboardWidgetCard({
+  widget,
+  style,
+  editable,
+  todoCount,
+  automationCount,
+  gestureKind,
+  children,
+  onMovePointerDown,
+  onResizePointerDown,
+  onRemove
+}: {
+  widget: DashboardWidgetState;
+  style: CSSProperties;
+  editable: boolean;
+  todoCount: number;
+  automationCount: number;
+  gestureKind: "move" | "resize" | null;
+  children: ReactNode;
+  onMovePointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  onResizePointerDown: (event: ReactPointerEvent<HTMLElement>, resizeMode: "x" | "y" | "xy") => void;
+  onRemove: () => void;
+}) {
+  return (
+    <section
+      className={[
+        "affairs-dashboard-widget",
+        editable ? "editable" : "locked",
+        gestureKind === "move" ? "dragging" : "",
+        gestureKind === "resize" ? "resizing" : ""
+      ].filter(Boolean).join(" ")}
+      style={style}
+    >
+      <div
+        className={editable ? "affairs-dashboard-widget-header affairs-dashboard-widget-header-draggable" : "affairs-dashboard-widget-header"}
+        onPointerDown={editable ? onMovePointerDown : undefined}
+      >
+        <div className="affairs-dashboard-widget-header-main">
+          <div>
+            <h3>{widget.title}</h3>
+            <p>{resolveDashboardWidgetHint(widget)}</p>
+          </div>
+        </div>
+        <div className="affairs-dashboard-widget-header-meta">
+          <span className="affairs-inline-pill">
+            {resolveDashboardWidgetBadgeLabel(widget, todoCount, automationCount)}
+          </span>
+          {editable ? (
+            <div className="affairs-dashboard-widget-toolbar">
+              <button
+                type="button"
+              className="affairs-dashboard-toolbar-icon-button danger"
+              title={t("shell.affairsWorkbenchRemoveWidgetAction")}
+              aria-label={t("shell.affairsWorkbenchRemoveWidgetAction")}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onRemove}
+            >
+                <AffairsDashboardRemoveIcon />
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="affairs-dashboard-widget-body">{children}</div>
+      {editable ? (
+        <>
+          <div
+            className="affairs-dashboard-resize-edge right"
+            aria-hidden="true"
+            onPointerDown={(event) => onResizePointerDown(event, "x")}
+          />
+          <div
+            className="affairs-dashboard-resize-edge bottom"
+            aria-hidden="true"
+            onPointerDown={(event) => onResizePointerDown(event, "y")}
+          />
+          <div
+            className="affairs-dashboard-resize-corner"
+            aria-hidden="true"
+            onPointerDown={(event) => onResizePointerDown(event, "xy")}
+          />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+class DashboardWidgetErrorBoundary extends Component<
+  { fallbackTitle: string; children: ReactNode },
+  { hasError: boolean; message: string | null }
+> {
+  constructor(props: { fallbackTitle: string; children: ReactNode }) {
+    super(props);
+    this.state = {
+      hasError: false,
+      message: null
+    };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return {
+      hasError: true,
+      message: error.message
+    };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="affairs-dashboard-widget-error">
+          <strong>{this.props.fallbackTitle}</strong>
+          <p>{this.state.message || t("shell.affairsWorkbenchWidgetErrorBody")}</p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function AffairsDashboardWidgetHost({
+  widget,
+  workspaceId,
+  todoRecords,
+  automationRecords,
+  automationRuns,
+  onUpdateConfig,
+  onOpenTodo,
+  onOpenAutomation
+}: {
+  widget: DashboardWidgetState;
+  workspaceId: string;
+  todoRecords: TodoRecord[];
+  automationRecords: AutomationRecord[];
+  automationRuns: AssistantAutomationRunDto[];
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  onOpenTodo: () => void;
+  onOpenAutomation: () => void;
+}) {
+  return (
+    <DashboardWidgetErrorBoundary fallbackTitle={t("shell.affairsWorkbenchWidgetErrorTitle")}>
+      {widget.type === "todo" ? (
+        <AffairsDashboardTodoWidget widget={widget} todoRecords={todoRecords} onUpdateConfig={onUpdateConfig} onOpen={onOpenTodo} />
+      ) : widget.type === "automation" ? (
+        <AffairsDashboardAutomationWidget
+          widget={widget}
+          automationRecords={automationRecords}
+          automationRuns={automationRuns}
+          onUpdateConfig={onUpdateConfig}
+          onOpen={onOpenAutomation}
+        />
+      ) : (
+        <AffairsDashboardHtmlWidget widget={widget} workspaceId={workspaceId} />
+      )}
+    </DashboardWidgetErrorBoundary>
+  );
+}
+
+function AffairsDashboardTodoWidget({
+  widget,
+  todoRecords,
+  onUpdateConfig,
+  onOpen
+}: {
+  widget: DashboardWidgetState;
+  todoRecords: TodoRecord[];
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  onOpen: () => void;
+}) {
+  const currentView = widget.config.view === "detail" ? "detail" : "compact";
+
+  return (
+    <>
+      <div className="affairs-dashboard-widget-inline-tabs" role="tablist" aria-label={t("shell.affairsWorkbenchWidgetTodoViewLabel")}>
+        <button
+          type="button"
+          className={currentView === "compact" ? "affairs-dashboard-widget-inline-tab active" : "affairs-dashboard-widget-inline-tab"}
+          onClick={() => onUpdateConfig({ view: "compact" })}
+        >
+          {t("shell.affairsWorkbenchWidgetCompactView")}
+        </button>
+        <button
+          type="button"
+          className={currentView === "detail" ? "affairs-dashboard-widget-inline-tab active" : "affairs-dashboard-widget-inline-tab"}
+          onClick={() => onUpdateConfig({ view: "detail" })}
+        >
+          {t("shell.affairsWorkbenchWidgetDetailView")}
+        </button>
+      </div>
+      <div className="affairs-dashboard-widget-preview-list">
+        {todoRecords.slice(0, currentView === "detail" ? 4 : 3).map((record) => (
+          <div key={record.id} className="affairs-dashboard-widget-preview-item affairs-dashboard-widget-preview-item-stack">
+            <div>
+              <strong>{record.title}</strong>
+              <span>{record.statusLabel}</span>
+            </div>
+            {currentView === "detail" ? <p>{record.summary || record.detail || record.sourceDescription}</p> : null}
+          </div>
+        ))}
+        {todoRecords.length === 0 ? (
+          <div className="affairs-stage-empty compact">{t("shell.affairsTodoEmpty")}</div>
+        ) : null}
+      </div>
+      <button type="button" className="secondary-button" onClick={onOpen}>
+        {t("shell.affairsWorkbenchWidgetOpenTodoAction")}
+      </button>
+    </>
+  );
+}
+
+function AffairsDashboardAutomationWidget({
+  widget,
+  automationRecords,
+  automationRuns,
+  onUpdateConfig,
+  onOpen
+}: {
+  widget: DashboardWidgetState;
+  automationRecords: AutomationRecord[];
+  automationRuns: AssistantAutomationRunDto[];
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  onOpen: () => void;
+}) {
+  const currentView = widget.config.view === "recent" ? "recent" : "list";
+
+  return (
+    <>
+      <div className="affairs-dashboard-widget-inline-tabs" role="tablist" aria-label={t("shell.affairsWorkbenchWidgetAutomationViewLabel")}>
+        <button
+          type="button"
+          className={currentView === "list" ? "affairs-dashboard-widget-inline-tab active" : "affairs-dashboard-widget-inline-tab"}
+          onClick={() => onUpdateConfig({ view: "list" })}
+        >
+          {t("shell.affairsWorkbenchWidgetAutomationListView")}
+        </button>
+        <button
+          type="button"
+          className={currentView === "recent" ? "affairs-dashboard-widget-inline-tab active" : "affairs-dashboard-widget-inline-tab"}
+          onClick={() => onUpdateConfig({ view: "recent" })}
+        >
+          {t("shell.affairsWorkbenchWidgetAutomationRecentView")}
+        </button>
+      </div>
+      {currentView === "recent" ? (
+        <div className="affairs-dashboard-widget-preview-list">
+          {automationRuns.slice(0, 3).map((record) => {
+            const automation = automationRecords.find((item) => item.id === record.automationId);
+            return (
+              <div key={record.id} className="affairs-dashboard-widget-preview-item affairs-dashboard-widget-preview-item-stack">
+                <div>
+                  <strong>{automation?.title || t("shell.affairsWorkbenchWidgetAutomationRunFallbackTitle")}</strong>
+                  <span>{resolveAutomationRunStatusLabel(record.status)}</span>
+                </div>
+                <p>{record.summary || automation?.summary || t("shell.affairsAutomationEmpty")}</p>
+              </div>
+            );
+          })}
+          {automationRuns.length === 0 ? (
+            <div className="affairs-stage-empty compact">{t("shell.affairsAutomationEmpty")}</div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="affairs-dashboard-widget-preview-list">
+          {automationRecords.slice(0, 3).map((record) => (
+            <div key={record.id} className="affairs-dashboard-widget-preview-item affairs-dashboard-widget-preview-item-stack">
+              <div>
+                <strong>{record.title}</strong>
+                <span>{record.statusLabel}</span>
+              </div>
+              <p>{record.summary || record.lastRunSummary || record.triggerLabel}</p>
+            </div>
+          ))}
+          {automationRecords.length === 0 ? (
+            <div className="affairs-stage-empty compact">{t("shell.affairsAutomationEmpty")}</div>
+          ) : null}
+        </div>
+      )}
+      <button type="button" className="secondary-button" onClick={onOpen}>
+        {t("shell.affairsWorkbenchWidgetOpenAutomationAction")}
+      </button>
+    </>
+  );
+}
+
+function AffairsDashboardHtmlWidget({
+  widget,
+  workspaceId
+}: {
+  widget: DashboardWidgetState;
+  workspaceId: string;
+}) {
+  const { showToast } = useToast();
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const sourcePath = widget.sourceRef?.sourceId?.trim() ?? "";
+  const sourceWorkspaceId = resolveDashboardSourceWorkspaceId(widget.sourceRef, workspaceId);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!sourcePath) {
+      setPreviewUrl(null);
+      setLoading(false);
+      setError(t("shell.affairsWorkbenchHtmlSourceMissing"));
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    void getFilePreviewLink(sourceWorkspaceId, sourcePath)
+      .then((previewLink) => {
+        if (cancelled) {
+          return;
+        }
+        setPreviewUrl(buildDashboardPreviewUrl(previewLink.previewUrl));
+      })
+      .catch((nextError) => {
+        if (cancelled) {
+          return;
+        }
+        setError(resolveErrorMessage(nextError, t("shell.affairsWorkbenchHtmlSourceLoadFailed")));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourcePath, sourceWorkspaceId]);
+
+  const openInWindow = useCallback(() => {
+    if (!previewUrl) {
+      return;
+    }
+    window.open(previewUrl, "_blank", "noopener,noreferrer");
+  }, [previewUrl]);
+
+  if (loading) {
+    return <div className="affairs-stage-empty compact">{t("common.loading")}</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="affairs-dashboard-widget-error">
+        <strong>{t("shell.affairsWorkbenchHtmlSourceLoadFailed")}</strong>
+        <p>{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="affairs-dashboard-html-meta">
+        <span>{sourcePath}</span>
+        <button
+          type="button"
+          className="affairs-dashboard-toolbar-button"
+          onClick={() => {
+            if (!previewUrl) {
+              showToast({ title: t("shell.affairsWorkbenchHtmlSourceLoadFailed"), tone: "error" });
+              return;
+            }
+            openInWindow();
+          }}
+        >
+          {t("shell.affairsWorkbenchOpenHtmlAction")}
+        </button>
+      </div>
+      <AffairsDashboardHtmlFrame src={previewUrl} workspaceId={sourceWorkspaceId} title={widget.title} />
+    </>
+  );
+}
+
+function AffairsDashboardHtmlFrame({
+  src,
+  workspaceId,
+  title
+}: {
+  src: string | null;
+  workspaceId: string;
+  title: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    if (!src) {
+      return;
+    }
+
+    const bridge = createHtmlPreviewWorkspaceBridge({
+      iframe: frameRef.current,
+      workspaceId
+    });
+
+    function handleMessage(event: MessageEvent) {
+      void bridge.onMessage(event);
+    }
+
+    window.addEventListener("message", handleMessage);
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      bridge.dispose();
+    };
+  }, [src, workspaceId]);
+
+  if (!src) {
+    return <div className="affairs-stage-empty compact">{t("shell.affairsWorkbenchHtmlSourceMissing")}</div>;
+  }
+
+  return (
+    <div className="affairs-dashboard-html-frame-shell">
+      <iframe
+        ref={frameRef}
+        key={src}
+        className="affairs-dashboard-html-frame"
+        title={title}
+        src={src}
+        sandbox={resolveDashboardHtmlPreviewSandbox(src)}
+      />
+    </div>
+  );
+}
+
+function WorkspaceHtmlSourcePicker({
+  workspaceId,
+  inputId,
+  value,
+  onChange,
+  helpText,
+  mode = "html",
+  label,
+  placeholder,
+  listFailedMessage
+}: {
+  workspaceId: string;
+  inputId: string;
+  value: string;
+  onChange: (value: string) => void;
+  helpText: string;
+  mode?: "html" | "file";
+  label?: string;
+  placeholder?: string;
+  listFailedMessage?: string;
+}) {
+  const [items, setItems] = useState<WorkspaceHtmlSourceOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void listWorkspaceBridgeDir(workspaceId, "", {
+      kind: "file",
+      recursive: true,
+      sortBy: "mtime",
+      order: "desc",
+      limit: 300
+    }).then((payload) => {
+      if (cancelled) {
+        return;
+      }
+      const nextItems = payload.items
+        .filter((item) => item.kind === "file" && (mode === "file" || isWorkspaceHtmlEntryPath(item.path)))
+        .map((item) => ({
+          path: item.path,
+          title: getPathLeafName(item.path),
+          updatedAt: item.mtime,
+          size: item.size
+        }));
+      setItems(nextItems);
+    }).catch((nextError) => {
+      if (cancelled) {
+        return;
+      }
+      setError(resolveErrorMessage(nextError, listFailedMessage ?? t("shell.affairsWorkbenchHtmlSourceListFailed")));
+    }).finally(() => {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [listFailedMessage, mode, workspaceId]);
+
+  return (
+    <div className="affairs-dashboard-inline-field-group">
+      <label className="affairs-dashboard-inline-field" htmlFor={inputId}>
+        <span>{label ?? t("shell.affairsWorkbenchHtmlSourceSelectField")}</span>
+        <select
+          id={inputId}
+          className="affairs-dashboard-inline-select"
+          value={items.some((item) => item.path === value) ? value : ""}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        >
+          <option value="">{loading ? t("common.loading") : (placeholder ?? t("shell.affairsWorkbenchHtmlSourceSelectPlaceholder"))}</option>
+          {items.map((item) => (
+            <option key={item.path} value={item.path}>{item.path}</option>
+          ))}
+        </select>
+      </label>
+      <p className="affairs-dashboard-inline-help">{helpText}</p>
+      {error ? <p className="affairs-dashboard-inline-error">{error}</p> : null}
     </div>
   );
 }
@@ -12006,6 +14237,16 @@ function useAffairsWorkbenchInternal() {
 
   if (!context) {
     throw new Error("AffairsWorkbench components must be used inside AffairsWorkbenchProvider");
+  }
+
+  return context;
+}
+
+function useAffairsDashboardInternal() {
+  const context = useContext(AffairsDashboardContext);
+
+  if (!context) {
+    throw new Error("AffairsDashboard components must be used inside AffairsWorkbenchProvider");
   }
 
   return context;
@@ -12614,6 +14855,19 @@ function areLibrarySnapshotsEqual(
 function areLibraryConfigsEqual(
   left: AffairsLibraryConfigDto | null,
   right: AffairsLibraryConfigDto | null
+) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areAffairsLibraryBindingsEqual(
+  left: AffairsLibraryBindingDto | null,
+  right: AffairsLibraryBindingDto | null
 ) {
   if (left === right) {
     return true;
@@ -13616,11 +15870,13 @@ function normalizeAffairsWorkspacePath(input: string | null | undefined): string
   return input?.trim().replace(/\/+$/g, "") ?? "";
 }
 
-function isAffairsWorkspacePathMatch(
-  leftPath: string | null | undefined,
-  rightPath: string | null | undefined
+function isAffairsControlSessionMatchWorkspaceId(
+  controlSession: ButlerControlSessionDto | null | undefined,
+  workspaceId: string | null | undefined
 ): boolean {
-  return resolveAffairsWorkspacePathMatchLength(leftPath, rightPath) > 0;
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  const sessionWorkspaceId = controlSession?.session.workspaceId?.trim() ?? "";
+  return normalizedWorkspaceId.length > 0 && sessionWorkspaceId === normalizedWorkspaceId;
 }
 
 function buildAffairsConversationDraftSummary(draft: AffairsConversationDraftSelection) {

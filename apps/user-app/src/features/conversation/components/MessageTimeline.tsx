@@ -720,6 +720,9 @@ function getToolDisplayName(name: string): string {
   if (name === "shell_command" || name === "tool") {
     return t("conversation.roleTool");
   }
+  if (name === "web_search" || name === "web_search_20250305") {
+    return t("conversation.toolWebSearch");
+  }
 
   return name;
 }
@@ -2115,8 +2118,58 @@ function getToolPreview(tool: ResolvedToolCall): string {
     return t("conversation.toolPreviewTerminal");
   }
 
+  if (tool.name === "web_search" || tool.name === "web_search_20250305") {
+    const query = parsedInput ? readFirstToolInputText(parsedInput, ["query", "q"]) : "";
+    if (query) {
+      return `搜索：${query}`;
+    }
+  }
+
   const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
   return previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
+}
+
+function parseWebSearchToolResult(tool: ResolvedToolCall): {
+  detail: string;
+  query: string | null;
+  sources: Array<{ title: string | null; url: string | null }>;
+} | null {
+  if (tool.name !== "web_search" && tool.name !== "web_search_20250305") {
+    return null;
+  }
+
+  const rawOutput = tool.output?.trim() ?? "";
+  if (!rawOutput) {
+    return null;
+  }
+
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(rawOutput) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(parsed)) {
+    return null;
+  }
+
+  const detail = readText(parsed, "detail") || t("conversation.toolResultEmpty");
+  const query = readText(parsed, "query");
+  const sources = (readArray(parsed, "sources") ?? [])
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item) => ({
+      title: readText(item, "title"),
+      url: readText(item, "url")
+    }))
+    .filter((item) => item.title || item.url)
+    .slice(0, 8);
+
+  return {
+    detail,
+    query,
+    sources
+  };
 }
 
 function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGroup | null {
@@ -3777,11 +3830,13 @@ function ViewImageToolItem({
 
 function ToolCallItem({
   group,
+  sessionId,
   workspaceId,
   workspacePath,
   exportMode = false
 }: {
   group: ToolMessageGroup;
+  sessionId?: string | null;
   workspaceId?: string | null;
   workspacePath?: string | null;
   exportMode?: boolean;
@@ -3791,8 +3846,8 @@ function ToolCallItem({
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
   const viewImageSnapshot = useMemo(
-    () => resolveViewImageToolSnapshot(tool, workspacePath),
-    [tool, workspacePath]
+    () => resolveViewImageToolSnapshot(tool, workspacePath, sessionId),
+    [sessionId, tool, workspacePath]
   );
   const assistantCapabilityLookup = useMemo(
     () => buildAssistantCapabilityNavigationLookup(navigationGroups),
@@ -3820,6 +3875,7 @@ function ToolCallItem({
       <ViewImageToolItem
         tool={tool}
         snapshot={viewImageSnapshot}
+        sessionId={sessionId}
         workspaceId={workspaceId}
         exportMode={exportMode}
       />
@@ -3879,6 +3935,7 @@ function ToolCallItem({
   }
 
   const preview = getToolPreview(tool);
+  const webSearchResult = parseWebSearchToolResult(tool);
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
   const canToggleExpanded = hasDetails && !exportMode;
   const headerContent = (
@@ -3927,9 +3984,51 @@ function ToolCallItem({
           {(hasResult || tool.error || tool.output) && (
             <div className="tool-call-section">
               <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
-              <pre className={tool.error ? "tool-call-error" : undefined}>
-                {tool.error || tool.output || t("conversation.toolResultEmpty")}
-              </pre>
+              {webSearchResult && !tool.error ? (
+                <div className="tool-web-search-result">
+                  <p className="tool-web-search-detail">{webSearchResult.detail}</p>
+                  {webSearchResult.query ? (
+                    <div className="tool-web-search-meta">
+                      <span className="tool-web-search-meta-label">{t("conversation.toolWebSearchQueryLabel")}</span>
+                      <span className="tool-web-search-meta-value">{webSearchResult.query}</span>
+                    </div>
+                  ) : null}
+                  {webSearchResult.sources.length > 0 ? (
+                    <div className="tool-web-search-sources">
+                      <div className="tool-web-search-sources-label">{t("conversation.toolWebSearchSourcesLabel")}</div>
+                      <ul className="tool-web-search-source-list">
+                        {webSearchResult.sources.map((source, index) => {
+                          const key = `${source.url || source.title || "source"}-${index}`;
+                          const title = source.title || source.url || t("conversation.toolWebSearchUntitledSource");
+                          return (
+                            <li key={key} className="tool-web-search-source-item">
+                              {source.url ? (
+                                <a
+                                  className="tool-web-search-source-link"
+                                  href={source.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {title}
+                                </a>
+                              ) : (
+                                <span className="tool-web-search-source-title">{title}</span>
+                              )}
+                              {source.url ? (
+                                <span className="tool-web-search-source-url">{source.url}</span>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <pre className={tool.error ? "tool-call-error" : undefined}>
+                  {tool.error || tool.output || t("conversation.toolResultEmpty")}
+                </pre>
+              )}
             </div>
           )}
         </div>
@@ -4880,6 +4979,7 @@ export function ConversationTranscriptExport({
             <article key={item.key} className="message-item tool-message-row">
               <ToolCallItem
                 group={item.group}
+                sessionId={sessionId}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 exportMode
@@ -5867,7 +5967,12 @@ export function MessageTimeline({
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
             <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem group={item.group} workspaceId={workspaceId} workspacePath={workspacePath} />
+              <ToolCallItem
+                group={item.group}
+                sessionId={sessionId}
+                workspaceId={workspaceId}
+                workspacePath={workspacePath}
+              />
             </article>
           ) : item.type === "runtime_thinking" ? (
             renderRuntimeThinkingItem(item)

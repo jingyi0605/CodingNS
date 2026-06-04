@@ -20,6 +20,7 @@ import {
 import { useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type { AffairsViewState } from "../types/workbench-mode";
 import { resolveAffairsDocumentVisual } from "../utils/affairs-document-visual";
+import { createAffairsShortcutAppState, createDefaultAffairsDashboardState } from "../utils/affairs-dashboard-state";
 
 const desktopBridgeMock = vi.hoisted(() => ({
   fs: {
@@ -257,6 +258,22 @@ const conversationApiMock = vi.hoisted(() => ({
 const docsApiMock = vi.hoisted(() => ({
   destroyEditor: vi.fn(),
   docEditor: vi.fn()
+}));
+
+const fileContextApiMock = vi.hoisted(() => ({
+  getFilePreview: vi.fn(),
+  getFilePreviewLink: vi.fn()
+}));
+
+const workspaceBridgeApiMock = vi.hoisted(() => ({
+  listWorkspaceBridgeDir: vi.fn()
+}));
+
+const htmlPreviewBridgeMock = vi.hoisted(() => ({
+  createHtmlPreviewWorkspaceBridge: vi.fn(() => ({
+    onMessage: vi.fn(),
+    dispose: vi.fn()
+  }))
 }));
 
 vi.mock("../../conversation/api/conversation-api", async () => {
@@ -612,6 +629,19 @@ vi.mock("../../../platform/platform-provider", () => ({
     windows: {},
     haptics: { supported: false, trigger: vi.fn() }
   })
+}));
+
+vi.mock("../../conversation/api/file-context-api", () => ({
+  getFilePreview: fileContextApiMock.getFilePreview,
+  getFilePreviewLink: fileContextApiMock.getFilePreviewLink
+}));
+
+vi.mock("../../../platform/preview/codingns-workspace-bridge", () => ({
+  listWorkspaceBridgeDir: workspaceBridgeApiMock.listWorkspaceBridgeDir
+}));
+
+vi.mock("../../../platform/preview/html-preview-workspace-bridge", () => ({
+  createHtmlPreviewWorkspaceBridge: htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge
 }));
 
 vi.mock("../../conversation/timeline-source-items", () => ({
@@ -1158,6 +1188,48 @@ describe("AffairsWorkbenchView", () => {
     clearProviderCatalogStore();
     clearSessionProviderPickerCapabilityCache();
 
+    fileContextApiMock.getFilePreview.mockReset();
+    fileContextApiMock.getFilePreview.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "tools/report/index.html",
+      supported: true,
+      kind: "html",
+      reason: null,
+      content: null,
+      version: null,
+      size: 0,
+      updatedAt: null,
+      previewPath: "/preview/files/token/tools/report/index.html",
+      previewUrl: "http://127.0.0.1:3002/preview/files/token/tools/report/index.html",
+      onlyOffice: null,
+      capabilities: {
+        canEdit: false,
+        canRefresh: true,
+        canResize: true,
+        canZoom: false,
+        canPaginate: false
+      }
+    });
+    fileContextApiMock.getFilePreviewLink.mockReset();
+    fileContextApiMock.getFilePreviewLink.mockResolvedValue({
+      previewPath: "/preview/files/token/tools/report/index.html",
+      previewUrl: "http://127.0.0.1:3002/preview/files/token/tools/report/index.html",
+      expiresAt: "2026-06-05T00:00:00.000Z"
+    });
+    workspaceBridgeApiMock.listWorkspaceBridgeDir.mockReset();
+    workspaceBridgeApiMock.listWorkspaceBridgeDir.mockResolvedValue({
+      path: "",
+      items: [
+        {
+          name: "index.html",
+          path: "tools/report/index.html",
+          kind: "file",
+          size: 1024,
+          mtime: Date.now()
+        }
+      ]
+    });
+    htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge.mockClear();
     conversationApiMock.listAffairsLightweightSessions.mockReset();
     conversationApiMock.getAffairsLightweightSession.mockReset();
     conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
@@ -1195,6 +1267,7 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.sendAffairsLightweightSessionMessage.mockReset();
     conversationApiMock.sendAffairsLightweightSessionMessageStream.mockReset();
     conversationApiMock.markSessionSeen.mockReset();
+    conversationApiMock.markSessionSeen.mockResolvedValue(undefined);
     conversationApiMock.renameSessionTitle.mockReset();
     conversationApiMock.deleteSession.mockReset();
     conversationApiMock.getSessionMessages.mockReset();
@@ -2824,7 +2897,7 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-  it("新建 Agent 会话会切到文档库绑定工作区并同步 Butler workspacePath", async () => {
+  it("新建 Agent 会话会复用文档库绑定工作区对应的共享 runtime，而不会改 Butler workspacePath", async () => {
     const user = userEvent.setup();
     butlerRuntimeStateMock.setState({
       profile: {
@@ -2857,9 +2930,7 @@ describe("AffairsWorkbenchView", () => {
 
     await waitFor(() => {
       expect(butlerRuntimeCallsMock.constructedWorkspaceIds).toContain("workspace-2");
-      expect(butlerRuntimeCallsMock.updateProfile).toHaveBeenCalledWith({
-        workspacePath: "/Users/jackson/SynologyDrive"
-      });
+      expect(butlerRuntimeCallsMock.updateProfile).not.toHaveBeenCalled();
       expect(butlerRuntimeCallsMock.sendMessage).toHaveBeenCalled();
     });
   });
@@ -3003,11 +3074,77 @@ describe("AffairsWorkbenchView", () => {
       expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Exchange 分层通讯簿/i })).toBeInTheDocument();
     });
+    expect(screen.getByText(t("shell.affairsAssistantBindingRequired"))).toBeInTheDocument();
 
     expect(screen.queryByRole("heading", { name: "事务对话" })).toBeNull();
     expect(butlerRuntimeCallsMock.switchProvider).toHaveBeenCalledWith("codex");
-    expect(butlerRuntimeCallsMock.updateProfile).toHaveBeenCalledWith({
-      workspacePath: "/Users/jackson/SynologyDrive"
+    expect(butlerRuntimeCallsMock.updateProfile).not.toHaveBeenCalled();
+
+    expect(screen.getAllByTestId("affairs-timeline")).toHaveLength(1);
+    await user.click(screen.getByTestId("affairs-composer-send"));
+
+    await waitFor(() => {
+      expect(butlerRuntimeCallsMock.sendMessage).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByTestId("affairs-timeline")).toHaveLength(1);
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("agent-session-1:");
+      expect(screen.queryByText(t("shell.affairsAssistantBindingRequired"))).toBeNull();
+    });
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsConversationNav") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Agent 对话" })).toBeInTheDocument();
+      expect(screen.getAllByTestId("affairs-timeline")).toHaveLength(2);
+      expect(screen.getAllByTestId("affairs-timeline").every((item) => item.textContent?.startsWith("agent-session-1:"))).toBe(true);
+    });
+  });
+
+  it("右侧事务助手点击历史会话时会在助手页内部切换，不会跳到事务对话主视图", async () => {
+    const user = userEvent.setup();
+    butlerRuntimeStateMock.setState({
+      profile: {
+        displayName: "事务助手",
+        providerId: "codex",
+        workspacePath: "/tmp/workspace-1",
+        persona: {
+          tone: "direct"
+        }
+      },
+      activeProvider: "codex"
+    });
+    butlerControlSessionsCatalogMock.items = [
+      createButlerControlSession({
+        id: "control-session-history-1",
+        title: "事务 Agent 会话",
+        session: {
+          sessionId: "agent-session-history-1",
+          workspaceId: "workspace-2",
+          provider: "codex",
+          rawStoreRef: "raw://codex/agent-session-history-1"
+        }
+      })
+    ];
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      auxiliaryTab: "assistant"
+    }, createNavigationGroupsWithAgentSessions([
+      createAgentSnapshotSession({
+        sessionId: "agent-session-history-1",
+        title: "事务 Agent 会话",
+        rawStoreRef: "butler://butler-session-history-1"
+      })
+    ]));
+
+    await user.click(await screen.findByRole("button", { name: t("shell.butlerHistoryAction") }));
+    const historyDialog = await screen.findByRole("dialog", { name: t("shell.affairsConversationSidebarTitle") });
+    await user.click(within(historyDialog).getByText("事务 Agent 会话").closest("button") as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(butlerRuntimeCallsMock.openControlSession).toHaveBeenCalledWith("control-session-history-1");
+      expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toHaveClass("workbench-info-tab", "active");
+      expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Agent 对话" })).toBeNull();
     });
   });
 
@@ -4380,7 +4517,7 @@ describe("AffairsWorkbenchView", () => {
 
     renderWorkbench();
     await screen.findByText("Exchange 分层通讯簿.txt");
-    await userEvent.click(screen.getByRole("button", { name: /临时文件.*2 个对象/ }));
+    await userEvent.dblClick(screen.getByRole("button", { name: /临时文件.*2 个对象/ }));
 
     await waitFor(() => {
       expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
@@ -5879,6 +6016,335 @@ describe("AffairsWorkbenchView", () => {
     expect(jsonCard.querySelector(".affairs-document-sheet")).toHaveClass("tone-cyan");
     expect(zipCard.querySelector(".affairs-document-sheet")).toHaveClass("tone-amber");
     expect(videoCard.querySelector(".affairs-document-sheet")).toHaveClass("tone-violet");
+  });
+
+  it("添加 HTML 块时会按所选来源工作区走校验和预览链路", async () => {
+    const openMock = vi.fn();
+    vi.stubGlobal("open", openMock);
+    const boundLibraryBinding = {
+      ...baseLibrarySnapshot().binding,
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/SynologyDrive/事务文档库"
+    };
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      binding: boundLibraryBinding
+    }));
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(boundLibraryBinding);
+
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:30:00.000Z");
+    dashboardState.layoutLocked = false;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeHtml") }));
+    const currentLibraryOption = screen.getByRole("option", {
+      name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", { workspace: "事务文档库" })
+    });
+    expect(currentLibraryOption).toBeInTheDocument();
+    expect(currentLibraryOption).toHaveValue("workspace-2");
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceSelectField")), "tools/report/index.html");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
+
+    await waitFor(() => {
+      expect(fileContextApiMock.getFilePreview).toHaveBeenCalledWith("workspace-2", "tools/report/index.html");
+    });
+    await waitFor(() => {
+      expect(fileContextApiMock.getFilePreviewLink).toHaveBeenCalledWith("workspace-2", "tools/report/index.html");
+    });
+  });
+
+  it("文档库路径映射不到任何工作区时不会显示当前文档库来源选项", async () => {
+    const libraryBindingWithoutWorkspace = {
+      ...baseLibrarySnapshot().binding,
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/NotMatchedLibrary"
+    };
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      binding: libraryBindingWithoutWorkspace
+    }));
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(libraryBindingWithoutWorkspace);
+
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:30:00.000Z");
+    dashboardState.layoutLocked = false;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeHtml") }));
+
+    expect(screen.queryByRole("option", {
+      name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", { workspace: "事务文档库" })
+    })).not.toBeInTheDocument();
+  });
+
+  it("添加快捷应用时默认选中当前文档库对应工作区", async () => {
+    const boundLibraryBinding = {
+      ...baseLibrarySnapshot().binding,
+      workspaceId: "workspace-1",
+      rootDir: "/Users/jackson/SynologyDrive/事务文档库"
+    };
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      binding: boundLibraryBinding
+    }));
+    conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(boundLibraryBinding);
+
+    renderWorkbenchWithCustomNavigationGroups(createState(), navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
+  });
+
+  it("打开快捷应用时会继承快捷应用自己的来源工作区权限", async () => {
+    renderWorkbenchWithCustomNavigationGroups(createState(), navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
+
+    await waitFor(() => {
+      expect(fileContextApiMock.getFilePreview).toHaveBeenCalledWith("workspace-2", "tools/report/index.html");
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailDoneAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailLaunchAction", { title: "index.html" }) }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "index.html" })).toBeInTheDocument();
+    });
+    expect(fileContextApiMock.getFilePreviewLink).not.toHaveBeenCalled();
+  });
+
+  it("文档和对话分区默认折叠快捷应用，点展开后才显示内容", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:10:00.000Z");
+    dashboardState.shortcutApps = [
+      createAffairsShortcutAppState({
+        title: "会员管理",
+        workspaceId: "workspace-2",
+        entryPath: "tools/member/index.html"
+      }, "2026-06-04T10:10:00.000Z")
+    ];
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    const { rerender } = renderWorkbenchWithCustomNavigationGroups(createState(), navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(screen.queryByText("会员管理")).toBeNull();
+    expect(screen.queryByRole("button", { name: t("shell.affairsShortcutRailAddAction") })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    expect(await screen.findByText("会员管理")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsShortcutRailRemoveAction") })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailAddAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailRemoveAction") })).toBeInTheDocument();
+
+    rerender(
+      <AffairsWorkbenchProvider
+        workspaceId="workspace-1"
+        workspaceName="事务工作区"
+        navigationGroups={navigationGroupsWithBoundLibraryWorkspace}
+        state={{
+          ...createState(),
+          primarySection: "conversation"
+        }}
+        onStateChange={() => undefined}
+      >
+        <div style={{ display: "flex", gap: 12 }}>
+          <AffairsSectionMenu />
+          <AffairsSidebarPanel />
+          <AffairsWorkbenchView workspaceId="workspace-1" />
+          <AffairsAuxiliaryPanel workspaceId="workspace-1" />
+        </div>
+      </AffairsWorkbenchProvider>
+    );
+
+    expect(screen.queryByText("会员管理")).toBeNull();
+    expect(screen.queryByRole("button", { name: t("shell.affairsShortcutRailAddAction") })).toBeNull();
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailExpandAction") })).toBeInTheDocument();
+  });
+
+  it("快捷应用会用名称生成图标，并通过全屏 HTML 预览打开", async () => {
+    clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsShortcutRailAddAction") })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await userEvent.clear(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")));
+    await userEvent.type(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")), "会员管理");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
+
+    const launcher = await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditEntryAction", { title: "会员管理" }) });
+    expect(within(launcher).getByText("会员")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailRemoveAction") })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailDoneAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailLaunchAction", { title: "会员管理" }) }));
+
+    const dialog = await screen.findByRole("dialog", { name: "会员管理" });
+    expect(dialog).toBeInTheDocument();
+    expect(document.querySelector('.workbench-modal-card.file-viewer-modal[data-size=\"full\"]')).not.toBeNull();
+  });
+
+  it("编辑模式下点击快捷应用会进入编辑表单而不是打开应用", async () => {
+    clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await userEvent.clear(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")));
+    await userEvent.type(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")), "会员管理");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditEntryAction", { title: "会员管理" }) }));
+
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
+    expect(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField"))).toHaveValue("tools/report/index.html");
+    expect(screen.getByLabelText(t("shell.affairsShortcutRailTitleField"))).toHaveValue("会员管理");
+    expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmEditAction") })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "会员管理" })).toBeNull();
+  });
+
+  it("快捷应用支持添加非 HTML 文件，并通过预览打开", async () => {
+    clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
+    workspaceBridgeApiMock.listWorkspaceBridgeDir.mockResolvedValue({
+      path: "",
+      items: [
+        {
+          name: "Exchange 分层通讯簿.txt",
+          path: "Exchange 分层通讯簿.txt",
+          kind: "file",
+          size: 1024,
+          mtime: Date.now()
+        },
+        {
+          name: "index.html",
+          path: "tools/report/index.html",
+          kind: "file",
+          size: 1024,
+          mtime: Date.now()
+        }
+      ]
+    });
+    fileContextApiMock.getFilePreview.mockImplementation(async (workspaceId: string, path: string) => ({
+      workspaceId,
+      path,
+      supported: true,
+      kind: "text",
+      reason: null,
+      content: null,
+      version: null,
+      size: 1024,
+      updatedAt: null,
+      previewPath: `/preview/files/token/${path}`,
+      previewUrl: `http://127.0.0.1:3002/preview/files/token/${path}`,
+      onlyOffice: null,
+      capabilities: {
+        canEdit: false,
+        canRefresh: true,
+        canResize: true,
+        canZoom: false,
+        canPaginate: false
+      }
+    }));
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "Exchange 分层通讯簿.txt");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailDoneAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailLaunchAction", { title: "Exchange 分层通讯簿.txt" }) }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Exchange 分层通讯簿.txt" })).toBeInTheDocument();
+    });
+    expect(fileContextApiMock.getFilePreview).toHaveBeenCalledWith("workspace-2", "Exchange 分层通讯簿.txt");
+  });
+
+  it("锁定状态下会隐藏标签页添加按钮", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:40:00.000Z");
+    dashboardState.layoutLocked = true;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(screen.queryByRole("button", { name: t("shell.affairsWorkbenchAddTabAction") })).toBeNull();
+  });
+
+  it("解锁状态下支持新增、重命名和删除标签页", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:45:00.000Z");
+    dashboardState.layoutLocked = false;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddTabAction") }));
+    expect(await screen.findByRole("tab", { name: /工作台 2/i })).toBeInTheDocument();
+
+    const renameButtons = screen.getAllByRole("button", { name: t("shell.affairsWorkbenchRenameTabAction") });
+    await userEvent.click(renameButtons[1]);
+    const input = screen.getByRole("textbox", { name: t("shell.affairsWorkbenchRenameTabAction") });
+    await userEvent.clear(input);
+    await userEvent.type(input, "项目看板");
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByRole("tab", { name: /项目看板/i })).toBeInTheDocument();
+
+    const deleteButtons = screen.getAllByRole("button", { name: t("shell.affairsWorkbenchDeleteTabAction") });
+    await userEvent.click(deleteButtons[1]);
+    await waitFor(() => {
+      expect(screen.queryByRole("tab", { name: /项目看板/i })).toBeNull();
+    });
   });
 
 

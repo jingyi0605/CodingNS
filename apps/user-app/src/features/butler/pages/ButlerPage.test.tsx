@@ -76,13 +76,6 @@ vi.mock("../../conversation/components/MessageTimeline", () => ({
   )
 }));
 
-vi.mock("../../conversation/components/FileContextPanel", () => ({
-  FileContextPanel: ({
-    workspaceId
-  }: {
-    workspaceId?: string | null;
-  }) => <div data-testid="butler-sandbox-file-panel">{workspaceId}</div>
-}));
 
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
@@ -146,15 +139,12 @@ vi.mock("../api/butler-api", () => ({
   cancelAssistantAutomation: vi.fn(),
   cancelButlerControlTimer: vi.fn(),
   cancelButlerVerificationRun: vi.fn(),
-  createAssistantSandbox: vi.fn(),
-  expireAssistantSandbox: vi.fn(),
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   updateButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
   getButlerFollowUpTask: vi.fn(),
-  listAssistantSandboxes: vi.fn(),
   listButlerControlSessions: vi.fn(),
   listButlerControlTimers: vi.fn(),
   listAssistantAutomations: vi.fn(),
@@ -163,8 +153,6 @@ vi.mock("../api/butler-api", () => ({
   listButlerFollowUpTasks: vi.fn(),
   listButlerInboxItems: vi.fn(),
   listButlerControlEvents: vi.fn(),
-  promoteAssistantSandbox: vi.fn(),
-  removeAssistantSandbox: vi.fn(),
   skipAssistantAutomationWait: vi.fn(),
   updateAssistantAutomation: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
@@ -181,15 +169,12 @@ import {
   cancelAssistantAutomation,
   cancelButlerControlTimer,
   cancelButlerVerificationRun,
-  createAssistantSandbox,
-  expireAssistantSandbox,
   getButlerProfile,
   initButlerProfile,
   updateButlerProfile,
   getButlerOverview,
   cancelButlerFollowUpTask,
   getButlerFollowUpTask,
-  listAssistantSandboxes,
   listButlerControlSessions,
   listButlerControlTimers,
   listAssistantAutomations,
@@ -198,8 +183,6 @@ import {
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerControlEvents,
-  promoteAssistantSandbox,
-  removeAssistantSandbox,
   skipAssistantAutomationWait,
   updateAssistantAutomation,
   getCurrentButlerControlSession,
@@ -224,15 +207,12 @@ const mockedListProviderCatalog = vi.mocked(listProviderCatalog);
 const mockedCancelAssistantAutomation = vi.mocked(cancelAssistantAutomation);
 const mockedCancelButlerControlTimer = vi.mocked(cancelButlerControlTimer);
 const mockedCancelButlerVerificationRun = vi.mocked(cancelButlerVerificationRun);
-const mockedCreateAssistantSandbox = vi.mocked(createAssistantSandbox);
-const mockedExpireAssistantSandbox = vi.mocked(expireAssistantSandbox);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
-const mockedListAssistantSandboxes = vi.mocked(listAssistantSandboxes);
 const mockedListButlerControlSessions = vi.mocked(listButlerControlSessions);
 const mockedListButlerControlTimers = vi.mocked(listButlerControlTimers);
 const mockedListAssistantAutomations = vi.mocked(listAssistantAutomations);
@@ -241,8 +221,6 @@ const mockedListButlerPatrolPlans = vi.mocked(listButlerPatrolPlans);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
-const mockedPromoteAssistantSandbox = vi.mocked(promoteAssistantSandbox);
-const mockedRemoveAssistantSandbox = vi.mocked(removeAssistantSandbox);
 const mockedSkipAssistantAutomationWait = vi.mocked(skipAssistantAutomationWait);
 const mockedUpdateAssistantAutomation = vi.mocked(updateAssistantAutomation);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
@@ -391,250 +369,6 @@ describe("ButlerPage", () => {
         automation: {} as never
       }
     });
-    mockedCreateAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {} as never
-      }
-    });
-    mockedExpireAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {} as never
-      }
-    });
-    mockedCancelButlerVerificationRun.mockResolvedValue({
-      run: {
-        id: "verification-1",
-        projectId: "project-1",
-        status: "cancelled"
-      } as never
-    });
-    mockedGetButlerFollowUpTask.mockResolvedValue({
-      task: {
-        id: "follow-up-1",
-        projectId: "project-1",
-        projectName: "项目甲",
-        workspaceId: "workspace-1",
-        butlerSessionId: "butler-session-1",
-        sessionId: "session-1",
-        sessionTitle: "登录页开发",
-        objective: "把验证码功能真正做完",
-        completionCriteria: "当验证码流程和回归验证都完成后停止。",
-        maxAutoContinueCount: 5,
-        status: "waiting_user",
-        checkIntervalSeconds: 300,
-        lastCheckedAt: "2026-04-07T01:00:00.000Z",
-        nextCheckAt: null,
-        lastObservedRunningState: "completed",
-        lastObservedMessageAt: "2026-04-07T01:00:00.000Z",
-        lastObservedMessageCount: 12,
-        lastAutomationSummary: "当前需要你确认验证码失败策略。",
-        lastAutomationAt: "2026-04-07T01:02:00.000Z",
-        autoContinueCount: 1,
-        waitingReason: "需要你确认失败策略。",
-        rounds: [
-          {
-            roundNumber: 1,
-            kind: "started",
-            status: "active",
-            summary: "已开始跟进，准备由后台评估助手检查当前进展。默认最多自动推进 5 轮。",
-            waitingReason: null,
-            continuePrompt: null,
-            observedRunningState: "completed",
-            autoContinueCount: 0,
-            createdAt: "2026-04-07T00:50:00.000Z"
-          },
-          {
-            roundNumber: 2,
-            kind: "waiting_user",
-            status: "waiting_user",
-            summary: "当前需要你确认验证码失败策略。",
-            waitingReason: "需要你确认失败策略。",
-            continuePrompt: null,
-            observedRunningState: "completed",
-            autoContinueCount: 1,
-            createdAt: "2026-04-07T01:02:00.000Z"
-          }
-        ],
-        createdAt: "2026-04-07T00:50:00.000Z",
-        updatedAt: "2026-04-07T01:02:00.000Z",
-        completedAt: null
-      }
-    });
-    mockedListButlerPatrolPlans.mockResolvedValue({
-      items: []
-    });
-    mockedListButlerControlSessions.mockResolvedValue({
-      items: []
-    } as never);
-    mockedListAssistantSandboxes.mockResolvedValue({
-      payload: {
-        items: []
-      }
-    });
-    mockedListButlerControlTimers.mockResolvedValue({
-      items: []
-    });
-    mockedListAssistantAutomations.mockResolvedValue({
-      payload: {
-        items: []
-      }
-    });
-    mockedListRecentAssistantAutomationRuns.mockResolvedValue({
-      payload: {
-        items: []
-      }
-    });
-    mockedListButlerFollowUpTasks.mockResolvedValue({
-      items: []
-    });
-    mockedListButlerInboxItems.mockResolvedValue({
-      items: []
-    });
-    mockedListButlerControlEvents.mockResolvedValue({ items: [] });
-    mockedPromoteAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {} as never
-      }
-    });
-    mockedRemoveAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {} as never
-      }
-    });
-    mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
-    mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
-    mockedAnalyzeButlerInboxItem.mockResolvedValue({
-      item: {} as never,
-      controlSession: {} as never
-    });
-    mockedStartButlerControlSession.mockResolvedValue({
-      controlSession: {
-        id: "ctrl-start",
-        providerId: "codex",
-        sessionId: "session-control-1",
-        status: "running",
-        lastContextVersion: null,
-        lastSummary: null,
-        createdAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z",
-        session: {
-          sessionId: "session-control-1"
-        }
-      }
-    } as never);
-    mockedStartButlerInboxItemSession.mockResolvedValue({
-      item: {} as never,
-      session: {} as never,
-      followUpTask: null
-    });
-    mockedGetProviderCapabilities.mockResolvedValue({
-      provider: "codex",
-      canStartSession: true,
-      canResumeSession: true,
-      canSendMessage: true,
-      inRunInputMode: "none",
-      supportsSubagents: false,
-      supportsInterrupt: true,
-      supportsStructuredToolCalls: true,
-      supportsTokenUsage: true,
-      supportsAttachments: false,
-      supportsPermissionPrompt: true,
-      supportsCheckpoint: false,
-      supportsQueueWhileRunning: false,
-      supportsRunSteering: false,
-      supportsSlashMenu: false,
-      supportsReasoningSelector: true,
-      modelOptions: [{ id: "provider-default", name: "provider-default", usesProviderDefault: true }],
-      defaultReasoningLevel: null,
-      limitations: []
-    });
-    mockedGetSessionMessages.mockResolvedValue({
-      messages: [],
-      cursor: "cursor-latest",
-      nextCursor: null,
-      total: 0
-    } as never);
-    mockedGetSessionCapabilities.mockResolvedValue({
-      provider: "codex",
-      canStartSession: true,
-      canResumeSession: true,
-      canSendMessage: true,
-      inRunInputMode: "none",
-      supportsSubagents: false,
-      supportsInterrupt: true,
-      supportsStructuredToolCalls: true,
-      supportsTokenUsage: true,
-      supportsAttachments: false,
-      supportsPermissionPrompt: true,
-      supportsCheckpoint: false,
-      supportsQueueWhileRunning: false,
-      supportsRunSteering: false,
-      supportsSlashMenu: false,
-      supportsReasoningSelector: true,
-      modelOptions: [{ id: "provider-default", name: "provider-default", usesProviderDefault: true }],
-      defaultReasoningLevel: null,
-      limitations: []
-    });
-    mockedGetSessionPermissionRequests.mockResolvedValue({
-      items: []
-    } as never);
-    mockedReplySessionPermissionRequest.mockResolvedValue({
-      id: "permission-1",
-      sessionId: "session-control-1",
-      provider: "claude-code",
-      providerSessionId: "provider-control-1",
-      requestKey: "request-1",
-      kind: "command",
-      status: "approved",
-      title: "Claude 请求执行命令",
-      summary: "pwd",
-      detail: null,
-      reason: null,
-      toolName: "Bash",
-      command: "pwd",
-      cwd: "/tmp/butler",
-      paths: [],
-      permissionProfile: null,
-      questions: [],
-      actions: [],
-      rawPayload: null,
-      createdAt: "2026-04-05T00:00:00.000Z",
-      updatedAt: "2026-04-05T00:00:01.000Z",
-      resolvedAt: "2026-04-05T00:00:01.000Z"
-    } as never);
-    mockedGetSessionRuntime.mockResolvedValue({
-      sessionId: "session-control-1",
-      runningState: "idle",
-      hasActiveRun: false,
-      canAttach: false,
-      canInterrupt: true,
-      inRunInputMode: "none",
-      provider: "codex",
-      providerSessionId: "provider-control-1",
-      activityResolutionSource: "authoritative_runtime",
-      activityConfidence: "authoritative",
-      runId: null,
-      detail: null,
-      errorCode: null,
-      errorDetail: null,
-      updatedAt: "2026-04-05T00:00:00.000Z",
-      watchdogTriggeredAt: null,
-      contextUsage: null
-    } as never);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  function renderPage() {
-    return render(
-      <MemoryRouter initialEntries={["/workspaces/workspace-1/butler"]}>
-        <Routes>
-          <Route path="/workspaces/:workspaceId/butler" element={<ButlerPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
   }
 
   function getLatestSidePanel() {
@@ -1947,180 +1681,7 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
   });
 
-  it("信息标签页顶部可以进入当前控制会话的沙箱管理并查看文件", async () => {
-    mockedGetButlerProfile.mockResolvedValueOnce({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-    mockedGetCurrentButlerControlSession.mockResolvedValue({
-      controlSession: {
-        id: "control-1",
-        providerId: "codex",
-        sessionId: "assistant-session-1",
-        purpose: "chat",
-        title: "当前助手控制会话",
-        sourceItemId: null,
-        status: "running",
-        lastContextVersion: null,
-        lastSummary: "继续处理 Butler 沙箱",
-        createdAt: "2026-04-17T09:50:00.000Z",
-        updatedAt: "2026-04-17T10:00:00.000Z",
-        session: {
-          sessionId: "assistant-session-1",
-          workspaceId: "workspace-1",
-          title: "当前助手控制会话"
-        }
-      }
-    } as never);
-    mockedListAssistantSandboxes.mockResolvedValue({
-      payload: {
-        items: [
-          {
-            id: "sandbox-1",
-            userId: "user-1",
-            workspaceId: "workspace-sandbox-1",
-            controlSessionId: "control-1",
-            title: "现有沙箱",
-            description: null,
-            sourceKind: "blank",
-            sourceRef: "/tmp/butler/sandboxes/existing",
-            visibility: "assistant_only",
-            status: "active",
-            purpose: "验证旧问题",
-            expiresAt: null,
-            promotedAt: null,
-            createdAt: "2026-04-17T10:00:00.000Z",
-            updatedAt: "2026-04-17T10:00:00.000Z",
-            workspace: {
-              id: "workspace-sandbox-1",
-              name: "现有沙箱",
-              path: "/tmp/butler/sandboxes/existing",
-              repoRoot: "/tmp/butler/sandboxes/existing",
-              favorite: false,
-              sortOrder: 0,
-              createdAt: "2026-04-17T10:00:00.000Z",
-              updatedAt: "2026-04-17T10:00:00.000Z",
-              removedAt: null
-            }
-          }
-        ]
-      }
-    });
-    mockedRemoveAssistantSandbox.mockResolvedValue({
-      payload: {
-        sandbox: {
-          id: "sandbox-1",
-          userId: "user-1",
-          workspaceId: "workspace-sandbox-1",
-          controlSessionId: "control-1",
-          title: "现有沙箱",
-          description: null,
-          sourceKind: "blank",
-          sourceRef: "/tmp/butler/sandboxes/existing",
-          visibility: "assistant_only",
-          status: "deleted",
-          purpose: "验证旧问题",
-          expiresAt: null,
-          promotedAt: null,
-          createdAt: "2026-04-17T10:00:00.000Z",
-          updatedAt: "2026-04-17T10:20:00.000Z",
-          workspace: null
-        }
-      }
-    });
 
-    renderPage();
-
-    await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
-    });
-
-    const renderedPanel = render(getLatestSidePanel());
-
-    fireEvent.click(
-      renderedPanel.getByRole("button", { name: t("shell.butlerSandboxManageAction") })
-    );
-
-    const dialog = await screen.findByRole("dialog", {
-      name: t("shell.butlerSandboxManagerTitle")
-    });
-
-    await waitFor(() => {
-      expect(mockedListAssistantSandboxes).toHaveBeenCalledWith({
-        controlSessionId: "control-1"
-      });
-    });
-
-    expect(within(dialog).getAllByText("现有沙箱").length).toBeGreaterThan(0);
-    expect(within(dialog).getByTestId("butler-sandbox-file-panel")).toHaveTextContent("workspace-sandbox-1");
-
-    fireEvent.click(
-      within(dialog).getByRole("button", {
-        name: t("shell.butlerSandboxRemoveAction")
-      })
-    );
-
-    await waitFor(() => {
-      expect(mockedRemoveAssistantSandbox).toHaveBeenCalledWith("sandbox-1");
-      expect(showToastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: t("shell.butlerSandboxRemoveSucceeded"),
-          tone: "success"
-        })
-      );
-    });
-  });
-
-  it("当前会话没有沙箱时，沙箱管理直接展示空态", async () => {
-    mockedGetButlerProfile.mockResolvedValueOnce({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-
-    renderPage();
-
-    await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
-    });
-
-    const renderedPanel = render(getLatestSidePanel());
-
-    fireEvent.click(
-      renderedPanel.getByRole("button", { name: t("shell.butlerSandboxManageAction") })
-    );
-
-    const dialog = await screen.findByRole("dialog", {
-      name: t("shell.butlerSandboxManagerTitle")
-    });
-
-    expect(mockedListAssistantSandboxes).not.toHaveBeenCalled();
-    expect(within(dialog).getByText(t("shell.butlerSandboxEmpty"))).toBeInTheDocument();
-    expect(within(dialog).queryByText(t("shell.butlerSandboxSelectHint"))).not.toBeInTheDocument();
-  });
 
   it("代办提示词支持从预览区和动作区复制", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({

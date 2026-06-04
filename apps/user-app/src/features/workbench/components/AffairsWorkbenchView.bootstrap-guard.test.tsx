@@ -37,7 +37,8 @@ describe("AffairsWorkbenchView bootstrap guard", () => {
     });
 
     expect(await screen.findByRole("tab", { name: t("shell.affairsWorkbenchNav") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(t("shell.affairsWorkbenchCanvasTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsShortcutRailTitle"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("shell.affairsShortcutRailEmpty")).length).toBeGreaterThan(0);
     expect(screen.getByText(t("shell.affairsWorkbenchDefaultTabShortTitle"))).toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();

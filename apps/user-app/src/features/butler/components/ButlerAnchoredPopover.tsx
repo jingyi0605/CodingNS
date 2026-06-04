@@ -7,12 +7,15 @@ interface ButlerAnchoredPopoverProps {
   role?: string;
   labelledBy?: string;
   className: string;
+  backdropClassName?: string;
   anchorRef: RefObject<HTMLElement | null>;
   popoverRef?: Ref<HTMLDivElement>;
   children: ReactNode;
   maxWidth?: number;
   gap?: number;
   viewportPadding?: number;
+  showBackdrop?: boolean;
+  onBackdropClick?: () => void;
 }
 
 interface PopoverPosition {
@@ -31,12 +34,15 @@ export function ButlerAnchoredPopover({
   role = "dialog",
   labelledBy,
   className,
+  backdropClassName,
   anchorRef,
   popoverRef,
   children,
   maxWidth = 360,
   gap = 10,
-  viewportPadding = 16
+  viewportPadding = 16,
+  showBackdrop = false,
+  onBackdropClick
 }: ButlerAnchoredPopoverProps) {
   const [position, setPosition] = useState<PopoverPosition | null>(null);
 
@@ -112,17 +118,29 @@ export function ButlerAnchoredPopover({
   };
 
   return createPortal(
-    <div
-      id={id}
-      ref={popoverRef}
-      role={role}
-      aria-labelledby={labelledBy}
-      className={className}
-      data-placement={position.placeAbove ? "top" : "bottom"}
-      style={style}
-    >
-      {children}
-    </div>,
+    <>
+      {showBackdrop ? (
+        <button
+          type="button"
+          className={backdropClassName}
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={onBackdropClick}
+          style={{ zIndex: BUTLER_POPOVER_Z_INDEX - 1 }}
+        />
+      ) : null}
+      <div
+        id={id}
+        ref={popoverRef}
+        role={role}
+        aria-labelledby={labelledBy}
+        className={className}
+        data-placement={position.placeAbove ? "top" : "bottom"}
+        style={style}
+      >
+        {children}
+      </div>
+    </>,
     document.body
   );
 }

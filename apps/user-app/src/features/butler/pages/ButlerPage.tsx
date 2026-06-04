@@ -23,7 +23,6 @@ import {
 } from "../../conversation/api/conversation-api";
 import { useProviderCatalog } from "../../conversation/capability/provider-catalog-store";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
-import { FileContextPanel } from "../../conversation/components/FileContextPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { PermissionRequestList } from "../../conversation/components/PermissionRequestList";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -36,7 +35,6 @@ import {
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
-  AssistantSandboxDto,
   ButlerControlEventDto,
   ButlerControlSessionDto,
   ButlerControlTimerDto,
@@ -59,9 +57,7 @@ import {
   cancelButlerControlTimer,
   cancelButlerFollowUpTask,
   cancelButlerVerificationRun,
-  expireAssistantSandbox,
   getButlerFollowUpTask,
-  listAssistantSandboxes,
   listAssistantAutomations,
   listRecentAssistantAutomationRuns,
   listButlerControlSessions,
@@ -69,8 +65,6 @@ import {
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerPatrolPlans,
-  promoteAssistantSandbox,
-  removeAssistantSandbox,
   skipAssistantAutomationWait,
   startButlerInboxItemSession,
   updateAssistantAutomation
@@ -237,18 +231,10 @@ export function ButlerPage() {
   const [controlSessionDeletionTarget, setControlSessionDeletionTarget] =
     useState<ButlerControlSessionDto | null>(null);
   const [deletingControlSessionId, setDeletingControlSessionId] = useState<string | null>(null);
-  const [sandboxManagerOpen, setSandboxManagerOpen] = useState(false);
-  const [allSandboxesOpen, setAllSandboxesOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [assistantSandboxes, setAssistantSandboxes] = useState<AssistantSandboxDto[]>([]);
-  const [allAssistantSandboxes, setAllAssistantSandboxes] = useState<AssistantSandboxDto[]>([]);
-  const [sandboxLoading, setSandboxLoading] = useState(false);
-  const [allSandboxLoading, setAllSandboxLoading] = useState(false);
-  const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(null);
-  const [sandboxActionSandboxId, setSandboxActionSandboxId] = useState<string | null>(null);
   const [cancellingFollowUpTaskId, setCancellingFollowUpTaskId] = useState<string | null>(null);
   const [cancellingVerificationId, setCancellingVerificationId] = useState<string | null>(null);
   const [cancellingAutomationId, setCancellingAutomationId] = useState<string | null>(null);
@@ -427,28 +413,6 @@ export function ButlerPage() {
       ),
     [navigationGroups]
   );
-  const selectedSandbox = useMemo(
-    () =>
-      assistantSandboxes.find((item) => item.id === selectedSandboxId)
-      ?? allAssistantSandboxes.find((item) => item.id === selectedSandboxId)
-      ?? null,
-    [allAssistantSandboxes, assistantSandboxes, selectedSandboxId]
-  );
-
-  useEffect(() => {
-    if (!selectedSandboxId) {
-      return;
-    }
-
-    const existsInCurrent = assistantSandboxes.some((item) => item.id === selectedSandboxId);
-    const existsInAll = allAssistantSandboxes.some((item) => item.id === selectedSandboxId);
-
-    if (existsInCurrent || existsInAll) {
-      return;
-    }
-
-    setSelectedSandboxId(assistantSandboxes[0]?.id ?? allAssistantSandboxes[0]?.id ?? null);
-  }, [allAssistantSandboxes, assistantSandboxes, selectedSandboxId]);
 
   useEffect(() => {
     setCountdownNow(Date.now());
@@ -480,66 +444,6 @@ export function ButlerPage() {
         description: error instanceof Error ? error.message : undefined,
         tone: "error"
       });
-    }
-  }, [initialized, showToast]);
-  const reloadAssistantSandboxes = useCallback(async () => {
-    if (!initialized) {
-      setAssistantSandboxes([]);
-      setSelectedSandboxId(null);
-      return;
-    }
-
-    if (!controlSession?.id) {
-      setAssistantSandboxes([]);
-      setSelectedSandboxId(null);
-      return;
-    }
-
-    setSandboxLoading(true);
-
-    try {
-      const response = await listAssistantSandboxes({
-        controlSessionId: controlSession?.id ?? null
-      });
-      setAssistantSandboxes(response.payload.items);
-      setSelectedSandboxId((current) => {
-        if (!response.payload.items.length) {
-          return null;
-        }
-
-        return response.payload.items.some((item) => item.id === current)
-          ? current
-          : response.payload.items[0]?.id ?? null;
-      });
-    } catch (error) {
-      showToast({
-        title: t("shell.butlerSandboxLoadFailed"),
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setSandboxLoading(false);
-    }
-  }, [controlSession?.id, initialized, showToast]);
-  const reloadAllAssistantSandboxes = useCallback(async () => {
-    if (!initialized) {
-      setAllAssistantSandboxes([]);
-      return;
-    }
-
-    setAllSandboxLoading(true);
-
-    try {
-      const response = await listAssistantSandboxes();
-      setAllAssistantSandboxes(response.payload.items.filter((item) => item.status !== "deleted"));
-    } catch (error) {
-      showToast({
-        title: t("shell.butlerSandboxLoadFailed"),
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setAllSandboxLoading(false);
     }
   }, [initialized, showToast]);
   const handleOpenFollowUpHistory = useCallback(() => {
@@ -602,14 +506,6 @@ export function ButlerPage() {
     showToast,
     store
   ]);
-  const handleOpenSandboxManager = useCallback(() => {
-    setSandboxManagerOpen(true);
-    void reloadAssistantSandboxes();
-  }, [reloadAssistantSandboxes]);
-  const handleOpenAllSandboxes = useCallback(() => {
-    setAllSandboxesOpen(true);
-    void reloadAllAssistantSandboxes();
-  }, [reloadAllAssistantSandboxes]);
 
   useEffect(() => {
     if (!controlHistoryOpen) {
@@ -663,13 +559,6 @@ export function ButlerPage() {
     };
   }, [controlHistoryOpen, handleCloseControlHistory]);
 
-  useEffect(() => {
-    if (!sandboxManagerOpen) {
-      return;
-    }
-
-    void reloadAssistantSandboxes();
-  }, [controlSession?.id, reloadAssistantSandboxes, sandboxManagerOpen]);
 
   const handleSettingsFormChange = useCallback((patch: Partial<ButlerSettingsFormState>) => {
     setSettingsForm((current) => ({
@@ -1056,81 +945,6 @@ export function ButlerPage() {
 
     navigate(buildWorkspaceSessionPath(targetWorkspaceId, targetSessionId));
   }, [navigate, sessionWorkspaceIdById, workspaceId]);
-  const handlePromoteSandboxToProject = useCallback(async (sandboxId: string) => {
-    setSandboxActionSandboxId(sandboxId);
-
-    try {
-      const response = await promoteAssistantSandbox({
-        sandboxId,
-        mode: "project",
-        defaultProvider: activeProvider
-      });
-      setAssistantSandboxes((current) =>
-        mergeAssistantSandboxList(current, response.payload.sandbox, controlSession?.id ?? null)
-      );
-      setAllAssistantSandboxes((current) => mergeAssistantSandboxList(current, response.payload.sandbox));
-      requestNavigationRefresh();
-      showToast({
-        title: t("shell.butlerSandboxPromoteSucceeded"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: t("shell.butlerSandboxPromoteFailed"),
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setSandboxActionSandboxId(null);
-    }
-  }, [activeProvider, controlSession?.id, requestNavigationRefresh, showToast]);
-  const handleExpireSandbox = useCallback(async (sandboxId: string) => {
-    setSandboxActionSandboxId(sandboxId);
-
-    try {
-      const response = await expireAssistantSandbox(sandboxId);
-      setAssistantSandboxes((current) =>
-        mergeAssistantSandboxList(current, response.payload.sandbox, controlSession?.id ?? null)
-      );
-      setAllAssistantSandboxes((current) => mergeAssistantSandboxList(current, response.payload.sandbox));
-      showToast({
-        title: t("shell.butlerSandboxExpireSucceeded"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: t("shell.butlerSandboxExpireFailed"),
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setSandboxActionSandboxId(null);
-    }
-  }, [controlSession?.id, showToast]);
-  const handleRemoveSandbox = useCallback(async (sandboxId: string) => {
-    setSandboxActionSandboxId(sandboxId);
-
-    try {
-      const response = await removeAssistantSandbox(sandboxId);
-      setAssistantSandboxes((current) =>
-        mergeAssistantSandboxList(current, response.payload.sandbox, controlSession?.id ?? null)
-      );
-      setAllAssistantSandboxes((current) => mergeAssistantSandboxList(current, response.payload.sandbox));
-      requestNavigationRefresh();
-      showToast({
-        title: t("shell.butlerSandboxRemoveSucceeded"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: t("shell.butlerSandboxRemoveFailed"),
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setSandboxActionSandboxId(null);
-    }
-  }, [controlSession?.id, requestNavigationRefresh, showToast]);
   const handleSaveSettings = useCallback(async () => {
     if (!profile) {
       return;
@@ -1315,7 +1129,6 @@ export function ButlerPage() {
       setControlTimers([]);
       setAssistantAutomations([]);
       setAssistantAutomationRuns([]);
-      setAssistantSandboxes([]);
       return;
     }
 
@@ -1366,7 +1179,6 @@ export function ButlerPage() {
         setControlTimers([]);
         setAssistantAutomations([]);
         setAssistantAutomationRuns([]);
-        setAssistantSandboxes([]);
         showToast({
           title: t("shell.butlerSidebarLoadFailed"),
           description: loadError instanceof Error ? loadError.message : undefined,
@@ -1501,10 +1313,8 @@ export function ButlerPage() {
         cancellingVerificationId={cancellingVerificationId}
         cancellingAutomationId={cancellingAutomationId}
         controlSession={controlSession}
-        sandboxes={assistantSandboxes}
         settingsForm={settingsForm}
         savingSettings={savingSettings}
-        onOpenSandboxManager={handleOpenSandboxManager}
         onOpenFollowUpHistory={handleOpenFollowUpHistory}
         onOpenVerificationHistory={handleOpenVerificationHistory}
         onOpenAutomationHistory={handleOpenAutomationHistory}
@@ -1528,7 +1338,6 @@ export function ButlerPage() {
       events,
       handleAnalyzeTodo,
       handleCancelAutomation,
-      handleOpenSandboxManager,
       handleCopyTodoPrompt,
       handleOpenAutomationHistory,
       handleOpenAutomationDetail,
@@ -1542,7 +1351,6 @@ export function ButlerPage() {
       handleStartTodoSession,
       assistantAutomations,
       assistantAutomationRuns,
-      assistantSandboxes,
       inboxItems,
       cancellingAutomationId,
       cancellingFollowUpTaskId,
@@ -2084,71 +1892,6 @@ export function ButlerPage() {
         ) : null}
       </WorkbenchModal>
       <WorkbenchModal
-        open={sandboxManagerOpen}
-        title={t("shell.butlerSandboxManagerTitle")}
-        description={t("shell.butlerSandboxManagerDescription")}
-        headerActions={(
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              handleOpenAllSandboxes();
-            }}
-          >
-            {t("shell.butlerSandboxBrowseAllAction")}
-          </button>
-        )}
-        onClose={() => {
-          setAllSandboxesOpen(false);
-          setSandboxManagerOpen(false);
-        }}
-      >
-        <ButlerSandboxManagerPanel
-          items={assistantSandboxes}
-          selectedSandbox={selectedSandbox}
-          loading={sandboxLoading}
-          actionSandboxId={sandboxActionSandboxId}
-          onSelectSandbox={setSelectedSandboxId}
-          onReload={reloadAssistantSandboxes}
-          onPromoteSandboxToProject={handlePromoteSandboxToProject}
-          onExpireSandbox={handleExpireSandbox}
-          onRemoveSandbox={handleRemoveSandbox}
-        />
-      </WorkbenchModal>
-      <WorkbenchModal
-        open={allSandboxesOpen}
-        title={t("shell.butlerSandboxLibraryTitle")}
-        description={t("shell.butlerSandboxLibraryDescription")}
-        layout="list"
-        headerActions={(
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={allSandboxLoading}
-            onClick={() => {
-              void reloadAllAssistantSandboxes();
-            }}
-          >
-            {t("shell.butlerRefreshAction")}
-          </button>
-        )}
-        onClose={() => {
-          setAllSandboxesOpen(false);
-        }}
-      >
-        <ButlerAllSandboxesPanel
-          items={allAssistantSandboxes}
-          loading={allSandboxLoading}
-          actionSandboxId={sandboxActionSandboxId}
-          selectedSandboxId={selectedSandboxId}
-          onViewSandbox={(sandboxId) => {
-            setSelectedSandboxId(sandboxId);
-            setAllSandboxesOpen(false);
-          }}
-          onRemoveSandbox={handleRemoveSandbox}
-        />
-      </WorkbenchModal>
-      <WorkbenchModal
         open={detailTaskId !== null}
         title={t("shell.butlerAutomationRoundDetailsTitle")}
         description={detailTask?.sessionTitle?.trim() || detailTask?.projectName || t("shell.butlerAutomationRoundDetailsDescription")}
@@ -2180,10 +1923,8 @@ function ButlerAuxiliaryPanel(props: {
   cancellingVerificationId: string | null;
   cancellingAutomationId: string | null;
   controlSession: ButlerControlSessionDto | null;
-  sandboxes: AssistantSandboxDto[];
   settingsForm: ButlerSettingsFormState;
   savingSettings: boolean;
-  onOpenSandboxManager: () => void;
   onOpenFollowUpHistory: () => void;
   onOpenVerificationHistory: () => void;
   onOpenAutomationHistory: () => void;
@@ -2215,8 +1956,6 @@ function ButlerAuxiliaryPanel(props: {
         overview={props.overview}
         inboxItems={props.inboxItems}
         followUpTasks={props.followUpTasks}
-        sandboxes={props.sandboxes}
-        onOpenSandboxManager={props.onOpenSandboxManager}
         cancellingFollowUpTaskId={props.cancellingFollowUpTaskId}
         cancellingVerificationId={props.cancellingVerificationId}
         onOpenFollowUpHistory={props.onOpenFollowUpHistory}
@@ -2284,8 +2023,6 @@ function GlobalRecordsSidebarContent(props: {
   overview: ButlerOverviewDto | null;
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
-  sandboxes: AssistantSandboxDto[];
-  onOpenSandboxManager: () => void;
   cancellingFollowUpTaskId: string | null;
   cancellingVerificationId: string | null;
   onOpenFollowUpHistory: () => void;
@@ -2317,10 +2054,6 @@ function GlobalRecordsSidebarContent(props: {
 
   return (
     <>
-      <ButlerSandboxEntryCard
-        sandboxes={props.sandboxes}
-        onOpenSandboxManager={props.onOpenSandboxManager}
-      />
       <FollowUpStatusCard
         tasks={activeFollowUpTasks}
         cancellingTaskId={props.cancellingFollowUpTaskId}
@@ -2348,38 +2081,6 @@ function GlobalRecordsSidebarContent(props: {
         onCopyTodoPrompt={props.onCopyTodoPrompt}
       />
     </>
-  );
-}
-
-function ButlerSandboxEntryCard(props: {
-  sandboxes: AssistantSandboxDto[];
-  onOpenSandboxManager: () => void;
-}) {
-  const activeCount = props.sandboxes.filter((item) => item.status === "active").length;
-
-  return (
-    <section className="butler-side-card butler-sandbox-entry-card">
-      <header>
-        <div>
-          <h2>{t("shell.butlerSandboxEntryTitle")}</h2>
-          <p>{t("shell.butlerSandboxEntryDescription")}</p>
-          {activeCount > 0 ? (
-            <p className="butler-secondary-text">
-              {t("shell.butlerSandboxEntrySessionSummary", {
-                count: activeCount
-              })}
-            </p>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          className="secondary-button butler-side-header-action"
-          onClick={props.onOpenSandboxManager}
-        >
-          {t("shell.butlerSandboxManageAction")}
-        </button>
-      </header>
-    </section>
   );
 }
 
@@ -2842,248 +2543,6 @@ function ButlerSearchIcon() {
         d="M6.75 1.75a5 5 0 1 0 3.16 8.875l3.61 3.608a.75.75 0 1 0 1.06-1.06l-3.608-3.61A5 5 0 0 0 6.75 1.75Zm-3.5 5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0Z"
       />
     </svg>
-  );
-}
-
-function ButlerSandboxManagerPanel(props: {
-  items: AssistantSandboxDto[];
-  selectedSandbox: AssistantSandboxDto | null;
-  loading: boolean;
-  actionSandboxId: string | null;
-  onSelectSandbox: (sandboxId: string | null) => void;
-  onReload: () => Promise<void>;
-  onPromoteSandboxToProject: (sandboxId: string) => Promise<void>;
-  onExpireSandbox: (sandboxId: string) => Promise<void>;
-  onRemoveSandbox: (sandboxId: string) => Promise<void>;
-}) {
-  const sortedItems = useMemo(
-    () => [...props.items].sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt)),
-    [props.items]
-  );
-  const currentSandbox = props.selectedSandbox ?? sortedItems[0] ?? null;
-  const actionRunning = props.actionSandboxId === currentSandbox?.id;
-  const canPromote = currentSandbox?.status === "active" && currentSandbox.visibility === "assistant_only";
-  const canExpire = currentSandbox?.status === "active";
-  const canRemove = currentSandbox?.status !== "deleted";
-
-  return (
-    <div className="butler-sandbox-panel">
-      <section className="butler-side-card butler-sandbox-panel-card">
-        <header className="butler-sandbox-current-header">
-          <div className="butler-card-header-copy">
-            <h2>{t("shell.butlerSandboxCurrentTitle")}</h2>
-            <p>{t("shell.butlerSandboxCurrentPanelDescription")}</p>
-          </div>
-          <div className="butler-sandbox-header-actions">
-            {currentSandbox && canPromote ? (
-              <button
-                type="button"
-                className="secondary-button butler-automation-card-action"
-                disabled={actionRunning}
-                onClick={() => {
-                  void props.onPromoteSandboxToProject(currentSandbox.id);
-                }}
-              >
-                {actionRunning
-                  ? t("shell.butlerSandboxActionRunning")
-                  : t("shell.butlerSandboxPromoteAction")}
-              </button>
-            ) : null}
-            {currentSandbox && canExpire ? (
-              <button
-                type="button"
-                className="secondary-button butler-automation-card-action"
-                disabled={actionRunning}
-                onClick={() => {
-                  void props.onExpireSandbox(currentSandbox.id);
-                }}
-              >
-                {actionRunning
-                  ? t("shell.butlerSandboxActionRunning")
-                  : t("shell.butlerSandboxExpireAction")}
-              </button>
-            ) : null}
-            {currentSandbox && canRemove ? (
-              <button
-                type="button"
-                className="secondary-button workbench-danger-button butler-automation-card-action"
-                disabled={actionRunning}
-                onClick={() => {
-                  void props.onRemoveSandbox(currentSandbox.id);
-                }}
-              >
-                {actionRunning
-                  ? t("shell.butlerSandboxActionRunning")
-                  : t("shell.butlerSandboxRemoveAction")}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={props.loading}
-              onClick={() => {
-                void props.onReload();
-              }}
-            >
-              {t("shell.butlerRefreshAction")}
-            </button>
-          </div>
-        </header>
-        {props.loading ? (
-          <p className="butler-secondary-text">{t("shell.butlerSandboxLoading")}</p>
-        ) : sortedItems.length === 0 ? (
-          <p className="butler-secondary-text">{t("shell.butlerSandboxEmpty")}</p>
-        ) : currentSandbox ? (
-          <article className="butler-automation-card butler-sandbox-record" data-selected="true">
-            <div className="butler-sandbox-record-top">
-              <div className="butler-automation-card-title-group butler-sandbox-record-title">
-                <strong>{currentSandbox.title}</strong>
-                <span>{currentSandbox.workspace?.path ?? t("shell.butlerSandboxWorkspaceMissing")}</span>
-              </div>
-              <span
-                className="butler-automation-status-badge"
-                data-status={resolveAssistantSandboxBadgeStatus(currentSandbox.status)}
-              >
-                {resolveAssistantSandboxStatusLabel(currentSandbox.status)}
-              </span>
-            </div>
-            <div className="butler-automation-card-body butler-sandbox-record-body">
-              <div className="butler-automation-row butler-sandbox-record-meta">
-                <span>{t("shell.butlerSandboxSourceKindLabel")}</span>
-                <strong>{resolveAssistantSandboxSourceLabel(currentSandbox.sourceKind)}</strong>
-              </div>
-              <div className="butler-automation-row butler-sandbox-record-meta">
-                <span>{t("shell.butlerSandboxVisibilityLabel")}</span>
-                <strong>{resolveAssistantSandboxVisibilityLabel(currentSandbox.visibility)}</strong>
-              </div>
-              <div className="butler-automation-row butler-sandbox-record-meta">
-                <span>{t("shell.butlerSandboxUpdatedAtLabel")}</span>
-                <strong>{formatTimestamp(currentSandbox.updatedAt)}</strong>
-              </div>
-              <div className="butler-automation-row butler-sandbox-record-meta">
-                <span>{t("shell.butlerSandboxPurposeLabel")}</span>
-                <strong>{currentSandbox.purpose?.trim() || t("shell.butlerSandboxPurposeEmpty")}</strong>
-              </div>
-            </div>
-          </article>
-        ) : null}
-      </section>
-
-      <section className="butler-side-card butler-sandbox-panel-card butler-sandbox-files-card">
-        <header>
-          <div className="butler-card-header-copy">
-            <h2>{t("shell.butlerSandboxFilesTitle")}</h2>
-            <p>{t("shell.butlerSandboxFilesDescription")}</p>
-          </div>
-        </header>
-        {!props.selectedSandbox ? (
-          sortedItems.length > 0
-            ? <p className="butler-secondary-text">{t("shell.butlerSandboxSelectHint")}</p>
-            : null
-        ) : (
-          <div className="butler-sandbox-files-shell">
-            <div className="butler-sandbox-files-meta">
-              <div className="butler-automation-row butler-sandbox-files-meta-item">
-                <span>{t("shell.butlerSandboxTitleLabel")}</span>
-                <strong>{props.selectedSandbox.title}</strong>
-              </div>
-              <div className="butler-automation-row butler-sandbox-files-meta-item">
-                <span>{t("shell.butlerSandboxWorkspaceLabel")}</span>
-                <strong>{props.selectedSandbox.workspace?.path ?? t("shell.butlerSandboxWorkspaceMissing")}</strong>
-              </div>
-            </div>
-            {props.selectedSandbox.workspace ? (
-              <FileContextPanel
-                className="butler-sandbox-file-context-panel"
-                hideHeading
-                hideTabs
-                sessionId={null}
-                workspaceId={props.selectedSandbox.workspaceId}
-              />
-            ) : (
-              <p className="butler-secondary-text">{t("shell.butlerSandboxWorkspaceMissing")}</p>
-            )}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ButlerAllSandboxesPanel(props: {
-  items: AssistantSandboxDto[];
-  loading: boolean;
-  actionSandboxId: string | null;
-  selectedSandboxId: string | null;
-  onViewSandbox: (sandboxId: string) => void;
-  onRemoveSandbox: (sandboxId: string) => Promise<void>;
-}) {
-  const sortedItems = useMemo(
-    () => [...props.items].sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt)),
-    [props.items]
-  );
-
-  if (props.loading) {
-    return <p className="butler-secondary-text">{t("shell.butlerSandboxLoading")}</p>;
-  }
-
-  if (sortedItems.length === 0) {
-    return <p className="butler-secondary-text">{t("shell.butlerSandboxLibraryEmpty")}</p>;
-  }
-
-  return (
-    <ModalList className="butler-sandbox-browser-list" compact>
-      {sortedItems.map((item) => {
-        const actionRunning = props.actionSandboxId === item.id;
-
-        return (
-          <ModalListItem
-            key={item.id}
-            className="butler-sandbox-browser-item"
-            selected={props.selectedSandboxId === item.id}
-            label={item.title}
-            description={item.workspace?.path ?? t("shell.butlerSandboxWorkspaceMissing")}
-            trailing={(
-              <div className="butler-sandbox-browser-actions">
-                <span
-                  className="butler-automation-status-badge"
-                  data-status={resolveAssistantSandboxBadgeStatus(item.status)}
-                >
-                  {resolveAssistantSandboxStatusLabel(item.status)}
-                </span>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    props.onViewSandbox(item.id);
-                  }}
-                >
-                  {t("shell.butlerSandboxOpenAction")}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button workbench-danger-button"
-                  disabled={actionRunning}
-                  onClick={() => {
-                    void props.onRemoveSandbox(item.id);
-                  }}
-                >
-                  {actionRunning
-                    ? t("shell.butlerSandboxActionRunning")
-                    : t("shell.butlerSandboxRemoveAction")}
-                </button>
-              </div>
-            )}
-          >
-            <div className="butler-sandbox-browser-meta">
-              <span>{resolveAssistantSandboxSourceLabel(item.sourceKind)}</span>
-              <span>{resolveAssistantSandboxVisibilityLabel(item.visibility)}</span>
-              <span>{formatTimestamp(item.updatedAt)}</span>
-            </div>
-          </ModalListItem>
-        );
-      })}
-    </ModalList>
   );
 }
 
@@ -5496,79 +4955,6 @@ function buildAutomationUpdatePayload(
     expiresAt: parseNullableDateTimeInput(editorState.expiresAt, t("shell.butlerAutomationExpiresAtLabel")),
     maxChecks: parseOptionalPositiveInteger(editorState.maxChecks, t("shell.butlerAutomationMaxChecksLabel"))
   };
-}
-
-function resolveAssistantSandboxStatusLabel(
-  status: AssistantSandboxDto["status"]
-): string {
-  switch (status) {
-    case "archived":
-      return t("shell.butlerAutomationStatusCompleted");
-    case "expired":
-      return t("shell.butlerAutomationStatusCancelled");
-    case "orphaned":
-      return t("shell.butlerSandboxStatusOrphaned");
-    case "deleted":
-      return t("shell.butlerAutomationStatusFailed");
-    case "active":
-    default:
-      return t("shell.butlerAutomationStatusActive");
-  }
-}
-
-function resolveAssistantSandboxBadgeStatus(
-  status: AssistantSandboxDto["status"]
-): "waiting_user" | "active" | "completed" | "failed" | "cancelled" {
-  switch (status) {
-    case "archived":
-      return "completed";
-    case "expired":
-      return "cancelled";
-    case "orphaned":
-      return "waiting_user";
-    case "deleted":
-      return "failed";
-    case "active":
-    default:
-      return "active";
-  }
-}
-
-function resolveAssistantSandboxSourceLabel(
-  sourceKind: AssistantSandboxDto["sourceKind"]
-): string {
-  return sourceKind === "clone"
-    ? t("shell.butlerSandboxSourceClone")
-    : t("shell.butlerSandboxSourceBlank");
-}
-
-function resolveAssistantSandboxVisibilityLabel(
-  visibility: AssistantSandboxDto["visibility"]
-): string {
-  return visibility === "pinned"
-    ? t("shell.butlerSandboxVisibilityPinned")
-    : t("shell.butlerSandboxVisibilityAssistantOnly");
-}
-
-function mergeAssistantSandboxList(
-  sandboxes: AssistantSandboxDto[],
-  nextSandbox: AssistantSandboxDto,
-  controlSessionId?: string | null
-): AssistantSandboxDto[] {
-  const nextSandboxes = sandboxes.filter((sandbox) => sandbox.id !== nextSandbox.id);
-
-  if (nextSandbox.status === "deleted") {
-    return nextSandboxes
-      .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
-  }
-
-  if (controlSessionId && nextSandbox.controlSessionId !== controlSessionId && sandboxes.every((sandbox) => sandbox.id !== nextSandbox.id)) {
-    return nextSandboxes
-      .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
-  }
-
-  return [nextSandbox, ...nextSandboxes]
-    .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
 }
 
 function replaceAssistantAutomation(

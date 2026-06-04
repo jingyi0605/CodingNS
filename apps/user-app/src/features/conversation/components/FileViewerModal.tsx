@@ -983,7 +983,7 @@ export function FileViewerPanel({
   return (
     <DesktopModal
       open={open}
-      title={filePath}
+      title={windowTitle ?? filePath}
       size={activeModalSizePreset}
       layout="viewer"
       className={`file-viewer-modal${platform.isDesktop && activeModalSizePreset !== "full" ? " is-resizable" : ""}`}
