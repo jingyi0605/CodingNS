@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
-import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
 import type {
@@ -73,7 +71,6 @@ export function ButlerInitForm({
   previewRuleLabel,
   affairsLibrary
 }: ButlerInitFormProps) {
-  const platform = usePlatform();
   const [browserOpen, setBrowserOpen] = useState(false);
   const [rootDirInput, setRootDirInput] = useState(affairsLibrary?.value.rootDir ?? "");
 
@@ -145,21 +142,8 @@ export function ButlerInitForm({
     selectedRiskPreferenceLabel
   ];
 
-  async function handlePickDirectory() {
+  function handlePickDirectory() {
     if (!affairsLibrary) {
-      return;
-    }
-    if (platform.isDesktop) {
-      const result = await getCodingNSDesktopBridge().fs.pickDirectory();
-      if (!result.ok || !result.value) {
-        return;
-      }
-      const nextRootDir = String(result.value).trim();
-      setRootDirInput(nextRootDir);
-      affairsLibrary.onChange({
-        enabled: affairsLibrary.value.enabled,
-        rootDir: nextRootDir
-      });
       return;
     }
     setBrowserOpen(true);

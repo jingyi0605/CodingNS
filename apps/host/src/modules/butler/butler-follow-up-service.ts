@@ -14,7 +14,6 @@ import type {
   SessionRunningState
 } from "../../types/domain.js";
 import type { ButlerProfileService } from "./butler-profile-service.js";
-import { ensureButlerWorkspaceIsolation } from "./butler-profile-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerSessionService } from "./butler-session-service.js";
 import type { ButlerFollowUpTaskRepository } from "../../storage/repositories/butler-follow-up-task-repository.js";

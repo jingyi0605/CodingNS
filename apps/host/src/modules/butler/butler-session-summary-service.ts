@@ -11,7 +11,6 @@ import type { ButlerSessionSummaryStateRepository } from "../../storage/reposito
 import type { SessionCheckpointRepository } from "../../storage/repositories/session-checkpoint-repository.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 import type { ButlerProfileService } from "./butler-profile-service.js";
-import { ensureButlerWorkspaceIsolation } from "./butler-profile-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerProjectSessionView, ButlerSessionService } from "./butler-session-service.js";
 import {
@@ -113,7 +112,6 @@ export class ButlerSessionSummaryService {
       return createIdleSummaryRunResult();
     }
 
-    ensureButlerWorkspaceIsolation(profile.workspacePath);
     this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
     this.syncSummaryInstructionFiles(profile.workspacePath, profile.providerId);
     const debounceMs = this.resolveDebounceMs(profile.focus.summaryDebounceSeconds);

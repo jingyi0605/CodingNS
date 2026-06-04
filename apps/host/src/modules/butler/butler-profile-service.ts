@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -304,7 +303,6 @@ function finalizeWorkspacePath(
   }
 
   fs.mkdirSync(resolved, { recursive: true });
-  ensureButlerWorkspaceIsolation(resolved);
   return resolved;
 }
 
@@ -446,66 +444,6 @@ function readAgentsFile(filePath: string): string {
 function writeAgentsFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${content.trim()}\n`, "utf8");
-}
-
-export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
-  const resolvedWorkspacePath = path.resolve(workspacePath);
-
-  fs.mkdirSync(resolvedWorkspacePath, { recursive: true });
-
-  if (isSamePath(readGitTopLevel(resolvedWorkspacePath), resolvedWorkspacePath)) {
-    return;
-  }
-
-  try {
-    // 必须建立真实 git 边界，假 .git 目录挡不住上层仓库规则继承。
-    execFileSync("git", ["-C", resolvedWorkspacePath, "init", "-q"], {
-      stdio: "ignore"
-    });
-  } catch (error) {
-    throw new AppError({
-      statusCode: 500,
-      errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
-      detail:
-        error instanceof Error
-          ? `代码助手工作目录初始化独立 git 边界失败：${error.message}`
-          : "代码助手工作目录初始化独立 git 边界失败"
-    });
-  }
-
-  if (!isSamePath(readGitTopLevel(resolvedWorkspacePath), resolvedWorkspacePath)) {
-    throw new AppError({
-      statusCode: 500,
-      errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
-      detail: "代码助手工作目录未能建立独立 git 边界"
-    });
-  }
-}
-
-function readGitTopLevel(workspacePath: string): string | null {
-  try {
-    const output = execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-
-    const normalized = output.trim();
-    return normalized ? path.resolve(normalized) : null;
-  } catch {
-    return null;
-  }
-}
-
-function isSamePath(left: string | null, right: string): boolean {
-  if (!left) {
-    return false;
-  }
-
-  try {
-    return fs.realpathSync.native(left) === fs.realpathSync.native(right);
-  } catch {
-    return path.resolve(left) === path.resolve(right);
-  }
 }
 
 function normalizePersona(value: unknown): ButlerPersonaProfile {

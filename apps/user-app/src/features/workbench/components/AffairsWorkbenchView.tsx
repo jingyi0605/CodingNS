@@ -650,6 +650,7 @@ interface AffairsWorkbenchContextValue {
   toolbarExpanded: boolean;
   detailViewerCollapsed: boolean;
   initializeButlerProfile: (payload: ButlerProfilePayload) => Promise<void>;
+  updateButlerProfile: (payload: ButlerProfilePayload) => Promise<void>;
   reloadButlerProfile: () => Promise<void>;
   openLibraryViewer: (record: DocumentRecord) => void;
   selectSection: (section: AffairsPrimarySection) => void;
@@ -3622,6 +3623,9 @@ export function AffairsWorkbenchProvider({
     },
     initializeButlerProfile: async (payload) => {
       await butlerStore.initializeProfile(payload);
+    },
+    updateButlerProfile: async (payload) => {
+      await butlerStore.updateProfile(payload);
     },
     reloadButlerProfile: async () => {
       await butlerStore.initialize();
@@ -7433,6 +7437,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
   const {
     initGuard,
     initializeButlerProfile,
+    updateButlerProfile,
     openInitializedSection,
     reloadButlerProfile,
     selectedConversationDraft,
@@ -7444,6 +7449,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
   const initialized = initGuard.initialized;
   const loading = initGuard.loading;
   const unavailable = initGuard.unavailable;
+  const butlerInitialized = initGuard.butlerInitialized;
   const profile = initGuard.profile;
   const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_BUTLER_INIT_FORM_STATE);
   const [initializing, setInitializing] = useState(false);
@@ -7484,6 +7490,18 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
       })
       .catch(() => undefined);
   }, [initialized, workspaceId]);
+
+  useEffect(() => {
+    if (!profile) {
+      return;
+    }
+    setInitForm((current) => ({
+      ...current,
+      displayName: current.displayName.trim() ? current.displayName : profile.displayName,
+      providerId: profile.providerId,
+      personaTone: profile.personaTone
+    }));
+  }, [profile]);
 
   useEffect(() => {
     if (!initialized || !pendingOpenLibrary) {
@@ -7574,7 +7592,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const displayName = initForm.displayName.trim();
+    const displayName = initForm.displayName.trim() || profile?.displayName?.trim() || "";
 
     if (!displayName) {
       showToast({
@@ -7595,7 +7613,6 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     const payload: ButlerProfilePayload = {
       displayName,
       providerId: initForm.providerId,
-      workspacePath: agentWorkspacePath?.trim() || libraryInit.rootDir.trim() || undefined,
       agentsMode: initForm.agentsMode,
       persona: {
         tone: initForm.personaTone,
@@ -7613,11 +7630,16 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     setInitializing(true);
 
     try {
-      await initializeButlerProfile(payload);
+      if (butlerInitialized) {
+        await updateButlerProfile(payload);
+      } else {
+        await initializeButlerProfile(payload);
+      }
       if (libraryInit.rootDir.trim()) {
         await saveGlobalAffairsLibraryBinding({ rootDir: libraryInit.rootDir.trim() });
         await setGlobalAffairsLibraryEnabled({ enabled: libraryInit.enabled });
       }
+      await reloadButlerProfile();
       setPendingOpenLibrary(true);
       showToast({
         title: t("shell.affairsInitSuccess"),

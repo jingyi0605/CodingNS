@@ -5,9 +5,6 @@ import path from "node:path";
 import type {
   ButlerProfile
 } from "../../types/domain.js";
-import {
-  ensureButlerWorkspaceIsolation
-} from "./butler-profile-service.js";
 import type {
   ButlerPromptContext
 } from "./context-aggregator.js";
@@ -43,7 +40,6 @@ export function syncButlerWorkspaceContext(input: {
   const workspacePath = resolveInstructionWorkspacePath(input.profile, input.workspacePath);
 
   fs.mkdirSync(workspacePath, { recursive: true });
-  ensureButlerWorkspaceIsolation(workspacePath);
   const auth = input.butlerAuthService.ensureWorkspaceCredential(workspacePath, input.userId);
   const authFilePath = input.butlerAuthService.getCredentialFilePath(workspacePath);
 

@@ -129,9 +129,7 @@ describe("ButlerProfileService", () => {
     expect(profile.agentsMode).toBe("inline");
     expect(profile.focus.summaryDebounceSeconds).toBe(300);
     expect(repository.create).toHaveBeenCalledOnce();
-    expect(execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
-      encoding: "utf8"
-    }).trim()).toBe(fs.realpathSync.native(workspacePath));
+    expect(fs.existsSync(workspacePath)).toBe(true);
   });
 
   it("旧档案只标记为未完成时，可以重新完成初始化而不会再插入重复主键", () => {
@@ -290,7 +288,7 @@ describe("ButlerProfileService", () => {
 
     expect(profile.workspacePath).toBe(path.join(dataRootDir, "butler-workspace"));
     expect(profile.agentsFilePath).toBe(path.join(profile.workspacePath, "AGENTS.md"));
-    expect(fs.existsSync(path.join(profile.workspacePath, ".git", "HEAD"))).toBe(true);
+    expect(fs.existsSync(profile.workspacePath)).toBe(true);
     expect(profile.agentsContent).toContain("这套规则只服务于代码助手工作目录");
     expect(profile.agentsContent).toContain("如果上层仓库、默认配置或普通项目会话规则和这里冲突");
   });
