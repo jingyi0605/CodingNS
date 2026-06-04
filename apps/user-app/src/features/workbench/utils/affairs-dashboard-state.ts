@@ -8,11 +8,12 @@ import type {
   DashboardWidgetSourceRef,
   DashboardWidgetState,
   DashboardWidgetType,
+  ShortcutAppSourceKind,
   ShortcutAppState
 } from "../types/workbench-mode";
 
 const AFFAIRS_DASHBOARD_STATE_KEY_PREFIX = "workbench.affairs.dashboard.";
-const AFFAIRS_DASHBOARD_STATE_VERSION = 5;
+const AFFAIRS_DASHBOARD_STATE_VERSION = 6;
 const AFFAIRS_DASHBOARD_STATE_CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 const WORKSPACE_HTML_PATH_PATTERN = /\.(html?|HTML?)$/;
 
@@ -185,6 +186,7 @@ export function createDefaultAffairsDashboardTabState(timestamp = new Date().toI
 export function createAffairsShortcutAppState(
   input: {
     title?: string;
+    sourceKind?: ShortcutAppSourceKind;
     workspaceId: string;
     sourceId?: string;
     entryPath: string;
@@ -194,10 +196,12 @@ export function createAffairsShortcutAppState(
   const entryPath = input.entryPath.trim();
   const workspaceId = input.workspaceId.trim();
   const sourceId = input.sourceId?.trim() || entryPath;
+  const sourceKind = input.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
 
   return {
     id: createDashboardEntityId("shortcut-app"),
     title: input.title?.trim() || resolvePathLeafName(entryPath),
+    sourceKind,
     workspaceId,
     sourceId,
     entryPath,
@@ -242,7 +246,11 @@ function normalizeDashboardWidgetState(
 
   const sourceRef = isRecord(rawWidget.sourceRef)
     ? {
-        kind: rawWidget.sourceRef.kind === "html_shortcut" ? "html_shortcut" as const : "plugin_runtime" as const,
+        kind: rawWidget.sourceRef.kind === "html_shortcut"
+          ? "html_shortcut" as const
+          : rawWidget.sourceRef.kind === "affairs_library_html"
+            ? "affairs_library_html" as const
+            : "plugin_runtime" as const,
         workspaceId: typeof rawWidget.sourceRef.workspaceId === "string" && rawWidget.sourceRef.workspaceId.trim()
           ? rawWidget.sourceRef.workspaceId.trim()
           : undefined,
@@ -307,6 +315,7 @@ function normalizeShortcutAppState(rawShortcut: unknown, timestampFallback: stri
     return null;
   }
 
+  const sourceKind = rawShortcut.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
   const workspaceId = typeof rawShortcut.workspaceId === "string" ? rawShortcut.workspaceId.trim() : "";
   const entryPath = typeof rawShortcut.entryPath === "string" ? rawShortcut.entryPath.trim() : "";
   if (!workspaceId || !entryPath) {
@@ -324,6 +333,7 @@ function normalizeShortcutAppState(rawShortcut: unknown, timestampFallback: stri
     title: typeof rawShortcut.title === "string" && rawShortcut.title.trim()
       ? rawShortcut.title.trim()
       : resolvePathLeafName(entryPath),
+    sourceKind,
     workspaceId,
     sourceId,
     entryPath,

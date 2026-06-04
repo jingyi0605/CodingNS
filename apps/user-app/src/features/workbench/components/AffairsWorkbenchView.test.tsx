@@ -262,7 +262,8 @@ const docsApiMock = vi.hoisted(() => ({
 
 const fileContextApiMock = vi.hoisted(() => ({
   getFilePreview: vi.fn(),
-  getFilePreviewLink: vi.fn()
+  getFilePreviewLink: vi.fn(),
+  getFileTree: vi.fn()
 }));
 
 const workspaceBridgeApiMock = vi.hoisted(() => ({
@@ -633,7 +634,8 @@ vi.mock("../../../platform/platform-provider", () => ({
 
 vi.mock("../../conversation/api/file-context-api", () => ({
   getFilePreview: fileContextApiMock.getFilePreview,
-  getFilePreviewLink: fileContextApiMock.getFilePreviewLink
+  getFilePreviewLink: fileContextApiMock.getFilePreviewLink,
+  getFileTree: fileContextApiMock.getFileTree
 }));
 
 vi.mock("../../../platform/preview/codingns-workspace-bridge", () => ({
@@ -1047,6 +1049,22 @@ function findTagTreeNode(label: string) {
   return labelNode?.closest(".affairs-tag-tree-node") ?? null;
 }
 
+async function chooseShortcutSource(path: string) {
+  await userEvent.click(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")));
+  const dialog = await screen.findByRole("dialog", { name: t("shell.affairsShortcutRailSourcePickerTitle") });
+  const segments = path.split("/").filter(Boolean);
+
+  for (const segment of segments.slice(0, -1)) {
+    await userEvent.click(within(dialog).getByRole("button", { name: segment }));
+  }
+
+  await userEvent.click(within(dialog).getByRole("button", { name: segments.at(-1) ?? path }));
+  await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsShortcutRailSourcePickerConfirmAction") }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: t("shell.affairsShortcutRailSourcePickerTitle") })).toBeNull();
+  });
+}
+
 function mockAffairsConversationSidebarSessions() {
   const lightweightSession = {
     sessionId: "light-session-1",
@@ -1215,6 +1233,56 @@ describe("AffairsWorkbenchView", () => {
       previewPath: "/preview/files/token/tools/report/index.html",
       previewUrl: "http://127.0.0.1:3002/preview/files/token/tools/report/index.html",
       expiresAt: "2026-06-05T00:00:00.000Z"
+    });
+    fileContextApiMock.getFileTree.mockReset();
+    fileContextApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => {
+      if (!filePath) {
+        return {
+          items: [
+            {
+              name: "tools",
+              path: "tools",
+              kind: "directory",
+              size: null,
+              updatedAt: null
+            },
+            {
+              name: "Exchange 分层通讯簿.txt",
+              path: "Exchange 分层通讯簿.txt",
+              kind: "file",
+              size: 1024,
+              updatedAt: null
+            }
+          ]
+        };
+      }
+      if (filePath === "tools") {
+        return {
+          items: [
+            {
+              name: "report",
+              path: "tools/report",
+              kind: "directory",
+              size: null,
+              updatedAt: null
+            }
+          ]
+        };
+      }
+      if (filePath === "tools/report") {
+        return {
+          items: [
+            {
+              name: "index.html",
+              path: "tools/report/index.html",
+              kind: "file",
+              size: 1024,
+              updatedAt: null
+            }
+          ]
+        };
+      }
+      return { items: [] };
     });
     workspaceBridgeApiMock.listWorkspaceBridgeDir.mockReset();
     workspaceBridgeApiMock.listWorkspaceBridgeDir.mockResolvedValue({
@@ -6024,12 +6092,47 @@ describe("AffairsWorkbenchView", () => {
     const boundLibraryBinding = {
       ...baseLibrarySnapshot().binding,
       workspaceId: "workspace-1",
-      rootDir: "/Users/jackson/SynologyDrive/事务文档库"
+      rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
       binding: boundLibraryBinding
     }));
     conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(boundLibraryBinding);
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
+      {
+        documentId: "doc-html-1",
+        path: "Obsidian/Jackson-Obsi/Tools/会员管理.html",
+        title: "会员管理",
+        summary: "HTML 工具",
+        updatedAt: "2026-06-04T09:30:00.000Z",
+        createdAt: "2026-06-04T09:20:00.000Z",
+        sizeBytes: 4096,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+    conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "Obsidian/Jackson-Obsi/Tools/会员管理.html",
+      supported: true,
+      kind: "html",
+      reason: null,
+      content: null,
+      version: "preview-1",
+      size: 4096,
+      updatedAt: "2026-06-04T09:30:00.000Z",
+      previewPath: "/preview/affairs-files/mock/Obsidian/Jackson-Obsi/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Obsidian/Jackson-Obsi/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      onlyOffice: null,
+      capabilities: {
+        canEdit: false,
+        canRefresh: true,
+        canResize: true,
+        canZoom: false,
+        canPaginate: false
+      }
+    });
 
     const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:30:00.000Z");
     dashboardState.layoutLocked = false;
@@ -6044,29 +6147,28 @@ describe("AffairsWorkbenchView", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeHtml") }));
-    const currentLibraryOption = screen.getByRole("option", {
-      name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", { workspace: "事务文档库" })
-    });
+    const currentLibraryOption = screen.getByRole("option", { name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption") });
     expect(currentLibraryOption).toBeInTheDocument();
-    expect(currentLibraryOption).toHaveValue("workspace-2");
-    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceSelectField")), "tools/report/index.html");
+    expect(currentLibraryOption).toHaveValue("__affairs_current_library__");
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("__affairs_current_library__");
+    expect(screen.getByText("当前文档库路径：/Users/jackson/SynologyDrive。下面的文件列表直接来自这份全局文档库配置。")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceSelectField")), "Obsidian/Jackson-Obsi/Tools/会员管理.html");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
 
     await waitFor(() => {
-      expect(fileContextApiMock.getFilePreview).toHaveBeenCalledWith("workspace-2", "tools/report/index.html");
+      expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-1", "Obsidian/Jackson-Obsi/Tools/会员管理.html");
     });
     await waitFor(() => {
-      expect(fileContextApiMock.getFilePreviewLink).toHaveBeenCalledWith("workspace-2", "tools/report/index.html");
+      expect(screen.getByText("Obsidian/Jackson-Obsi/Tools/会员管理.html")).toBeInTheDocument();
     });
+    expect(fileContextApiMock.getFilePreview).not.toHaveBeenCalled();
   });
 
-  it("文档库路径映射不到任何工作区时不会显示当前文档库来源选项", async () => {
+  it("当前文档库来源选项直接读取全局 rootDir，不再映射成某个工作区名", async () => {
     const libraryBindingWithoutWorkspace = {
       ...baseLibrarySnapshot().binding,
       workspaceId: "workspace-1",
-      rootDir: "/Users/jackson/NotMatchedLibrary"
+      rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
       binding: libraryBindingWithoutWorkspace
@@ -6087,16 +6189,17 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeHtml") }));
 
-    expect(screen.queryByRole("option", {
-      name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", { workspace: "事务文档库" })
-    })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", {
+      name: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption")
+    })).toHaveValue("__affairs_current_library__");
+    expect(screen.queryByRole("option", { name: /Jackson-Obsi/ })).not.toBeInTheDocument();
   });
 
-  it("添加快捷应用时默认选中当前文档库对应工作区", async () => {
+  it("添加快捷应用时默认选中当前文档库来源", async () => {
     const boundLibraryBinding = {
       ...baseLibrarySnapshot().binding,
       workspaceId: "workspace-1",
-      rootDir: "/Users/jackson/SynologyDrive/事务文档库"
+      rootDir: "/Users/jackson/SynologyDrive"
     };
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
       binding: boundLibraryBinding
@@ -6109,7 +6212,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
 
-    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("__affairs_current_library__");
   });
 
   it("打开快捷应用时会继承快捷应用自己的来源工作区权限", async () => {
@@ -6119,7 +6222,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
     await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await chooseShortcutSource("tools/report/index.html");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
 
     await waitFor(() => {
@@ -6196,7 +6299,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
     await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await chooseShortcutSource("tools/report/index.html");
     await userEvent.clear(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")));
     await userEvent.type(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")), "会员管理");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
@@ -6224,7 +6327,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
     await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "tools/report/index.html");
+    await chooseShortcutSource("tools/report/index.html");
     await userEvent.clear(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")));
     await userEvent.type(screen.getByLabelText(t("shell.affairsShortcutRailTitleField")), "会员管理");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
@@ -6232,7 +6335,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditEntryAction", { title: "会员管理" }) }));
 
     expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-2");
-    expect(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField"))).toHaveValue("tools/report/index.html");
+    expect(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField"))).toHaveTextContent("tools/report/index.html");
     expect(screen.getByLabelText(t("shell.affairsShortcutRailTitleField"))).toHaveValue("会员管理");
     expect(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmEditAction") })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "会员管理" })).toBeNull();
@@ -6240,25 +6343,6 @@ describe("AffairsWorkbenchView", () => {
 
   it("快捷应用支持添加非 HTML 文件，并通过预览打开", async () => {
     clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
-    workspaceBridgeApiMock.listWorkspaceBridgeDir.mockResolvedValue({
-      path: "",
-      items: [
-        {
-          name: "Exchange 分层通讯簿.txt",
-          path: "Exchange 分层通讯簿.txt",
-          kind: "file",
-          size: 1024,
-          mtime: Date.now()
-        },
-        {
-          name: "index.html",
-          path: "tools/report/index.html",
-          kind: "file",
-          size: 1024,
-          mtime: Date.now()
-        }
-      ]
-    });
     fileContextApiMock.getFilePreview.mockImplementation(async (workspaceId: string, path: string) => ({
       workspaceId,
       path,
@@ -6290,7 +6374,7 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
     await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")), "workspace-2");
-    await userEvent.selectOptions(screen.getByLabelText(t("shell.affairsShortcutRailSourceSelectField")), "Exchange 分层通讯簿.txt");
+    await chooseShortcutSource("Exchange 分层通讯簿.txt");
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailConfirmAddAction") }));
 
     await userEvent.click(screen.getByRole("button", { name: t("shell.affairsShortcutRailDoneAction") }));

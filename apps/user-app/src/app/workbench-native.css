@@ -7919,6 +7919,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-dashboard-tab-main:focus-visible,
 .affairs-dashboard-tab-action:focus-visible,
 .affairs-dashboard-tab-input:focus-visible,
+.affairs-dashboard-inline-picker-button:focus-visible,
 .affairs-dashboard-toolbar-icon-button:focus-visible,
 .affairs-dashboard-editor-type:focus-visible,
 .affairs-dashboard-widget-inline-tab:focus-visible,
@@ -8083,6 +8084,40 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   border-radius: 12px;
   background: var(--panel-bg);
   color: var(--text-primary);
+}
+
+.affairs-dashboard-inline-picker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 36px;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-separator) 76%, transparent);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.affairs-dashboard-inline-picker-button[data-empty="true"] {
+  color: var(--text-secondary);
+}
+
+.affairs-dashboard-inline-picker-button-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.affairs-dashboard-inline-picker-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
 }
 
 .affairs-dashboard-inline-help,
@@ -8343,6 +8378,114 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   flex: 0 0 auto;
   padding-top: 10px;
   border-top: 1px solid color-mix(in srgb, var(--panel-separator) 88%, rgba(255, 255, 255, 0.08));
+}
+
+.affairs-shortcut-file-picker-modal-body {
+  min-height: 0;
+}
+
+.affairs-shortcut-file-picker-modal {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.affairs-shortcut-file-picker-selected {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-separator) 76%, transparent);
+  border-radius: 12px;
+  background: var(--panel-bg);
+}
+
+.affairs-shortcut-file-picker-selected strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.affairs-shortcut-file-picker-tree {
+  min-height: 280px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-separator) 76%, transparent);
+  border-radius: 14px;
+  background: var(--panel-bg);
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  gap: 8px;
+  padding-right: 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-item:hover {
+  background: color-mix(in srgb, var(--panel-separator) 58%, transparent);
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-item[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg));
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  color: var(--text-tertiary);
+  flex: 0 0 12px;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-chevron.is-hidden {
+  visibility: hidden;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-item[data-kind="directory"] .file-tree-label {
+  font-weight: 600;
+}
+
+.affairs-shortcut-file-picker-tree .file-tree-empty {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.affairs-shortcut-file-picker-folder-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  flex: 0 0 8px;
 }
 
 .affairs-shortcut-rail-standalone {

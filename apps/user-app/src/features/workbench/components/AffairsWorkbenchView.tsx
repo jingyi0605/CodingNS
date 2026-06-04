@@ -161,7 +161,16 @@ import {
   isDraftProviderSupported
 } from "../../conversation/capability/provider-ui";
 import { getPathLeafName } from "../../conversation/components/file-entry-visibility";
-import { getFilePreview, getFilePreviewLink } from "../../conversation/api/file-context-api";
+import {
+  getFilePreview,
+  getFilePreviewLink,
+  getFileTree,
+  type FileNodeDto
+} from "../../conversation/api/file-context-api";
+import {
+  resolveFileTreeIconKind,
+  resolveFileTreeIconLabel
+} from "../../conversation/components/file-tree-icon";
 import { buildConversationTimelineSourceItems } from "../../conversation/timeline-source-items";
 import {
   createPendingMessage,
@@ -200,6 +209,7 @@ import type {
   DashboardWidgetSourceRef,
   DashboardWidgetState,
   DashboardWidgetType,
+  ShortcutAppSourceKind,
   ShortcutAppState
 } from "../types/workbench-mode";
 
@@ -735,6 +745,22 @@ interface AffairsWorkbenchContextValue {
 
 type DashboardWidgetSizePreset = "small" | "medium" | "large";
 type DashboardWidgetPaletteType = "todo" | "automation" | "html";
+const AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY = "__affairs_current_library__";
+
+type WorkspaceHtmlSourceScopeOption =
+  | {
+      value: string;
+      label: string;
+      kind: "workspace";
+      workspaceId: string;
+    }
+  | {
+      value: typeof AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY;
+      label: string;
+      kind: "affairs_library";
+      workspaceId: string;
+      rootDir: string;
+    };
 
 type WorkspaceHtmlSourceOption = {
   path: string;
@@ -763,8 +789,8 @@ interface AffairsDashboardContextValue {
   setDashboardWidgetLayout: (widgetId: string, nextLayout: Partial<DashboardWidgetLayout>) => void;
   removeDashboardWidget: (widgetId: string) => void;
   resetActiveDashboardLayout: () => void;
-  addShortcutApp: (input: { title?: string; workspaceId: string; entryPath: string }) => void;
-  updateShortcutApp: (shortcutId: string, input: { title?: string; workspaceId: string; entryPath: string }) => void;
+  addShortcutApp: (input: { title?: string; sourceKind?: ShortcutAppSourceKind; workspaceId: string; entryPath: string }) => void;
+  updateShortcutApp: (shortcutId: string, input: { title?: string; sourceKind?: ShortcutAppSourceKind; workspaceId: string; entryPath: string }) => void;
   removeShortcutApp: (shortcutId: string) => void;
 }
 
@@ -1190,16 +1216,75 @@ async function validateWorkspaceShortcutSource(workspaceId: string, entryPath: s
   };
 }
 
+async function validateAffairsLibraryHtmlSource(workspaceId: string, entryPath: string): Promise<{ path: string; title: string }> {
+  const normalizedPath = entryPath.trim();
+
+  if (!isWorkspaceHtmlEntryPath(normalizedPath)) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceInvalid"));
+  }
+
+  const preview = await getAffairsLibraryPreview(workspaceId, normalizedPath);
+  if (!preview.supported || preview.kind !== "html" || !preview.previewUrl) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceUnsupported"));
+  }
+
+  return {
+    path: normalizedPath,
+    title: resolveWorkspaceHtmlSourceTitle(normalizedPath)
+  };
+}
+
+async function validateAffairsLibraryShortcutSource(workspaceId: string, entryPath: string): Promise<{ path: string; title: string }> {
+  const normalizedPath = entryPath.trim();
+
+  if (!normalizedPath) {
+    throw new Error(t("shell.affairsShortcutRailSourceInvalid"));
+  }
+
+  const preview = await getAffairsLibraryPreview(workspaceId, normalizedPath);
+  if (!preview.supported) {
+    throw new Error(t("shell.affairsShortcutRailSourceUnsupported"));
+  }
+
+  return {
+    path: normalizedPath,
+    title: resolveWorkspaceHtmlSourceTitle(normalizedPath)
+  };
+}
+
+async function validateHtmlSourceSelection(
+  source: WorkspaceHtmlSourceScopeOption | null,
+  entryPath: string
+): Promise<{ path: string; title: string }> {
+  if (!source) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceInvalid"));
+  }
+  if (source.kind === "affairs_library") {
+    return validateAffairsLibraryHtmlSource(source.workspaceId, entryPath);
+  }
+  return validateWorkspaceHtmlSource(source.workspaceId, entryPath);
+}
+
+async function validateShortcutSourceSelection(
+  source: WorkspaceHtmlSourceScopeOption | null,
+  entryPath: string
+): Promise<{ path: string; title: string }> {
+  if (!source) {
+    throw new Error(t("shell.affairsShortcutRailSourceInvalid"));
+  }
+  if (source.kind === "affairs_library") {
+    return validateAffairsLibraryShortcutSource(source.workspaceId, entryPath);
+  }
+  return validateWorkspaceShortcutSource(source.workspaceId, entryPath);
+}
+
 function buildWorkspaceHtmlSourceWorkspaceOptions(
   navigationGroups: WorkspaceSessionGroup[],
   currentWorkspaceId: string,
-  currentLibraryWorkspace?: {
-    workspaceId: string;
-    label: string;
-  } | null
-): Array<{ workspaceId: string; label: string }> {
+  currentLibraryWorkspace?: WorkspaceHtmlSourceScopeOption | null
+): WorkspaceHtmlSourceScopeOption[] {
   const seenWorkspaceIds = new Set<string>();
-  const options: Array<{ workspaceId: string; label: string }> = [];
+  const options: WorkspaceHtmlSourceScopeOption[] = [];
   const appendOption = (workspaceId: string, label: string) => {
     const normalizedWorkspaceId = workspaceId.trim();
     if (!normalizedWorkspaceId || seenWorkspaceIds.has(normalizedWorkspaceId)) {
@@ -1207,13 +1292,15 @@ function buildWorkspaceHtmlSourceWorkspaceOptions(
     }
     seenWorkspaceIds.add(normalizedWorkspaceId);
     options.push({
+      value: normalizedWorkspaceId,
       workspaceId: normalizedWorkspaceId,
-      label
+      label,
+      kind: "workspace"
     });
   };
 
-  if (currentLibraryWorkspace?.workspaceId?.trim()) {
-    appendOption(currentLibraryWorkspace.workspaceId, currentLibraryWorkspace.label.trim() || currentLibraryWorkspace.workspaceId.trim());
+  if (currentLibraryWorkspace) {
+    options.push(currentLibraryWorkspace);
   }
 
   navigationGroups.forEach((group) => {
@@ -1226,8 +1313,10 @@ function buildWorkspaceHtmlSourceWorkspaceOptions(
 
   if (!seenWorkspaceIds.has(currentWorkspaceId)) {
     options.unshift({
+      value: currentWorkspaceId,
       workspaceId: currentWorkspaceId,
-      label: navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name?.trim() || currentWorkspaceId
+      label: navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name?.trim() || currentWorkspaceId,
+      kind: "workspace"
     });
   }
 
@@ -1236,44 +1325,38 @@ function buildWorkspaceHtmlSourceWorkspaceOptions(
 
 function resolveAffairsLibrarySourceWorkspaceOption(
   binding: AffairsLibraryBindingDto | null,
-  navigationGroups: WorkspaceSessionGroup[]
-): { workspaceId: string; label: string } | null {
-  const workspaceId = resolveAffairsAgentWorkspaceId(binding?.rootDir?.trim() ?? null, navigationGroups);
-  if (!workspaceId) {
+  currentWorkspaceId: string
+): WorkspaceHtmlSourceScopeOption | null {
+  const rootDir = binding?.rootDir?.trim() ?? "";
+  const workspaceId = currentWorkspaceId.trim();
+  if (!rootDir || !workspaceId) {
     return null;
   }
-  const matchedGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
-  const fallbackWorkspacePath = binding?.rootDir?.trim() || "";
-  const fallbackWorkspaceLabel = fallbackWorkspacePath.split("/").filter(Boolean).at(-1) ?? "";
-  const workspaceLabel =
-    matchedGroup?.workspace.name?.trim() ||
-    matchedGroup?.workspace.path ||
-    fallbackWorkspaceLabel ||
-    workspaceId;
   return {
+    value: AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY,
+    kind: "affairs_library",
     workspaceId,
-    label: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption", {
-      workspace: workspaceLabel
-    })
+    rootDir,
+    label: t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryOption")
   };
 }
 
 function resolveWorkspaceHtmlSourceDefaultWorkspaceId(input: {
   currentWorkspaceId: string;
-  currentLibraryWorkspace: { workspaceId: string; label: string } | null;
-  options: Array<{ workspaceId: string; label: string }>;
+  currentLibraryWorkspace: WorkspaceHtmlSourceScopeOption | null;
+  options: WorkspaceHtmlSourceScopeOption[];
 }): string {
-  const currentLibraryWorkspaceId = input.currentLibraryWorkspace?.workspaceId?.trim() ?? "";
-  if (currentLibraryWorkspaceId && input.options.some((option) => option.workspaceId === currentLibraryWorkspaceId)) {
-    return currentLibraryWorkspaceId;
+  const currentLibraryWorkspaceValue = input.currentLibraryWorkspace?.value?.trim() ?? "";
+  if (currentLibraryWorkspaceValue && input.options.some((option) => option.value === currentLibraryWorkspaceValue)) {
+    return currentLibraryWorkspaceValue;
   }
 
   const currentWorkspaceId = input.currentWorkspaceId.trim();
-  if (currentWorkspaceId && input.options.some((option) => option.workspaceId === currentWorkspaceId)) {
+  if (currentWorkspaceId && input.options.some((option) => option.value === currentWorkspaceId)) {
     return currentWorkspaceId;
   }
 
-  return input.options[0]?.workspaceId ?? currentWorkspaceId;
+  return input.options[0]?.value ?? currentWorkspaceId;
 }
 
 function resolveDashboardSourceWorkspaceId(
@@ -1281,6 +1364,14 @@ function resolveDashboardSourceWorkspaceId(
   fallbackWorkspaceId: string
 ): string {
   return sourceRef?.workspaceId?.trim() || fallbackWorkspaceId;
+}
+
+function resolveHtmlSourceScopeOption(
+  options: WorkspaceHtmlSourceScopeOption[],
+  value: string
+): WorkspaceHtmlSourceScopeOption | null {
+  const normalizedValue = value.trim();
+  return options.find((option) => option.value === normalizedValue) ?? null;
 }
 
 const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
@@ -3048,19 +3139,21 @@ export function AffairsWorkbenchProvider({
     })));
   }, []);
 
-  const addShortcutApp = useCallback((input: { title?: string; workspaceId: string; entryPath: string }) => {
+  const addShortcutApp = useCallback((input: { title?: string; sourceKind?: ShortcutAppSourceKind; workspaceId: string; entryPath: string }) => {
     setDashboardState((current) => {
+      const sourceKind: ShortcutAppSourceKind = input.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
       const sourceWorkspaceId = input.workspaceId.trim();
       const normalizedPath = input.entryPath.trim();
       const timestamp = new Date().toISOString();
       const existingIndex = current.shortcutApps.findIndex((item) => (
-        item.workspaceId === sourceWorkspaceId && item.entryPath === normalizedPath
+        item.sourceKind === sourceKind && item.workspaceId === sourceWorkspaceId && item.entryPath === normalizedPath
       ));
 
       if (existingIndex >= 0) {
         const nextShortcut = {
           ...current.shortcutApps[existingIndex],
           title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+          sourceKind,
           workspaceId: sourceWorkspaceId,
           updatedAt: timestamp
         };
@@ -3080,6 +3173,7 @@ export function AffairsWorkbenchProvider({
           createAffairsShortcutAppState(
             {
               title: input.title,
+              sourceKind,
               workspaceId: sourceWorkspaceId,
               entryPath: normalizedPath,
               sourceId: normalizedPath,
@@ -3093,8 +3187,9 @@ export function AffairsWorkbenchProvider({
     });
   }, []);
 
-  const updateShortcutApp = useCallback((shortcutId: string, input: { title?: string; workspaceId: string; entryPath: string }) => {
+  const updateShortcutApp = useCallback((shortcutId: string, input: { title?: string; sourceKind?: ShortcutAppSourceKind; workspaceId: string; entryPath: string }) => {
     setDashboardState((current) => {
+      const sourceKind: ShortcutAppSourceKind = input.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
       const sourceWorkspaceId = input.workspaceId.trim();
       const normalizedPath = input.entryPath.trim();
       const timestamp = new Date().toISOString();
@@ -3105,6 +3200,7 @@ export function AffairsWorkbenchProvider({
 
       const duplicateShortcut = current.shortcutApps.find((item) => (
         item.id !== shortcutId
+        && item.sourceKind === sourceKind
         && item.workspaceId === sourceWorkspaceId
         && item.entryPath === normalizedPath
       ));
@@ -3112,6 +3208,7 @@ export function AffairsWorkbenchProvider({
       const nextShortcut = {
         ...targetShortcut,
         title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+        sourceKind,
         workspaceId: sourceWorkspaceId,
         entryPath: normalizedPath,
         sourceId: normalizedPath,
@@ -4071,8 +4168,8 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
   const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(!standalone);
   const currentLibraryWorkspaceOption = useMemo(
-    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, navigationGroups),
-    [globalLibraryBinding, navigationGroups]
+    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
+    [globalLibraryBinding, workspaceId]
   );
   const sourceWorkspaceOptions = useMemo(
     () => buildWorkspaceHtmlSourceWorkspaceOptions(
@@ -4091,6 +4188,14 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
     [currentLibraryWorkspaceOption, sourceWorkspaceOptions, workspaceId]
   );
   const [sourceWorkspaceId, setSourceWorkspaceId] = useState(defaultSourceWorkspaceId);
+  const selectedSourceWorkspaceOption = useMemo(
+    () => resolveHtmlSourceScopeOption(sourceWorkspaceOptions, sourceWorkspaceId),
+    [sourceWorkspaceId, sourceWorkspaceOptions]
+  );
+  const selectedSourceWorkspaceLabel = useMemo(
+    () => selectedSourceWorkspaceOption?.label ?? "",
+    [selectedSourceWorkspaceOption]
+  );
   const [entryPath, setEntryPath] = useState("");
   const [title, setTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -4120,18 +4225,20 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
 
     setSubmitting(true);
     try {
-      const source = await validateWorkspaceShortcutSource(sourceWorkspaceId, entryPath);
+      const source = await validateShortcutSourceSelection(selectedSourceWorkspaceOption, entryPath);
       const resolvedTitle = resolveWorkspaceHtmlSourceTitle(source.path, title);
       if (editingShortcutId) {
         updateShortcutApp(editingShortcutId, {
+          sourceKind: selectedSourceWorkspaceOption?.kind === "affairs_library" ? "affairs_library" : "workspace",
           title: resolvedTitle,
-          workspaceId: sourceWorkspaceId,
+          workspaceId: selectedSourceWorkspaceOption?.workspaceId ?? workspaceId,
           entryPath: source.path
         });
       } else {
         addShortcutApp({
+          sourceKind: selectedSourceWorkspaceOption?.kind === "affairs_library" ? "affairs_library" : "workspace",
           title: resolvedTitle,
-          workspaceId: sourceWorkspaceId,
+          workspaceId: selectedSourceWorkspaceOption?.workspaceId ?? workspaceId,
           entryPath: source.path
         });
       }
@@ -4152,12 +4259,23 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
     } finally {
       setSubmitting(false);
     }
-  }, [addShortcutApp, defaultSourceWorkspaceId, editingShortcutId, entryPath, showToast, sourceWorkspaceId, submitting, title, updateShortcutApp]);
+  }, [
+    addShortcutApp,
+    defaultSourceWorkspaceId,
+    editingShortcutId,
+    entryPath,
+    selectedSourceWorkspaceOption,
+    showToast,
+    submitting,
+    title,
+    updateShortcutApp,
+    workspaceId
+  ]);
 
   const openShortcutApp = useCallback((shortcut: ShortcutAppState) => {
     if (editing) {
       setEditingShortcutId(shortcut.id);
-      setSourceWorkspaceId(shortcut.workspaceId);
+      setSourceWorkspaceId(shortcut.sourceKind === "affairs_library" ? AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY : shortcut.workspaceId);
       setEntryPath(shortcut.entryPath);
       setTitle(shortcut.title);
       setAddingShortcut(true);
@@ -4172,8 +4290,16 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
     }
 
     try {
-      const previewLink = await getFilePreviewLink(previewingShortcut.workspaceId, previewingShortcut.entryPath);
-      window.open(buildDashboardPreviewUrl(previewLink.previewUrl), "_blank", "noopener,noreferrer");
+      if (previewingShortcut.sourceKind === "affairs_library") {
+        const preview = await getAffairsLibraryPreview(previewingShortcut.workspaceId, previewingShortcut.entryPath);
+        if (!preview.previewUrl) {
+          throw new Error(t("shell.affairsShortcutRailOpenFailed"));
+        }
+        window.open(buildDashboardPreviewUrl(preview.previewUrl), "_blank", "noopener,noreferrer");
+      } else {
+        const previewLink = await getFilePreviewLink(previewingShortcut.workspaceId, previewingShortcut.entryPath);
+        window.open(buildDashboardPreviewUrl(previewLink.previewUrl), "_blank", "noopener,noreferrer");
+      }
     } catch (error) {
       showToast({
         title: resolveErrorMessage(error, t("shell.affairsShortcutRailOpenFailed")),
@@ -4267,16 +4393,23 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
               }}
             >
               {sourceWorkspaceOptions.map((option) => (
-                <option key={option.workspaceId} value={option.workspaceId}>{option.label}</option>
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
-          <WorkspaceHtmlSourcePicker
-            workspaceId={sourceWorkspaceId}
+          {selectedSourceWorkspaceOption?.kind === "affairs_library" ? (
+            <p className="affairs-dashboard-inline-help">
+              {t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryHelper", {
+                path: selectedSourceWorkspaceOption.rootDir
+              })}
+            </p>
+          ) : null}
+          <WorkspaceShortcutFilePicker
+            sourceOption={selectedSourceWorkspaceOption}
+            workspaceLabel={selectedSourceWorkspaceLabel}
             inputId="affairs-shortcut-entry-path"
             value={entryPath}
             onChange={setEntryPath}
-            mode="file"
             label={t("shell.affairsShortcutRailSourceSelectField")}
             placeholder={t("shell.affairsShortcutRailSourceSelectPlaceholder")}
             helpText={t("shell.affairsShortcutRailSourceHelper")}
@@ -4352,6 +4485,9 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
           onClose={() => setPreviewingShortcut(null)}
           onSaved={() => undefined}
           windowTitle={previewingShortcut.title}
+          previewLoader={previewingShortcut.sourceKind === "affairs_library"
+            ? ((targetWorkspaceId, targetFilePath, options) => getAffairsLibraryPreviewWithOptions(targetWorkspaceId, targetFilePath, options))
+            : undefined}
           saveDisabledReason={t("shell.affairsShortcutRailPreviewEditDisabled")}
           showDetachAction={platform.isDesktop && platform.bridge.supported}
           onDetach={() => void handleDetachShortcutPreview()}
@@ -12886,8 +13022,8 @@ function AffairsDashboardView() {
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetPaletteType>("todo");
   const [selectedHtmlVariant, setSelectedHtmlVariant] = useState<DashboardHtmlWidgetVariant>("embed");
   const currentLibraryWorkspaceOption = useMemo(
-    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, navigationGroups),
-    [globalLibraryBinding, navigationGroups]
+    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
+    [globalLibraryBinding, workspaceId]
   );
   const htmlSourceWorkspaceOptions = useMemo(
     () => buildWorkspaceHtmlSourceWorkspaceOptions(
@@ -12906,6 +13042,10 @@ function AffairsDashboardView() {
     [currentLibraryWorkspaceOption, htmlSourceWorkspaceOptions, workspaceId]
   );
   const [htmlSourceWorkspaceId, setHtmlSourceWorkspaceId] = useState(defaultHtmlSourceWorkspaceId);
+  const selectedHtmlSourceWorkspaceOption = useMemo(
+    () => resolveHtmlSourceScopeOption(htmlSourceWorkspaceOptions, htmlSourceWorkspaceId),
+    [htmlSourceWorkspaceId, htmlSourceWorkspaceOptions]
+  );
   const [htmlEntryPath, setHtmlEntryPath] = useState("");
   const [widgetTitle, setWidgetTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -13128,14 +13268,14 @@ function AffairsDashboardView() {
           }
         });
       } else {
-        const source = await validateWorkspaceHtmlSource(htmlSourceWorkspaceId, htmlEntryPath);
+        const source = await validateHtmlSourceSelection(selectedHtmlSourceWorkspaceOption, htmlEntryPath);
         addDashboardWidget({
           type: "html",
           variant: selectedHtmlVariant,
           title: resolveWorkspaceHtmlSourceTitle(source.path, widgetTitle),
           sourceRef: {
-            kind: "html_shortcut",
-            workspaceId: htmlSourceWorkspaceId,
+            kind: selectedHtmlSourceWorkspaceOption?.kind === "affairs_library" ? "affairs_library_html" : "html_shortcut",
+            workspaceId: selectedHtmlSourceWorkspaceOption?.workspaceId ?? workspaceId,
             sourceId: source.path,
           },
           config: {}
@@ -13158,11 +13298,13 @@ function AffairsDashboardView() {
     htmlEntryPath,
     htmlSourceWorkspaceId,
     selectedHtmlVariant,
+    selectedHtmlSourceWorkspaceOption,
     selectedWidgetType,
     showToast,
     submitting,
     widgetTitle,
-    defaultHtmlSourceWorkspaceId
+    defaultHtmlSourceWorkspaceId,
+    workspaceId
   ]);
 
   if (!activeDashboardTab) {
@@ -13348,11 +13490,18 @@ function AffairsDashboardView() {
                       }}
                     >
                       {htmlSourceWorkspaceOptions.map((option) => (
-                        <option key={option.workspaceId} value={option.workspaceId}>{option.label}</option>
+                        <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
                   </label>
                   <p className="affairs-dashboard-inline-help">{t("shell.affairsWorkbenchHtmlSourceWorkspaceHelper")}</p>
+                  {selectedHtmlSourceWorkspaceOption?.kind === "affairs_library" ? (
+                    <p className="affairs-dashboard-inline-help">
+                      {t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryHelper", {
+                        path: selectedHtmlSourceWorkspaceOption.rootDir
+                      })}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="affairs-dashboard-inline-field-group">
                   <div className="affairs-dashboard-inline-field">
@@ -13377,7 +13526,7 @@ function AffairsDashboardView() {
                   <p className="affairs-dashboard-inline-help">{t("shell.affairsWorkbenchHtmlVariantHelper")}</p>
                 </div>
                 <WorkspaceHtmlSourcePicker
-                  workspaceId={htmlSourceWorkspaceId}
+                  sourceOption={selectedHtmlSourceWorkspaceOption}
                   inputId="affairs-dashboard-widget-source"
                   value={htmlEntryPath}
                   onChange={setHtmlEntryPath}
@@ -13748,6 +13897,7 @@ function AffairsDashboardHtmlWidget({
   const [error, setError] = useState<string | null>(null);
   const sourcePath = widget.sourceRef?.sourceId?.trim() ?? "";
   const sourceWorkspaceId = resolveDashboardSourceWorkspaceId(widget.sourceRef, workspaceId);
+  const sourceKind = widget.sourceRef?.kind ?? "html_shortcut";
 
   useEffect(() => {
     let cancelled = false;
@@ -13760,7 +13910,11 @@ function AffairsDashboardHtmlWidget({
 
     setLoading(true);
     setError(null);
-    void getFilePreviewLink(sourceWorkspaceId, sourcePath)
+    void (sourceKind === "affairs_library_html"
+      ? getAffairsLibraryPreview(sourceWorkspaceId, sourcePath).then((preview) => preview.previewUrl ? {
+          previewUrl: preview.previewUrl
+        } : Promise.reject(new Error(t("shell.affairsWorkbenchHtmlSourceLoadFailed"))))
+      : getFilePreviewLink(sourceWorkspaceId, sourcePath))
       .then((previewLink) => {
         if (cancelled) {
           return;
@@ -13782,7 +13936,7 @@ function AffairsDashboardHtmlWidget({
     return () => {
       cancelled = true;
     };
-  }, [sourcePath, sourceWorkspaceId]);
+  }, [sourceKind, sourcePath, sourceWorkspaceId]);
 
   const openInWindow = useCallback(() => {
     if (!previewUrl) {
@@ -13878,8 +14032,112 @@ function AffairsDashboardHtmlFrame({
   );
 }
 
+async function listAffairsLibrarySourceFiles(
+  workspaceId: string,
+  mode: "html" | "file"
+): Promise<WorkspaceHtmlSourceOption[]> {
+  const limit = 200;
+  let offset = 0;
+  const collected: WorkspaceHtmlSourceOption[] = [];
+
+  while (offset < 1000) {
+    const payload = await listAffairsLibraryDocuments(workspaceId, {
+      browseMode: "folder",
+      offset,
+      limit
+    });
+    const nextItems = payload.items
+      .filter((item) => mode === "file" || isWorkspaceHtmlEntryPath(item.path))
+      .map((item) => ({
+        path: item.path,
+        title: getPathLeafName(item.path),
+        updatedAt: item.updatedAt ? Date.parse(item.updatedAt) : null,
+        size: item.sizeBytes ?? null
+      }));
+    collected.push(...nextItems);
+
+    const pageCount = payload.items.length;
+    if (pageCount < limit || offset + pageCount >= payload.total) {
+      break;
+    }
+    offset += pageCount;
+  }
+
+  return collected;
+}
+
+function buildAffairsLibraryFileTree(
+  items: AffairsLibraryDocumentRecordDto[]
+): {
+  rootItems: FileNodeDto[];
+  treeCache: Record<string, FileNodeDto[]>;
+} {
+  const childMap = new Map<string, Map<string, FileNodeDto>>();
+  const ensureBucket = (directoryPath: string) => {
+    const current = childMap.get(directoryPath);
+    if (current) {
+      return current;
+    }
+    const next = new Map<string, FileNodeDto>();
+    childMap.set(directoryPath, next);
+    return next;
+  };
+
+  ensureBucket(SHORTCUT_FILE_TREE_ROOT_KEY);
+
+  items.forEach((item) => {
+    const normalizedPath = item.path.trim().replace(/\\/g, "/");
+    if (!normalizedPath) {
+      return;
+    }
+    const segments = normalizedPath.split("/").filter(Boolean);
+    if (!segments.length) {
+      return;
+    }
+
+    let currentPath = "";
+    let parentKey = SHORTCUT_FILE_TREE_ROOT_KEY;
+
+    segments.forEach((segment, index) => {
+      const nextPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const isFile = index === segments.length - 1;
+      const bucket = ensureBucket(parentKey);
+      if (!bucket.has(nextPath)) {
+        bucket.set(nextPath, {
+          path: nextPath,
+          name: segment,
+          kind: isFile ? "file" : "directory",
+          size: isFile ? (item.sizeBytes ?? null) : null,
+          updatedAt: isFile ? (item.updatedAt ?? null) : null
+        });
+      }
+      if (!isFile) {
+        ensureBucket(nextPath);
+      }
+      parentKey = nextPath;
+      currentPath = nextPath;
+    });
+  });
+
+  const sortNodes = (nodes: FileNodeDto[]) => [...nodes].sort((left, right) => {
+    if (left.kind !== right.kind) {
+      return left.kind === "directory" ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name, "zh-Hans-CN", { sensitivity: "base" });
+  });
+
+  return {
+    rootItems: sortNodes(Array.from(childMap.get(SHORTCUT_FILE_TREE_ROOT_KEY)?.values() ?? [])),
+    treeCache: Object.fromEntries(
+      Array.from(childMap.entries())
+        .filter(([directoryPath]) => directoryPath !== SHORTCUT_FILE_TREE_ROOT_KEY)
+        .map(([directoryPath, children]) => [directoryPath, sortNodes(Array.from(children.values()))])
+    )
+  };
+}
+
 function WorkspaceHtmlSourcePicker({
-  workspaceId,
+  sourceOption,
   inputId,
   value,
   onChange,
@@ -13889,7 +14147,7 @@ function WorkspaceHtmlSourcePicker({
   placeholder,
   listFailedMessage
 }: {
-  workspaceId: string;
+  sourceOption: WorkspaceHtmlSourceScopeOption | null;
   inputId: string;
   value: string;
   onChange: (value: string) => void;
@@ -13907,24 +14165,33 @@ function WorkspaceHtmlSourcePicker({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void listWorkspaceBridgeDir(workspaceId, "", {
-      kind: "file",
-      recursive: true,
-      sortBy: "mtime",
-      order: "desc",
-      limit: 300
-    }).then((payload) => {
+    if (!sourceOption) {
+      setItems([]);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void (sourceOption.kind === "affairs_library"
+      ? listAffairsLibrarySourceFiles(sourceOption.workspaceId, mode)
+      : listWorkspaceBridgeDir(sourceOption.workspaceId, "", {
+          kind: "file",
+          recursive: true,
+          sortBy: "mtime",
+          order: "desc",
+          limit: 300
+        }).then((payload) => payload.items
+          .filter((item) => item.kind === "file" && (mode === "file" || isWorkspaceHtmlEntryPath(item.path)))
+          .map((item) => ({
+            path: item.path,
+            title: getPathLeafName(item.path),
+            updatedAt: item.mtime,
+            size: item.size
+          }))))
+      .then((nextItems) => {
       if (cancelled) {
         return;
       }
-      const nextItems = payload.items
-        .filter((item) => item.kind === "file" && (mode === "file" || isWorkspaceHtmlEntryPath(item.path)))
-        .map((item) => ({
-          path: item.path,
-          title: getPathLeafName(item.path),
-          updatedAt: item.mtime,
-          size: item.size
-        }));
       setItems(nextItems);
     }).catch((nextError) => {
       if (cancelled) {
@@ -13940,7 +14207,7 @@ function WorkspaceHtmlSourcePicker({
     return () => {
       cancelled = true;
     };
-  }, [listFailedMessage, mode, workspaceId]);
+  }, [listFailedMessage, mode, sourceOption]);
 
   return (
     <div className="affairs-dashboard-inline-field-group">
@@ -13961,6 +14228,349 @@ function WorkspaceHtmlSourcePicker({
       <p className="affairs-dashboard-inline-help">{helpText}</p>
       {error ? <p className="affairs-dashboard-inline-error">{error}</p> : null}
     </div>
+  );
+}
+
+const SHORTCUT_FILE_TREE_ROOT_KEY = "__shortcut_root__";
+const SHORTCUT_FILE_TREE_ROOT_PADDING_PX = 12;
+const SHORTCUT_FILE_TREE_DEPTH_STEP_PX = 18;
+
+function WorkspaceShortcutFilePicker({
+  sourceOption,
+  workspaceLabel,
+  inputId,
+  value,
+  onChange,
+  helpText,
+  label,
+  placeholder,
+  listFailedMessage
+}: {
+  sourceOption: WorkspaceHtmlSourceScopeOption | null;
+  workspaceLabel?: string;
+  inputId: string;
+  value: string;
+  onChange: (value: string) => void;
+  helpText: string;
+  label?: string;
+  placeholder?: string;
+  listFailedMessage?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rootItems, setRootItems] = useState<FileNodeDto[]>([]);
+  const [treeCache, setTreeCache] = useState<Record<string, FileNodeDto[]>>({});
+  const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
+  const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState(value);
+  const requestTokenRef = useRef(0);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedPath(value);
+    }
+  }, [open, value]);
+
+  const loadDirectory = useCallback(async (directoryPath?: string) => {
+    if (!sourceOption) {
+      setRootItems([]);
+      setTreeCache({});
+      return;
+    }
+    const cacheKey = directoryPath ?? SHORTCUT_FILE_TREE_ROOT_KEY;
+    const currentToken = requestTokenRef.current;
+
+    setLoadingDirectories((current) => (current.includes(cacheKey) ? current : [...current, cacheKey]));
+    try {
+      if (requestTokenRef.current !== currentToken) {
+        return;
+      }
+      if (sourceOption.kind === "affairs_library") {
+        const payload = await listAffairsLibraryDocuments(sourceOption.workspaceId, {
+          browseMode: "folder",
+          offset: 0,
+          limit: 1000
+        });
+        if (requestTokenRef.current !== currentToken) {
+          return;
+        }
+        const builtTree = buildAffairsLibraryFileTree(payload.items);
+        setRootItems(builtTree.rootItems);
+        setTreeCache(builtTree.treeCache);
+      } else {
+        const response = await getFileTree(sourceOption.workspaceId, directoryPath || undefined);
+        if (requestTokenRef.current !== currentToken) {
+          return;
+        }
+        const nextItems = response.items ?? [];
+        if (directoryPath) {
+          setTreeCache((current) => ({
+            ...current,
+            [directoryPath]: nextItems
+          }));
+        } else {
+          setRootItems(nextItems);
+        }
+      }
+      setError(null);
+    } catch (nextError) {
+      if (requestTokenRef.current !== currentToken) {
+        return;
+      }
+      setError(resolveErrorMessage(nextError, listFailedMessage ?? t("shell.affairsShortcutRailSourceListFailed")));
+    } finally {
+      if (requestTokenRef.current === currentToken) {
+        setLoadingDirectories((current) => current.filter((item) => item !== cacheKey));
+      }
+    }
+  }, [listFailedMessage, sourceOption]);
+
+  const initializeTree = useCallback(async () => {
+    requestTokenRef.current += 1;
+    setRootItems([]);
+    setTreeCache({});
+    setExpandedDirectories([]);
+    setError(null);
+    setSelectedPath(value);
+    await loadDirectory();
+  }, [loadDirectory, value]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    void initializeTree();
+  }, [initializeTree, open]);
+
+  useEffect(() => {
+    requestTokenRef.current += 1;
+    setOpen(false);
+    setRootItems([]);
+    setTreeCache({});
+    setExpandedDirectories([]);
+    setLoadingDirectories([]);
+    setError(null);
+    setSelectedPath(value);
+  }, [sourceOption, value]);
+
+  const toggleDirectory = useCallback(async (directoryPath: string) => {
+    const nextExpanded = expandedDirectories.includes(directoryPath)
+      ? expandedDirectories.filter((item) => item !== directoryPath)
+      : [...expandedDirectories, directoryPath];
+    setExpandedDirectories(nextExpanded);
+
+    if (sourceOption?.kind !== "affairs_library" && !expandedDirectories.includes(directoryPath) && !treeCache[directoryPath]) {
+      await loadDirectory(directoryPath);
+    }
+  }, [expandedDirectories, loadDirectory, sourceOption?.kind, treeCache]);
+
+  const confirmSelection = useCallback(() => {
+    if (!selectedPath) {
+      return;
+    }
+    onChange(selectedPath);
+    setOpen(false);
+  }, [onChange, selectedPath]);
+
+  const renderTree = useCallback((items: FileNodeDto[], depth: number): ReactNode => (
+    <>
+      {items.map((item) => {
+        const isDirectory = item.kind === "directory";
+        const isExpanded = isDirectory && expandedDirectories.includes(item.path);
+        const childItems = treeCache[item.path] ?? [];
+        const isLoading = loadingDirectories.includes(item.path);
+        const isSelected = selectedPath === item.path;
+
+        return (
+          <div key={`${item.kind}-${item.path}`} className="file-tree-node">
+            <button
+              type="button"
+              className="file-tree-item"
+              data-kind={item.kind}
+              data-selected={isSelected ? "true" : undefined}
+              aria-expanded={isDirectory ? isExpanded : undefined}
+              style={{
+                paddingInlineStart: `${SHORTCUT_FILE_TREE_ROOT_PADDING_PX + depth * SHORTCUT_FILE_TREE_DEPTH_STEP_PX}px`
+              }}
+              onClick={() => {
+                if (isDirectory) {
+                  void toggleDirectory(item.path);
+                  return;
+                }
+                setSelectedPath(item.path);
+              }}
+            >
+              <span className={`file-tree-chevron${isDirectory ? "" : " is-hidden"}`} aria-hidden="true">
+                <ShortcutFileTreeChevronIcon expanded={isExpanded} />
+              </span>
+              {!isDirectory ? (
+                <span
+                  className="git-tree-file-icon"
+                  data-kind={resolveFileTreeIconKind(item.name)}
+                  aria-hidden="true"
+                >
+                  {resolveFileTreeIconLabel(item.name)}
+                </span>
+              ) : (
+                <span className="affairs-shortcut-file-picker-folder-dot" aria-hidden="true" />
+              )}
+              <span className="file-tree-label">{item.name}</span>
+            </button>
+            {isDirectory && isExpanded ? (
+              <div className="file-tree-children">
+                {isLoading && !childItems.length ? (
+                  <p className="file-tree-empty">{t("common.loading")}</p>
+                ) : childItems.length ? (
+                  renderTree(childItems, depth + 1)
+                ) : (
+                  <p className="file-tree-empty">{t("conversation.filePanelEmptyDirectory")}</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  ), [expandedDirectories, loadingDirectories, selectedPath, toggleDirectory, treeCache]);
+
+  const fieldLabel = label ?? t("shell.affairsShortcutRailSourceSelectField");
+  const fieldPlaceholder = placeholder ?? t("shell.affairsShortcutRailSourceSelectPlaceholder");
+  const selectedSummary = selectedPath || value || t("shell.affairsShortcutRailSourcePickerCurrentEmpty");
+  const workspaceSummary = workspaceLabel || t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrent");
+  const loadingRoot = loadingDirectories.includes(SHORTCUT_FILE_TREE_ROOT_KEY);
+
+  return (
+    <>
+      <div className="affairs-dashboard-inline-field-group">
+        <label className="affairs-dashboard-inline-field" htmlFor={inputId}>
+          <span>{fieldLabel}</span>
+          <button
+            id={inputId}
+            type="button"
+            className="affairs-dashboard-inline-picker-button"
+            data-empty={value ? undefined : "true"}
+            onClick={() => setOpen(true)}
+          >
+            <span className="affairs-dashboard-inline-picker-button-value">
+              {value || fieldPlaceholder}
+            </span>
+            <span className="affairs-dashboard-inline-picker-button-icon" aria-hidden="true">
+              <ShortcutPickerOpenIcon />
+            </span>
+          </button>
+        </label>
+        <p className="affairs-dashboard-inline-help">{helpText}</p>
+        {error ? <p className="affairs-dashboard-inline-error">{error}</p> : null}
+      </div>
+
+      <WorkbenchModal
+        open={open}
+        title={t("shell.affairsShortcutRailSourcePickerTitle")}
+        description={t("shell.affairsShortcutRailSourcePickerDescription")}
+        size="regular"
+        bodyClassName="affairs-shortcut-file-picker-modal-body"
+        onClose={() => setOpen(false)}
+      >
+        <div className="affairs-shortcut-file-picker-modal">
+          <ModalField
+            label={t("shell.affairsShortcutRailSourcePickerCurrentField")}
+            description={workspaceSummary}
+          >
+            <div className="affairs-shortcut-file-picker-selected">
+              <strong>{selectedSummary}</strong>
+            </div>
+          </ModalField>
+          <ModalSection
+            heading={t("shell.affairsShortcutRailSourcePickerTreeTitle")}
+            actions={error ? (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  void initializeTree();
+                }}
+              >
+                {t("shell.affairsShortcutRailSourcePickerRetryAction")}
+              </button>
+            ) : null}
+          >
+            <div
+              className="affairs-shortcut-file-picker-tree"
+              role="tree"
+              aria-label={t("shell.affairsShortcutRailSourcePickerTreeTitle")}
+            >
+              {loadingRoot && !rootItems.length ? (
+                <ModalEmptyState
+                  compact
+                  title={t("common.loading")}
+                />
+              ) : rootItems.length ? (
+                renderTree(rootItems, 0)
+              ) : (
+                <ModalEmptyState
+                  compact
+                  title={t("shell.affairsShortcutRailSourcePickerTreeEmpty")}
+                  description={error ?? t("shell.affairsShortcutRailSourcePickerTreeEmptyDescription")}
+                  action={error ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        void initializeTree();
+                      }}
+                    >
+                      {t("shell.affairsShortcutRailSourcePickerRetryAction")}
+                    </button>
+                  ) : null}
+                />
+              )}
+            </div>
+          </ModalSection>
+          <ModalActions>
+            <button type="button" className="ghost-button" onClick={() => setOpen(false)}>
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!selectedPath}
+              onClick={confirmSelection}
+            >
+              {t("shell.affairsShortcutRailSourcePickerConfirmAction")}
+            </button>
+          </ModalActions>
+        </div>
+      </WorkbenchModal>
+    </>
+  );
+}
+
+function ShortcutPickerOpenIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M9 18h6" strokeLinecap="round" />
+      <path d="m8 10 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ShortcutFileTreeChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      {expanded ? (
+        <path d="M2 3.5 5 6.5l3-3" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <path d="M3.5 2 6.5 5l-3 3" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+    </svg>
   );
 }
 

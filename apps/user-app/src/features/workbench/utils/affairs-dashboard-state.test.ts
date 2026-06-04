@@ -31,6 +31,7 @@ describe("affairs-dashboard-state", () => {
       createAffairsShortcutAppState(
         {
           title: "会员工具",
+          sourceKind: "affairs_library",
           workspaceId: "workspace-2",
           entryPath: "tools/members/index.html"
         },
@@ -116,6 +117,7 @@ describe("affairs-dashboard-state", () => {
         {
           id: "shortcut-1",
           workspaceId: "workspace-bad",
+          sourceKind: "workspace",
           entryPath: "reports/index.html"
         }
       ],
@@ -200,7 +202,7 @@ describe("affairs-dashboard-state", () => {
 
     const state = ensureAffairsDashboardState("workspace-legacy-html");
 
-    expect(state.version).toBe(5);
+    expect(state.version).toBe(6);
     expect(state.layoutLocked).toBe(true);
     expect(state.tabs[0].widgets).toMatchObject([
       {

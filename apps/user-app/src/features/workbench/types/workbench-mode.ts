@@ -11,7 +11,9 @@ export type DashboardWidgetType =
 
 export type DashboardHtmlWidgetVariant = "app" | "stat" | "embed";
 
-export type DashboardWidgetSourceKind = "plugin_runtime" | "html_shortcut";
+export type DashboardWidgetSourceKind = "plugin_runtime" | "html_shortcut" | "affairs_library_html";
+
+export type ShortcutAppSourceKind = "workspace" | "affairs_library";
 
 export interface DashboardWidgetSourceRef {
   kind: DashboardWidgetSourceKind;
@@ -53,6 +55,7 @@ export interface DashboardTabState {
 export interface ShortcutAppState {
   id: string;
   title: string;
+  sourceKind: ShortcutAppSourceKind;
   workspaceId: string;
   sourceId: string;
   entryPath: string;
