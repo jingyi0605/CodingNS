@@ -23,6 +23,7 @@ const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   browseMode: "folder",
   viewMode: "grid",
   selectedFolderPath: null,
+  selectedFolderEntryPath: null,
   selectedTagPath: null,
   selectedTagPaths: [],
   selectedDocumentId: null,
@@ -39,6 +40,61 @@ function buildModePathKey(workspaceId: string, mode: WorkbenchMode) {
 
 function buildAffairsStateKey(workspaceId: string) {
   return `${WORKBENCH_AFFAIRS_STATE_KEY_PREFIX}${workspaceId}`;
+}
+
+function normalizeLegacyAffairsPrimarySection(
+  section: AffairsViewState["primarySection"] | "todo" | "automation" | null | undefined
+): AffairsViewState["primarySection"] {
+  if (section === "conversation" || section === "library" || section === "workbench") {
+    return section;
+  }
+
+  if (section === "todo" || section === "automation") {
+    return "workbench";
+  }
+
+  return DEFAULT_AFFAIRS_STATE.primarySection;
+}
+
+function normalizeLegacyAffairsSelectedNodeId(
+  section: AffairsViewState["primarySection"],
+  nodeId: string | null | undefined
+): string {
+  const normalizedNodeId = nodeId?.trim() ?? "";
+
+  if (section === "library") {
+    return normalizedNodeId || DEFAULT_AFFAIRS_STATE.selectedNodeId || "library";
+  }
+
+  if (section === "conversation") {
+    return normalizedNodeId || "conversation:home";
+  }
+
+  if (normalizedNodeId === "todo:all") {
+    return "workbench:todo:all";
+  }
+
+  if (normalizedNodeId === "todo:inbox") {
+    return "workbench:todo:inbox";
+  }
+
+  if (normalizedNodeId === "todo:follow_up") {
+    return "workbench:todo:follow_up";
+  }
+
+  if (normalizedNodeId === "automation:all") {
+    return "workbench:overview";
+  }
+
+  if (normalizedNodeId.startsWith("automation:item:")) {
+    return `workbench:${normalizedNodeId}`;
+  }
+
+  if (!normalizedNodeId) {
+    return "workbench:overview";
+  }
+
+  return normalizedNodeId;
 }
 
 export function resolveWorkbenchModeFromPath(pathname: string): WorkbenchMode | null {
@@ -130,10 +186,12 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
     return null;
   }
 
+  const primarySection = normalizeLegacyAffairsPrimarySection(snapshot.primarySection as AffairsViewState["primarySection"] | "todo" | "automation" | null | undefined);
+
   return {
     workspaceId: normalizedWorkspaceId,
-    primarySection: snapshot.primarySection ?? DEFAULT_AFFAIRS_STATE.primarySection,
-    selectedNodeId: snapshot.selectedNodeId ?? DEFAULT_AFFAIRS_STATE.selectedNodeId,
+    primarySection,
+    selectedNodeId: normalizeLegacyAffairsSelectedNodeId(primarySection, snapshot.selectedNodeId),
     selectedObjectId: snapshot.selectedObjectId ?? DEFAULT_AFFAIRS_STATE.selectedObjectId,
     toolbarExpanded: snapshot.toolbarExpanded ?? DEFAULT_AFFAIRS_STATE.toolbarExpanded,
     detailViewerCollapsed: snapshot.detailViewerCollapsed ?? DEFAULT_AFFAIRS_STATE.detailViewerCollapsed,
@@ -141,6 +199,7 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
     browseMode: snapshot.browseMode ?? DEFAULT_AFFAIRS_STATE.browseMode,
     viewMode: snapshot.viewMode ?? DEFAULT_AFFAIRS_STATE.viewMode,
     selectedFolderPath: snapshot.selectedFolderPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderPath,
+    selectedFolderEntryPath: snapshot.selectedFolderEntryPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderEntryPath,
     selectedTagPath: snapshot.selectedTagPath ?? DEFAULT_AFFAIRS_STATE.selectedTagPath,
     selectedTagPaths: Array.isArray(snapshot.selectedTagPaths)
       ? snapshot.selectedTagPaths.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -166,9 +225,35 @@ export function createDefaultAffairsViewState(workspaceId: string): AffairsViewS
     browseMode: DEFAULT_AFFAIRS_STATE.browseMode,
     viewMode: DEFAULT_AFFAIRS_STATE.viewMode,
     selectedFolderPath: DEFAULT_AFFAIRS_STATE.selectedFolderPath,
+    selectedFolderEntryPath: DEFAULT_AFFAIRS_STATE.selectedFolderEntryPath,
     selectedTagPath: DEFAULT_AFFAIRS_STATE.selectedTagPath,
     selectedTagPaths: DEFAULT_AFFAIRS_STATE.selectedTagPaths,
     selectedDocumentId: DEFAULT_AFFAIRS_STATE.selectedDocumentId,
     selectedFavoriteId: DEFAULT_AFFAIRS_STATE.selectedFavoriteId
+  };
+}
+
+export function createDefaultAffairsLibraryLandingState(
+  workspaceId: string,
+  current?: Partial<AffairsViewState> | null
+): AffairsViewState {
+  const baseState = {
+    ...createDefaultAffairsViewState(workspaceId),
+    ...(current ?? {}),
+    workspaceId
+  };
+
+  return {
+    ...baseState,
+    primarySection: "library",
+    selectedNodeId: "library",
+    selectedObjectId: null,
+    browseMode: "folder",
+    selectedFolderPath: null,
+    selectedFolderEntryPath: null,
+    selectedTagPath: null,
+    selectedTagPaths: [],
+    selectedDocumentId: null,
+    selectedFavoriteId: null
   };
 }

@@ -1,8 +1,60 @@
 export type WorkbenchMode = "code" | "affairs";
 
-export type AffairsPrimarySection = "library" | "conversation" | "todo" | "automation";
+export type AffairsPrimarySection = "library" | "conversation" | "workbench";
 
 export type AffairsAuxiliaryTab = "detail" | "assistant";
+
+export type DashboardWidgetType =
+  | "todo"
+  | "automation"
+  | "html_app"
+  | "html_stat"
+  | "html_embed";
+
+export type DashboardWidgetSourceKind = "plugin_runtime" | "html_shortcut";
+
+export interface DashboardWidgetSourceRef {
+  kind: DashboardWidgetSourceKind;
+  sourceId: string;
+  entryId?: string;
+}
+
+export interface DashboardWidgetState {
+  id: string;
+  type: DashboardWidgetType;
+  title: string;
+  sourceRef?: DashboardWidgetSourceRef;
+  config: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardWidgetLayout {
+  widgetId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minW?: number;
+  minH?: number;
+}
+
+export interface DashboardTabState {
+  id: string;
+  title: string;
+  widgets: DashboardWidgetState[];
+  layout: DashboardWidgetLayout[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AffairsWorkbenchDashboardState {
+  workspaceId: string;
+  version: number;
+  activeTabId: string;
+  tabs: DashboardTabState[];
+  updatedAt: string;
+}
 
 export interface WorkbenchModeSnapshot {
   mode: WorkbenchMode;
@@ -21,6 +73,7 @@ export interface AffairsViewState {
   browseMode: "folder" | "tag";
   viewMode: "grid" | "list";
   selectedFolderPath: string | null;
+  selectedFolderEntryPath: string | null;
   selectedTagPath: string | null;
   selectedTagPaths: string[];
   selectedDocumentId: string | null;
