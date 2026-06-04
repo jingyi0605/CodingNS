@@ -1671,10 +1671,8 @@ export function AffairsWorkbenchProvider({
     [libraryDocumentPage?.tagFacetCounts]
   );
   const effectiveSelectedFolderPath = useMemo(
-    () => state.browseMode === "folder"
-      ? (state.selectedFolderEntryPath?.trim() || state.selectedFolderPath?.trim() || null)
-      : (state.selectedFolderPath?.trim() || null),
-    [state.browseMode, state.selectedFolderEntryPath, state.selectedFolderPath]
+    () => state.selectedFolderPath?.trim() || null,
+    [state.selectedFolderPath]
   );
 
   useEffect(() => {
@@ -2417,12 +2415,14 @@ export function AffairsWorkbenchProvider({
       });
     },
     navigateLibraryFolder: (folderPath) => {
+      const nextFolderPath = folderPath?.trim() || null;
+      const previousFolderPath = state.selectedFolderPath?.trim() || null;
       onStateChange({
         ...state,
         browseMode: "folder",
-        selectedNodeId: folderPath?.trim() ? `library:folder:${folderPath}` : "library:all",
-        selectedFolderPath: folderPath?.trim() || null,
-        selectedFolderEntryPath: null,
+        selectedNodeId: nextFolderPath ? `library:folder:${nextFolderPath}` : "library:all",
+        selectedFolderPath: nextFolderPath,
+        selectedFolderEntryPath: resolveSelectedFolderEntryPathOnNavigate(previousFolderPath, nextFolderPath),
         selectedTagPath: null,
         selectedTagPaths: [],
         selectedFavoriteId: null,
@@ -13013,6 +13013,35 @@ function getParentFolderPath(path: string | null) {
   }
   const index = normalized.lastIndexOf("/");
   return index >= 0 ? normalized.slice(0, index) : null;
+}
+
+function resolveSelectedFolderEntryPathOnNavigate(
+  previousFolderPath: string | null,
+  nextFolderPath: string | null
+) {
+  const previous = normalizeFolderPath(previousFolderPath);
+  const next = normalizeFolderPath(nextFolderPath);
+
+  if (!previous || previous === next) {
+    return null;
+  }
+
+  if (getParentFolderPath(previous) === next) {
+    return previous;
+  }
+
+  if (!next) {
+    const [firstSegment] = previous.split("/");
+    return firstSegment || null;
+  }
+
+  if (!previous.startsWith(`${next}/`)) {
+    return null;
+  }
+
+  const remainder = previous.slice(next.length + 1);
+  const [firstChildSegment] = remainder.split("/");
+  return firstChildSegment ? `${next}/${firstChildSegment}` : null;
 }
 
 function buildFolderBreadcrumbs(path: string | null) {

@@ -1723,7 +1723,7 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByText(t("shell.affairsLibraryFolderDetailTitle"))).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "临时文件" })).toBeInTheDocument();
-    expect(screen.getByText(/当前目录是 临时文件。这里有 0 个直接子目录、2 份直接文档/)).toBeInTheDocument();
+    expect(screen.getByText(/当前目录是 临时文件。这里有 0 个直接子目录、0 份直接文档，整个目录树一共 2 份文档。/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.affairsDocumentSummaryExpandAction") })).not.toBeInTheDocument();
   });
 
@@ -1735,7 +1735,7 @@ describe("AffairsWorkbenchView", () => {
 
     expect(await screen.findByRole("heading", { name: "临时文件" })).toBeInTheDocument();
     expect(screen.getByText(t("shell.affairsLibraryFolderDetailTitle"))).toBeInTheDocument();
-    expect(conversationApiMock.listAffairsLibraryDocuments.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Exchange 分层通讯簿.txt/)).toBeInTheDocument();
 
     await userEvent.dblClick(folderCard);
 
@@ -1745,6 +1745,23 @@ describe("AffairsWorkbenchView", () => {
         selectedFolderPath: "临时文件"
       }));
     });
+  });
+
+  it("单击选中文件夹时，当前目录下的文件不会消失", async () => {
+    renderWorkbench();
+
+    const folderCard = await screen.findByRole("button", { name: /临时文件.*2 个对象/ });
+    await userEvent.click(folderCard);
+
+    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
+
+    expect(conversationApiMock.listAffairsLibraryDocuments).not.toHaveBeenCalledWith(
+      "workspace-1",
+      expect.objectContaining({
+        browseMode: "folder",
+        selectedFolderPath: "临时文件"
+      })
+    );
   });
 
   it("右侧对象详情栏底部的 Office 预览会走阅读视图，不影响双击正式预览", async () => {
@@ -3377,6 +3394,104 @@ describe("AffairsWorkbenchView", () => {
         limit: 120
       });
     });
+  });
+
+  it("返回上级后会保留来源文件夹高亮", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: [
+        {
+          path: "临时文件",
+          name: "临时文件",
+          parentPath: null,
+          depth: 0,
+          directDocumentCount: 1,
+          documentCount: 1,
+          createdAt: "2026-05-30T08:00:00.000Z",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        {
+          path: "临时文件/子目录",
+          name: "子目录",
+          parentPath: "临时文件",
+          depth: 1,
+          directDocumentCount: 1,
+          documentCount: 1,
+          createdAt: "2026-05-30T08:00:00.000Z",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        }
+      ]
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockReset();
+    conversationApiMock.listAffairsLibraryDocuments
+      .mockResolvedValueOnce(createDocumentListResponse([
+        {
+          documentId: "doc-root",
+          path: "Exchange 分层通讯簿.txt",
+          title: "Exchange 分层通讯簿.txt",
+          summary: "",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }
+      ]))
+      .mockResolvedValueOnce(createDocumentListResponse([
+        {
+          documentId: "doc-parent",
+          path: "临时文件/账号总表.txt",
+          title: "账号总表.txt",
+          summary: "",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }
+      ]))
+      .mockResolvedValueOnce(createDocumentListResponse([
+        {
+          documentId: "doc-child",
+          path: "临时文件/子目录/账号.txt",
+          title: "账号.txt",
+          summary: "",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }
+      ]))
+      .mockResolvedValue(createDocumentListResponse([
+        {
+          documentId: "doc-parent",
+          path: "临时文件/账号总表.txt",
+          title: "账号总表.txt",
+          summary: "",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }
+      ]));
+
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    await user.dblClick(await screen.findByRole("button", { name: /临时文件.*1 个对象/ }));
+    await user.dblClick(await screen.findByRole("button", { name: /子目录.*1 个对象/ }));
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          browseMode: "folder",
+          selectedFolderPath: "临时文件/子目录"
+        })
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "临时文件" }));
+
+    const childFolderRow = await screen.findByRole("button", { name: /子目录.*1 个对象/ });
+    expect(childFolderRow.className).toContain("active");
+    expect(await screen.findByText("账号总表.txt")).toBeInTheDocument();
   });
 
   it("列表模式表头会显示文件名大小时间和种类", async () => {
