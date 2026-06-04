@@ -222,7 +222,6 @@ import {
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
 import {
   AffairsAuxiliaryPanel,
-  AffairsDashboardLockToolbarButton,
   AffairsSectionMenu,
   AffairsSidebarPanel,
   AffairsWorkbenchProvider,
@@ -12457,7 +12456,6 @@ export function WorkbenchLayout({
                         className="workbench-collapsed-controls right"
                         data-visible={effectiveRightCollapsed}
                       >
-                        <AffairsDashboardLockToolbarButton className="workbench-nav-toolbar-button workbench-collapsed-button" />
                         <SidebarDockButton
                           className="workbench-nav-toolbar-button workbench-collapsed-button"
                           ariaLabel={t("shell.showInfoSidebar")}

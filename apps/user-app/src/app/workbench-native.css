@@ -7749,9 +7749,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   box-sizing: border-box;
 }
 
+.affairs-dashboard-tabbar-shell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .affairs-dashboard-tabbar {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 2px;
   height: 43px;
   min-height: 43px;
@@ -7759,6 +7768,14 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+.affairs-dashboard-tabbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .affairs-dashboard-tab {

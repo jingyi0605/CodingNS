@@ -13328,86 +13328,91 @@ function AffairsDashboardView() {
 
   return (
     <div className="affairs-dashboard-shell">
-      <div className="affairs-dashboard-tabbar" role="tablist" aria-label={t("shell.affairsWorkbenchNav")}>
-        {dashboardState.tabs.map((tab) => (
-          <div
-            key={tab.id}
-            role="tab"
-            aria-selected={tab.id === activeDashboardTab.id}
-            className={tab.id === activeDashboardTab.id ? "affairs-dashboard-tab active" : "affairs-dashboard-tab"}
-          >
+      <div className="affairs-dashboard-tabbar-shell">
+        <div className="affairs-dashboard-tabbar" role="tablist" aria-label={t("shell.affairsWorkbenchNav")}>
+          {dashboardState.tabs.map((tab) => (
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.id === activeDashboardTab.id}
+              className={tab.id === activeDashboardTab.id ? "affairs-dashboard-tab active" : "affairs-dashboard-tab"}
+            >
+              <button
+                type="button"
+                className="affairs-dashboard-tab-main"
+                onClick={() => selectDashboardTab(tab.id)}
+              >
+                {editingTabId === tab.id ? (
+                  <input
+                    autoFocus
+                    className="affairs-dashboard-tab-input"
+                    value={editingTabTitle}
+                    onChange={(event) => setEditingTabTitle(event.currentTarget.value)}
+                    onBlur={commitEditingTab}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitEditingTab();
+                        return;
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setEditingTabId(null);
+                        setEditingTabTitle("");
+                      }
+                    }}
+                    aria-label={t("shell.affairsWorkbenchRenameTabAction")}
+                  />
+                ) : (
+                  <span className="affairs-dashboard-tab-title">{resolveDashboardTabTitleLabel(tab.title)}</span>
+                )}
+              </button>
+              {!layoutLocked ? (
+                <div className="affairs-dashboard-tab-actions">
+                  <button
+                    type="button"
+                    className="affairs-dashboard-tab-action"
+                    aria-label={t("shell.affairsWorkbenchRenameTabAction")}
+                    title={t("shell.affairsWorkbenchRenameTabAction")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      startEditingTab(tab);
+                    }}
+                  >
+                    <AffairsDashboardEditTabIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="affairs-dashboard-tab-action"
+                    aria-label={t("shell.affairsWorkbenchDeleteTabAction")}
+                    title={t("shell.affairsWorkbenchDeleteTabAction")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeDashboardTab(tab.id);
+                    }}
+                    disabled={dashboardState.tabs.length <= 1}
+                  >
+                    <AffairsDashboardRemoveIcon />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {!layoutLocked ? (
             <button
               type="button"
-              className="affairs-dashboard-tab-main"
-              onClick={() => selectDashboardTab(tab.id)}
+              className="affairs-dashboard-add-tab"
+              aria-label={t("shell.affairsWorkbenchAddTabAction")}
+              title={t("shell.affairsWorkbenchAddTabAction")}
+              onClick={addDashboardTab}
             >
-              {editingTabId === tab.id ? (
-                <input
-                  autoFocus
-                  className="affairs-dashboard-tab-input"
-                  value={editingTabTitle}
-                  onChange={(event) => setEditingTabTitle(event.currentTarget.value)}
-                  onBlur={commitEditingTab}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitEditingTab();
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setEditingTabId(null);
-                      setEditingTabTitle("");
-                    }
-                  }}
-                  aria-label={t("shell.affairsWorkbenchRenameTabAction")}
-                />
-              ) : (
-                <span className="affairs-dashboard-tab-title">{resolveDashboardTabTitleLabel(tab.title)}</span>
-              )}
+              <AffairsDashboardAddTabIcon />
             </button>
-            {!layoutLocked ? (
-              <div className="affairs-dashboard-tab-actions">
-                <button
-                  type="button"
-                  className="affairs-dashboard-tab-action"
-                  aria-label={t("shell.affairsWorkbenchRenameTabAction")}
-                  title={t("shell.affairsWorkbenchRenameTabAction")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    startEditingTab(tab);
-                  }}
-                >
-                  <AffairsDashboardEditTabIcon />
-                </button>
-                <button
-                  type="button"
-                  className="affairs-dashboard-tab-action"
-                  aria-label={t("shell.affairsWorkbenchDeleteTabAction")}
-                  title={t("shell.affairsWorkbenchDeleteTabAction")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeDashboardTab(tab.id);
-                  }}
-                  disabled={dashboardState.tabs.length <= 1}
-                >
-                  <AffairsDashboardRemoveIcon />
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {!layoutLocked ? (
-          <button
-            type="button"
-            className="affairs-dashboard-add-tab"
-            aria-label={t("shell.affairsWorkbenchAddTabAction")}
-            title={t("shell.affairsWorkbenchAddTabAction")}
-            onClick={addDashboardTab}
-          >
-            <AffairsDashboardAddTabIcon />
-          </button>
-        ) : null}
+          ) : null}
+        </div>
+        <div className="affairs-dashboard-tabbar-actions">
+          <AffairsDashboardLockToolbarButton />
+        </div>
       </div>
 
       <section className="workbench-section-block affairs-dashboard-canvas-block">
