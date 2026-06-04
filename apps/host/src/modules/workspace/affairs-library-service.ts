@@ -87,6 +87,7 @@ export interface AffairsLibraryBindingDto {
   mirrorRoot: string | null;
   allowedExtensions: string[];
   includedHiddenPaths?: string[];
+  folderOpenBehavior?: "single_click" | "double_click";
   configRelativePath: string;
   exportMode: "v2";
   updatedAt: string;
