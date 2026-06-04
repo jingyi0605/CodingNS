@@ -1,4 +1,5 @@
 import type { AppLanguage, ClientPermissionMode } from "../config/client-config-types";
+import type { AffairsWorkbenchDashboardState } from "../features/workbench/types/workbench-mode";
 
 export type PreferenceProviderId =
   | "claude-code"
@@ -29,6 +30,7 @@ export interface AccountPreferencesProfile {
   defaultPermissionMode: ClientPermissionMode;
   providers: Record<PreferenceProviderId, AccountPreferenceProviderProfile>;
   debugPortPools?: DebugPortPoolConfig;
+  affairsDashboardStatesByWorkspace?: Record<string, AffairsWorkbenchDashboardState>;
   updatedAt: string | null;
 }
 
@@ -44,4 +46,5 @@ export interface AccountPreferencesPatch {
   defaultPermissionMode?: ClientPermissionMode;
   providers?: Partial<Record<PreferenceProviderId, AccountPreferenceProviderPatch>>;
   debugPortPools?: DebugPortPoolConfig;
+  affairsDashboardStatesByWorkspace?: Record<string, AffairsWorkbenchDashboardState>;
 }

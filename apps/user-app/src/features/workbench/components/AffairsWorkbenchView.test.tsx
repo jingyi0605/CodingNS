@@ -1203,6 +1203,7 @@ describe("AffairsWorkbenchView", () => {
     clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
     clearViewSnapshot("affairs.conversation.lightweight.sessions.workspace-1");
     clearViewSnapshot("affairs.conversation.agent.sessions.workspace-1");
+    clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
     window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
     window.sessionStorage.clear();
     clearProviderCatalogStore();
@@ -3146,7 +3147,7 @@ describe("AffairsWorkbenchView", () => {
       expect(screen.getByTestId("affairs-composer-send")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Exchange 分层通讯簿/i })).toBeInTheDocument();
     });
-    expect(screen.getByText(t("shell.affairsAssistantBindingRequired"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.affairsAssistantPlaceholderEmpty"))).toBeInTheDocument();
 
     expect(screen.queryByRole("heading", { name: "事务对话" })).toBeNull();
     expect(butlerRuntimeCallsMock.switchProvider).toHaveBeenCalledWith("codex");
@@ -3159,7 +3160,7 @@ describe("AffairsWorkbenchView", () => {
       expect(butlerRuntimeCallsMock.sendMessage).toHaveBeenCalledTimes(1);
       expect(screen.getAllByTestId("affairs-timeline")).toHaveLength(1);
       expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("agent-session-1:");
-      expect(screen.queryByText(t("shell.affairsAssistantBindingRequired"))).toBeNull();
+      expect(screen.queryByText(t("shell.affairsAssistantPlaceholderEmpty"))).toBeNull();
     });
 
     await user.click(screen.getByRole("tab", { name: t("shell.affairsConversationNav") }));
@@ -6584,6 +6585,110 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(deleteButtons[1]);
     await waitFor(() => {
       expect(screen.queryByRole("tab", { name: /项目看板/i })).toBeNull();
+    });
+  });
+
+  it("远端工作台布局会优先覆盖本地快照", async () => {
+    const localDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:00:00.000Z");
+    localDashboardState.layoutLocked = true;
+    localDashboardState.tabs = [
+      ...localDashboardState.tabs,
+      {
+        id: "local-tab-1",
+        title: "本地看板",
+        widgets: [],
+        layout: [],
+        createdAt: "2026-06-04T10:01:00.000Z",
+        updatedAt: "2026-06-04T10:01:00.000Z"
+      }
+    ];
+    localDashboardState.activeTabId = "local-tab-1";
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
+
+    const remoteDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:10:00.000Z");
+    remoteDashboardState.layoutLocked = false;
+    remoteDashboardState.tabs = [
+      ...remoteDashboardState.tabs,
+      {
+        id: "remote-tab-1",
+        title: "远端看板",
+        widgets: [],
+        layout: [],
+        createdAt: "2026-06-04T10:11:00.000Z",
+        updatedAt: "2026-06-04T10:11:00.000Z"
+      }
+    ];
+    remoteDashboardState.activeTabId = "remote-tab-1";
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      },
+      affairsDashboardStatesByWorkspace: {
+        "workspace-1": remoteDashboardState
+      },
+      source: "remote",
+      updatedAt: "2026-06-04T10:12:00.000Z"
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(await screen.findByRole("tab", { name: /远端看板/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /本地看板/i })).toBeNull();
+    expect(screen.getByRole("button", { name: t("shell.affairsWorkbenchAddTabAction") })).toBeInTheDocument();
+  });
+
+  it("远端缺失时会把本地工作台快照自动迁到偏好 store", async () => {
+    const localDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:20:00.000Z");
+    localDashboardState.layoutLocked = false;
+    localDashboardState.tabs = [
+      ...localDashboardState.tabs,
+      {
+        id: "local-migrate-tab-1",
+        title: "本地迁移看板",
+        widgets: [],
+        layout: [],
+        createdAt: "2026-06-04T10:21:00.000Z",
+        updatedAt: "2026-06-04T10:21:00.000Z"
+      }
+    ];
+    localDashboardState.activeTabId = "local-migrate-tab-1";
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
+
+    userPreferenceStore.hydrate({
+      ...initialPreferenceState,
+      profile: {
+        ...initialPreferenceState.profile,
+        language: "zh-CN"
+      },
+      affairsDashboardStatesByWorkspace: {},
+      source: "remote",
+      updatedAt: "2026-06-04T10:22:00.000Z"
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    expect(await screen.findByRole("tab", { name: /本地迁移看板/i })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        userPreferenceStore.getState().affairsDashboardStatesByWorkspace?.["workspace-1"]
+      ).toMatchObject({
+        workspaceId: "workspace-1",
+        layoutLocked: false,
+        activeTabId: "local-migrate-tab-1"
+      });
     });
   });
 

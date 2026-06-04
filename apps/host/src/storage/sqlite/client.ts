@@ -774,6 +774,11 @@ function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
     db.exec(`ALTER TABLE user_preference_profiles
       ADD COLUMN debug_port_pools_json TEXT NOT NULL DEFAULT '{"start":43000,"end":47999}'`);
   }
+
+  if (!columnNames.has("affairs_dashboard_states_json")) {
+    db.exec(`ALTER TABLE user_preference_profiles
+      ADD COLUMN affairs_dashboard_states_json TEXT NOT NULL DEFAULT '{}'`);
+  }
 }
 
 function ensureUserAffairsLibrarySettingsSchema(db: BetterSqliteDatabase): void {

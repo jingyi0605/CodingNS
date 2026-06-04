@@ -21,6 +21,7 @@ export function usePreferencesSelector<T>(selector: (state: PreferencesState) =>
       profile: {
         ...state.profile,
         providers: state.providers,
+        affairsDashboardStatesByWorkspace: state.affairsDashboardStatesByWorkspace ?? {},
         updatedAt: state.updatedAt
       },
       isFetching: false,

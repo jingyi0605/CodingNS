@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import Database from "../../src/shared/runtime/better-sqlite3.js";
 
 import {
   createEmptyFixture,
@@ -36,6 +37,7 @@ const DEFAULT_PROFILE_RESPONSE = {
   theme: "light",
   autoTheme: false,
   defaultPermissionMode: "default",
+  affairsDashboardStatesByWorkspace: {},
   debugPortPools: {
     start: 43000,
     end: 47999
@@ -301,6 +303,280 @@ describe("偏好 profile 接口", () => {
         end: 48099
       },
       updatedAt: expect.any(String)
+    });
+  });
+
+  it("保存事务工作台整份布局并在重启后保留", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    activeFixtures.push(fixture);
+
+    const firstHosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(firstHosted);
+    await firstHosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(firstHosted);
+    const updateResponse = await firstHosted.app.inject({
+      method: "PUT",
+      url: "/api/preferences/profile",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        affairsDashboardStatesByWorkspace: {
+          "workspace-1": {
+            workspaceId: "workspace-1",
+            version: 6,
+            layoutLocked: false,
+            activeTabId: "tab-2",
+            tabs: [
+              {
+                id: "tab-1",
+                title: "默认",
+                widgets: [],
+                layout: [],
+                createdAt: "2026-06-04T10:00:00.000Z",
+                updatedAt: "2026-06-04T10:00:00.000Z"
+              },
+              {
+                id: "tab-2",
+                title: "项目看板",
+                widgets: [],
+                layout: [],
+                createdAt: "2026-06-04T10:01:00.000Z",
+                updatedAt: "2026-06-04T10:01:00.000Z"
+              }
+            ],
+            shortcutApps: [
+              {
+                id: "shortcut-1",
+                title: "会员管理",
+                sourceKind: "workspace",
+                workspaceId: "workspace-2",
+                sourceId: "tools/report/index.html",
+                entryPath: "tools/report/index.html",
+                createdAt: "2026-06-04T10:00:00.000Z",
+                updatedAt: "2026-06-04T10:00:00.000Z"
+              }
+            ],
+            updatedAt: "2026-06-04T10:01:00.000Z"
+          }
+        }
+      }
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toEqual({
+      ...DEFAULT_PROFILE_RESPONSE,
+      affairsDashboardStatesByWorkspace: {
+        "workspace-1": {
+          workspaceId: "workspace-1",
+          version: 6,
+          layoutLocked: false,
+          activeTabId: "tab-2",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "默认",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T10:00:00.000Z",
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            },
+            {
+              id: "tab-2",
+              title: "项目看板",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T10:01:00.000Z",
+              updatedAt: "2026-06-04T10:01:00.000Z"
+            }
+          ],
+          shortcutApps: [
+            {
+              id: "shortcut-1",
+              title: "会员管理",
+              sourceKind: "workspace",
+              workspaceId: "workspace-2",
+              sourceId: "tools/report/index.html",
+              entryPath: "tools/report/index.html",
+              createdAt: "2026-06-04T10:00:00.000Z",
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            }
+          ],
+          updatedAt: "2026-06-04T10:01:00.000Z"
+        }
+      },
+      updatedAt: expect.any(String)
+    });
+
+    await firstHosted.app.close();
+    activeServers.pop();
+
+    const secondHosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(secondHosted);
+    await secondHosted.app.ready();
+
+    const secondAccessToken = await login(secondHosted);
+    const getResponse = await secondHosted.app.inject({
+      method: "GET",
+      url: "/api/preferences/profile",
+      headers: {
+        authorization: `Bearer ${secondAccessToken}`
+      }
+    });
+
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json()).toEqual({
+      ...DEFAULT_PROFILE_RESPONSE,
+      affairsDashboardStatesByWorkspace: {
+        "workspace-1": {
+          workspaceId: "workspace-1",
+          version: 6,
+          layoutLocked: false,
+          activeTabId: "tab-2",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "默认",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T10:00:00.000Z",
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            },
+            {
+              id: "tab-2",
+              title: "项目看板",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T10:01:00.000Z",
+              updatedAt: "2026-06-04T10:01:00.000Z"
+            }
+          ],
+          shortcutApps: [
+            {
+              id: "shortcut-1",
+              title: "会员管理",
+              sourceKind: "workspace",
+              workspaceId: "workspace-2",
+              sourceId: "tools/report/index.html",
+              entryPath: "tools/report/index.html",
+              createdAt: "2026-06-04T10:00:00.000Z",
+              updatedAt: "2026-06-04T10:00:00.000Z"
+            }
+          ],
+          updatedAt: "2026-06-04T10:01:00.000Z"
+        }
+      },
+      updatedAt: expect.any(String)
+    });
+  });
+
+  it("读取旧快捷应用字段时会自动映射到新版工作台状态", async () => {
+    const fixture = createEmptyFixture();
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    activeFixtures.push(fixture);
+
+    const firstHosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(firstHosted);
+    await firstHosted.app.ready();
+    await bootstrapAndLogin(firstHosted);
+    await firstHosted.app.close();
+    activeServers.pop();
+
+    const db = new Database(databasePath);
+    db.exec("ALTER TABLE user_preference_profiles ADD COLUMN affairs_shortcut_apps_json TEXT NOT NULL DEFAULT '{}'");
+    const adminUser = db
+      .prepare("SELECT id FROM auth_users WHERE username = ? LIMIT 1")
+      .get("admin") as { id: string };
+    db.prepare(
+      `INSERT INTO user_preference_profiles (
+        user_id,
+        language,
+        theme,
+        auto_theme,
+        default_permission_mode,
+        providers_json,
+        debug_port_pools_json,
+        affairs_dashboard_states_json,
+        affairs_shortcut_apps_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        affairs_dashboard_states_json = excluded.affairs_dashboard_states_json,
+        affairs_shortcut_apps_json = excluded.affairs_shortcut_apps_json,
+        updated_at = excluded.updated_at`
+    ).run(
+      adminUser.id,
+      "zh-CN",
+      "light",
+      0,
+      "default",
+      JSON.stringify(DEFAULT_PROFILE_RESPONSE.providers),
+      JSON.stringify(DEFAULT_PROFILE_RESPONSE.debugPortPools),
+      "{}",
+      JSON.stringify({
+        "workspace-1": [
+          {
+            id: "shortcut-1",
+            title: "会员管理",
+            sourceKind: "workspace",
+            workspaceId: "workspace-2",
+            sourceId: "tools/report/index.html",
+            entryPath: "tools/report/index.html",
+            createdAt: "2026-06-04T10:00:00.000Z",
+            updatedAt: "2026-06-04T10:00:00.000Z"
+          }
+        ]
+      }),
+      "2026-06-04T10:00:00.000Z",
+      "2026-06-04T10:00:00.000Z"
+    );
+    db.close();
+
+    const secondHosted = createTestApp(fixture, {
+      databasePath
+    });
+    activeServers.push(secondHosted);
+    await secondHosted.app.ready();
+
+    const accessToken = await login(secondHosted);
+    const response = await secondHosted.app.inject({
+      method: "GET",
+      url: "/api/preferences/profile",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ...DEFAULT_PROFILE_RESPONSE,
+      affairsDashboardStatesByWorkspace: {
+        "workspace-1": {
+          workspaceId: "workspace-1",
+          shortcutApps: [
+            {
+              id: "shortcut-1",
+              title: "会员管理",
+              sourceKind: "workspace",
+              workspaceId: "workspace-2",
+              sourceId: "tools/report/index.html",
+              entryPath: "tools/report/index.html",
+              createdAt: "2026-06-04T10:00:00.000Z",
+          updatedAt: "2026-06-04T10:00:00.000Z"
+            }
+          ]
+        }
+      },
+      updatedAt: "2026-06-04T10:00:00.000Z"
     });
   });
 

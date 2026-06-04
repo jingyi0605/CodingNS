@@ -33,11 +33,14 @@ import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
+  createDefaultAffairsDashboardState,
   createAffairsDashboardWidgetState,
   createAffairsShortcutAppState,
   createEmptyAffairsDashboardTabState,
   ensureAffairsDashboardState,
   isWorkspaceHtmlEntryPath,
+  normalizeAffairsDashboardState,
+  readAffairsDashboardState,
   writeAffairsDashboardState
 } from "../utils/affairs-dashboard-state";
 import { buildWorkspaceAffairsPath } from "../utils/workbench-navigation";
@@ -187,7 +190,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { listWorkspaceBridgeDir } from "../../../platform/preview/codingns-workspace-bridge";
 import { createHtmlPreviewWorkspaceBridge } from "../../../platform/preview/html-preview-workspace-bridge";
 import { resolveContextMenuPosition } from "../utils/context-menu-position";
-import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { useUserPreferenceSelector, userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import {
   computeVirtualGridMetrics,
@@ -310,6 +313,7 @@ const AFFAIRS_TAG_SAVE_SNAPSHOT_POLL_MS = 600;
 const AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS = 8_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const AFFAIRS_DASHBOARD_REMOTE_SYNC_DEBOUNCE_MS = 600;
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
   ".pdf", ".doc", ".docx", ".odt", ".wps",
@@ -1505,7 +1509,18 @@ export function AffairsWorkbenchProvider({
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [automations, setAutomations] = useState<AssistantAutomationTaskDto[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AssistantAutomationRunDto[]>([]);
-  const [dashboardState, setDashboardState] = useState<AffairsWorkbenchDashboardState>(() => ensureAffairsDashboardState(workspaceId));
+  const remoteDashboardStatesByWorkspace = useUserPreferenceSelector(
+    (preferenceState) => preferenceState.affairsDashboardStatesByWorkspace ?? {}
+  );
+  const preferenceSource = useUserPreferenceSelector((preferenceState) => preferenceState.source);
+  const remoteDashboardState = remoteDashboardStatesByWorkspace[workspaceId] ?? null;
+  const [dashboardState, setDashboardState] = useState<AffairsWorkbenchDashboardState>(() => (
+    resolveInitialDashboardState(workspaceId, remoteDashboardState)
+  ));
+  const dashboardSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedDashboardSerializedRef = useRef<string | null>(
+    remoteDashboardState ? JSON.stringify(remoteDashboardState) : null
+  );
   const activeDashboardTab = useMemo(
     () => dashboardState.tabs.find((tab) => tab.id === dashboardState.activeTabId) ?? dashboardState.tabs[0] ?? null,
     [dashboardState]
@@ -2967,12 +2982,116 @@ export function AffairsWorkbenchProvider({
   }, [workspaceId]);
 
   useEffect(() => {
-    setDashboardState(ensureAffairsDashboardState(workspaceId));
-  }, [workspaceId]);
+    const nextState = resolveInitialDashboardState(
+      workspaceId,
+      remoteDashboardState
+    );
+    const serializedNextState = JSON.stringify(nextState);
+
+    setDashboardState((current) => (
+      JSON.stringify(current) === serializedNextState ? current : nextState
+    ));
+
+    if (remoteDashboardState) {
+      lastSyncedDashboardSerializedRef.current = serializedNextState;
+    }
+  }, [remoteDashboardState, workspaceId]);
 
   useEffect(() => {
     writeAffairsDashboardState(dashboardState);
   }, [dashboardState]);
+
+  useEffect(() => {
+    if (preferenceSource !== "remote") {
+      return;
+    }
+
+    if (remoteDashboardState) {
+      return;
+    }
+
+    const nextDashboardState = readAffairsDashboardState(workspaceId);
+
+    if (!nextDashboardState) {
+      return;
+    }
+
+    void userPreferenceStore.updateProfile({
+      affairsDashboardStatesByWorkspace: buildDashboardStatesByWorkspacePatch(
+        remoteDashboardStatesByWorkspace,
+        workspaceId,
+        nextDashboardState
+      )
+    }).catch(() => undefined);
+  }, [
+    preferenceSource,
+    remoteDashboardState,
+    remoteDashboardStatesByWorkspace,
+    workspaceId
+  ]);
+
+  useEffect(() => {
+    if (preferenceSource !== "remote") {
+      return;
+    }
+
+    const serializedDashboardState = JSON.stringify(dashboardState);
+    const serializedRemoteDashboardState = remoteDashboardState
+      ? JSON.stringify(remoteDashboardState)
+      : null;
+
+    if (serializedRemoteDashboardState === serializedDashboardState) {
+      lastSyncedDashboardSerializedRef.current = serializedDashboardState;
+      return;
+    }
+
+    if (lastSyncedDashboardSerializedRef.current === serializedDashboardState) {
+      return;
+    }
+
+    if (dashboardSyncTimerRef.current) {
+      clearTimeout(dashboardSyncTimerRef.current);
+    }
+
+    dashboardSyncTimerRef.current = setTimeout(() => {
+      const currentPreferenceState = userPreferenceStore.getState();
+      const currentDashboardStatesByWorkspace = currentPreferenceState.affairsDashboardStatesByWorkspace ?? {};
+      const currentRemoteDashboardState = currentDashboardStatesByWorkspace[workspaceId] ?? null;
+      const currentRemoteSerialized = currentRemoteDashboardState
+        ? JSON.stringify(currentRemoteDashboardState)
+        : null;
+
+      if (currentRemoteSerialized === serializedDashboardState) {
+        lastSyncedDashboardSerializedRef.current = serializedDashboardState;
+        return;
+      }
+
+      const normalizedDashboardState =
+        normalizeAffairsDashboardState(workspaceId, dashboardState) ?? dashboardState;
+
+      void userPreferenceStore.updateProfile({
+        affairsDashboardStatesByWorkspace: buildDashboardStatesByWorkspacePatch(
+          currentDashboardStatesByWorkspace,
+          workspaceId,
+          normalizedDashboardState
+        )
+      }).then(() => {
+        lastSyncedDashboardSerializedRef.current = serializedDashboardState;
+      }).catch(() => undefined);
+    }, AFFAIRS_DASHBOARD_REMOTE_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      if (dashboardSyncTimerRef.current) {
+        clearTimeout(dashboardSyncTimerRef.current);
+        dashboardSyncTimerRef.current = null;
+      }
+    };
+  }, [
+    dashboardState,
+    preferenceSource,
+    remoteDashboardState,
+    workspaceId
+  ]);
 
   const selectDashboardTab = useCallback((tabId: string) => {
     setDashboardState((current) => {

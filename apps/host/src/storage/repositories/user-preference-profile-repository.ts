@@ -3,12 +3,24 @@ import type Database from "better-sqlite3";
 import type { UserPreferenceProfileRecord } from "../../types/domain.js";
 
 export class UserPreferenceProfileRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly hasLegacyShortcutAppsColumn: boolean;
+
+  constructor(private readonly db: Database.Database) {
+    const columns = this.db
+      .prepare("PRAGMA table_info(user_preference_profiles)")
+      .all() as Array<{ name: string }>;
+    this.hasLegacyShortcutAppsColumn = columns.some(
+      (column) => column.name === "affairs_shortcut_apps_json"
+    );
+  }
 
   findByUserId(userId: string): UserPreferenceProfileRecord | null {
+    const selectLegacyColumn = this.hasLegacyShortcutAppsColumn
+      ? ", affairs_shortcut_apps_json"
+      : "";
     const row = this.db
       .prepare(
-        `SELECT language, theme, auto_theme, default_permission_mode, providers_json, debug_port_pools_json, created_at, updated_at
+        `SELECT language, theme, auto_theme, default_permission_mode, providers_json, debug_port_pools_json, affairs_dashboard_states_json${selectLegacyColumn}, created_at, updated_at
          FROM user_preference_profiles
          WHERE user_id = ?`
       )
@@ -26,6 +38,12 @@ export class UserPreferenceProfileRepository {
       defaultPermissionMode: row.default_permission_mode as UserPreferenceProfileRecord["defaultPermissionMode"],
       providers: JSON.parse(row.providers_json) as UserPreferenceProfileRecord["providers"],
       debugPortPools: JSON.parse(row.debug_port_pools_json) as UserPreferenceProfileRecord["debugPortPools"],
+      affairsDashboardStatesByWorkspace:
+        JSON.parse(row.affairs_dashboard_states_json) as UserPreferenceProfileRecord["affairsDashboardStatesByWorkspace"],
+      legacyAffairsShortcutAppsByWorkspace:
+        row.affairs_shortcut_apps_json !== undefined
+          ? JSON.parse(row.affairs_shortcut_apps_json) as NonNullable<UserPreferenceProfileRecord["legacyAffairsShortcutAppsByWorkspace"]>
+          : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -42,9 +60,10 @@ export class UserPreferenceProfileRepository {
           default_permission_mode,
           providers_json,
           debug_port_pools_json,
+          affairs_dashboard_states_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           language = excluded.language,
           theme = excluded.theme,
@@ -52,6 +71,7 @@ export class UserPreferenceProfileRepository {
           default_permission_mode = excluded.default_permission_mode,
           providers_json = excluded.providers_json,
           debug_port_pools_json = excluded.debug_port_pools_json,
+          affairs_dashboard_states_json = excluded.affairs_dashboard_states_json,
           updated_at = excluded.updated_at`
       )
       .run(
@@ -62,6 +82,7 @@ export class UserPreferenceProfileRepository {
         record.defaultPermissionMode,
         JSON.stringify(record.providers),
         JSON.stringify(record.debugPortPools),
+        JSON.stringify(record.affairsDashboardStatesByWorkspace),
         record.createdAt,
         record.updatedAt
       );
@@ -77,6 +98,8 @@ interface UserPreferenceProfileRow {
   default_permission_mode: string;
   providers_json: string;
   debug_port_pools_json: string;
+  affairs_shortcut_apps_json?: string;
+  affairs_dashboard_states_json: string;
   created_at: string;
   updated_at: string;
 }

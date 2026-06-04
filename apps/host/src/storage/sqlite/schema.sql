@@ -936,6 +936,7 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
   ),
   providers_json TEXT NOT NULL,
   debug_port_pools_json TEXT NOT NULL,
+  affairs_dashboard_states_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES auth_users(id)

@@ -373,7 +373,7 @@ function normalizeDashboardTabState(rawTab: unknown, timestampFallback: string):
   };
 }
 
-function normalizeAffairsDashboardState(
+export function normalizeAffairsDashboardState(
   workspaceId: string,
   snapshot: unknown
 ): AffairsWorkbenchDashboardState | null {

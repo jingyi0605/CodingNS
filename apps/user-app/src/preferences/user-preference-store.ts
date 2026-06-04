@@ -3,6 +3,8 @@ import { useSyncExternalStore } from "react";
 import type { AppLanguage, ClientPermissionMode } from "../config/client-config-types";
 import { clientConfigStore } from "../config/client-config-store";
 import { authStore } from "../features/auth/store/auth-store";
+import type { AffairsWorkbenchDashboardState } from "../features/workbench/types/workbench-mode";
+import { normalizeAffairsDashboardState } from "../features/workbench/utils/affairs-dashboard-state";
 import type {
   AccountPreferenceProviderPatch,
   AccountPreferencesPatch,
@@ -26,6 +28,7 @@ interface AccountPreferenceState {
     debugPortPools?: DebugPortPoolConfig;
   };
   providers: AccountPreferencesProfile["providers"];
+  affairsDashboardStatesByWorkspace?: Record<string, AffairsWorkbenchDashboardState>;
   updatedAt: string | null;
   source: PreferenceSource;
 }
@@ -33,6 +36,7 @@ interface AccountPreferenceState {
 interface StoredPreferenceShadow {
   profile: AccountPreferenceState["profile"];
   providers: AccountPreferenceState["providers"];
+  affairsDashboardStatesByWorkspace?: AccountPreferenceState["affairsDashboardStatesByWorkspace"];
   updatedAt: string | null;
 }
 
@@ -157,6 +161,7 @@ function createDefaultState(): AccountPreferenceState {
       debugPortPools: cloneDebugPortPools(DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: createDefaultProviders(),
+    affairsDashboardStatesByWorkspace: {},
     updatedAt: null,
     source: "default"
   };
@@ -273,6 +278,7 @@ function hasPatchContent(patch: AccountPreferencesPatch | null | undefined): boo
     patch.autoTheme !== undefined ||
     patch.defaultPermissionMode !== undefined ||
     patch.debugPortPools !== undefined ||
+    patch.affairsDashboardStatesByWorkspace !== undefined ||
     (patch.providers !== undefined && Object.keys(patch.providers).length > 0)
   );
 }
@@ -299,6 +305,8 @@ function normalizeProfile(
       normalizePermissionMode(input?.defaultPermissionMode) ?? defaults.profile.defaultPermissionMode,
     debugPortPools: normalizeDebugPortPools(input?.debugPortPools) ?? defaults.profile.debugPortPools,
     providers,
+    affairsDashboardStatesByWorkspace:
+      normalizeDashboardStatesByWorkspace(input?.affairsDashboardStatesByWorkspace),
     updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : null
   };
 }
@@ -323,6 +331,7 @@ function readShadow(): StoredPreferenceShadow | null {
       defaultPermissionMode: parsed.profile?.defaultPermissionMode,
       debugPortPools: parsed.profile?.debugPortPools,
       providers: parsed.providers,
+      affairsDashboardStatesByWorkspace: parsed.affairsDashboardStatesByWorkspace,
       updatedAt: parsed.updatedAt
     });
 
@@ -335,6 +344,7 @@ function readShadow(): StoredPreferenceShadow | null {
         debugPortPools: normalized.debugPortPools
       },
       providers: normalized.providers,
+      affairsDashboardStatesByWorkspace: normalized.affairsDashboardStatesByWorkspace,
       updatedAt: normalized.updatedAt
     };
   } catch {
@@ -350,6 +360,7 @@ function writeShadow(state: AccountPreferenceState): void {
   const shadow: StoredPreferenceShadow = {
     profile: state.profile,
     providers: state.providers,
+    affairsDashboardStatesByWorkspace: state.affairsDashboardStatesByWorkspace,
     updatedAt: state.updatedAt
   };
 
@@ -370,6 +381,7 @@ function createFallbackState(): AccountPreferenceState {
     initialized: true,
     profile: shadow.profile,
     providers: shadow.providers,
+    affairsDashboardStatesByWorkspace: shadow.affairsDashboardStatesByWorkspace,
     updatedAt: shadow.updatedAt,
     source: "shadow"
   };
@@ -389,6 +401,7 @@ function createStateFromProfile(
       debugPortPools: cloneDebugPortPools(profile.debugPortPools ?? DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: profile.providers,
+    affairsDashboardStatesByWorkspace: profile.affairsDashboardStatesByWorkspace ?? {},
     updatedAt: profile.updatedAt,
     source
   };
@@ -436,9 +449,41 @@ function applyPatch(
         : current.profile.debugPortPools ?? cloneDebugPortPools(DEFAULT_DEBUG_PORT_POOLS)
     },
     providers: nextProviders,
+    affairsDashboardStatesByWorkspace:
+      patch.affairsDashboardStatesByWorkspace !== undefined
+        ? normalizeDashboardStatesByWorkspace(patch.affairsDashboardStatesByWorkspace)
+        : (current.affairsDashboardStatesByWorkspace ?? {}),
     updatedAt: current.updatedAt,
     source
   };
+}
+
+function normalizeDashboardStatesByWorkspace(
+  input: Record<string, AffairsWorkbenchDashboardState> | null | undefined
+): Record<string, AffairsWorkbenchDashboardState> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const result: Record<string, AffairsWorkbenchDashboardState> = {};
+
+  for (const [workspaceId, rawState] of Object.entries(input)) {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId) {
+      continue;
+    }
+
+    const normalizedState = normalizeAffairsDashboardState(normalizedWorkspaceId, rawState);
+
+    if (!normalizedState) {
+      continue;
+    }
+
+    result[normalizedWorkspaceId] = normalizedState;
+  }
+
+  return result;
 }
 
 function normalizeDebugPortPools(value: unknown): DebugPortPoolConfig | null {
