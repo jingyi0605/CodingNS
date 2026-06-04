@@ -7750,88 +7750,153 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .affairs-dashboard-tabbar {
   display: flex;
   align-items: center;
-  min-height: 44px;
-}
-
-.affairs-dashboard-tablist {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  gap: 2px;
+  height: 35px;
+  min-height: 35px;
+  padding: 0 clamp(20px, 5%, 72px);
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .affairs-dashboard-tab {
+  position: relative;
   display: inline-flex;
-  min-width: 0;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
+  align-self: center;
+  flex: 0 0 auto;
+  min-width: 100px;
+  height: 35px;
   padding: 0 12px;
-  border: 1px solid var(--affairs-elevated-border);
-  border-radius: 8px;
-  background: var(--affairs-surface-soft);
-  color: var(--text-primary);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(60, 60, 67, 0.76);
   text-align: center;
-  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.affairs-dashboard-tab::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background var(--transition-fast);
 }
 
 .affairs-dashboard-tab:hover {
-  background: var(--affairs-surface-hover);
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
-  transform: translateY(-0.5px);
+  background: rgba(120, 120, 128, 0.06);
+  color: rgba(28, 28, 30, 0.92);
 }
 
 .affairs-dashboard-tab.active {
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel-bg-strong));
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
-  color: color-mix(in srgb, var(--accent) 68%, var(--text-primary));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--panel-bg-strong) 26%, rgba(255, 255, 255, 0.22)),
-    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: rgba(120, 120, 128, 0.08);
+  color: rgba(28, 28, 30, 0.96);
+  box-shadow: none;
+}
+
+.affairs-dashboard-tab.active::after {
+  background: color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.affairs-dashboard-tab:active,
+.affairs-dashboard-add-tab:active {
+  transform: scale(0.985);
 }
 
 .affairs-dashboard-tab-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .affairs-dashboard-add-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  align-self: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  margin-left: 6px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text-secondary);
+  color: rgba(60, 60, 67, 0.72);
   cursor: pointer;
   flex: 0 0 auto;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .affairs-dashboard-add-tab svg {
   display: block;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
 }
 
 .affairs-dashboard-add-tab:hover {
-  background: var(--affairs-surface-hover);
-  border-color: var(--panel-border);
-  color: var(--text-primary);
-  transform: translateY(-0.5px);
+  background: rgba(120, 120, 128, 0.08);
+  color: rgba(28, 28, 30, 0.92);
+}
+
+.affairs-dashboard-add-tab:focus-visible,
+.affairs-dashboard-tab:focus-visible,
+.affairs-dashboard-toolbar-icon-button:focus-visible,
+.affairs-dashboard-size-button:focus-visible,
+.affairs-dashboard-editor-type:focus-visible,
+.affairs-dashboard-widget-inline-tab:focus-visible,
+.affairs-dashboard-toolbar-button:focus-visible,
+.affairs-shortcut-rail-launcher:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+[data-theme="dark"] .affairs-dashboard-tab {
+  color: rgba(235, 235, 245, 0.68);
+}
+
+[data-theme="dark"] .affairs-dashboard-tab:hover,
+[data-theme="dark"] .affairs-dashboard-add-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+[data-theme="dark"] .affairs-dashboard-tab.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .affairs-dashboard-tab.active::after {
+  background: color-mix(in srgb, var(--accent) 62%, rgba(255, 255, 255, 0.22));
+}
+
+[data-theme="dark"] .affairs-dashboard-add-tab {
+  color: rgba(235, 235, 245, 0.62);
 }
 
 .affairs-dashboard-canvas-block {
