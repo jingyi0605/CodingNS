@@ -191,8 +191,27 @@ function createService(
   };
 }
 
+function useFakeNow(iso?: string) {
+  vi.useFakeTimers();
+
+  if (iso) {
+    vi.setSystemTime(new Date(iso));
+  }
+}
+
+function scheduleSnapshotUpdate<T extends object>(target: T, patch: Partial<T>, delayMs = 100) {
+  setTimeout(() => {
+    Object.assign(target, patch);
+  }, delayMs);
+}
+
+async function advanceBackgroundTimers(ms = 200) {
+  await vi.advanceTimersByTimeAsync(ms);
+}
+
 describe("SessionLiveRuntimeService", () => {
   afterEach(() => {
+    vi.clearAllTimers();
     vi.useRealTimers();
     while (tempDirs.length > 0) {
       const target = tempDirs.pop();
@@ -467,8 +486,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("sendLiveMessage 在权威 user 尚未回流时，会用请求发起时间作为 synthetic 时间锚点", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-26T21:00:57.997Z"));
+    useFakeNow("2026-04-26T21:00:57.997Z");
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const providerRuntimeService = {
@@ -1288,8 +1306,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("startLiveSession 在首条权威 user 尚未落库时，会用请求发起时间作为 synthetic 时间锚点", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-26T21:00:57.997Z"));
+    useFakeNow("2026-04-26T21:00:57.997Z");
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const runtimeSnapshot = {
@@ -2386,8 +2403,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("getSessionRuntime 遇到过期的 Claude external runtime snapshot 时，会清理快照并回退到 fallback 状态", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-03-26T10:05:00.000Z"));
+    useFakeNow("2026-03-26T10:05:00.000Z");
 
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
@@ -2897,8 +2913,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时不会提前调度队列", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+    useFakeNow("2026-03-26T10:00:30.000Z");
 
     const { service, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
@@ -2931,8 +2946,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时会拒绝直发，避免假装送进当前会话", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+    useFakeNow("2026-03-26T10:00:30.000Z");
 
     const { service, sessionHistoryService, workspaceService } = createService();
     const providerRuntimeService = {
@@ -2996,8 +3010,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时，中断接口会强制清理本地运行态，避免把用户卡死", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-03-26T10:00:30.000Z"));
+    useFakeNow("2026-03-26T10:00:30.000Z");
 
     const {
       service,
@@ -3193,7 +3206,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("dispatchNextQueuedMessage 遇到 ACTIVE_RUN_EXISTS 时会回到等待并安排重试", async () => {
-    vi.useFakeTimers();
+    useFakeNow();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
@@ -3242,13 +3255,13 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(sessionSendQueueRepository.markFailed).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1200);
+    await advanceBackgroundTimers(1200);
 
     expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(2);
   });
 
   it("dispatchNextQueuedMessage 遇到运行时追加受限时会回到等待并自动重试", async () => {
-    vi.useFakeTimers();
+    useFakeNow();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
@@ -3307,7 +3320,7 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(sessionSendQueueRepository.markFailed).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1200);
+    await advanceBackgroundTimers(1200);
 
     expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(2);
     expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-1");
@@ -4372,7 +4385,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("startLiveSession 不会等待 Gemini 真实 session id 回填才返回，而是后台持久化 binding", async () => {
-    vi.useFakeTimers();
+    useFakeNow();
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const runtimeSnapshot = {
@@ -4437,12 +4450,12 @@ describe("SessionLiveRuntimeService", () => {
       messageCount: 0
     }));
 
-    setTimeout(() => {
-      runtimeSnapshot.providerSessionId = "gemini-session-real-1";
-      runtimeSnapshot.rawStoreRef = "gemini://session/gemini-session-real-1";
-      runtimeSnapshot.runningState = "running";
-      runtimeSnapshot.lastEventAt = "2026-03-26T10:00:00.200Z";
-    }, 100);
+    scheduleSnapshotUpdate(runtimeSnapshot, {
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1",
+      runningState: "running",
+      lastEventAt: "2026-03-26T10:00:00.200Z"
+    });
 
     const resultPromise = service.startLiveSession({
       workspaceId: "workspace-1",
@@ -4456,7 +4469,7 @@ describe("SessionLiveRuntimeService", () => {
 
     expect(result.providerSessionId).toBe("pending://gemini/runtime-session-1");
 
-    await vi.advanceTimersByTimeAsync(200);
+    await advanceBackgroundTimers();
 
     const createdSessionId = sessionHistoryService.persistSessionBinding.mock.calls[0]?.[0];
 
@@ -4473,7 +4486,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("startLiveSession 会在后台把 Codex synthetic binding 回填成真实 rollout 路径", async () => {
-    vi.useFakeTimers();
+    useFakeNow();
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const runtimeSnapshot = {
@@ -4538,12 +4551,12 @@ describe("SessionLiveRuntimeService", () => {
       messageCount: 0
     }));
 
-    setTimeout(() => {
-      runtimeSnapshot.rawStoreRef =
-        "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl";
-      runtimeSnapshot.runningState = "running";
-      runtimeSnapshot.lastEventAt = "2026-04-15T07:58:16.000Z";
-    }, 100);
+    scheduleSnapshotUpdate(runtimeSnapshot, {
+      rawStoreRef:
+        "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl",
+      runningState: "running",
+      lastEventAt: "2026-04-15T07:58:16.000Z"
+    });
 
     const resultPromise = service.startLiveSession({
       workspaceId: "workspace-1",
@@ -4557,7 +4570,7 @@ describe("SessionLiveRuntimeService", () => {
 
     expect(result.providerSessionId).toBe("019d9025-e575-7fa1-84e2-9e797a2d61df");
 
-    await vi.advanceTimersByTimeAsync(200);
+    await advanceBackgroundTimers();
 
     const createdSessionId = sessionHistoryService.persistSessionBinding.mock.calls[0]?.[0];
 
@@ -4906,7 +4919,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   });
 
   it("startLiveSession 会在 Kimi 首轮等待真实 binding 并优先返回权威 user 消息", async () => {
-    vi.useFakeTimers();
+    useFakeNow();
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
     const runtimeSnapshot = {
@@ -4997,12 +5010,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       messageCount: 0
     }));
 
-    setTimeout(() => {
-      runtimeSnapshot.providerSessionId = "kimi-session-real-1";
-      runtimeSnapshot.rawStoreRef = "kimi://session/kimi-session-real-1";
-      runtimeSnapshot.runningState = "running";
-      runtimeSnapshot.lastEventAt = "2026-04-09T10:00:00.200Z";
-    }, 100);
+    scheduleSnapshotUpdate(runtimeSnapshot, {
+      providerSessionId: "kimi-session-real-1",
+      rawStoreRef: "kimi://session/kimi-session-real-1",
+      runningState: "running",
+      lastEventAt: "2026-04-09T10:00:00.200Z"
+    });
 
     const resultPromise = service.startLiveSession({
       workspaceId: "workspace-1",
@@ -5012,7 +5025,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       clientRequestId: "client-kimi-1"
     });
 
-    await vi.advanceTimersByTimeAsync(200);
+    await advanceBackgroundTimers();
     const result = await resultPromise;
 
     expect(result.providerSessionId).toBe("kimi-session-real-1");
