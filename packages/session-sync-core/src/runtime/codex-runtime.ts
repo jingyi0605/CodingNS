@@ -2435,9 +2435,6 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
-  if (permissionOptions.sandboxMode) {
-    params.sandbox = permissionOptions.sandboxMode;
-  }
 
   if (request.options.model) {
     params.model = request.options.model;
@@ -2461,9 +2458,6 @@ function createThreadResumeParams(
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
-  if (permissionOptions.sandboxMode) {
-    params.sandbox = permissionOptions.sandboxMode;
-  }
 
   if (request.options.model) {
     params.model = request.options.model;
