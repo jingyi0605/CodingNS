@@ -4830,7 +4830,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   justify-content: flex-end;
   gap: 6px;
   flex: 0 0 auto;
-  min-width: 62px;
+  min-width: calc(30px * 2 + 6px);
 }
 
 .affairs-auxiliary-header-actions[data-visible="false"] {
