@@ -1840,7 +1840,7 @@ function cloneSessionDocument(
         ? {
             ...message.toolCall
           }
-        : undefined
+        : null
     }))
   };
 }

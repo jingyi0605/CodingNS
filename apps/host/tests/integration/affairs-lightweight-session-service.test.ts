@@ -518,6 +518,128 @@ describe("AffairsLightweightSessionService", () => {
       errorCode: "AFFAIRS_LIGHTWEIGHT_SESSION_NOT_FOUND"
     });
   });
+
+  it("会话文件短暂损坏时，会优先回退到最近一次内存快照，不再直接 500", async () => {
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const workspaceId = "workspace-1";
+    const userId = "user-1";
+    const sessionId = "light-cache-1";
+    const sessionFilePath = path.join(hostDataRootDir, "affairs-lightweight-sessions", workspaceId, `${sessionId}.json`);
+    await fs.mkdir(path.dirname(sessionFilePath), { recursive: true });
+    await fs.writeFile(sessionFilePath, JSON.stringify({
+      version: 1,
+      userId,
+      session: {
+        sessionId,
+        workspaceId,
+        provider: "codex",
+        providerSessionId: `affairs-lightweight:codex:${sessionId}`,
+        rawStoreRef: sessionFilePath,
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "缓存回退测试",
+        messageCount: 1,
+        lastMessageAt: "2026-06-03T12:00:00.000Z",
+        createdAt: "2026-06-03T11:00:00.000Z",
+        updatedAt: "2026-06-03T12:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-06-03T12:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-03T12:00:00.000Z",
+        completedAt: "2026-06-03T12:00:00.000Z",
+        lastSeenAt: null,
+        activityState: "idle"
+      },
+      messages: [
+        {
+          id: "msg-1",
+          role: "assistant",
+          kind: "text",
+          content: "ok",
+          sequence: 1,
+          createdAt: "2026-06-03T12:00:00.000Z",
+          updatedAt: "2026-06-03T12:00:00.000Z",
+          provider: "codex",
+          providerSessionId: `affairs-lightweight:codex:${sessionId}`,
+          metadata: {},
+          rawRef: `${sessionFilePath}#assistant-1`
+        }
+      ]
+    }), "utf8");
+
+    const firstRead = await service.readMessages(workspaceId, sessionId, userId);
+    expect(firstRead.total).toBe(1);
+
+    await fs.writeFile(sessionFilePath, "{", "utf8");
+
+    const fallbackRead = await service.readMessages(workspaceId, sessionId, userId);
+    expect(fallbackRead.total).toBe(1);
+    expect(fallbackRead.messages[0]?.content).toBe("ok");
+  });
+
+  it("写会话文件时会走临时文件 + rename，不留下半截 JSON", async () => {
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const workspaceId = "workspace-1";
+    const userId = "user-1";
+    const sessionId = "light-atomic-1";
+    const sessionFilePath = path.join(hostDataRootDir, "affairs-lightweight-sessions", workspaceId, `${sessionId}.json`);
+    await fs.mkdir(path.dirname(sessionFilePath), { recursive: true });
+    await fs.writeFile(sessionFilePath, JSON.stringify({
+      version: 1,
+      userId,
+      session: {
+        sessionId,
+        workspaceId,
+        provider: "codex",
+        providerSessionId: `affairs-lightweight:codex:${sessionId}`,
+        rawStoreRef: sessionFilePath,
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "原始标题",
+        messageCount: 0,
+        lastMessageAt: null,
+        createdAt: "2026-06-03T11:00:00.000Z",
+        updatedAt: "2026-06-03T11:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "completed",
+        activitySource: "runtime",
+        lastEventAt: "2026-06-03T11:00:00.000Z",
+        completedAt: "2026-06-03T11:00:00.000Z",
+        lastSeenAt: null,
+        activityState: "idle"
+      },
+      messages: []
+    }), "utf8");
+
+    await service.renameSessionTitle(workspaceId, sessionId, userId, "新标题");
+
+    const content = await fs.readFile(sessionFilePath, "utf8");
+    expect(() => JSON.parse(content)).not.toThrow();
+    const workspaceDirEntries = await fs.readdir(path.dirname(sessionFilePath));
+    expect(workspaceDirEntries.filter((name) => name.includes(".tmp"))).toEqual([]);
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined) {
