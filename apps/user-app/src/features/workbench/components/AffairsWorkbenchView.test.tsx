@@ -3008,6 +3008,27 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("切到事务文档页时也会先初始化 Butler 状态，避免卡在空白页", async () => {
+    butlerRuntimeStateMock.setState({
+      initialized: false,
+      loading: false,
+      profile: null,
+      bootstrapErrorCode: null,
+      error: null
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "library",
+      selectedNodeId: "library:all"
+    }, navigationGroups);
+
+    await waitFor(() => {
+      expect(butlerRuntimeCallsMock.initialize).toHaveBeenCalled();
+      expect(butlerRuntimeCallsMock.constructedWorkspaceIds).toContain("workspace-2");
+    });
+  });
+
   it("事务 Agent 首条消息会默认带上当前事务对象上下文", async () => {
     const user = userEvent.setup();
     renderWorkbenchWithCustomNavigationGroups({
@@ -4284,6 +4305,7 @@ describe("AffairsWorkbenchView", () => {
       expect(screen.queryByText("30")).not.toBeInTheDocument();
     });
   });
+
 
   it("标签树显示手动业务标签，同时继续隐藏来源、主题、状态这类噪音根标签", async () => {
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();

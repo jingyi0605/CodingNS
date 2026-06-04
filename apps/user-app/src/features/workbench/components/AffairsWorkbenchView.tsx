@@ -577,6 +577,7 @@ type AffairsConversationExportRenderJob = {
 type AffairsInitGuardSnapshot = {
   loading: boolean;
   initialized: boolean;
+  butlerInitialized: boolean;
   unavailable: boolean;
   errorMessage: string | null;
   profile: {
@@ -1544,6 +1545,10 @@ export function AffairsWorkbenchProvider({
   );
   const butlerInitLoading = useButlerRuntimeStore(butlerStore, (value) => value.loading);
   const butlerInitialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
+  const affairsSetupCompleted = useButlerRuntimeStore(
+    butlerStore,
+    (value) => value.affairsSetupCompleted ?? value.initialized
+  );
   const butlerBootstrapErrorCode = useButlerRuntimeStore(
     butlerStore,
     (value) => value.bootstrapErrorCode
@@ -1560,7 +1565,8 @@ export function AffairsWorkbenchProvider({
   const currentDirectoryStatus = libraryDocumentPage?.directoryStatus ?? null;
   const initGuard = useMemo<AffairsInitGuardSnapshot>(() => ({
     loading: butlerInitLoading,
-    initialized: butlerInitialized,
+    initialized: affairsSetupCompleted,
+    butlerInitialized,
     unavailable: !butlerInitLoading && butlerHostUnavailable,
     errorMessage: butlerInitError,
     profile: butlerProfile
@@ -1570,7 +1576,7 @@ export function AffairsWorkbenchProvider({
           personaTone: butlerProfile.persona.tone
         }
       : null
-  }), [butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
+  }), [affairsSetupCompleted, butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
   const isAffairsRoute = location.pathname === buildWorkspaceAffairsPath(workspaceId);
   const ensureAffairsRoute = useCallback(() => {
     if (isAffairsRoute) {
@@ -1584,18 +1590,12 @@ export function AffairsWorkbenchProvider({
   const directoryHintBootstrappedRef = useRef(false);
 
   const effectiveAuxiliaryTab = resolveAffairsAuxiliaryTabForSection(activeSection, state.auxiliaryTab);
-  const shouldInitializeButler =
-    agentWorkspaceId !== null
-    && (activeSection === "conversation" || effectiveAuxiliaryTab === "assistant");
 
   useEffect(() => {
-    if (!shouldInitializeButler) {
-      return;
-    }
     if (typeof butlerStore.initialize === "function") {
       void butlerStore.initialize();
     }
-  }, [butlerStore, shouldInitializeButler]);
+  }, [butlerStore]);
 
   useEffect(() => () => {
     butlerStore.dispose();
@@ -1619,6 +1619,30 @@ export function AffairsWorkbenchProvider({
   useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
+
+  useEffect(() => {
+    if (butlerInitLoading || butlerHostUnavailable || affairsSetupCompleted || activeSection === "conversation") {
+      return;
+    }
+
+    ensureAffairsRoute();
+    onStateChange({
+      ...state,
+      primarySection: "conversation",
+      selectedNodeId: null,
+      selectedObjectId: null,
+      selectedDocumentId: null,
+      auxiliaryTab: resolveAffairsAuxiliaryTabForSection("conversation", state.auxiliaryTab)
+    });
+  }, [
+    activeSection,
+    affairsSetupCompleted,
+    butlerHostUnavailable,
+    butlerInitLoading,
+    ensureAffairsRoute,
+    onStateChange,
+    state
+  ]);
 
   useEffect(() => {
     if (lightweightConversationSessionCacheScopeRef.current !== workspaceId) {
@@ -8520,8 +8544,18 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     return createPortal(content, document.body);
   };
 
-  if (activeSection === "conversation") {
+  if (!initGuard.loading && !initGuard.unavailable && !initGuard.initialized) {
     return <AffairsConversationInitState workspaceId={workspaceId} />;
+  }
+
+  if (activeSection === "conversation") {
+    return (
+      <div className="affairs-main-panel">
+        <section className="affairs-stage-panel">
+          <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -8531,9 +8565,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
         {error ? <div className="affairs-stage-empty">{error}</div> : null}
         {!loading && !error ? (
           activeSection === "library" ? (
-            !binding ? (
-              <AffairsLibraryBindingPanel />
-            ) : (
+            !binding ? null : (
               <>
                 <AffairsLibraryStageToolbar
                   browseMode={state.browseMode}
@@ -9376,7 +9408,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
         ) : auxiliaryTab === "detail" ? (
           selectedObject.section === "library" ? (
             !binding ? (
-              <div className="affairs-stage-empty">{t("shell.affairsAssistantBindingRequired")}</div>
+              <div className="affairs-stage-empty">{t("shell.affairsDetailEmpty")}</div>
             ) : documentRecord ? (
               <div className="affairs-detail-panel">
                 <section className="workbench-section-block affairs-detail-block affairs-detail-hero-block">
@@ -10904,115 +10936,6 @@ function renderDocumentGlyphByKind(kind: AffairsDocumentKind) {
     default:
       return <DocumentGlyph />;
   }
-}
-
-function AffairsLibraryBindingPanel() {
-  const { binding, saveLibraryBinding, setLibraryEnabled } = useAffairsWorkbenchInternal();
-  const [browserOpen, setBrowserOpen] = useState(false);
-  const [value, setValue] = useState(binding?.rootDir ?? "");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setValue(binding?.rootDir ?? "");
-  }, [binding?.rootDir]);
-
-  return (
-    <>
-      <div className="affairs-stage-empty affairs-binding-panel">
-        <strong>{t("shell.affairsLibraryBindingTitle")}</strong>
-        <p>{t("shell.affairsLibraryBindingDescription")}</p>
-        <label className="affairs-binding-field">
-          <span>{t("shell.affairsLibraryBindingFieldLabel")}</span>
-          <input
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder={t("shell.affairsLibraryBindingFieldPlaceholder")}
-          />
-        </label>
-        <div className="affairs-binding-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={submitting}
-            onClick={() => setBrowserOpen(true)}
-          >
-            {t("shell.affairsLibraryBindingBrowseAction")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={submitting || !value.trim()}
-            onClick={async () => {
-              setSubmitting(true);
-              setError(null);
-              try {
-                await saveLibraryBinding(value.trim());
-              } catch (requestError) {
-                setError(requestError instanceof Error ? requestError.message : t("shell.affairsLibraryBindingSaveFailed"));
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-          >
-            {submitting ? t("common.loading") : t("shell.affairsLibraryBindingSubmitAction")}
-          </button>
-        </div>
-        {binding ? (
-          <div className="affairs-library-config-section">
-            <strong>{t("shell.affairsLibraryEnableLabel")}</strong>
-            <p>{t("shell.affairsLibraryEnableHint")}</p>
-            <div className="affairs-binding-actions">
-              <span className="affairs-inline-pill">{binding.enabled ? t("shell.affairsLibraryEnabledState") : t("shell.affairsLibraryDisabledState")}</span>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={submitting}
-                onClick={async () => {
-                  setSubmitting(true);
-                  setError(null);
-                  try {
-                    await setLibraryEnabled(!binding.enabled);
-                  } catch (requestError) {
-                    setError(requestError instanceof Error ? requestError.message : t("shell.affairsLibraryEnableSaveFailed"));
-                  } finally {
-                    setSubmitting(false);
-                  }
-                }}
-              >
-                {submitting
-                  ? t("common.loading")
-                  : (binding.enabled ? t("shell.affairsLibraryDisableAction") : t("shell.affairsLibraryEnableAction"))}
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {error ? <span className="affairs-binding-error">{error}</span> : null}
-      </div>
-      <WorkspaceImportBrowserModal
-        open={browserOpen}
-        mode="select-directory"
-        title={t("shell.affairsLibraryBindingPickerTitle")}
-        description={t("shell.affairsLibraryBindingPickerDescription")}
-        submitLabel={t("shell.affairsLibraryBindingUseThisDirectory")}
-        initialPath={value || binding?.rootDir || null}
-        onClose={() => setBrowserOpen(false)}
-        onSelectedPath={async (path) => {
-          setValue(path);
-          setBrowserOpen(false);
-          setSubmitting(true);
-          setError(null);
-          try {
-            await saveLibraryBinding(path);
-          } catch (requestError) {
-            setError(requestError instanceof Error ? requestError.message : t("shell.affairsLibraryBindingSaveFailed"));
-          } finally {
-            setSubmitting(false);
-          }
-        }}
-      />
-    </>
-  );
 }
 
 function AffairsLibrarySettingsModal({
@@ -12751,7 +12674,7 @@ function UniversalAssistantBridge({
                 <span className="affairs-inline-pill subtle">{t("shell.affairsAssistantTitle")}</span>
               </div>
               <h3>{t("shell.affairsAssistantTitle")}</h3>
-              <p>{t("shell.affairsAssistantBindingRequired")}</p>
+              <p>{t("shell.affairsAssistantPlaceholderEmpty")}</p>
             </div>
           </div>
         </section>
@@ -16698,7 +16621,7 @@ function getErrorMessage(error: unknown, fallback: string): string {
 function resolveDefaultNodeId(
   section: AffairsPrimarySection,
   automationRecords: AutomationRecord[],
-  binding: AffairsLibraryBindingDto | null
+  _binding: AffairsLibraryBindingDto | null
 ) {
   switch (section) {
     case "conversation":
@@ -16707,7 +16630,7 @@ function resolveDefaultNodeId(
       return "workbench:overview";
     case "library":
     default:
-      return binding ? "library:all" : "library:binding";
+      return "library:all";
   }
 }
 
@@ -17581,7 +17504,7 @@ function resolveLibraryEmptyText(status: AffairsLibraryIndexStatusDto | null) {
 
 function resolveLibraryDetailEmptyText(status: AffairsLibraryIndexStatusDto | null) {
   if (!status) {
-    return t("shell.affairsAssistantBindingRequired");
+    return t("shell.affairsDetailEmpty");
   }
 
   if (status.state === "running") {

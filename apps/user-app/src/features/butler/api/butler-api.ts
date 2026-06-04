@@ -131,6 +131,7 @@ export interface ButlerProfilePayload {
 
 export interface ButlerProfileResponseDto {
   initialized: boolean;
+  affairsSetupCompleted?: boolean;
   profile: ButlerProfileDto | null;
 }
 

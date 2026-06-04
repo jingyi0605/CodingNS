@@ -59,6 +59,7 @@ export interface ButlerRuntimeState {
   sending: boolean;
   switchingProvider: boolean;
   initialized: boolean;
+  affairsSetupCompleted: boolean;
   profile: ButlerProfileDto | null;
   activeProvider: ButlerProviderId;
   controlSession: ButlerControlSessionDto | null;
@@ -104,6 +105,7 @@ export class ButlerRuntimeStore {
       sending: false,
       switchingProvider: false,
       initialized: false,
+      affairsSetupCompleted: false,
       profile: null,
       activeProvider: "codex",
       controlSession: null,
@@ -154,6 +156,7 @@ export class ButlerRuntimeStore {
         this.patch({
           loading: false,
           initialized: false,
+          affairsSetupCompleted: false,
           profile: null,
           activeProvider: "codex",
           capabilities: createButlerFallbackCapabilities("codex"),
@@ -177,6 +180,7 @@ export class ButlerRuntimeStore {
       const profile = profileResponse.profile;
       this.patch({
         initialized: true,
+        affairsSetupCompleted: profileResponse.affairsSetupCompleted ?? profileResponse.initialized,
         profile,
         activeProvider: profile.providerId,
         capabilities: createButlerFallbackCapabilities(profile.providerId),
@@ -211,6 +215,7 @@ export class ButlerRuntimeStore {
 
       this.patch({
         initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
         profile: response.profile,
         activeProvider: response.profile.providerId,
         capabilities: createButlerFallbackCapabilities(response.profile.providerId),
@@ -298,6 +303,7 @@ export class ButlerRuntimeStore {
 
       this.patch({
         initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
         profile: response.profile,
         activeProvider: response.profile.providerId
       });
@@ -341,6 +347,7 @@ export class ButlerRuntimeStore {
 
       this.patch({
         initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
         profile: response.profile,
         activeProvider: response.profile.providerId
       });

@@ -10,7 +10,7 @@ import {
 } from "./AffairsWorkbenchView.test-support";
 
 describe("AffairsWorkbenchView bootstrap guard", () => {
-  it("事务模式未初始化时切到自动化分区也不会被强制打回对话初始化页", async () => {
+  it("事务模式未初始化时切到自动化分区会被强制拉回对话初始化页", async () => {
     butlerApiMock.listAssistantAutomations.mockResolvedValue({ payload: { items: [] } });
     butlerApiMock.listRecentAssistantAutomationRuns.mockResolvedValue({ payload: { items: [] } });
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
@@ -36,18 +36,15 @@ describe("AffairsWorkbenchView bootstrap guard", () => {
       selectedNodeId: "workbench:overview"
     });
 
-    expect(await screen.findByRole("tab", { name: t("shell.affairsWorkbenchNav") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(t("shell.affairsShortcutRailTitle"))).toBeInTheDocument();
-    expect(screen.getAllByText(t("shell.affairsShortcutRailEmpty")).length).toBeGreaterThan(0);
-    expect(screen.getByText(t("shell.affairsWorkbenchDefaultTabShortTitle"))).toBeInTheDocument();
-    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: t("shell.affairsConversationNav") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByText(t("shell.affairsInitRouteGuardHint")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: t("shell.affairsInitSubmit") })).toBeInTheDocument();
     expect(screen.queryByText(t("shell.affairsHostUnavailableTitle"))).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).not.toBeDisabled();
     expect(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") })).not.toBeDisabled();
   });
 
-  it("事务模式未初始化时刷新到文档页会直接显示文档内容", async () => {
+  it("事务模式未初始化时刷新到文档页会直接回到初始化页", async () => {
     useButlerRuntimeStoreMock.mockImplementation((_store, selector) => selector({
       initialized: false,
       loading: false,
@@ -68,9 +65,9 @@ describe("AffairsWorkbenchView bootstrap guard", () => {
 
     renderWorkbenchWithState(createState());
 
-    expect(await screen.findByText("Exchange 分层通讯簿.txt")).toBeInTheDocument();
-    expect(screen.queryByText(t("shell.affairsInitRouteGuardHint"))).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.affairsInitSubmit") })).not.toBeInTheDocument();
+    expect((await screen.findAllByText(t("shell.affairsInitRouteGuardHint"))).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: t("shell.affairsInitSubmit") })).toBeInTheDocument();
+    expect(screen.queryByText("Exchange 分层通讯簿.txt")).not.toBeInTheDocument();
   });
 
   it("事务服务连不上时文档主区也不会被不可用页接管", async () => {
