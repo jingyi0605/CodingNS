@@ -7750,15 +7750,15 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .affairs-dashboard-tabbar {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 35px;
-  min-height: 35px;
+  height: 43px;
+  min-height: 43px;
   padding: 0 clamp(20px, 5%, 72px);
   box-sizing: border-box;
   overflow-x: auto;
