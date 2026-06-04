@@ -476,7 +476,7 @@ describe("偏好 profile 接口", () => {
     });
   });
 
-  it("读取旧快捷应用字段时会自动映射到新版工作台状态", async () => {
+  it("启动时会把旧快捷应用字段迁到新版工作台状态并删除旧列", async () => {
     const fixture = createEmptyFixture();
     const databasePath = path.join(fixture.rootDir, "host.sqlite");
     activeFixtures.push(fixture);
@@ -521,7 +521,24 @@ describe("偏好 profile 接口", () => {
       "default",
       JSON.stringify(DEFAULT_PROFILE_RESPONSE.providers),
       JSON.stringify(DEFAULT_PROFILE_RESPONSE.debugPortPools),
-      "{}",
+      JSON.stringify({
+        "workspace-2": {
+          workspaceId: "workspace-2",
+          tabs: [
+            {
+              id: "tab-keep",
+              title: "保留现有布局",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T09:00:00.000Z",
+              updatedAt: "2026-06-04T09:00:00.000Z"
+            }
+          ],
+          activeTabId: "tab-keep",
+          shortcutApps: [],
+          updatedAt: "2026-06-04T09:00:00.000Z"
+        }
+      }),
       JSON.stringify({
         "workspace-1": [
           {
@@ -533,6 +550,18 @@ describe("偏好 profile 接口", () => {
             entryPath: "tools/report/index.html",
             createdAt: "2026-06-04T10:00:00.000Z",
             updatedAt: "2026-06-04T10:00:00.000Z"
+          }
+        ],
+        "workspace-2": [
+          {
+            id: "shortcut-legacy-ignored",
+            title: "不该覆盖已有状态",
+            sourceKind: "workspace",
+            workspaceId: "workspace-2",
+            sourceId: "tools/legacy/index.html",
+            entryPath: "tools/legacy/index.html",
+            createdAt: "2026-06-04T10:02:00.000Z",
+            updatedAt: "2026-06-04T10:02:00.000Z"
           }
         ]
       }),
@@ -571,13 +600,40 @@ describe("偏好 profile 接口", () => {
               sourceId: "tools/report/index.html",
               entryPath: "tools/report/index.html",
               createdAt: "2026-06-04T10:00:00.000Z",
-          updatedAt: "2026-06-04T10:00:00.000Z"
+              updatedAt: "2026-06-04T10:00:00.000Z"
             }
           ]
+        },
+        "workspace-2": {
+          workspaceId: "workspace-2",
+          tabs: [
+            {
+              id: "tab-keep",
+              title: "保留现有布局",
+              widgets: [],
+              layout: [],
+              createdAt: "2026-06-04T09:00:00.000Z",
+              updatedAt: "2026-06-04T09:00:00.000Z"
+            }
+          ],
+          activeTabId: "tab-keep",
+          shortcutApps: [],
+          updatedAt: "2026-06-04T09:00:00.000Z"
         }
       },
       updatedAt: "2026-06-04T10:00:00.000Z"
     });
+
+    await secondHosted.app.close();
+    activeServers.pop();
+
+    const migratedDb = new Database(databasePath, { readonly: true });
+    const columns = migratedDb
+      .prepare("PRAGMA table_info(user_preference_profiles)")
+      .all() as Array<{ name: string }>;
+    migratedDb.close();
+
+    expect(columns.some((column) => column.name === "affairs_shortcut_apps_json")).toBe(false);
   });
 
   it("读取旧版分角色端口池配置时会归一化成单一区间", async () => {

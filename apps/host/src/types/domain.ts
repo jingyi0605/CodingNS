@@ -920,20 +920,6 @@ export interface UserPreferenceProviderProfile {
 }
 
 export type UserPreferenceProviders = Record<PreferenceProviderId, UserPreferenceProviderProfile>;
-export type UserPreferenceShortcutAppSourceKind = "workspace" | "affairs_library";
-
-export interface UserPreferenceAffairsShortcutApp {
-  id: string;
-  title: string;
-  sourceKind: UserPreferenceShortcutAppSourceKind;
-  workspaceId: string;
-  sourceId: string;
-  entryPath: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type UserPreferenceAffairsShortcutAppsByWorkspace = Record<string, UserPreferenceAffairsShortcutApp[]>;
 export type UserPreferenceAffairsDashboardStatesByWorkspace = Record<string, Record<string, unknown>>;
 
 export interface UserPreferenceProfile {
@@ -947,7 +933,6 @@ export interface UserPreferenceProfile {
 }
 
 export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
-  legacyAffairsShortcutAppsByWorkspace?: UserPreferenceAffairsShortcutAppsByWorkspace;
   userId: string;
   createdAt: string;
   updatedAt: string;

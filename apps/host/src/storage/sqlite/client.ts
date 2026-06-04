@@ -779,6 +779,171 @@ function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
     db.exec(`ALTER TABLE user_preference_profiles
       ADD COLUMN affairs_dashboard_states_json TEXT NOT NULL DEFAULT '{}'`);
   }
+
+  migrateLegacyAffairsShortcutAppsColumn(db, columnNames);
+}
+
+interface UserPreferenceProfileLegacyRow {
+  user_id: string;
+  language: string;
+  theme: string;
+  auto_theme: number;
+  default_permission_mode: string;
+  providers_json: string;
+  debug_port_pools_json: string;
+  affairs_dashboard_states_json: string;
+  affairs_shortcut_apps_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function migrateLegacyAffairsShortcutAppsColumn(
+  db: BetterSqliteDatabase,
+  columnNames?: Set<string>
+): void {
+  if (!tableExists(db, "user_preference_profiles")) {
+    return;
+  }
+
+  const resolvedColumnNames = columnNames
+    ?? new Set(
+      (db.prepare("PRAGMA table_info(user_preference_profiles)").all() as Array<{ name: string }>)
+        .map((column) => column.name)
+    );
+
+  if (!resolvedColumnNames.has("affairs_shortcut_apps_json")) {
+    return;
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT
+        user_id,
+        language,
+        theme,
+        auto_theme,
+        default_permission_mode,
+        providers_json,
+        debug_port_pools_json,
+        affairs_dashboard_states_json,
+        affairs_shortcut_apps_json,
+        created_at,
+        updated_at
+      FROM user_preference_profiles`
+    )
+    .all() as UserPreferenceProfileLegacyRow[];
+
+  const migratedRows = rows.map((row) => ({
+    ...row,
+    affairs_dashboard_states_json: JSON.stringify(
+      mergeLegacyShortcutAppsIntoDashboardStates(
+        parseJsonObjectRecord(row.affairs_dashboard_states_json),
+        parseJsonObjectRecord(row.affairs_shortcut_apps_json)
+      )
+    )
+  }));
+
+  db.exec("BEGIN IMMEDIATE");
+
+  try {
+    db.exec(`
+      ALTER TABLE user_preference_profiles RENAME TO user_preference_profiles_legacy;
+
+      CREATE TABLE user_preference_profiles (
+        user_id TEXT PRIMARY KEY,
+        language TEXT NOT NULL CHECK (language IN ('zh-CN', 'en-US')),
+        theme TEXT NOT NULL CHECK (theme IN ('light', 'dark', 'sky-blue', 'eye-green')),
+        auto_theme INTEGER NOT NULL DEFAULT 0 CHECK (auto_theme IN (0, 1)),
+        default_permission_mode TEXT NOT NULL CHECK (
+          default_permission_mode IN ('default', 'acceptEdits', 'bypassPermissions')
+        ),
+        providers_json TEXT NOT NULL,
+        debug_port_pools_json TEXT NOT NULL,
+        affairs_dashboard_states_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      )
+    `);
+
+    const insertStatement = db.prepare(`
+      INSERT INTO user_preference_profiles (
+        user_id,
+        language,
+        theme,
+        auto_theme,
+        default_permission_mode,
+        providers_json,
+        debug_port_pools_json,
+        affairs_dashboard_states_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const row of migratedRows) {
+      insertStatement.run(
+        row.user_id,
+        row.language,
+        row.theme,
+        row.auto_theme,
+        row.default_permission_mode,
+        row.providers_json,
+        row.debug_port_pools_json,
+        row.affairs_dashboard_states_json,
+        row.created_at,
+        row.updated_at
+      );
+    }
+
+    db.exec("DROP TABLE user_preference_profiles_legacy");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function parseJsonObjectRecord(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return { ...parsed };
+  } catch {
+    return {};
+  }
+}
+
+function mergeLegacyShortcutAppsIntoDashboardStates(
+  dashboardStatesByWorkspace: Record<string, unknown>,
+  legacyShortcutAppsByWorkspace: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    ...dashboardStatesByWorkspace
+  };
+
+  for (const [workspaceId, shortcutApps] of Object.entries(legacyShortcutAppsByWorkspace)) {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId || Object.prototype.hasOwnProperty.call(result, normalizedWorkspaceId)) {
+      continue;
+    }
+
+    if (!Array.isArray(shortcutApps)) {
+      continue;
+    }
+
+    result[normalizedWorkspaceId] = {
+      workspaceId: normalizedWorkspaceId,
+      shortcutApps
+    };
+  }
+
+  return result;
 }
 
 function ensureUserAffairsLibrarySettingsSchema(db: BetterSqliteDatabase): void {

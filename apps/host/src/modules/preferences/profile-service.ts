@@ -5,8 +5,6 @@ import type {
   DebugPortPoolRole,
   PreferenceProviderId,
   UserPreferenceAffairsDashboardStatesByWorkspace,
-  UserPreferenceAffairsShortcutApp,
-  UserPreferenceAffairsShortcutAppsByWorkspace,
   UserPreferenceLanguage,
   UserPreferencePermissionMode,
   UserPreferenceProfile,
@@ -126,11 +124,6 @@ export class PreferenceProfileService {
 }
 
 function toProfile(record: UserPreferenceProfileRecord): UserPreferenceProfile {
-  const dashboardStatesByWorkspace = mergeLegacyShortcutAppsIntoDashboardStates(
-    normalizeAffairsDashboardStatesByWorkspace(record.affairsDashboardStatesByWorkspace),
-    record.legacyAffairsShortcutAppsByWorkspace
-  );
-
   return {
     language: record.language,
     theme: record.theme,
@@ -138,7 +131,9 @@ function toProfile(record: UserPreferenceProfileRecord): UserPreferenceProfile {
     defaultPermissionMode: record.defaultPermissionMode,
     providers: buildProvidersRecord(record.providers),
     debugPortPools: normalizeDebugPortPools(record.debugPortPools),
-    affairsDashboardStatesByWorkspace: dashboardStatesByWorkspace
+    affairsDashboardStatesByWorkspace: normalizeAffairsDashboardStatesByWorkspace(
+      record.affairsDashboardStatesByWorkspace
+    )
   };
 }
 
@@ -343,35 +338,6 @@ function cloneDebugPortPools(config: DebugPortPoolConfig): DebugPortPoolConfig {
   return { ...config };
 }
 
-function normalizeAffairsShortcutAppsByWorkspace(input: unknown): UserPreferenceAffairsShortcutAppsByWorkspace {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw invalidField("affairsShortcutAppsByWorkspace", "affairsShortcutAppsByWorkspace 必须是对象");
-  }
-
-  const result: UserPreferenceAffairsShortcutAppsByWorkspace = {};
-
-  for (const [workspaceId, rawItems] of Object.entries(input)) {
-    const normalizedWorkspaceId = workspaceId.trim();
-
-    if (!normalizedWorkspaceId) {
-      throw invalidField("affairsShortcutAppsByWorkspace", "affairsShortcutAppsByWorkspace 的工作区 ID 不能为空");
-    }
-
-    if (!Array.isArray(rawItems)) {
-      throw invalidField(
-        `affairsShortcutAppsByWorkspace.${normalizedWorkspaceId}`,
-        "快捷应用列表必须是数组"
-      );
-    }
-
-    result[normalizedWorkspaceId] = rawItems.map((item, index) =>
-      normalizeAffairsShortcutApp(item, normalizedWorkspaceId, index)
-    );
-  }
-
-  return result;
-}
-
 function normalizeAffairsDashboardStatesByWorkspace(
   input: unknown
 ): UserPreferenceAffairsDashboardStatesByWorkspace {
@@ -407,116 +373,6 @@ function normalizeAffairsDashboardStatesByWorkspace(
   }
 
   return result;
-}
-
-function mergeLegacyShortcutAppsIntoDashboardStates(
-  dashboardStatesByWorkspace: UserPreferenceAffairsDashboardStatesByWorkspace,
-  legacyShortcutAppsByWorkspace: unknown
-): UserPreferenceAffairsDashboardStatesByWorkspace {
-  const normalizedLegacyShortcutAppsByWorkspace =
-    legacyShortcutAppsByWorkspace === undefined
-      ? {}
-      : normalizeAffairsShortcutAppsByWorkspace(legacyShortcutAppsByWorkspace);
-  const result: UserPreferenceAffairsDashboardStatesByWorkspace = {
-    ...dashboardStatesByWorkspace
-  };
-
-  for (const [workspaceId, shortcutApps] of Object.entries(normalizedLegacyShortcutAppsByWorkspace)) {
-    if (Object.prototype.hasOwnProperty.call(result, workspaceId)) {
-      continue;
-    }
-
-    result[workspaceId] = {
-      workspaceId,
-      shortcutApps
-    };
-  }
-
-  return result;
-}
-
-function normalizeAffairsShortcutApp(
-  input: unknown,
-  workspaceId: string,
-  index: number
-): UserPreferenceAffairsShortcutApp {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw invalidField(
-      `affairsShortcutAppsByWorkspace.${workspaceId}.${index}`,
-      "快捷应用条目必须是对象"
-    );
-  }
-
-  const record = input as Record<string, unknown>;
-  const sourceKind = normalizeAffairsShortcutSourceKind(
-    record.sourceKind,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.sourceKind`
-  );
-  const id = normalizeRequiredString(
-    record.id,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.id`,
-    "快捷应用 ID 不能为空"
-  );
-  const title = normalizeRequiredString(
-    record.title,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.title`,
-    "快捷应用标题不能为空"
-  );
-  const sourceId = normalizeRequiredString(
-    record.sourceId,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.sourceId`,
-    "快捷应用来源不能为空"
-  );
-  const entryPath = normalizeRequiredString(
-    record.entryPath,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.entryPath`,
-    "快捷应用路径不能为空"
-  );
-  const createdAt = normalizeRequiredString(
-    record.createdAt,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.createdAt`,
-    "快捷应用创建时间不能为空"
-  );
-  const updatedAt = normalizeRequiredString(
-    record.updatedAt,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.updatedAt`,
-    "快捷应用更新时间不能为空"
-  );
-  const rawWorkspaceId = normalizeRequiredString(
-    record.workspaceId,
-    `affairsShortcutAppsByWorkspace.${workspaceId}.${index}.workspaceId`,
-    "快捷应用工作区不能为空"
-  );
-
-  return {
-    id,
-    title,
-    sourceKind,
-    workspaceId: rawWorkspaceId,
-    sourceId,
-    entryPath,
-    createdAt,
-    updatedAt
-  };
-}
-
-function normalizeAffairsShortcutSourceKind(
-  value: unknown,
-  field: string
-): UserPreferenceAffairsShortcutApp["sourceKind"] {
-  if (value === "workspace" || value === "affairs_library") {
-    return value;
-  }
-
-  throw invalidField(field, "快捷应用来源只允许为 workspace 或 affairs_library");
-}
-
-function normalizeRequiredString(value: unknown, field: string, detail: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw invalidField(field, detail);
-  }
-
-  return value.trim();
 }
 
 function normalizeLanguage(value: unknown): UserPreferenceLanguage {
