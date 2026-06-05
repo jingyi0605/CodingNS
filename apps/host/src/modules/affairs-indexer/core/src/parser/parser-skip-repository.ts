@@ -1,6 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
-import { openDatabase } from "../sqlite/open-database.js";
+import { openDatabase, type AffairsIndexerDatabase, type AffairsIndexerStatement } from "../sqlite/open-database.js";
 
 export interface ParserSkipRecordInput {
   adapter: string;
@@ -53,9 +52,9 @@ function normalizeSamplePaths(raw: string, candidatePath?: string, limit = 20): 
  * 只保存聚合信息，不为每个复杂文档重复生成重失败记录。
  */
 export class ParserSkipRepository {
-  private activeDb: DatabaseSync | null = null;
-  private selectStatement: ReturnType<DatabaseSync["prepare"]> | null = null;
-  private upsertStatement: ReturnType<DatabaseSync["prepare"]> | null = null;
+  private activeDb: AffairsIndexerDatabase | null = null;
+  private selectStatement: AffairsIndexerStatement | null = null;
+  private upsertStatement: AffairsIndexerStatement | null = null;
 
   constructor(private readonly dbPath: string) {}
 
@@ -95,9 +94,9 @@ export class ParserSkipRepository {
   }
 
   private withDatabase<T>(handler: (
-    db: DatabaseSync,
-    selectStatement: ReturnType<DatabaseSync["prepare"]>,
-    upsertStatement: ReturnType<DatabaseSync["prepare"]>,
+    db: AffairsIndexerDatabase,
+    selectStatement: AffairsIndexerStatement,
+    upsertStatement: AffairsIndexerStatement,
   ) => T): T {
     if (this.activeDb && this.selectStatement && this.upsertStatement) {
       return handler(this.activeDb, this.selectStatement, this.upsertStatement);

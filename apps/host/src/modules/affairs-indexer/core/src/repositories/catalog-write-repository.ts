@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import { openDatabase } from "../sqlite/open-database.js";
+import { openDatabase, type AffairsIndexerDatabase, type AffairsIndexerStatement } from "../sqlite/open-database.js";
 import type { FileScanResult } from "../scanner/file-scanner.js";
 import type { ParsedDocument } from "../parser/plain-text-parser.js";
 import type { TagAssignment } from "../tagging/simple-tag-inference.js";
@@ -25,52 +24,52 @@ export interface ReconcileScope {
 }
 
 interface PreparedStatements {
-  upsertFile: ReturnType<DatabaseSync["prepare"]>;
-  upsertDocument: ReturnType<DatabaseSync["prepare"]>;
-  insertChunk: ReturnType<DatabaseSync["prepare"]>;
-  insertTag: ReturnType<DatabaseSync["prepare"]>;
-  updateTagDefinition: ReturnType<DatabaseSync["prepare"]>;
-  selectTagById: ReturnType<DatabaseSync["prepare"]>;
-  selectTagByPath: ReturnType<DatabaseSync["prepare"]>;
-  selectTagChildrenByParentId: ReturnType<DatabaseSync["prepare"]>;
-  deleteManualDocumentBindingsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
-  insertManualDocumentBinding: ReturnType<DatabaseSync["prepare"]>;
-  deleteManualFileBindingsByTagId: ReturnType<DatabaseSync["prepare"]>;
-  insertManualFileBinding: ReturnType<DatabaseSync["prepare"]>;
-  selectManualFileBindingsForIdentity: ReturnType<DatabaseSync["prepare"]>;
-  deleteManualFileBindingById: ReturnType<DatabaseSync["prepare"]>;
-  deleteFolderBindingsByFolderPath: ReturnType<DatabaseSync["prepare"]>;
-  insertFolderBinding: ReturnType<DatabaseSync["prepare"]>;
-  deleteTagRulesByTagId: ReturnType<DatabaseSync["prepare"]>;
-  insertTagRule: ReturnType<DatabaseSync["prepare"]>;
-  deleteDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
-  deleteDerivedDocumentTagByPair: ReturnType<DatabaseSync["prepare"]>;
-  deleteDocumentTagByDocumentAndSource: ReturnType<DatabaseSync["prepare"]>;
-  deleteDerivedDocumentTagByDocumentAndSource: ReturnType<DatabaseSync["prepare"]>;
-  insertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
-  insertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
-  upsertDocumentTag: ReturnType<DatabaseSync["prepare"]>;
-  upsertDerivedTag: ReturnType<DatabaseSync["prepare"]>;
-  selectActiveFileIdentityByPath: ReturnType<DatabaseSync["prepare"]>;
-  selectFileByPath: ReturnType<DatabaseSync["prepare"]>;
-  selectDocumentByFileId: ReturnType<DatabaseSync["prepare"]>;
-  selectUnseenIdentityCandidates: ReturnType<DatabaseSync["prepare"]>;
-  selectManualBindingsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
-  selectManualFileBindingRowsForIdentity: ReturnType<DatabaseSync["prepare"]>;
-  deleteManualBindingByPair: ReturnType<DatabaseSync["prepare"]>;
-  selectManualDocumentTagsByDocumentId: ReturnType<DatabaseSync["prepare"]>;
-  selectDocumentTagIds: ReturnType<DatabaseSync["prepare"]>;
-  selectDerivedTagIds: ReturnType<DatabaseSync["prepare"]>;
-  deleteDocumentTags: ReturnType<DatabaseSync["prepare"]>;
-  deleteDerivedDocumentTags: ReturnType<DatabaseSync["prepare"]>;
-  deleteChunksByDocumentId: ReturnType<DatabaseSync["prepare"]>;
-  deleteDocumentById: ReturnType<DatabaseSync["prepare"]>;
-  markFileDeleted: ReturnType<DatabaseSync["prepare"]>;
-  listActiveFilesAll: ReturnType<DatabaseSync["prepare"]>;
-  listActiveFilesExact: ReturnType<DatabaseSync["prepare"]>;
-  listActiveFilesPrefix: ReturnType<DatabaseSync["prepare"]>;
-  countActiveIndexedDocuments: ReturnType<DatabaseSync["prepare"]>;
-  selectActiveIndexedFileStateByPath: ReturnType<DatabaseSync["prepare"]>;
+  upsertFile: AffairsIndexerStatement;
+  upsertDocument: AffairsIndexerStatement;
+  insertChunk: AffairsIndexerStatement;
+  insertTag: AffairsIndexerStatement;
+  updateTagDefinition: AffairsIndexerStatement;
+  selectTagById: AffairsIndexerStatement;
+  selectTagByPath: AffairsIndexerStatement;
+  selectTagChildrenByParentId: AffairsIndexerStatement;
+  deleteManualDocumentBindingsByDocumentId: AffairsIndexerStatement;
+  insertManualDocumentBinding: AffairsIndexerStatement;
+  deleteManualFileBindingsByTagId: AffairsIndexerStatement;
+  insertManualFileBinding: AffairsIndexerStatement;
+  selectManualFileBindingsForIdentity: AffairsIndexerStatement;
+  deleteManualFileBindingById: AffairsIndexerStatement;
+  deleteFolderBindingsByFolderPath: AffairsIndexerStatement;
+  insertFolderBinding: AffairsIndexerStatement;
+  deleteTagRulesByTagId: AffairsIndexerStatement;
+  insertTagRule: AffairsIndexerStatement;
+  deleteDocumentTagByPair: AffairsIndexerStatement;
+  deleteDerivedDocumentTagByPair: AffairsIndexerStatement;
+  deleteDocumentTagByDocumentAndSource: AffairsIndexerStatement;
+  deleteDerivedDocumentTagByDocumentAndSource: AffairsIndexerStatement;
+  insertDocumentTag: AffairsIndexerStatement;
+  insertDerivedTag: AffairsIndexerStatement;
+  upsertDocumentTag: AffairsIndexerStatement;
+  upsertDerivedTag: AffairsIndexerStatement;
+  selectActiveFileIdentityByPath: AffairsIndexerStatement;
+  selectFileByPath: AffairsIndexerStatement;
+  selectDocumentByFileId: AffairsIndexerStatement;
+  selectUnseenIdentityCandidates: AffairsIndexerStatement;
+  selectManualBindingsByDocumentId: AffairsIndexerStatement;
+  selectManualFileBindingRowsForIdentity: AffairsIndexerStatement;
+  deleteManualBindingByPair: AffairsIndexerStatement;
+  selectManualDocumentTagsByDocumentId: AffairsIndexerStatement;
+  selectDocumentTagIds: AffairsIndexerStatement;
+  selectDerivedTagIds: AffairsIndexerStatement;
+  deleteDocumentTags: AffairsIndexerStatement;
+  deleteDerivedDocumentTags: AffairsIndexerStatement;
+  deleteChunksByDocumentId: AffairsIndexerStatement;
+  deleteDocumentById: AffairsIndexerStatement;
+  markFileDeleted: AffairsIndexerStatement;
+  listActiveFilesAll: AffairsIndexerStatement;
+  listActiveFilesExact: AffairsIndexerStatement;
+  listActiveFilesPrefix: AffairsIndexerStatement;
+  countActiveIndexedDocuments: AffairsIndexerStatement;
+  selectActiveIndexedFileStateByPath: AffairsIndexerStatement;
 }
 
 export interface SkippedDocumentEntry {
@@ -184,7 +183,7 @@ export interface SaveTagRuleInput {
  */
 export class CatalogWriteRepository {
   private readonly tagIdCache = new Map<string, string>();
-  private activeDb: DatabaseSync | null = null;
+  private activeDb: AffairsIndexerDatabase | null = null;
   private activeStatements: PreparedStatements | null = null;
   private activeBootstrapSession = false;
 
@@ -209,7 +208,7 @@ export class CatalogWriteRepository {
     this.activeBootstrapSession = false;
   }
 
-  private withConnection<T>(handler: (db: DatabaseSync, statements: PreparedStatements) => T): T {
+  private withConnection<T>(handler: (db: AffairsIndexerDatabase, statements: PreparedStatements) => T): T {
     if (this.activeDb && this.activeStatements) {
       return handler(this.activeDb, this.activeStatements);
     }
@@ -290,7 +289,7 @@ export class CatalogWriteRepository {
     });
   }
 
-  private detectBootstrapSession(db: DatabaseSync): boolean {
+  private detectBootstrapSession(db: AffairsIndexerDatabase): boolean {
     const row = db.prepare(`
       SELECT
         (SELECT COUNT(*) FROM documents) AS document_count,
@@ -307,7 +306,7 @@ export class CatalogWriteRepository {
       && Number(row?.derived_tag_count ?? 0) === 0;
   }
 
-  private prepareStatements(db: DatabaseSync): PreparedStatements {
+  private prepareStatements(db: AffairsIndexerDatabase): PreparedStatements {
     return {
       upsertFile: db.prepare(`
         INSERT INTO files(id, path, dir_path, name, extension, size, mtime, ctime, inode_key, content_hash, status, last_seen_at)
@@ -555,7 +554,7 @@ export class CatalogWriteRepository {
   }
 
   private ensureTagInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     tagCache: Map<string, string>,
     tagPath: string,
@@ -602,7 +601,7 @@ export class CatalogWriteRepository {
     return tagId;
   }
 
-  private cleanupOrphanTagsInConnection(db: DatabaseSync): void {
+  private cleanupOrphanTagsInConnection(db: AffairsIndexerDatabase): void {
     const selectOrphans = db.prepare(`
       SELECT t.id, t.path
       FROM tags t
@@ -868,7 +867,7 @@ export class CatalogWriteRepository {
   }
 
   private resolveManualFileBindingsForTargetInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     target: ManualDocumentBindingTarget,
   ): Array<{ id: string; tagId: string; source: string; createdAt: string; updatedAt: string }> {
     if (!target.inodeKey && !target.contentHash) {
@@ -943,7 +942,7 @@ export class CatalogWriteRepository {
   }
 
   private listActiveDocumentIdentityRowsInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     inodeKeys: string[],
     contentHashes: string[],
   ): Array<{ inodeKey: string | null; contentHash: string | null; size: number; extension: string }> {
@@ -980,7 +979,7 @@ export class CatalogWriteRepository {
   }
 
   private syncManualResolvedTagsForDocumentInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     target: ManualDocumentBindingTarget,
     observedAt: string,
@@ -1058,7 +1057,7 @@ export class CatalogWriteRepository {
   }
 
   private deleteDocumentInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     relativePath: string,
     deletedAt: string,
@@ -1083,7 +1082,7 @@ export class CatalogWriteRepository {
   }
 
   private upsertDocumentInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     tagCache: Map<string, string>,
     file: FileScanResult,
@@ -1240,7 +1239,7 @@ export class CatalogWriteRepository {
   }
 
   private upsertParseFailureInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     file: FileScanResult,
     error: Error,
@@ -1283,7 +1282,7 @@ export class CatalogWriteRepository {
   }
 
   private markSkippedDocumentInConnection(
-    db: DatabaseSync,
+    db: AffairsIndexerDatabase,
     statements: PreparedStatements,
     entry: SkippedDocumentEntry,
     observedAt = new Date().toISOString(),

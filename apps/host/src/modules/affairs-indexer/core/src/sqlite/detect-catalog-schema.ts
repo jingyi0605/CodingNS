@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./open-database.js";
 
 export type CatalogSchemaMode =
   | "absent"
@@ -35,7 +35,7 @@ export async function detectCatalogSchema(dbPath: string): Promise<CatalogSchema
     };
   }
 
-  const db = new DatabaseSync(dbPath, { open: true });
+  const db = openDatabase(dbPath);
   try {
     const tables = db.prepare(`
       SELECT name

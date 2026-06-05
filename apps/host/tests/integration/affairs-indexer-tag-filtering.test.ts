@@ -8,7 +8,7 @@ import { runAffairsIndexerCommand } from "../../src/modules/affairs-indexer/inte
 
 describe("affairs indexer tag filtering", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
   });
 

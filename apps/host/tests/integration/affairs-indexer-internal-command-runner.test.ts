@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,6 +10,7 @@ import { CatalogRepository } from "../../src/modules/affairs-indexer/core/src/re
 import { CatalogWriteRepository } from "../../src/modules/affairs-indexer/core/src/repositories/catalog-write-repository.js";
 import { TagRecomputeService } from "../../src/modules/affairs-indexer/core/src/services/tagging/tag-recompute-service.js";
 import { createAffairsIndexerRuntimeConfig } from "../../src/modules/affairs-indexer/internal-command-runner.js";
+import { openDatabase } from "../../src/modules/affairs-indexer/core/src/sqlite/open-database.js";
 
 describe("runAffairsIndexerCommand", () => {
   it("index 命令会同时刷新静态导出状态", async () => {
@@ -50,7 +50,7 @@ describe("runAffairsIndexerCommand", () => {
       await runAffairsIndexerCommand(rootDir, "index");
       const dbPath = path.join(rootDir, ".ai-index", "catalog.db");
       const getLastSeenAt = (): string | null => {
-        const db = new DatabaseSync(dbPath);
+        const db = openDatabase(dbPath);
         try {
           const row = db.prepare(`SELECT last_seen_at FROM files WHERE path = ?`).get("未变化文档.md") as {
             last_seen_at?: string | null;
