@@ -145,8 +145,25 @@
 
 ---
 
+## 阶段 4：把事务视图配置从代码工作区里拆出来
+
+- [x] 4.1 快捷应用和工作台画布配置改成事务视图全局配置
+  - 状态：DONE
+  - 这一步做什么：把快捷应用、工作台标签页和画布布局从旧的 `affairsDashboardStatesByWorkspace[workspaceId]` 分桶迁出来，改成用户级事务全局配置。
+  - 做完能看到什么：从不同代码工作区进入事务视图时，看到的是同一份快捷应用和画布配置，不会因为代码工作区 ID 变化看起来“丢失”。
+  - 依赖什么：已有事务工作台状态模型、Host 用户级事务文档库配置表。
+  - 主要改哪里：`user_affairs_library_settings.dashboard_state_json`、`AffairsLibraryService`、`/api/affairs/dashboard-state`、`AffairsWorkbenchView.tsx`、`WorkbenchLayout.tsx`。
+  - 这一步不做什么：不删除旧偏好接口；旧 `affairs_dashboard_states_json` 只保留给兼容和迁移用。
+  - 怎么验证：
+    - `pnpm -C apps/host exec tsc --noEmit --pretty false`
+    - `pnpm -C apps/user-app exec tsc --noEmit --pretty false`
+    - `pnpm -C apps/host exec vitest run tests/modules/workspace/affairs-library-service.test.ts tests/integration/affairs-library-global-routes.test.ts`
+    - `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+  - 补充说明：旧 workspace 级文档库保存接口仍可能被调用，所以也必须保留 `dashboardStateJson`，不能在保存绑定、启用状态或收藏时把全局画布配置洗成 `{}`。
+
 ## 当前本轮最小必要验证
 
-- `pnpm -C apps/user-app exec vitest run src/features/workbench/utils/affairs-dashboard-state.test.ts`
-- `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`（当前仍有 1 个事务助手历史会话旧失败，和本轮 HTML 块模型收口无直接关系）
-- `pnpm -C apps/user-app exec tsc --noEmit --pretty false 2>&1 | rg "AffairsWorkbenchView|affairs-dashboard-state|workbench-mode|shared/i18n/index.ts|codingns-workspace-bridge|file-context-api"`
+- `pnpm -C apps/host exec tsc --noEmit --pretty false`
+- `pnpm -C apps/user-app exec tsc --noEmit --pretty false`
+- `pnpm -C apps/host exec vitest run tests/modules/workspace/affairs-library-service.test.ts tests/integration/affairs-library-global-routes.test.ts`
+- `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`

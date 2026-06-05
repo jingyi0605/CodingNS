@@ -67,7 +67,7 @@
 | `AffairsWorkbenchView` | 事务视图内容分发 | 保持文档库、对话、工作台三入口；切回文档时强制显示对象详情 |
 | `AffairsDashboardView` | 工作台主舞台 | 顶部标签栏 + 画布 + 块预览 |
 | `AffairsSidebarPanel` | 左侧事务导航内容 | 在底部增加固定快捷应用栏 |
-| `AffairsDashboardState` | 保存工作台状态 | 除标签页和块外，增加快捷应用栏状态 |
+| `AffairsDashboardState` | 保存工作台状态 | 保存到事务视图的用户级全局配置里，不跟某个代码工作区 ID 绑定 |
 
 ## 4. 状态模型
 
@@ -88,6 +88,10 @@
 
 ### 4.2 工作台状态拆分
 
+工作台状态是“事务视图自己的配置”，不是“当前代码工作区的配置”。
+
+也就是说：不管用户从哪个代码工作区切进事务视图，看到的快捷应用栏、工作台标签页和画布布局都应该是同一份。代码工作区 ID 只用于文件来源、预览权限、文档库绑定这类业务动作，不能拿来当事务视图配置的分桶键。
+
 工作台状态分成四层：
 
 1. **主分区状态**：现在在文档库、对话还是工作台
@@ -107,12 +111,20 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `workspaceId` | 当前工作区 |
+| `workspaceId` | 固定为 `affairs-global`，只表示这是事务视图全局配置；不能写成代码工作区 ID |
 | `version` | 状态版本 |
 | `activeTabId` | 当前激活标签页 |
 | `tabs` | 工作台标签页列表 |
 | `shortcutApps` | 左侧固定快捷应用栏入口列表 |
 | `updatedAt` | 最近更新时间 |
+
+持久化位置：
+
+- Host：`user_affairs_library_settings.dashboard_state_json`
+- 前端接口：`GET /api/affairs/dashboard-state`、`PUT /api/affairs/dashboard-state`
+- 本地兜底快照：`workbench.affairs.dashboard.affairs-global`
+
+旧的 `user_preference_profiles.affairs_dashboard_states_json` 只作为迁移来源。事务视图后续不能继续按 `workspaceId` 写回旧偏好分桶。
 
 #### `ShortcutAppState`
 
@@ -142,14 +154,14 @@
 2. 系统校验它是否满足当前规则
 3. 通过后写入 `shortcutApps`
 4. 左侧固定快捷应用栏立即显示新入口
-5. 重新进入工作区时恢复该入口
+5. 重新进入事务视图时恢复该入口，不受当前代码工作区 ID 变化影响
 
 ### 5.3 添加画布块
 
 1. 用户在当前标签页里添加块
 2. 系统创建块定义和默认布局
 3. 画布立即渲染块
-4. 状态写回持久化
+4. 状态写回事务视图全局配置
 
 ## 6. 错误处理
 
