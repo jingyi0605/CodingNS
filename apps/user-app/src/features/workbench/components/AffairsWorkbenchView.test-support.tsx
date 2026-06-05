@@ -207,6 +207,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
+  getGlobalAffairsDashboardState: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getAffairsDocumentTagTask: vi.fn(),
   getProviderCapabilities: vi.fn(),
@@ -271,6 +272,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
+    getGlobalAffairsDashboardState: conversationApiMock.getGlobalAffairsDashboardState,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getAffairsDocumentTagTask: conversationApiMock.getAffairsDocumentTagTask,
     getProviderCapabilities: conversationApiMock.getProviderCapabilities,
@@ -1101,6 +1103,8 @@ beforeEach(() => {
   clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
   clearViewSnapshot("affairs.conversation.lightweight.sessions.workspace-1");
   clearViewSnapshot("affairs.conversation.agent.sessions.workspace-1");
+  clearViewSnapshot("workbench.affairs.dashboard.affairs-global");
+  clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
   window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
   window.sessionStorage.clear();
   clearProviderCatalogStore();
@@ -1109,6 +1113,8 @@ beforeEach(() => {
   conversationApiMock.listAffairsLightweightSessions.mockReset();
   conversationApiMock.getAffairsLightweightSession.mockReset();
   conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
+  conversationApiMock.getGlobalAffairsDashboardState.mockReset();
+  conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValue({ dashboardState: {} });
   conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
   conversationApiMock.getAffairsLibrarySnapshot.mockReset();
   conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
@@ -1152,6 +1158,10 @@ beforeEach(() => {
   conversationApiMock.startAffairsLightweightSessionStream.mockReset();
   conversationApiMock.updateSessionArchiveState.mockReset();
   conversationApiMock.updateSessionFavoriteState.mockReset();
+  conversationApiMock.updateGlobalAffairsDashboardState.mockReset();
+  conversationApiMock.updateGlobalAffairsDashboardState.mockImplementation(async (payload) => ({
+    dashboardState: payload.dashboardState
+  }));
   conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
   liveSessionControllerMock.useLiveSessionController.mockReset();
 

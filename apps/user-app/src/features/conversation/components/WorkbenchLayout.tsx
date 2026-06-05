@@ -234,7 +234,6 @@ import {
   AffairsWorkbenchView
 } from "../../workbench/components/AffairsWorkbenchView";
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
-import { ensureAffairsDashboardState } from "../../workbench/utils/affairs-dashboard-state";
 import {
   createDefaultAffairsViewState,
   createDefaultAffairsLibraryLandingState,
@@ -12535,13 +12534,6 @@ export function WorkbenchLayout({
     );
   }, [currentWorkspaceId]);
 
-  useEffect(() => {
-    if (!currentWorkspaceId || routeWorkbenchMode !== "affairs") {
-      return;
-    }
-
-    ensureAffairsDashboardState(currentWorkspaceId);
-  }, [currentWorkspaceId, routeWorkbenchMode]);
 
   useEffect(() => {
     if (!affairsViewState) {

@@ -1501,6 +1501,21 @@ export function getGlobalAffairsLibraryBinding() {
   return httpClient.request<AffairsLibraryBindingDto | null>("/api/affairs/library-binding");
 }
 
+export interface AffairsDashboardStateDto {
+  dashboardState: Record<string, unknown>;
+}
+
+export function getGlobalAffairsDashboardState() {
+  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state");
+}
+
+export function updateGlobalAffairsDashboardState(payload: { dashboardState: unknown }) {
+  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
   return httpClient.request<AffairsLibraryBindingDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`,

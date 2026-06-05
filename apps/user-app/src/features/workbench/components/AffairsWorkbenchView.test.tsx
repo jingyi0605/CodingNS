@@ -208,6 +208,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
+  getGlobalAffairsDashboardState: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getAffairsDocumentTagTask: vi.fn(),
   getProviderCapabilities: vi.fn(),
@@ -253,7 +254,8 @@ const conversationApiMock = vi.hoisted(() => ({
   updateSessionArchiveState: vi.fn(),
   updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
-  updateGlobalAffairsLibraryFavorites: vi.fn()
+  updateGlobalAffairsLibraryFavorites: vi.fn(),
+  updateGlobalAffairsDashboardState: vi.fn()
 }));
 
 const docsApiMock = vi.hoisted(() => ({
@@ -290,6 +292,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
+    getGlobalAffairsDashboardState: conversationApiMock.getGlobalAffairsDashboardState,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getAffairsDocumentTagTask: conversationApiMock.getAffairsDocumentTagTask,
     getProviderCapabilities: conversationApiMock.getProviderCapabilities,
@@ -335,7 +338,8 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     updateSessionArchiveState: conversationApiMock.updateSessionArchiveState,
     updateSessionFavoriteState: conversationApiMock.updateSessionFavoriteState,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
-    updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites
+    updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites,
+    updateGlobalAffairsDashboardState: conversationApiMock.updateGlobalAffairsDashboardState
   };
 });
 
@@ -1205,6 +1209,7 @@ describe("AffairsWorkbenchView", () => {
     clearViewSnapshot("affairs.library.documents::workspace-1::folder::.::.::.");
     clearViewSnapshot("affairs.conversation.lightweight.sessions.workspace-1");
     clearViewSnapshot("affairs.conversation.agent.sessions.workspace-1");
+    clearViewSnapshot("workbench.affairs.dashboard.affairs-global");
     clearViewSnapshot("workbench.affairs.dashboard.workspace-1");
     window.localStorage.removeItem("codingns.affairs.tag-tree.state.workspace-1");
     window.sessionStorage.clear();
@@ -1307,6 +1312,8 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.listAffairsLightweightSessions.mockReset();
     conversationApiMock.getAffairsLightweightSession.mockReset();
     conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
+    conversationApiMock.getGlobalAffairsDashboardState.mockReset();
+    conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValue({ dashboardState: {} });
     conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
@@ -1352,6 +1359,10 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.updateSessionArchiveState.mockReset();
     conversationApiMock.updateSessionFavoriteState.mockReset();
     conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
+    conversationApiMock.updateGlobalAffairsDashboardState.mockReset();
+    conversationApiMock.updateGlobalAffairsDashboardState.mockImplementation(async (payload) => ({
+      dashboardState: payload.dashboardState
+    }));
     liveSessionControllerMock.useLiveSessionController.mockReset();
 
     desktopBridgeMock.fs.openFile.mockClear();
@@ -6862,7 +6873,7 @@ describe("AffairsWorkbenchView", () => {
     localDashboardState.activeTabId = "local-tab-1";
     writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
 
-    const remoteDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:10:00.000Z");
+    const remoteDashboardState = createDefaultAffairsDashboardState("affairs-global", "2026-06-04T10:10:00.000Z");
     remoteDashboardState.layoutLocked = false;
     remoteDashboardState.tabs = [
       ...remoteDashboardState.tabs,
@@ -6876,17 +6887,8 @@ describe("AffairsWorkbenchView", () => {
       }
     ];
     remoteDashboardState.activeTabId = "remote-tab-1";
-    userPreferenceStore.hydrate({
-      ...initialPreferenceState,
-      profile: {
-        ...initialPreferenceState.profile,
-        language: "zh-CN"
-      },
-      affairsDashboardStatesByWorkspace: {
-        "workspace-1": remoteDashboardState
-      },
-      source: "remote",
-      updatedAt: "2026-06-04T10:12:00.000Z"
+    conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValueOnce({
+      dashboardState: remoteDashboardState
     });
 
     renderWorkbenchWithCustomNavigationGroups({
@@ -6901,7 +6903,7 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("button", { name: t("shell.affairsWorkbenchAddTabAction") })).toBeInTheDocument();
   });
 
-  it("远端缺失时会把本地工作台快照自动迁到偏好 store", async () => {
+  it("全局事务配置缺失时会把旧本地工作台快照迁到全局接口", async () => {
     const localDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:20:00.000Z");
     localDashboardState.layoutLocked = false;
     localDashboardState.tabs = [
@@ -6918,15 +6920,8 @@ describe("AffairsWorkbenchView", () => {
     localDashboardState.activeTabId = "local-migrate-tab-1";
     writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
 
-    userPreferenceStore.hydrate({
-      ...initialPreferenceState,
-      profile: {
-        ...initialPreferenceState.profile,
-        language: "zh-CN"
-      },
-      affairsDashboardStatesByWorkspace: {},
-      source: "remote",
-      updatedAt: "2026-06-04T10:22:00.000Z"
+    conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValueOnce({
+      dashboardState: {}
     });
 
     renderWorkbenchWithCustomNavigationGroups({
@@ -6940,11 +6935,13 @@ describe("AffairsWorkbenchView", () => {
 
     await waitFor(() => {
       expect(
-        userPreferenceStore.getState().affairsDashboardStatesByWorkspace?.["workspace-1"]
-      ).toMatchObject({
-        workspaceId: "workspace-1",
-        layoutLocked: false,
-        activeTabId: "local-migrate-tab-1"
+        conversationApiMock.updateGlobalAffairsDashboardState
+      ).toHaveBeenCalledWith({
+        dashboardState: expect.objectContaining({
+          workspaceId: "affairs-global",
+          layoutLocked: false,
+          activeTabId: "local-migrate-tab-1"
+        })
       });
     });
   });
