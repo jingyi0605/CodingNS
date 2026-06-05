@@ -35,6 +35,7 @@
     "test:user-app": "pnpm --dir apps/user-app test",
     "test:host:all": "pnpm --dir packages/session-sync-core build && pnpm --dir apps/host test:all",
     "test:user-app:all": "pnpm --dir apps/user-app test:all",
+    "check:sqlite-runtime": "node scripts/check-forbidden-node-sqlite.mjs",
     "test:related": "node scripts/run-related-tests.mjs",
     "test:changed": "node scripts/run-related-tests.mjs"
   },

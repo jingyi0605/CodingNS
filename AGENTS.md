@@ -94,6 +94,14 @@
    - Host 收尾是否还残留同步大事务或重 SQLite
 5. 如果需求里包含“后台任务”“定时刷新”“扫描”“订阅”“helper”“工作台刷新”“Git/Terminal 刷新”这些关键词，默认先回到上面的规范文档检查，再继续实现
 
+## SQLite 使用规则
+
+1. 正式运行代码禁止直接使用 Node 内置 `node:sqlite`，包括 `import { DatabaseSync } from "node:sqlite"` 和 `require("node:sqlite")`。
+2. Host 内部 SQLite 统一走 `apps/host/src/shared/runtime/better-sqlite3.ts`，或者模块内已经封好的 `better-sqlite3` 包装，例如事务文档库索引器的 `openDatabase(...)`。
+3. `packages/` 下的独立包不能偷用 Host 私有封装；如果包内需要 SQLite，必须在自己的 `package.json` 声明 `better-sqlite3`，并在包内提供最小封装。
+4. 测试 fixture 也不要直接使用 `node:sqlite`，否则会把测试自己的实验特性警告误判成 Host 或 helper 的运行时问题。
+5. 改 SQLite 相关代码后，必须运行 `pnpm check:sqlite-runtime`，确认正式代码和测试没有重新引入 `node:sqlite`。
+
 ## 仓库代码提交规则
 1. 如果你认为当前修改的代码已经满足git提交的最小模块，应该主动提出提交代码
 2. 提交代码的时候根据功能、模块、文档分配提交，不允许混合提交

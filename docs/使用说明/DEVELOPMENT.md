@@ -4,7 +4,7 @@
 
 本项目需要以下环境：
 
-- **Node.js**: >= 22.0.0 （必需，因为使用了 `node:sqlite` 模块）
+- **Node.js**: >= 22.0.0 （项目运行时和工具链要求）
 - **pnpm**: >= 9.0.0 （推荐使用 pnpm 10.7.1）
 
 ## 快速开始
@@ -109,7 +109,7 @@ pnpm dev:frontend
 
 ### Q: 为什么需要 Node.js 22+？
 
-A: 项目使用了 `node:sqlite` 模块，这是 Node.js 22 引入的新内置模块，用于替代第三方 SQLite 库。
+A: 项目运行时和工具链按 Node.js 22+ 维护。SQLite 正式运行链路统一使用 `better-sqlite3`，不要直接使用 Node 内置的实验性 `node:sqlite`。
 
 ### Q: 我已经安装了 Node.js 20，怎么办？
 
