@@ -1148,6 +1148,29 @@ function resolveWorkspaceHtmlSourceTitle(path: string, title?: string | null): s
   return getPathLeafName(path.trim()) || path.trim();
 }
 
+function buildDashboardStatesByWorkspacePatch(
+  current: Record<string, AffairsWorkbenchDashboardState>,
+  workspaceId: string,
+  dashboardState: AffairsWorkbenchDashboardState
+): Record<string, AffairsWorkbenchDashboardState> {
+  return {
+    ...current,
+    [workspaceId]: dashboardState
+  };
+}
+
+function resolveInitialDashboardState(
+  workspaceId: string,
+  remoteDashboardState: AffairsWorkbenchDashboardState | null
+): AffairsWorkbenchDashboardState {
+  if (remoteDashboardState) {
+    return remoteDashboardState;
+  }
+
+  const localState = readAffairsDashboardState(workspaceId);
+  return localState ?? createDefaultAffairsDashboardState(workspaceId);
+}
+
 function resolveShortcutAppIconText(title: string): string {
   const normalizedTitle = title.trim();
   if (!normalizedTitle) {
