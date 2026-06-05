@@ -9449,7 +9449,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
               </>
             ) : null}
           </div>
-          <AffairsDashboardLockToolbarButton />
         </div>
       </div>
 
@@ -13525,6 +13524,7 @@ function AffairsDashboardView() {
           ) : null}
         </div>
         <div className="affairs-dashboard-tabbar-actions">
+          <AffairsDashboardLockToolbarButton />
         </div>
       </div>
 

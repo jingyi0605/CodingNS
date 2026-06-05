@@ -6824,6 +6824,27 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
+  it("解锁按钮会显示在中间工作台标签栏最右侧，而不是右侧边栏顶部", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-05T09:45:00.000Z");
+    dashboardState.layoutLocked = true;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview",
+      auxiliaryTab: "detail"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const unlockButton = await screen.findByRole("button", { name: t("shell.affairsWorkbenchUnlockLayoutAction") });
+    const tabbarActions = document.querySelector(".affairs-dashboard-tabbar-actions");
+    const auxiliaryHeader = document.querySelector(".workbench-auxiliary-header");
+
+    expect(tabbarActions).not.toBeNull();
+    expect(tabbarActions?.firstElementChild).toBe(unlockButton);
+    expect(auxiliaryHeader?.contains(unlockButton)).toBe(false);
+  });
+
   it("远端工作台布局会优先覆盖本地快照", async () => {
     const localDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:00:00.000Z");
     localDashboardState.layoutLocked = true;
