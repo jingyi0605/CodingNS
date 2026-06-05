@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
-
 import { OpenCodeAdapter } from "../dist/index.js";
+import { loadDatabaseSync } from "../dist/sqlite/node-sqlite.js";
+
+const DatabaseSync = loadDatabaseSync();
 
 test("OpenCodeAdapter 会暴露 OpenCode 已接入后的能力边界", () => {
   const adapter = new OpenCodeAdapter({ dbPath: "/tmp/codingns-opencode.db" });

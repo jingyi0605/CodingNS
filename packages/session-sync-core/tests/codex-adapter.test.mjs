@@ -13,9 +13,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
-
 import { CodexAdapter } from "../dist/index.js";
+import { loadDatabaseSync } from "../dist/sqlite/node-sqlite.js";
+
+const DatabaseSync = loadDatabaseSync();
 
 function createStableMessageId(providerSessionId, stableIdentity) {
   return createHash("sha1").update(`codex:${providerSessionId}:${stableIdentity}`).digest("hex");

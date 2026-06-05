@@ -24,9 +24,11 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.130.0"
+    "@openai/codex-sdk": "0.130.0",
+    "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.5.2",
     "typescript": "^5.9.3"
   }

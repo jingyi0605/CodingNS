@@ -202,7 +202,13 @@ importers:
       '@openai/codex-sdk':
         specifier: 0.130.0
         version: 0.130.0
+      better-sqlite3:
+        specifier: ^12.8.0
+        version: 12.8.0
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/node':
         specifier: ^24.5.2
         version: 24.12.0
