@@ -15,6 +15,9 @@ export interface FileNodeDto {
   kind: FileNodeKind;
   size: number | null;
   updatedAt: string | null;
+  matchSource?: "path" | "content" | "path_and_content";
+  snippet?: string | null;
+  matchScore?: number | null;
 }
 
 export interface FileSnapshotDto {

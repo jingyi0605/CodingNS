@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { authStore } from "../../auth/store/auth-store";
 import { clientConfigStore } from "../../../config/client-config-store";
 import { localUiPreferenceStore } from "../../../preferences/local-ui-preference-store";
-import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { clearViewSnapshot, readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import {
@@ -38,6 +38,12 @@ import {
   getSessionCardByTitle,
   mockAffairsLibraryFetch,
   mockNavigator,
+  mockedGetButlerOverview,
+  mockedGetButlerProfile,
+  mockedListButlerFollowUpTasks,
+  mockedListButlerInboxItems,
+  mockedListButlerNotificationArchives,
+  mockedListButlerProjects,
   openFilesExternalWindowMock,
   openGitExternalWindowMock,
   openProcessesExternalWindowMock,
@@ -1529,7 +1535,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("普通分支会话")).toBeInTheDocument();
   });
 
-  it("搜索按钮不会抢占页面焦点，并支持会话与代码搜索", async () => {
+  it("搜索按钮不会抢占页面焦点，并支持统一搜索分组展示会话和代码结果", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1563,7 +1569,7 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(currentSnapshot);
       }
 
-      if (url.includes("/api/files/search?")) {
+      if (url.includes("/api/files/search?workspaceId=workspace-1")) {
         return createJsonResponse({
           items: [
             {
@@ -1575,6 +1581,15 @@ describe("WorkbenchLayout", () => {
             }
           ],
           total: 1,
+          page: 1,
+          pageSize: 20
+        });
+      }
+
+      if (url.includes("/api/files/search?workspaceId=workspace-2")) {
+        return createJsonResponse({
+          items: [],
+          total: 0,
           page: 1,
           pageSize: 20
         });
@@ -1602,7 +1617,14 @@ describe("WorkbenchLayout", () => {
 
     const sessionInput = within(searchDialog).getByRole("textbox");
     await userEvent.type(sessionInput, "搜索目标");
-    await userEvent.click(within(searchDialog).getByRole("button", { name: /搜索目标会话/ }));
+    await userEvent.click(within(searchDialog).getByRole("button", { name: t("shell.searchActionCode") }));
+    const sessionButton = await waitFor(() => {
+      const buttons = within(searchDialog).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("搜索目标会话"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    await userEvent.click(sessionButton);
 
     await waitFor(() => {
       expect(screen.getByTestId("current-path").textContent).toBe(
@@ -1612,14 +1634,1791 @@ describe("WorkbenchLayout", () => {
 
     await userEvent.click(screen.getAllByRole("button", { name: t("shell.searchEntry") })[0]);
     const reopenedDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
-    await userEvent.click(within(reopenedDialog).getByRole("tab", { name: t("shell.searchModeCode") }));
-
+    expect(within(reopenedDialog).getByRole("textbox")).toHaveValue("搜索目标");
+    const preservedSessionButton = within(reopenedDialog)
+      .getAllByRole("button")
+      .find((button) => button.textContent?.includes("搜索目标会话"));
+    expect(preservedSessionButton).toBeDefined();
+    await userEvent.click(within(reopenedDialog).getByRole("button", { name: t("shell.searchClearAction") }));
     const codeInput = within(reopenedDialog).getByRole("textbox");
-    await userEvent.type(codeInput, "SearchPanel");
-    await userEvent.click(within(reopenedDialog).getByRole("button", { name: t("shell.searchSubmit") }));
+    expect(codeInput).toHaveValue("");
+    await userEvent.type(codeInput, "SearchPanel components");
+    await userEvent.click(within(reopenedDialog).getByRole("button", { name: t("shell.searchActionCode") }));
 
-    expect(await screen.findByText("SearchPanel.tsx")).toBeInTheDocument();
-    expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
+    expect((await within(reopenedDialog).findAllByText(t("shell.searchCodeGroup"))).length).toBeGreaterThan(0);
+    const codeButtons = await waitFor(() =>
+      within(reopenedDialog).getAllByRole("button").filter((button) =>
+        button.textContent?.includes("SearchPanel.tsx")
+      )
+    );
+    expect(codeButtons[0]?.textContent).toContain("SearchPanel.tsx");
+    expect(codeButtons[0]?.textContent).toContain("项目一 · src/components/SearchPanel.tsx");
+  });
+
+  it("统一搜索遇到卡住的接口时不会一直停在正在搜索", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "中电投会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (
+        url.includes("/api/files/search?")
+        || url.includes("/affairs/library-snapshot")
+        || url.includes("/affairs/library-documents")
+        || url.includes("/affairs/lightweight-sessions")
+        || url.includes("/api/butler/inbox")
+        || url.includes("/api/butler/follow-up-tasks")
+      ) {
+        return new Promise<Response>(() => {});
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    const searchButton = await screen.findByRole("button", { name: t("shell.searchEntry") });
+    fireEvent.click(searchButton);
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    fireEvent.change(within(dialog).getByRole("textbox"), {
+      target: { value: "中电投" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("shell.searchActionCode") }));
+
+    expect(await within(dialog).findByText(t("shell.searchLoading"))).toBeInTheDocument();
+    await waitFor(() => {
+      const buttons = within(dialog).getAllByRole("button");
+      expect(buttons.some((button) => button.textContent?.includes("中电投会话"))).toBe(true);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 6500);
+      });
+    });
+
+    await waitFor(() => {
+      expect(within(dialog).queryByText(t("shell.searchLoading"))).toBeNull();
+    });
+
+    const buttons = within(dialog).getAllByRole("button");
+    expect(buttons.some((button) => button.textContent?.includes("中电投会话"))).toBe(true);
+  }, 15000);
+
+  it("事务模式会默认打开事务搜索，并支持跳到文档、标签、对话和代办", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+    mockedGetButlerProfile.mockResolvedValue({
+      initialized: true,
+      affairsSetupCompleted: true,
+      profile: {
+        id: "butler-profile-1",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/workspace-1",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 300
+        },
+        setupCompleted: true,
+        initializedAt: "2026-06-05T08:00:00.000Z",
+        updatedAt: "2026-06-05T08:00:00.000Z"
+      }
+    } as never);
+    mockedGetButlerOverview.mockResolvedValue({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-06-05T08:00:00.000Z",
+        global: {
+          projectCount: 0,
+          activeProjectCount: 0,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    } as never);
+    mockAffairsLibraryFetch();
+    mockedListButlerInboxItems.mockResolvedValue({
+      items: [
+        {
+          id: "todo-1",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          projectName: "项目一",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "补齐合同回访",
+          content: "今天继续整理合同回访记录。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            lifecycleStage: "pending",
+            analysisSummary: null,
+            generatedPrompt: null,
+            analysisControlSessionId: null,
+            analysisSessionId: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: null,
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
+          createdAt: "2026-06-05T08:00:00.000Z",
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          closedAt: null
+        }
+      ]
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValue({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "agent-session-1",
+          sessionTitle: "事务 Agent 对话",
+          objective: "继续跟进客户回访",
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-06-05T08:00:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-06-05T08:00:00.000Z",
+          lastObservedMessageCount: 5,
+          lastAutomationSummary: "等待你确认下一步回访时间。",
+          lastAutomationAt: "2026-06-05T08:00:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "要不要改成下周一回访？",
+          createdAt: "2026-06-05T08:00:00.000Z",
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          completedAt: null
+        }
+      ]
+    } as never);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "代码会话",
+            workspaceId: "workspace-1"
+          })
+        ],
+        affairsAssistantSessions: [
+          createSessionSummary({
+            sessionId: "agent-session-1",
+            title: "事务 Agent 对话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const affairsFetch = global.fetch;
+    const butlerProfileResponse = {
+      initialized: true,
+      affairsSetupCompleted: true,
+      profile: {
+        id: "butler-profile-1",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/workspace-1",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 300
+        },
+        setupCompleted: true,
+        initializedAt: "2026-06-05T08:00:00.000Z",
+        updatedAt: "2026-06-05T08:00:00.000Z"
+      }
+    };
+    const butlerOverviewResponse = {
+      overview: {
+        version: "v1",
+        generatedAt: "2026-06-05T08:00:00.000Z",
+        global: {
+          projectCount: 0,
+          activeProjectCount: 0,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    };
+    const butlerInboxResponse = {
+      items: [
+        {
+          id: "todo-1",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          projectName: "项目一",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "补齐合同回访",
+          content: "今天继续整理合同回访记录。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            lifecycleStage: "pending",
+            analysisSummary: null,
+            generatedPrompt: null,
+            analysisControlSessionId: null,
+            analysisSessionId: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: null,
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
+          createdAt: "2026-06-05T08:00:00.000Z",
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          closedAt: null
+        }
+      ]
+    };
+    const butlerFollowUpResponse = {
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "agent-session-1",
+          sessionTitle: "事务 Agent 对话",
+          objective: "继续跟进客户回访",
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-06-05T08:00:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-06-05T08:00:00.000Z",
+          lastObservedMessageCount: 5,
+          lastAutomationSummary: "等待你确认下一步回访时间。",
+          lastAutomationAt: "2026-06-05T08:00:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "要不要改成下周一回访？",
+          createdAt: "2026-06-05T08:00:00.000Z",
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          completedAt: null
+        }
+      ]
+    };
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/butler/profile")) {
+        return createJsonResponse(butlerProfileResponse);
+      }
+
+      if (url.endsWith("/api/butler/overview")) {
+        return createJsonResponse(butlerOverviewResponse);
+      }
+
+      if (url.includes("/api/butler/inbox")) {
+        return createJsonResponse(butlerInboxResponse);
+      }
+
+      if (url.includes("/api/butler/follow-up-tasks")) {
+        return createJsonResponse(butlerFollowUpResponse);
+      }
+
+      if (url.endsWith("/api/butler/notifications/archives")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      return affairsFetch(rawInput);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/affairs");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+
+    const input = within(dialog).getByRole("textbox");
+    await user.type(input, "跟进");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    const documentButton = await waitFor(() => {
+      const buttons = within(dialog).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("跟进记录"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    expect(documentButton.textContent).toContain("跟进记录");
+
+    await user.click(documentButton);
+    const previewDialog = await screen.findByRole("dialog", { name: /跟进记录/ });
+    expect(previewDialog).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: t("shell.searchModalTitle") })).toBeInTheDocument();
+    await user.click(within(previewDialog).getByRole("button", { name: t("common.close") }));
+
+    const locateDialog = screen.getByRole("dialog", { name: t("shell.searchModalTitle") });
+    const locateButton = await within(locateDialog).findByRole("button", { name: t("shell.searchResultLocateDocumentTitle") });
+    await user.click(locateButton);
+    await waitFor(() => {
+      const documentState = readViewSnapshot<any>("workbench.affairs.state.workspace-1");
+      expect(documentState.selectedDocumentId).toBe("doc-1");
+      expect(documentState.selectedFolderPath).toBe("客户资料");
+      expect(documentState.pendingLibraryPreview).toBeNull();
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const tagDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.click(within(tagDialog).getByRole("button", { name: t("shell.searchClearAction") }));
+    await user.type(within(tagDialog).getByRole("textbox"), "重要");
+    await user.click(within(tagDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const tagButton = await waitFor(() => {
+      const buttons = within(tagDialog).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("重要"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    expect(tagButton.textContent).toContain("重要");
+    await user.click(tagButton);
+    await waitFor(() => {
+      const tagState = readViewSnapshot<any>("workbench.affairs.state.workspace-1");
+      expect(tagState.selectedTagPath).toBe("客户/重要");
+      expect(tagState.selectedNodeId).toBe("library:tag:客户/重要");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const conversationDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.click(within(conversationDialog).getByRole("button", { name: t("shell.searchClearAction") }));
+    await user.type(within(conversationDialog).getByRole("textbox"), "Agent");
+    await user.click(within(conversationDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const conversationGroupTitle = await within(conversationDialog).findByText(t("shell.searchAffairsConversationsGroup"));
+    const conversationGroup = conversationGroupTitle.closest(".workbench-search-result-group");
+    if (!(conversationGroup instanceof HTMLElement)) {
+      throw new Error("未找到事务搜索的对话结果分组");
+    }
+    const conversationButton = await waitFor(() => {
+      const buttons = within(conversationGroup).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("事务 Agent 对话"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    expect(conversationButton.textContent).toContain("事务 Agent 对话");
+    await user.click(conversationButton);
+    await waitFor(() => {
+      const conversationState = readViewSnapshot<any>("workbench.affairs.state.workspace-1");
+      expect(conversationState.primarySection).toBe("conversation");
+      expect(conversationState.selectedNodeId).toBe("conversation:agent:session:agent-session-1");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const todoDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.click(within(todoDialog).getByRole("button", { name: t("shell.searchClearAction") }));
+    await user.type(within(todoDialog).getByRole("textbox"), "合同");
+    await user.click(within(todoDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const todoButton = await waitFor(() => {
+      const buttons = within(todoDialog).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("补齐合同回访"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    expect(todoButton.textContent).toContain("补齐合同回访");
+    await user.click(todoButton);
+    await waitFor(() => {
+      const todoState = readViewSnapshot<any>("workbench.affairs.state.workspace-1");
+      expect(todoState.primarySection).toBe("workbench");
+      expect(todoState.selectedNodeId).toBe("workbench:todo:inbox");
+      expect(todoState.selectedObjectId).toBe("inbox:todo-1");
+    });
+  });
+
+  it("事务模式全局搜索会覆盖所有事务工作区文档，并且不会触发代码搜索", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "事务入口会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-1", "项目一"),
+            createWorkspace("workspace-2", "项目二")
+          ]
+        });
+      }
+
+      if (url.includes("/api/files/search?")) {
+        throw new Error(`事务模式不应该触发代码搜索: ${url}`);
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: null,
+          status: {
+            state: "idle",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: null,
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [],
+          favorites: [],
+          folders: [],
+          documentCount: 0,
+          lastError: null
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-2/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: {
+            workspaceId: "workspace-2",
+            rootDir: "/Users/jackson/WorkFile/affairs-2",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          },
+          status: {
+            state: "fresh",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: "2026-06-05T08:00:00.000Z",
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [],
+          favorites: [],
+          folders: [],
+          documentCount: 1,
+          lastError: null
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+        return createJsonResponse({
+          total: 0,
+          offset: 0,
+          limit: 12,
+          items: []
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-2/affairs/library-documents")) {
+        const parsedUrl = new URL(url, "https://codingns.local");
+        const keyword = parsedUrl.searchParams.get("keyword");
+        const matched = keyword?.includes("预算");
+
+        return createJsonResponse({
+          total: matched ? 1 : 0,
+          offset: 0,
+          limit: 12,
+          items: matched
+            ? [
+              {
+                documentId: "doc-2",
+                path: "客户资料/预算汇总.md",
+                title: "预算汇总",
+                summary: "事务预算汇总",
+                updatedAt: "2026-06-05T08:00:00.000Z",
+                tags: [],
+                derivedTags: [],
+                isFavorite: false
+              }
+            ]
+            : []
+        });
+      }
+
+      if (url.includes("/affairs/lightweight-sessions")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/affairs");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "预算");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    const documentButton = await waitFor(() => {
+      const buttons = within(dialog).getAllByRole("button");
+      const matched = buttons.find((button) => button.textContent?.includes("预算汇总"));
+      expect(matched).toBeDefined();
+      return matched as HTMLElement;
+    });
+    expect(documentButton.textContent).toContain("预算汇总");
+    expect(documentButton.textContent).toContain("affairs-2 · 客户资料/预算汇总.md");
+    expect(documentButton.textContent).not.toContain("项目二 ·");
+    expect(within(dialog).queryByText(t("shell.searchCodeFailed"))).toBeNull();
+  });
+
+  it("事务模式搜索同一文档库时不会按工作区重复展示同一份文档", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-3", "项目三"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-1", "项目一"),
+            createWorkspace("workspace-2", "项目二"),
+            createWorkspace("workspace-3", "项目三")
+          ]
+        });
+      }
+
+      if (url.includes("/api/workspaces/") && url.includes("/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: {
+            workspaceId: "workspace-1",
+            rootDir: "/Users/jackson/WorkFile/售前文档",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          },
+          status: {
+            state: "fresh",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: "2026-06-05T08:00:00.000Z",
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [],
+          favorites: [],
+          folders: [],
+          documentCount: 1,
+          lastError: null
+        });
+      }
+
+      if (url.includes("/api/workspaces/") && url.includes("/affairs/library-documents")) {
+        const workspaceMatch = url.match(/\/api\/workspaces\/([^/]+)\/affairs\/library-documents/);
+        const workspaceSuffix = workspaceMatch?.[1] ?? "workspace";
+        return createJsonResponse({
+          total: 1,
+          offset: 0,
+          limit: 12,
+          items: [
+            {
+              documentId: `doc-${workspaceSuffix}`,
+              path: "S-上海能科/工程进度款申请-质保金（5%）.pdf",
+              title: "工程进度款申请-质保金（5%）",
+              summary: "付款条件为上海能科项目本期工程进度款，本页用于说明质保金扣留规则。",
+              updatedAt: "2026-06-05T08:00:00.000Z",
+              tags: [],
+              derivedTags: [],
+              isFavorite: false
+            }
+          ]
+        });
+      }
+
+      if (url.includes("/affairs/lightweight-sessions")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/api/butler/inbox")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/api/butler/follow-up-tasks")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/affairs");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "上海能科");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    const buttons = await waitFor(() =>
+      within(dialog).getAllByRole("button").filter((button) =>
+        button.textContent?.includes("工程进度款申请-质保金（5%）")
+      )
+    );
+
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toContain("售前文档 · S-上海能科/工程进度款申请-质保金（5%）.pdf");
+    expect(buttons[0]?.textContent).not.toContain("项目一 ·");
+    expect(buttons[0]?.textContent).not.toContain("项目二 ·");
+    expect(buttons[0]?.textContent).not.toContain("项目三 ·");
+  });
+
+  it("事务模式搜索会显示当前排序方式，并支持切换文档排序", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [createWorkspace("workspace-1", "项目一")]
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: {
+            workspaceId: "workspace-1",
+            rootDir: "/Users/jackson/WorkFile/售前文档",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          },
+          status: {
+            state: "fresh",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: "2026-06-05T08:00:00.000Z",
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [],
+          favorites: [],
+          folders: [],
+          documentCount: 2,
+          lastError: null
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+        return createJsonResponse({
+          total: 2,
+          offset: 0,
+          limit: 12,
+          items: [
+            {
+              documentId: "doc-relevance-first",
+              path: "S-上海能科/上海能科云桌面运维服务合同谈判记录表.docx",
+              title: "上海能科云桌面运维服务合同谈判记录表",
+              summary: "这里记录上海能科云桌面运维服务合同的谈判过程和关键条款。",
+              updatedAt: "2026-06-01T08:00:00.000Z",
+              tags: [],
+              derivedTags: [],
+              isFavorite: false
+            },
+            {
+              documentId: "doc-updated-first",
+              path: "S-上海能科/合同纪要.docx",
+              title: "合同纪要",
+              summary: "上海能科合同纪要的最新版本，包含近期更新内容。",
+              updatedAt: "2026-06-09T08:00:00.000Z",
+              tags: [],
+              derivedTags: [],
+              isFavorite: false
+            }
+          ]
+        });
+      }
+
+      if (url.includes("/affairs/lightweight-sessions")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/api/butler/inbox")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/api/butler/follow-up-tasks")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/affairs");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "上海能科");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    const sortSelect = within(dialog).getByRole("combobox", { name: t("shell.searchSortLabel") });
+    expect(sortSelect).toHaveValue("relevance");
+
+    await waitFor(() => {
+      const resultButtons = within(dialog).getAllByRole("button").filter((button) =>
+        button.textContent?.includes("上海能科云桌面运维服务合同谈判记录表")
+        || button.textContent?.includes("合同纪要")
+      );
+      expect(resultButtons[0]?.textContent).toContain("上海能科云桌面运维服务合同谈判记录表");
+    });
+
+    await user.selectOptions(sortSelect, "updated_desc");
+
+    await waitFor(() => {
+      const resultButtons = within(dialog).getAllByRole("button").filter((button) =>
+        button.textContent?.includes("上海能科云桌面运维服务合同谈判记录表")
+        || button.textContent?.includes("合同纪要")
+      );
+      expect(resultButtons[0]?.textContent).toContain("合同纪要");
+    });
+  });
+
+  it("事务模式的标签、对话、代办会按相关度优先排序", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    mockAffairsLibraryFetch();
+    const affairsFetch = global.fetch;
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "事务入口会话",
+            workspaceId: "workspace-1"
+          })
+        ],
+        affairsAssistantSessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    const butlerProfileResponse = {
+      initialized: true,
+      affairsSetupCompleted: true,
+      profile: {
+        id: "butler-profile-1",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/workspace-1",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 300
+        },
+        setupCompleted: true,
+        initializedAt: "2026-06-05T08:00:00.000Z",
+        updatedAt: "2026-06-05T08:00:00.000Z"
+      }
+    };
+    const butlerOverviewResponse = {
+      overview: {
+        version: "v1",
+        generatedAt: "2026-06-05T08:00:00.000Z",
+        global: {
+          projectCount: 0,
+          activeProjectCount: 0,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    };
+    const butlerInboxResponse = {
+      items: [
+        {
+          id: "todo-exact",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          projectName: "项目一",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "合同",
+          content: "今天继续处理合同审批。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            lifecycleStage: "pending",
+            analysisSummary: null,
+            generatedPrompt: null,
+            analysisControlSessionId: null,
+            analysisSessionId: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: null,
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
+          createdAt: "2026-06-05T08:00:00.000Z",
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          closedAt: null
+        },
+        {
+          id: "todo-prefix",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          projectName: "项目一",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "合同回访安排",
+          content: "需要尽快整理客户反馈。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            lifecycleStage: "pending",
+            analysisSummary: null,
+            generatedPrompt: null,
+            analysisControlSessionId: null,
+            analysisSessionId: null,
+            linkedButlerSessionId: null,
+            linkedSessionId: null,
+            linkedFollowUpTaskId: null,
+            lastError: null,
+            lastAnalyzedAt: null,
+            lastSessionCreatedAt: null,
+            lastFollowUpAt: null
+          },
+          createdAt: "2026-06-05T09:00:00.000Z",
+          updatedAt: "2026-06-05T09:00:00.000Z",
+          closedAt: null
+        }
+      ]
+    };
+    const butlerFollowUpResponse = {
+      items: []
+    };
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/butler/profile")) {
+        return createJsonResponse(butlerProfileResponse);
+      }
+
+      if (url.endsWith("/api/butler/overview")) {
+        return createJsonResponse(butlerOverviewResponse);
+      }
+
+      if (url.includes("/api/butler/inbox")) {
+        return createJsonResponse(butlerInboxResponse);
+      }
+
+      if (url.includes("/api/butler/follow-up-tasks")) {
+        return createJsonResponse(butlerFollowUpResponse);
+      }
+
+      if (url.endsWith("/api/butler/notifications/archives")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: {
+            workspaceId: "workspace-1",
+            rootDir: "/Users/jackson/WorkFile",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-05-31T08:00:00.000Z"
+          },
+          status: {
+            state: "fresh",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: "2026-05-31T08:00:00.000Z",
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [
+            {
+              path: "客户/合同",
+              name: "合同",
+              rootType: "manual",
+              parentPath: "客户",
+              depth: 1,
+              documentCount: 2
+            },
+            {
+              path: "客户/合同审批",
+              name: "合同审批",
+              rootType: "manual",
+              parentPath: "客户",
+              depth: 1,
+              documentCount: 2
+            }
+          ],
+          favorites: [],
+          folders: [],
+          documentCount: 0,
+          lastError: null
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+        return createJsonResponse({
+          total: 0,
+          offset: 0,
+          limit: 200,
+          items: []
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/lightweight-sessions")) {
+        return createJsonResponse({
+          items: [
+            createSessionSummary({
+              sessionId: "lightweight-exact",
+              title: "回访",
+              workspaceId: "workspace-1",
+              updatedAt: "2026-06-05T08:00:00.000Z",
+              lastMessageAt: "2026-06-05T08:00:00.000Z"
+            }),
+            createSessionSummary({
+              sessionId: "lightweight-prefix",
+              title: "回访计划",
+              workspaceId: "workspace-1",
+              updatedAt: "2026-06-05T10:00:00.000Z",
+              lastMessageAt: "2026-06-05T10:00:00.000Z"
+            })
+          ]
+        });
+      }
+
+      return affairsFetch(rawInput);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/affairs");
+    });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const tagDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    fireEvent.change(within(tagDialog).getByRole("textbox"), {
+      target: { value: "合同" }
+    });
+    fireEvent.click(within(tagDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const tagGroupTitle = await within(tagDialog).findByText(t("shell.searchAffairsTagsGroup"));
+    const tagGroup = tagGroupTitle.closest(".workbench-search-result-group");
+    if (!(tagGroup instanceof HTMLElement)) {
+      throw new Error("未找到事务搜索的标签分组");
+    }
+    const tagButtons = within(tagGroup).getAllByRole("button");
+    expect(tagButtons[0]?.textContent).toContain("合同");
+    expect(tagButtons[1]?.textContent).toContain("合同审批");
+
+    await user.click(within(tagDialog).getByRole("button", { name: /关闭|close/i }));
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const conversationDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    fireEvent.change(within(conversationDialog).getByRole("textbox"), {
+      target: { value: "回访" }
+    });
+    fireEvent.click(within(conversationDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const conversationGroupTitle = await within(conversationDialog).findByText(t("shell.searchAffairsConversationsGroup"));
+    const conversationGroup = conversationGroupTitle.closest(".workbench-search-result-group");
+    if (!(conversationGroup instanceof HTMLElement)) {
+      throw new Error("未找到事务搜索的对话分组");
+    }
+    const conversationButtons = within(conversationGroup).getAllByRole("button");
+    expect(conversationButtons[0]?.textContent).toContain("回访");
+    expect(conversationButtons[1]?.textContent).toContain("回访计划");
+
+    await user.click(within(conversationDialog).getByRole("button", { name: /关闭|close/i }));
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const todoDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    fireEvent.change(within(todoDialog).getByRole("textbox"), {
+      target: { value: "合同" }
+    });
+    fireEvent.click(within(todoDialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+    const todoGroupTitle = await within(todoDialog).findByText(t("shell.searchAffairsTodosGroup"));
+    const todoGroup = todoGroupTitle.closest(".workbench-search-result-group");
+    if (!(todoGroup instanceof HTMLElement)) {
+      throw new Error("未找到事务搜索的代办分组");
+    }
+    const todoButtons = within(todoGroup).getAllByRole("button");
+    expect(todoButtons[0]?.textContent).toContain("合同");
+    expect(todoButtons[1]?.textContent).toContain("合同回访安排");
+  });
+
+  it("事务模式搜索支持空格分隔的多关键词，并展示命中摘要和高亮", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    mockAffairsLibraryFetch();
+    const affairsFetch = global.fetch;
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "事务入口会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [createWorkspace("workspace-1", "项目一")]
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+        return createJsonResponse({
+          total: 1,
+          offset: 0,
+          limit: 200,
+          items: [
+            {
+              documentId: "doc-1",
+              path: "客户资料/客户跟进.md",
+              title: "索引第一句不该当标题",
+              summary: "上海办公室预算已确认\n第二行继续跟进审批节奏",
+              updatedAt: "2026-06-05T08:00:00.000Z",
+              tags: [],
+              derivedTags: [],
+              isFavorite: false
+            }
+          ]
+        });
+      }
+
+      return affairsFetch(rawInput);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "上海 预算");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    const button = await within(dialog).findByRole("button", { name: /客户跟进/ });
+    const title = button.querySelector(".workbench-search-result-title");
+    expect(title?.textContent).toBe("客户跟进.md");
+    expect(title?.textContent).not.toBe("索引第一句不该当标题");
+    expect(button.textContent).toContain("上海办公室预算已确认");
+    expect(button.textContent).toContain("第二行继续跟进审批节奏");
+    const highlights = button.querySelectorAll("mark.workbench-search-highlight");
+    expect(Array.from(highlights).some((node) => node.textContent === "上海")).toBe(true);
+    expect(Array.from(highlights).some((node) => node.textContent === "预算")).toBe(true);
+  });
+
+  it("事务模式文档搜索不会只停在首批结果", async () => {
+    const user = userEvent.setup();
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    mockAffairsLibraryFetch();
+    const affairsFetch = global.fetch;
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "事务入口会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    const documents = Array.from({ length: 205 }, (_, index) => ({
+      documentId: `doc-${index}`,
+      path: `客户资料/上海结果-${index}.md`,
+      title: `上海结果-${index}`,
+      summary: `第 ${index} 条上海结果摘要`,
+      updatedAt: "2026-06-05T08:00:00.000Z",
+      tags: [],
+      derivedTags: [],
+      isFavorite: false
+    }));
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [createWorkspace("workspace-1", "项目一")]
+        });
+      }
+
+      if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+        const parsedUrl = new URL(url, "https://codingns.local");
+        const offset = Number(parsedUrl.searchParams.get("offset") ?? "0");
+        const limit = Number(parsedUrl.searchParams.get("limit") ?? "200");
+        return createJsonResponse({
+          total: documents.length,
+          offset,
+          limit,
+          items: documents.slice(offset, offset + limit)
+        });
+      }
+
+      return affairsFetch(rawInput);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "上海");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionAffairs") }));
+
+    await waitFor(() => {
+      expect(dialog.textContent).toContain("上海结果-0");
+      expect(dialog.textContent).toContain("上海结果-204");
+    });
+
+    const fetchMock = vi.mocked(global.fetch);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("offset=200"))
+    ).toBe(true);
+  });
+
+  it("代码模式全局搜索会覆盖所有工作区代码结果，并且不会触发事务搜索", async () => {
+    const user = userEvent.setup();
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "代码入口会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-1", "项目一"),
+            createWorkspace("workspace-2", "项目二")
+          ]
+        });
+      }
+
+      if (url.includes("/api/files/search?workspaceId=workspace-1")) {
+        return createJsonResponse({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 20
+        });
+      }
+
+      if (url.includes("/api/files/search?workspaceId=workspace-2")) {
+        return createJsonResponse({
+          items: [
+            {
+              path: "src/services/BudgetService.ts",
+              name: "BudgetService.ts",
+              kind: "file",
+              size: 3456,
+              updatedAt: "2026-06-05T08:00:00.000Z",
+              matchSource: "content",
+              snippet: "const city = 'Shanghai';\nreturn buildBudgetService(city);",
+              matchScore: 16
+            }
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        });
+      }
+
+      if (url.includes("/affairs/") || url.includes("/api/butler/")) {
+        throw new Error(`代码模式不应该触发事务搜索: ${url}`);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const searchButton = await screen.findByRole("button", { name: t("shell.searchEntry") });
+    await user.click(searchButton);
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "Shanghai");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionCode") }));
+
+    const resultButton = await within(dialog).findByRole("button", { name: /BudgetService/ });
+    expect(resultButton.textContent).toContain("BudgetService.ts");
+    expect(resultButton.textContent).toContain("项目二 · src/services/BudgetService.ts");
+    expect(resultButton.textContent).toContain("const city = 'Shanghai';");
+    expect(
+      Array.from(resultButton.querySelectorAll("mark.workbench-search-highlight")).some(
+        (node) => node.textContent?.toLowerCase() === "shanghai"
+      )
+    ).toBe(true);
+    expect(within(dialog).queryByText(t("shell.searchAffairsFailed"))).toBeNull();
+
+    await user.click(resultButton);
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-2/sessions");
+    });
+  });
+
+  it("代码模式文件搜索不会只停在首批结果，并会展示内容命中摘要", async () => {
+    const user = userEvent.setup();
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "代码入口会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces")) {
+        return createJsonResponse({
+          items: [createWorkspace("workspace-1", "项目一")]
+        });
+      }
+
+      if (url.includes("/api/files/search?workspaceId=workspace-1")) {
+        const parsedUrl = new URL(url, "https://codingns.local");
+        const page = Number(parsedUrl.searchParams.get("page") ?? "1");
+        const pageSize = Number(parsedUrl.searchParams.get("pageSize") ?? "100");
+        const allItems = Array.from({ length: 205 }, (_, index) => ({
+          path: `src/services/shanghai-${index}.ts`,
+          name: `shanghai-${index}.ts`,
+          kind: "file" as const,
+          size: 1024,
+          updatedAt: "2026-06-05T08:00:00.000Z",
+          matchSource: "content" as const,
+          snippet: `const cityName = "Shanghai-${index}";\nreturn cityName;`,
+          matchScore: 12
+        }));
+        const offset = (page - 1) * pageSize;
+
+        return createJsonResponse({
+          items: allItems.slice(offset, offset + pageSize),
+          total: allItems.length,
+          page,
+          pageSize
+        });
+      }
+
+      if (url.includes("/affairs/") || url.includes("/api/butler/")) {
+        throw new Error(`代码模式不应该触发事务搜索: ${url}`);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const searchButton = await screen.findByRole("button", { name: t("shell.searchEntry") });
+    await user.click(searchButton);
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await user.type(within(dialog).getByRole("textbox"), "shanghai");
+    await user.click(within(dialog).getByRole("button", { name: t("shell.searchActionCode") }));
+
+    await waitFor(() => {
+      expect(dialog.textContent).toContain("shanghai-0.ts");
+      expect(dialog.textContent).toContain("shanghai-204.ts");
+      expect(dialog.textContent).toContain("const cityName = \"Shanghai-204\";");
+    });
+
+    const fetchMock = vi.mocked(global.fetch);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("page=3"))
+    ).toBe(true);
+  });
+
+  it("桌面端支持 Ctrl+F 或 Command+F 打开搜索框", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue(undefined)
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-1",
+      hosts: [
+        {
+          id: "host-1",
+          name: "本地 Host",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await screen.findByRole("button", { name: t("shell.searchEntry") });
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    expect(await screen.findByRole("dialog", { name: t("shell.searchModalTitle") })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.searchModalTitle") })).toBeNull();
+    });
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    expect(await screen.findByRole("dialog", { name: t("shell.searchModalTitle") })).toBeInTheDocument();
   });
 
   it("桌面侧栏会按代码、事务、对话、终端、技能顺序显示顶部入口，并支持跳转", async () => {

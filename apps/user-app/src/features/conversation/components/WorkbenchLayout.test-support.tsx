@@ -43,7 +43,13 @@ export {
   flattenVisibleSessionTree,
   getTreeNodeChildren,
   getVisibleSessionTreeNodes,
-  reorderWorkspaceGroups
+  reorderWorkspaceGroups,
+  mockedGetButlerProfile,
+  mockedGetButlerOverview,
+  mockedListButlerFollowUpTasks,
+  mockedListButlerInboxItems,
+  mockedListButlerNotificationArchives,
+  mockedListButlerProjects
 };
 
 const hoistedWindowMocks = vi.hoisted(() => ({
@@ -865,22 +871,31 @@ export function mockAffairsLibraryFetch() {
     }
 
     if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+      const parsedUrl = new URL(url, "https://codingns.local");
+      const browseMode = parsedUrl.searchParams.get("browseMode");
+      const selectedFolderPath = parsedUrl.searchParams.get("selectedFolderPath");
+      const shouldReturnNestedDocument =
+        browseMode === "tag"
+        || selectedFolderPath === "客户资料";
+
       return createJsonResponse({
-        total: 1,
+        total: shouldReturnNestedDocument ? 1 : 0,
         offset: 0,
         limit: 120,
-        items: [
-          {
-            documentId: "doc-1",
-            path: "客户资料/跟进记录.md",
-            title: "跟进记录",
-            summary: "事务文档摘要",
-            updatedAt: "2026-05-31T08:00:00.000Z",
-            tags: ["客户/重要"],
-            derivedTags: [],
-            isFavorite: false
-          }
-        ]
+        items: shouldReturnNestedDocument
+          ? [
+            {
+              documentId: "doc-1",
+              path: "客户资料/跟进记录.md",
+              title: "跟进记录",
+              summary: "事务文档摘要",
+              updatedAt: "2026-05-31T08:00:00.000Z",
+              tags: ["客户/重要"],
+              derivedTags: [],
+              isFavorite: false
+            }
+          ]
+          : []
       });
     }
 

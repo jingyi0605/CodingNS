@@ -95,6 +95,11 @@ export interface AffairsViewState {
   selectedTagPaths: string[];
   selectedDocumentId: string | null;
   selectedFavoriteId: string | null;
+  pendingLibraryPreview?: {
+    requestId: string;
+    filePath: string;
+    title: string;
+  } | null;
 }
 
 export interface AffairsObjectContext {

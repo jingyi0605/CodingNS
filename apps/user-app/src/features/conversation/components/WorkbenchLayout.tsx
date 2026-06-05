@@ -84,10 +84,14 @@ import {
   deleteSession,
   cleanupWorktree,
   createWorktree,
+  getAffairsLibrarySnapshot,
   getProviderCapabilities,
   getWorktreeMergePreview,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
+  listWorkspaces,
+  listAffairsLibraryDocuments,
+  listAffairsLightweightSessions,
   mergeWorktreeIntoParent,
   reorderWorkspaces,
   removeWorkspace,
@@ -95,6 +99,8 @@ import {
   updateSessionArchiveState,
   updateSessionFavoriteState,
   updateWorkspaceNavigationState,
+  type AffairsLibraryDocumentRecordDto,
+  type AffairsLibraryTagNodeDto,
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
@@ -966,6 +972,660 @@ function normalizeWorkbenchFilePath(filePath: string): string {
     .replace(/^\/+/, "");
 }
 
+function normalizeSearchKeyword(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function splitSearchKeywords(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .filter((item) => {
+      const normalized = normalizeSearchKeyword(item);
+      if (seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+}
+
+function normalizeSearchKeywordTerms(value: string | string[]): string[] {
+  const rawItems = Array.isArray(value) ? value : splitSearchKeywords(value);
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  rawItems.forEach((item) => {
+    const normalized = normalizeSearchKeyword(item);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  });
+
+  return result;
+}
+
+const GLOBAL_SEARCH_SOURCE_TIMEOUT_MS = 6000;
+const CODE_SEARCH_PAGE_SIZE = 100;
+const AFFAIRS_SEARCH_DOCUMENT_PAGE_SIZE = 200;
+
+function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs = GLOBAL_SEARCH_SOURCE_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error("search_timeout"));
+    }, timeoutMs);
+
+    promise.then((value) => {
+      window.clearTimeout(timer);
+      resolve(value);
+    }).catch((error) => {
+      window.clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeAffairsLibraryRootDir(rootDir: string | null | undefined): string {
+  return rootDir?.trim().replace(/\\/g, "/").replace(/\/+$/, "") ?? "";
+}
+
+function buildAffairsLibraryLabel(rootDir: string | null | undefined): string {
+  const normalizedRootDir = normalizeAffairsLibraryRootDir(rootDir);
+  if (!normalizedRootDir) {
+    return "";
+  }
+
+  const segments = normalizedRootDir.split("/").filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? normalizedRootDir;
+}
+
+function sanitizeSearchSnippetText(rawText: string | null | undefined): string {
+  return (rawText ?? "")
+    .replace(/\u0000/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
+    .replace(/\r/g, "")
+    .trim();
+}
+
+function isLikelyNoisySnippetLine(line: string): boolean {
+  const compact = line.replace(/\s+/g, "");
+  if (!compact) {
+    return true;
+  }
+
+  const noiseChars = compact.match(/[^A-Za-z0-9\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF.,!?;:'"“”‘’()[\]{}<>《》【】\-_/+&%#@：；，。！？、]/g)?.length ?? 0;
+  return noiseChars / compact.length >= 0.35;
+}
+
+function buildMatchedSnippet(
+  rawText: string | null | undefined,
+  keyword: string,
+  options?: {
+    lineCount?: number;
+    maxLineLength?: number;
+    maxCompactLength?: number;
+  }
+): string | null {
+  const text = sanitizeSearchSnippetText(rawText);
+  if (!text) {
+    return null;
+  }
+
+  const normalizedKeywords = normalizeSearchKeywordTerms(keyword);
+  const lineCount = Math.max(1, options?.lineCount ?? 2);
+  const maxLineLength = Math.max(40, options?.maxLineLength ?? 96);
+  const maxCompactLength = Math.max(80, options?.maxCompactLength ?? 180);
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => {
+      if (normalizedKeywords.length === 0) {
+        return !isLikelyNoisySnippetLine(line);
+      }
+      const normalizedLine = line.toLowerCase();
+      return normalizedKeywords.some((keywordItem) => normalizedLine.includes(keywordItem)) || !isLikelyNoisySnippetLine(line);
+    });
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const truncateAroundMatch = (source: string, maxLength: number) => {
+    if (source.length <= maxLength) {
+      return source;
+    }
+
+    if (normalizedKeywords.length === 0) {
+      return `${source.slice(0, maxLength - 1)}…`;
+    }
+
+    const lowerSource = source.toLowerCase();
+    const matchIndex = normalizedKeywords.reduce((current, keywordItem) => {
+      const index = lowerSource.indexOf(keywordItem);
+      if (index < 0) {
+        return current;
+      }
+      return current < 0 ? index : Math.min(current, index);
+    }, -1);
+    if (matchIndex < 0) {
+      return `${source.slice(0, maxLength - 1)}…`;
+    }
+
+    const preferredStart = Math.max(0, matchIndex - Math.floor(maxLength * 0.35));
+    const start = Math.max(0, Math.min(preferredStart, source.length - maxLength));
+    const end = Math.min(source.length, start + maxLength);
+    const prefix = start > 0 ? "…" : "";
+    const suffix = end < source.length ? "…" : "";
+    return `${prefix}${source.slice(start, end)}${suffix}`;
+  };
+
+  const matchedLineIndex = normalizedKeywords.length > 0
+    ? lines.findIndex((line) => {
+      const normalizedLine = line.toLowerCase();
+      return normalizedKeywords.some((keywordItem) => normalizedLine.includes(keywordItem));
+    })
+    : -1;
+  if (matchedLineIndex >= 0) {
+    return lines
+      .slice(matchedLineIndex, matchedLineIndex + lineCount)
+      .map((line) => truncateAroundMatch(line, maxLineLength))
+      .join("\n");
+  }
+
+  const compactText = text.replace(/\s+/g, " ").trim();
+  if (!compactText) {
+    return null;
+  }
+
+  return truncateAroundMatch(compactText, maxCompactLength);
+}
+
+function getAffairsDocumentDisplayName(record: AffairsLibraryDocumentRecordDto): string {
+  const compactPath = normalizeWorkbenchFilePath(record.path);
+  const segments = compactPath.split("/").filter((segment) => segment.length > 0);
+  const fileName = segments.at(-1);
+
+  return fileName || record.title || compactPath;
+}
+
+function buildAffairsDocumentSnippet(record: AffairsLibraryDocumentRecordDto, keyword: string): string | null {
+  const snippet = buildMatchedSnippet(record.summary, keyword, {
+    lineCount: 2,
+    maxLineLength: 110,
+    maxCompactLength: 220
+  });
+
+  if (snippet) {
+    return snippet;
+  }
+
+  const compactPath = normalizeWorkbenchFilePath(record.path);
+  if (!compactPath) {
+    return null;
+  }
+
+  return buildMatchedSnippet(compactPath, keyword, {
+    lineCount: 2,
+    maxLineLength: 110,
+    maxCompactLength: 220
+  });
+}
+
+function renderHighlightedText(
+  text: string | null | undefined,
+  keyword: string,
+  keyPrefix: string
+): ReactNode {
+  const source = text ?? "";
+  const normalizedKeywords = normalizeSearchKeywordTerms(keyword);
+  if (!source || normalizedKeywords.length === 0) {
+    return source;
+  }
+
+  const matcher = new RegExp(
+    `(${normalizedKeywords.slice().sort((left, right) => right.length - left.length).map(escapeRegExp).join("|")})`,
+    "ig"
+  );
+  const segments = source.split(matcher).filter((segment) => segment.length > 0);
+
+  if (segments.length <= 1) {
+    return source;
+  }
+
+  const highlightedKeywords = new Set(normalizedKeywords);
+  return segments.map((segment, index) => (
+    highlightedKeywords.has(segment.toLowerCase()) ? (
+      <mark key={`${keyPrefix}:highlight:${index}`} className="workbench-search-highlight">{segment}</mark>
+    ) : (
+      <span key={`${keyPrefix}:text:${index}`}>{segment}</span>
+    )
+  ));
+}
+
+function compareCodeSearchResults(left: CodeSearchResult, right: CodeSearchResult) {
+  const leftScore = left.file.matchScore ?? 0;
+  const rightScore = right.file.matchScore ?? 0;
+  if (rightScore !== leftScore) {
+    return rightScore - leftScore;
+  }
+
+  const rightTime = right.file.updatedAt ? Date.parse(right.file.updatedAt) : Number.NaN;
+  const leftTime = left.file.updatedAt ? Date.parse(left.file.updatedAt) : Number.NaN;
+  if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+    return rightTime - leftTime;
+  }
+
+  const workspaceOrder = left.workspaceName.localeCompare(right.workspaceName, "zh-Hans-CN");
+  if (workspaceOrder !== 0) {
+    return workspaceOrder;
+  }
+
+  return left.file.path.localeCompare(right.file.path, "zh-Hans-CN");
+}
+
+async function listAllAffairsSearchDocuments(workspaceId: string, keyword: string) {
+  const items: AffairsLibraryDocumentRecordDto[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (offset < total) {
+    const response = await withPromiseTimeout(listAffairsLibraryDocuments(workspaceId, {
+      browseMode: "tag",
+      keyword,
+      offset,
+      limit: AFFAIRS_SEARCH_DOCUMENT_PAGE_SIZE
+    }));
+    const pageItems = Array.isArray(response.items) ? response.items : [];
+    total = typeof response.total === "number" && Number.isFinite(response.total)
+      ? Math.max(0, response.total)
+      : pageItems.length;
+    items.push(...pageItems);
+
+    if (pageItems.length === 0) {
+      break;
+    }
+
+    offset += pageItems.length;
+  }
+
+  return items;
+}
+
+function mergeCodeSearchFile(left: FileNodeDto, right: FileNodeDto): FileNodeDto {
+  const snippets = [left.snippet, right.snippet]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item));
+  const mergedSnippet = Array.from(new Set(snippets)).join("\n");
+  const leftScore = left.matchScore ?? 0;
+  const rightScore = right.matchScore ?? 0;
+
+  return {
+    ...left,
+    updatedAt: left.updatedAt ?? right.updatedAt,
+    matchSource: left.matchSource === right.matchSource ? left.matchSource : "path_and_content",
+    snippet: mergedSnippet || left.snippet || right.snippet || null,
+    matchScore: leftScore || rightScore ? leftScore + rightScore : null
+  };
+}
+
+async function listAllCodeSearchFilesForKeywords(workspaceId: string, keywords: string[]) {
+  const results = await Promise.allSettled(keywords.map((keyword) => listAllCodeSearchFiles(workspaceId, keyword)));
+  const fulfilled = results
+    .filter((item): item is PromiseFulfilledResult<FileNodeDto[]> => item.status === "fulfilled")
+    .map((item) => item.value);
+
+  if (fulfilled.length === 0 && results.some((item) => item.status === "rejected")) {
+    throw new Error("code_search_failed");
+  }
+
+  const filesByIdentity = new Map<string, FileNodeDto>();
+  fulfilled.flat().forEach((file) => {
+    const identity = `${file.kind}:${normalizeWorkbenchFilePath(file.path) || file.path}`;
+    const existing = filesByIdentity.get(identity);
+    filesByIdentity.set(identity, existing ? mergeCodeSearchFile(existing, file) : file);
+  });
+
+  return [...filesByIdentity.values()];
+}
+
+async function listAllAffairsSearchDocumentsForKeywords(workspaceId: string, keywords: string[]) {
+  const results = await Promise.allSettled(keywords.map((keyword) => listAllAffairsSearchDocuments(workspaceId, keyword)));
+  const fulfilled = results
+    .filter((item): item is PromiseFulfilledResult<AffairsLibraryDocumentRecordDto[]> => item.status === "fulfilled")
+    .map((item) => item.value);
+
+  if (fulfilled.length === 0 && results.some((item) => item.status === "rejected")) {
+    throw new Error("affairs_document_search_failed");
+  }
+
+  const documentsByIdentity = new Map<string, AffairsLibraryDocumentRecordDto>();
+  fulfilled.flat().forEach((record) => {
+    const identity = `${record.documentId || ""}:${normalizeWorkbenchFilePath(record.path) || record.path.trim()}`;
+    if (!documentsByIdentity.has(identity)) {
+      documentsByIdentity.set(identity, record);
+    }
+  });
+
+  return [...documentsByIdentity.values()];
+}
+
+async function listAllCodeSearchFiles(workspaceId: string, keyword: string) {
+  const items: FileNodeDto[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (items.length < total) {
+    const response = await withPromiseTimeout(searchFiles(
+      workspaceId,
+      keyword,
+      page,
+      CODE_SEARCH_PAGE_SIZE
+    ));
+    const pageItems = Array.isArray(response.items) ? response.items : [];
+    total = typeof response.total === "number" && Number.isFinite(response.total)
+      ? Math.max(0, response.total)
+      : pageItems.length;
+    items.push(...pageItems);
+
+    if (pageItems.length === 0 || items.length >= total) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return items;
+}
+
+function resolveAffairsSearchLibraryInfo(
+  workspace: WorkspaceDto,
+  snapshotResult: PromiseSettledResult<Awaited<ReturnType<typeof getAffairsLibrarySnapshot>>>
+) {
+  if (snapshotResult.status !== "fulfilled") {
+    return {
+      workspaceId: workspace.id,
+      libraryRootDir: "",
+      libraryLabel: ""
+    };
+  }
+
+  const binding = snapshotResult.value.binding;
+  const libraryRootDir = normalizeAffairsLibraryRootDir(binding?.rootDir);
+  return {
+    workspaceId: binding?.workspaceId?.trim() || workspace.id,
+    libraryRootDir,
+    libraryLabel: buildAffairsLibraryLabel(libraryRootDir)
+  };
+}
+
+function sortAffairsSearchResults(
+  results: AffairsSearchResults,
+  mode: AffairsSearchSortMode
+): AffairsSearchResults {
+  return {
+    documents: [...results.documents].sort((left, right) => compareAffairsDocumentSearchResultsByMode(left, right, mode)),
+    tags: [...results.tags].sort((left, right) => compareAffairsTagSearchResultsByMode(left, right, mode)),
+    conversations: [...results.conversations].sort((left, right) => compareAffairsConversationSearchResultsByMode(left, right, mode)),
+    todos: [...results.todos].sort((left, right) => compareAffairsTodoSearchResultsByMode(left, right, mode))
+  };
+}
+
+function includesNormalizedSearch(
+  normalizedKeyword: string | string[],
+  ...values: Array<string | null | undefined>
+): boolean {
+  const normalizedKeywords = normalizeSearchKeywordTerms(normalizedKeyword);
+  if (normalizedKeywords.length === 0) {
+    return false;
+  }
+
+  const searchText = values.map((value) => value ?? "").join("\n").toLowerCase();
+  return normalizedKeywords.every((keywordItem) => searchText.includes(keywordItem));
+}
+
+function countNormalizedSearchMatches(normalizedKeyword: string, value: string | null | undefined): number {
+  if (!normalizedKeyword) {
+    return 0;
+  }
+
+  const source = value?.toLowerCase() ?? "";
+  if (!source) {
+    return 0;
+  }
+
+  let count = 0;
+  let startIndex = 0;
+
+  while (startIndex < source.length) {
+    const index = source.indexOf(normalizedKeyword, startIndex);
+    if (index < 0) {
+      break;
+    }
+    count += 1;
+    startIndex = index + normalizedKeyword.length;
+  }
+
+  return count;
+}
+
+function scoreNormalizedSearchValue(
+  normalizedKeyword: string | string[],
+  value: string | null | undefined,
+  weights: {
+    exact: number;
+    prefix: number;
+    includes: number;
+    occurrence: number;
+  }
+) {
+  const normalizedKeywords = normalizeSearchKeywordTerms(normalizedKeyword);
+  const source = value?.trim().toLowerCase() ?? "";
+
+  if (normalizedKeywords.length === 0 || !source) {
+    return 0;
+  }
+
+  return normalizedKeywords.reduce((totalScore, keywordItem) => {
+    let score = 0;
+    if (source === keywordItem) {
+      score += weights.exact;
+    } else if (source.startsWith(keywordItem)) {
+      score += weights.prefix;
+    } else if (source.includes(keywordItem)) {
+      score += weights.includes;
+    }
+
+    return totalScore + score + countNormalizedSearchMatches(keywordItem, source) * weights.occurrence;
+  }, 0);
+}
+
+function compareAffairsTagSearchResults(left: AffairsSearchTagResult, right: AffairsSearchTagResult) {
+  if (right.searchScore !== left.searchScore) {
+    return right.searchScore - left.searchScore;
+  }
+
+  if (left.tag.depth !== right.tag.depth) {
+    return left.tag.depth - right.tag.depth;
+  }
+
+  return left.tag.path.localeCompare(right.tag.path, "zh-Hans-CN");
+}
+
+function compareAffairsTagSearchResultsByMode(
+  left: AffairsSearchTagResult,
+  right: AffairsSearchTagResult,
+  mode: AffairsSearchSortMode
+) {
+  if (mode === "title_asc") {
+    return left.tag.name.localeCompare(right.tag.name, "zh-Hans-CN")
+      || left.tag.path.localeCompare(right.tag.path, "zh-Hans-CN");
+  }
+
+  if (mode === "updated_desc") {
+    return right.tag.documentCount - left.tag.documentCount
+      || left.tag.name.localeCompare(right.tag.name, "zh-Hans-CN")
+      || left.tag.path.localeCompare(right.tag.path, "zh-Hans-CN");
+  }
+
+  return compareAffairsTagSearchResults(left, right);
+}
+
+function compareAffairsDocumentSearchResults(left: AffairsSearchDocumentResult, right: AffairsSearchDocumentResult) {
+  if (right.searchScore !== left.searchScore) {
+    return right.searchScore - left.searchScore;
+  }
+
+  const rightTime = Date.parse(right.record.updatedAt);
+  const leftTime = Date.parse(left.record.updatedAt);
+  if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.record.path.localeCompare(right.record.path, "zh-Hans-CN");
+}
+
+function compareAffairsDocumentSearchResultsByMode(
+  left: AffairsSearchDocumentResult,
+  right: AffairsSearchDocumentResult,
+  mode: AffairsSearchSortMode
+) {
+  if (mode === "title_asc") {
+    return getAffairsDocumentDisplayName(left.record).localeCompare(getAffairsDocumentDisplayName(right.record), "zh-Hans-CN")
+      || left.record.path.localeCompare(right.record.path, "zh-Hans-CN");
+  }
+
+  if (mode === "updated_desc") {
+    const rightTime = Date.parse(right.record.updatedAt);
+    const leftTime = Date.parse(left.record.updatedAt);
+    if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+      return rightTime - leftTime;
+    }
+    if (right.searchScore !== left.searchScore) {
+      return right.searchScore - left.searchScore;
+    }
+    return left.record.path.localeCompare(right.record.path, "zh-Hans-CN");
+  }
+
+  return compareAffairsDocumentSearchResults(left, right);
+}
+
+function compareAffairsConversationSearchResults(
+  left: AffairsSearchConversationResult,
+  right: AffairsSearchConversationResult
+) {
+  if (right.searchScore !== left.searchScore) {
+    return right.searchScore - left.searchScore;
+  }
+
+  const rightTime = Date.parse(right.session.lastMessageAt ?? right.session.updatedAt);
+  const leftTime = Date.parse(left.session.lastMessageAt ?? left.session.updatedAt);
+  if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.session.title.localeCompare(right.session.title, "zh-Hans-CN");
+}
+
+function compareAffairsConversationSearchResultsByMode(
+  left: AffairsSearchConversationResult,
+  right: AffairsSearchConversationResult,
+  mode: AffairsSearchSortMode
+) {
+  if (mode === "title_asc") {
+    return left.session.title.localeCompare(right.session.title, "zh-Hans-CN");
+  }
+
+  if (mode === "updated_desc") {
+    const rightTime = Date.parse(right.session.lastMessageAt ?? right.session.updatedAt);
+    const leftTime = Date.parse(left.session.lastMessageAt ?? left.session.updatedAt);
+    if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+      return rightTime - leftTime;
+    }
+    if (right.searchScore !== left.searchScore) {
+      return right.searchScore - left.searchScore;
+    }
+    return left.session.title.localeCompare(right.session.title, "zh-Hans-CN");
+  }
+
+  return compareAffairsConversationSearchResults(left, right);
+}
+
+function compareAffairsTodoSearchResults(left: AffairsSearchTodoResult, right: AffairsSearchTodoResult) {
+  if (right.searchScore !== left.searchScore) {
+    return right.searchScore - left.searchScore;
+  }
+
+  const rightTime = Date.parse(right.updatedAt);
+  const leftTime = Date.parse(left.updatedAt);
+  if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.title.localeCompare(right.title, "zh-Hans-CN");
+}
+
+function compareAffairsTodoSearchResultsByMode(
+  left: AffairsSearchTodoResult,
+  right: AffairsSearchTodoResult,
+  mode: AffairsSearchSortMode
+) {
+  if (mode === "title_asc") {
+    return left.title.localeCompare(right.title, "zh-Hans-CN");
+  }
+
+  if (mode === "updated_desc") {
+    const rightTime = Date.parse(right.updatedAt);
+    const leftTime = Date.parse(left.updatedAt);
+    if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
+      return rightTime - leftTime;
+    }
+    if (right.searchScore !== left.searchScore) {
+      return right.searchScore - left.searchScore;
+    }
+    return left.title.localeCompare(right.title, "zh-Hans-CN");
+  }
+
+  return compareAffairsTodoSearchResults(left, right);
+}
+
+function getParentFolderPathFromFilePath(filePath: string | null | undefined): string | null {
+  const normalizedPath = normalizeWorkbenchFilePath(filePath ?? "");
+
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const index = normalizedPath.lastIndexOf("/");
+  return index >= 0 ? normalizedPath.slice(0, index) : null;
+}
+
+function mergeWorkspaceCatalogs(...workspaceGroups: Array<WorkspaceDto[] | null | undefined>) {
+  const seen = new Set<string>();
+  const result: WorkspaceDto[] = [];
+
+  workspaceGroups.forEach((items) => {
+    items?.forEach((workspace) => {
+      if (seen.has(workspace.id)) {
+        return;
+      }
+      seen.add(workspace.id);
+      result.push(workspace);
+    });
+  });
+
+  return result;
+}
+
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
 
@@ -1207,7 +1867,71 @@ interface WorktreeBaseRefOptionGroup {
 
 type CenterTab = "conversation" | "terminals" | "butler";
 type InfoTab = "files" | "git" | "terminals";
-type SearchMode = "sessions" | "code";
+type AffairsSearchSortMode = "relevance" | "updated_desc" | "title_asc";
+
+interface CodeSearchResult {
+  workspaceId: string;
+  workspaceName: string;
+  file: FileNodeDto;
+}
+
+type SearchScope = "code" | "affairs" | "all";
+
+interface AffairsSearchDocumentResult {
+  kind: "document";
+  workspaceId: string;
+  libraryRootDir: string;
+  libraryLabel: string;
+  record: AffairsLibraryDocumentRecordDto;
+  searchScore: number;
+  snippet: string | null;
+  dedupePath: string;
+}
+
+interface AffairsSearchTagResult {
+  kind: "tag";
+  workspaceId: string;
+  libraryRootDir: string;
+  libraryLabel: string;
+  tag: AffairsLibraryTagNodeDto;
+  searchScore: number;
+}
+
+interface AffairsSearchConversationResult {
+  kind: "conversation";
+  workspaceId: string;
+  workspaceName: string;
+  session: SessionSummaryDto;
+  conversationKind: "lightweight" | "agent";
+  searchScore: number;
+}
+
+interface AffairsSearchTodoResult {
+  kind: "todo";
+  workspaceId: string;
+  workspaceName: string;
+  todoKind: "inbox" | "follow_up";
+  id: string;
+  title: string;
+  summary: string;
+  statusLabel: string;
+  updatedAt: string;
+  searchScore: number;
+}
+
+interface AffairsSearchResults {
+  documents: AffairsSearchDocumentResult[];
+  tags: AffairsSearchTagResult[];
+  conversations: AffairsSearchConversationResult[];
+  todos: AffairsSearchTodoResult[];
+}
+
+const EMPTY_AFFAIRS_SEARCH_RESULTS: AffairsSearchResults = {
+  documents: [],
+  tags: [],
+  conversations: [],
+  todos: []
+};
 
 const WORKBENCH_MODE_DEFAULT: WorkbenchMode = "code";
 
@@ -3231,40 +3955,154 @@ function QuestionIcon() {
   );
 }
 
+function SearchResultTypeBadge({
+  label,
+  kind
+}: {
+  label: string;
+  kind: "session" | "code" | "document" | "tag" | "todo";
+}) {
+  return (
+    <span className="workbench-search-result-type" data-kind={kind}>
+      {label}
+    </span>
+  );
+}
+
+function SearchResultRow({
+  title,
+  titleAttribute,
+  meta,
+  snippet,
+  keyword,
+  keyPrefix,
+  typeLabel,
+  typeKind,
+  onOpen,
+  locateLabel,
+  locateTitle,
+  onLocate
+}: {
+  title: string;
+  titleAttribute?: string;
+  meta: string;
+  snippet?: string | null;
+  keyword: string;
+  keyPrefix: string;
+  typeLabel: string;
+  typeKind: "session" | "code" | "document" | "tag" | "todo";
+  onOpen: () => void;
+  locateLabel?: string;
+  locateTitle?: string;
+  onLocate?: () => void;
+}) {
+  return (
+    <div className="workbench-search-result-item">
+      <button
+        type="button"
+        className="workbench-search-result-main"
+        onClick={onOpen}
+      >
+        <span className="workbench-search-result-title" title={titleAttribute}>
+          {renderHighlightedText(title, keyword, `${keyPrefix}:title`)}
+        </span>
+        <span className="workbench-search-result-meta">
+          {renderHighlightedText(meta, keyword, `${keyPrefix}:meta`)}
+        </span>
+        {snippet ? (
+          <span className="workbench-search-result-snippet">
+            {renderHighlightedText(snippet, keyword, `${keyPrefix}:snippet`)}
+          </span>
+        ) : null}
+      </button>
+      <span className="workbench-search-result-side">
+        <SearchResultTypeBadge label={typeLabel} kind={typeKind} />
+        {onLocate ? (
+          <button
+            type="button"
+            className="workbench-search-result-locate"
+            aria-label={locateTitle ?? locateLabel}
+            title={locateTitle ?? locateLabel}
+            onClick={onLocate}
+          >
+            {locateLabel}
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
 function WorkspaceSearchModal({
   open,
-  mode,
+  scope,
   keyword,
-  codeWorkspaceId,
+  affairsSortMode,
+  sessionResults,
   codeResults,
   codeLoading,
   codeError,
-  workspaceOptions,
-  sessionResults,
+  affairsResults,
+  affairsLoading,
+  affairsError,
   onClose,
-  onModeChange,
   onKeywordChange,
-  onCodeWorkspaceChange,
-  onCodeSearch,
-  onOpenSession
+  onAffairsSortModeChange,
+  onClearSearch,
+  onSubmitSearch,
+  onOpenSession,
+  onOpenCodeFile,
+  onOpenAffairsDocument,
+  onLocateAffairsDocument,
+  onOpenAffairsTag,
+  onOpenAffairsConversation,
+  onOpenAffairsTodo
 }: {
   open: boolean;
-  mode: SearchMode;
+  scope: SearchScope | null;
   keyword: string;
-  codeWorkspaceId: string;
-  codeResults: FileNodeDto[];
+  affairsSortMode: AffairsSearchSortMode;
+  sessionResults: NavigationSessionEntry[];
+  codeResults: CodeSearchResult[];
   codeLoading: boolean;
   codeError: string | null;
-  workspaceOptions: WorkspaceDto[];
-  sessionResults: NavigationSessionEntry[];
+  affairsResults: AffairsSearchResults;
+  affairsLoading: boolean;
+  affairsError: string | null;
   onClose: () => void;
-  onModeChange: (mode: SearchMode) => void;
   onKeywordChange: (value: string) => void;
-  onCodeWorkspaceChange: (workspaceId: string) => void;
-  onCodeSearch: () => void;
+  onAffairsSortModeChange: (mode: AffairsSearchSortMode) => void;
+  onClearSearch: () => void;
+  onSubmitSearch: (scope: SearchScope) => void;
   onOpenSession: (sessionId: string) => void;
+  onOpenCodeFile: (item: CodeSearchResult) => void;
+  onOpenAffairsDocument: (item: AffairsSearchDocumentResult) => void;
+  onLocateAffairsDocument: (item: AffairsSearchDocumentResult) => void;
+  onOpenAffairsTag: (item: AffairsSearchTagResult) => void;
+  onOpenAffairsConversation: (item: AffairsSearchConversationResult) => void;
+  onOpenAffairsTodo: (item: AffairsSearchTodoResult) => void;
 }) {
-  const canSearchCode = keyword.trim().length > 0 && codeWorkspaceId.trim().length > 0;
+  const showsCodeResults = scope === "code" || scope === "all";
+  const showsAffairsResults = scope === "affairs" || scope === "all";
+  const isSearching = scope === "all"
+    ? codeLoading || affairsLoading
+    : scope === "affairs"
+      ? affairsLoading
+      : codeLoading;
+  const hasAffairsResults =
+    affairsResults.documents.length > 0
+    || affairsResults.tags.length > 0
+    || affairsResults.conversations.length > 0
+    || affairsResults.todos.length > 0;
+  const hasCodeResults = sessionResults.length > 0 || codeResults.length > 0;
+  const hasAnyResults = (showsCodeResults && hasCodeResults) || (showsAffairsResults && hasAffairsResults);
+  const activeError = scope === "all"
+    ? null
+    : scope === "affairs"
+      ? affairsError
+      : codeError;
+  const trimmedKeyword = keyword.trim();
+  const canClearSearch = Boolean(trimmedKeyword || scope || hasAnyResults || codeError || affairsError || codeLoading || affairsLoading);
 
   return (
     <SidebarModal
@@ -3274,124 +4112,216 @@ function WorkspaceSearchModal({
       onClose={onClose}
     >
       <div className="workbench-search-modal">
-        <div className="workbench-search-mode-switch" role="tablist" aria-label={t("shell.searchModeLabel")}>
-          <button
-            type="button"
-            className={mode === "sessions" ? "workbench-search-mode-button active" : "workbench-search-mode-button"}
-            role="tab"
-            aria-selected={mode === "sessions"}
-            onClick={() => onModeChange("sessions")}
-          >
-            {t("shell.searchModeSessions")}
-          </button>
-          <button
-            type="button"
-            className={mode === "code" ? "workbench-search-mode-button active" : "workbench-search-mode-button"}
-            role="tab"
-            aria-selected={mode === "code"}
-            onClick={() => onModeChange("code")}
-          >
-            {t("shell.searchModeCode")}
-          </button>
-        </div>
-
-        {mode === "sessions" ? (
-          <>
-            <label className="workbench-modal-field">
-              <span>{t("shell.searchKeywordLabel")}</span>
-              <input
-                type="text"
-                value={keyword}
-                placeholder={t("shell.searchSessionPlaceholder")}
-                autoFocus
-                onChange={(event) => onKeywordChange(event.target.value)}
-              />
-            </label>
-            <div className="workbench-search-results">
-              {keyword.trim().length === 0 ? (
-                <p className="workbench-search-empty">{t("shell.searchSessionHint")}</p>
-              ) : sessionResults.length > 0 ? (
-                sessionResults.map((item) => {
-                  const titlePresentation = buildSessionTitlePresentation(item.session.title, t("common.unknown"));
-
-                  return (
-                    <button
-                      key={item.session.sessionId}
-                      type="button"
-                      className="workbench-search-result-item"
-                      onClick={() => onOpenSession(item.session.sessionId)}
-                    >
-                      <span className="workbench-search-result-title" title={titlePresentation.fullTitle}>
-                        {titlePresentation.displayTitle}
-                      </span>
-                      <span className="workbench-search-result-meta">
-                        {item.workspace.name} · {formatProviderLabel(item.session.provider, "full")}
-                      </span>
-                    </button>
-                  );
-                })
-              ) : (
-                <p className="workbench-search-empty">{t("shell.searchSessionEmpty")}</p>
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <label className="workbench-modal-field">
-              <span>{t("shell.searchWorkspaceLabel")}</span>
-              <select
-                value={codeWorkspaceId}
-                onChange={(event) => onCodeWorkspaceChange(event.target.value)}
-              >
-                {workspaceOptions.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <form
-              className="workbench-search-code-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onCodeSearch();
-              }}
+        <label className="workbench-modal-field">
+          <span>{t("shell.searchKeywordLabel")}</span>
+          <input
+            type="text"
+            value={keyword}
+            placeholder={t("shell.searchPlaceholder")}
+            autoFocus
+            onChange={(event) => onKeywordChange(event.target.value)}
+          />
+        </label>
+        {trimmedKeyword ? (
+          <div className="workbench-search-actions" role="group" aria-label={t("shell.searchActionLabel")}>
+            <button
+              type="button"
+              className="workbench-secondary-button"
+              onClick={() => onSubmitSearch("code")}
             >
-              <label className="workbench-modal-field">
-                <span>{t("shell.searchKeywordLabel")}</span>
-                <input
-                  type="text"
-                  value={keyword}
-                  placeholder={t("shell.searchCodePlaceholder")}
-                  autoFocus
-                  onChange={(event) => onKeywordChange(event.target.value)}
-                />
-              </label>
+              {t("shell.searchActionCode")}
+            </button>
+            <button
+              type="button"
+              className="workbench-secondary-button"
+              onClick={() => onSubmitSearch("affairs")}
+            >
+              {t("shell.searchActionAffairs")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => onSubmitSearch("all")}
+            >
+              {t("shell.searchActionAll")}
+            </button>
+            {canClearSearch ? (
               <button
-                type="submit"
-                className="primary-button"
-                disabled={!canSearchCode || codeLoading}
+                type="button"
+                className="workbench-secondary-button"
+                onClick={onClearSearch}
               >
-                {codeLoading ? t("common.loading") : t("shell.searchSubmit")}
+                {t("shell.searchClearAction")}
               </button>
-            </form>
-            <div className="workbench-search-results">
-              {codeError ? <p className="status-text" data-tone="error">{codeError}</p> : null}
-              {!codeError && keyword.trim().length === 0 ? (
-                <p className="workbench-search-empty">{t("shell.searchCodeHint")}</p>
-              ) : null}
-              {!codeError && keyword.trim().length > 0 && !codeLoading && codeResults.length === 0 ? (
-                <p className="workbench-search-empty">{t("shell.searchCodeEmpty")}</p>
-              ) : null}
+            ) : null}
+          </div>
+        ) : null}
+        {!trimmedKeyword && canClearSearch ? (
+          <div className="workbench-search-actions" role="group" aria-label={t("shell.searchActionLabel")}>
+            <button
+              type="button"
+              className="workbench-secondary-button"
+              onClick={onClearSearch}
+            >
+              {t("shell.searchClearAction")}
+            </button>
+          </div>
+        ) : null}
+        {showsAffairsResults ? (
+          <label className="workbench-modal-field">
+            <span>{t("shell.searchSortLabel")}</span>
+            <select
+              value={affairsSortMode}
+              onChange={(event) => onAffairsSortModeChange(event.target.value as AffairsSearchSortMode)}
+            >
+              <option value="relevance">{t("shell.searchSortRelevance")}</option>
+              <option value="updated_desc">{t("shell.searchSortUpdated")}</option>
+              <option value="title_asc">{t("shell.searchSortTitle")}</option>
+            </select>
+          </label>
+        ) : null}
+        <div className="workbench-search-results">
+          {activeError ? <p className="status-text" data-tone="error">{activeError}</p> : null}
+          {scope === "all" && codeError ? <p className="status-text" data-tone="error">{codeError}</p> : null}
+          {scope === "all" && affairsError ? <p className="status-text" data-tone="error">{affairsError}</p> : null}
+          {!activeError && trimmedKeyword.length === 0 ? (
+            <p className="workbench-search-empty">{t("shell.searchHint")}</p>
+          ) : null}
+          {!activeError && trimmedKeyword.length > 0 && !scope ? (
+            <p className="workbench-search-empty">{t("shell.searchChooseActionHint")}</p>
+          ) : null}
+          {!activeError && trimmedKeyword.length > 0 && Boolean(scope) && isSearching ? (
+            <p className="workbench-search-empty">{t("shell.searchLoading")}</p>
+          ) : null}
+          {!activeError && trimmedKeyword.length > 0 && Boolean(scope) && !isSearching && !hasAnyResults ? (
+            <p className="workbench-search-empty">{t("shell.searchEmpty")}</p>
+          ) : null}
+          {showsCodeResults && sessionResults.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchSessionsGroup")}</div>
+              {sessionResults.map((item) => {
+                const titlePresentation = buildSessionTitlePresentation(item.session.title, t("common.unknown"));
+
+                return (
+                  <SearchResultRow
+                    key={item.session.sessionId}
+                    title={titlePresentation.displayTitle}
+                    titleAttribute={titlePresentation.fullTitle}
+                    meta={`${item.workspace.name} · ${formatProviderLabel(item.session.provider, "full")}`}
+                    keyword={keyword}
+                    keyPrefix={`session:${item.session.sessionId}`}
+                    typeLabel={t("shell.searchResultTypeSession")}
+                    typeKind="session"
+                    onOpen={() => onOpenSession(item.session.sessionId)}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+          {showsCodeResults && codeResults.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchCodeGroup")}</div>
               {codeResults.map((item) => (
-                <div key={`${item.path}-${item.kind}`} className="workbench-search-result-item static">
-                  <span className="workbench-search-result-title">{item.name}</span>
-                  <span className="workbench-search-result-meta">{item.path}</span>
-                </div>
+                <SearchResultRow
+                  key={`${item.workspaceId}:${item.file.path}:${item.file.kind}`}
+                  title={item.file.name}
+                  meta={`${item.workspaceName} · ${item.file.path}`}
+                  snippet={item.file.snippet}
+                  keyword={keyword}
+                  keyPrefix={`code:${item.workspaceId}:${item.file.path}`}
+                  typeLabel={t("shell.searchResultTypeCode")}
+                  typeKind="code"
+                  onOpen={() => onOpenCodeFile(item)}
+                />
               ))}
             </div>
-          </>
-        )}
+          ) : null}
+          {showsAffairsResults && affairsResults.documents.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchAffairsDocumentsGroup")}</div>
+              {affairsResults.documents.map((item) => {
+                const documentTitle = getAffairsDocumentDisplayName(item.record);
+                const documentMeta = item.libraryLabel
+                  ? `${item.libraryLabel} · ${item.record.path}`
+                  : item.record.path;
+                return (
+                  <SearchResultRow
+                    key={`${item.libraryRootDir || item.workspaceId}:${item.dedupePath}`}
+                    title={documentTitle}
+                    meta={documentMeta}
+                    snippet={item.snippet}
+                    keyword={keyword}
+                    keyPrefix={`document:${item.workspaceId}:${item.dedupePath}`}
+                    typeLabel={t("shell.searchResultTypeDocument")}
+                    typeKind="document"
+                    onOpen={() => onOpenAffairsDocument(item)}
+                    locateLabel={t("shell.searchResultLocateDocument")}
+                    locateTitle={t("shell.searchResultLocateDocumentTitle")}
+                    onLocate={() => onLocateAffairsDocument(item)}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+          {showsAffairsResults && affairsResults.tags.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchAffairsTagsGroup")}</div>
+              {affairsResults.tags.map((item) => (
+                <SearchResultRow
+                  key={`${item.libraryRootDir || item.workspaceId}:${item.tag.path}`}
+                  title={item.tag.name}
+                  meta={item.libraryLabel ? `${item.libraryLabel} · ${item.tag.path}` : item.tag.path}
+                  keyword={keyword}
+                  keyPrefix={`tag:${item.workspaceId}:${item.tag.path}`}
+                  typeLabel={t("shell.searchResultTypeAffairsTag")}
+                  typeKind="tag"
+                  onOpen={() => onOpenAffairsTag(item)}
+                />
+              ))}
+            </div>
+          ) : null}
+          {showsAffairsResults && affairsResults.conversations.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchAffairsConversationsGroup")}</div>
+              {affairsResults.conversations.map((item) => {
+                const titlePresentation = buildSessionTitlePresentation(item.session.title, t("common.unknown"));
+                return (
+                  <SearchResultRow
+                    key={`${item.workspaceId}:${item.conversationKind}:${item.session.sessionId}`}
+                    title={titlePresentation.displayTitle}
+                    titleAttribute={titlePresentation.fullTitle}
+                    meta={`${item.workspaceName} · ${item.conversationKind === "agent"
+                      ? t("shell.affairsConversationKindAgent")
+                      : t("shell.affairsConversationKindLightweight")}`}
+                    keyword={keyword}
+                    keyPrefix={`affairs-conversation:${item.workspaceId}:${item.session.sessionId}`}
+                    typeLabel={t("shell.searchResultTypeSession")}
+                    typeKind="session"
+                    onOpen={() => onOpenAffairsConversation(item)}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+          {showsAffairsResults && affairsResults.todos.length > 0 ? (
+            <div className="workbench-search-result-group">
+              <div className="workbench-search-result-group-title">{t("shell.searchAffairsTodosGroup")}</div>
+              {affairsResults.todos.map((item) => (
+                <SearchResultRow
+                  key={`${item.workspaceId}:${item.id}`}
+                  title={item.title}
+                  meta={`${item.workspaceName} · ${item.statusLabel}`}
+                  snippet={item.summary ? buildMatchedSnippet(item.summary, keyword) ?? item.summary : null}
+                  keyword={keyword}
+                  keyPrefix={`todo:${item.workspaceId}:${item.id}`}
+                  typeLabel={t("shell.searchResultTypeTodo")}
+                  typeKind="todo"
+                  onOpen={() => onOpenAffairsTodo(item)}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
     </SidebarModal>
   );
@@ -9115,6 +10045,7 @@ export function WorkbenchLayout({
   const permissionWatchSessionsRef = useRef<
     Array<{ sessionId: string; workspaceId: string; title: string }>
   >([]);
+  const affairsSearchRequestIdRef = useRef(0);
   const sessionDisplaySortModeRef = useRef<SessionDisplaySortMode>(sessionDisplaySortMode);
   const pendingWorkspaceReorderRef = useRef<{
     originalGroups: WorkspaceSessionGroup[];
@@ -9168,12 +10099,16 @@ export function WorkbenchLayout({
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
   const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [searchWorkspaceId, setSearchWorkspaceId] = useState("");
+  const [searchRequest, setSearchRequest] = useState<{ keyword: string; scope: SearchScope } | null>(null);
+  const [affairsSearchSortMode, setAffairsSearchSortMode] = useState<AffairsSearchSortMode>("relevance");
+  const [searchWorkspaceCatalog, setSearchWorkspaceCatalog] = useState<WorkspaceDto[] | null>(null);
   const [codeSearchLoading, setCodeSearchLoading] = useState(false);
   const [codeSearchError, setCodeSearchError] = useState<string | null>(null);
-  const [codeSearchResults, setCodeSearchResults] = useState<FileNodeDto[]>([]);
+  const [codeSearchResults, setCodeSearchResults] = useState<CodeSearchResult[]>([]);
+  const [affairsSearchLoading, setAffairsSearchLoading] = useState(false);
+  const [affairsSearchError, setAffairsSearchError] = useState<string | null>(null);
+  const [affairsSearchResults, setAffairsSearchResults] = useState<AffairsSearchResults>(EMPTY_AFFAIRS_SEARCH_RESULTS);
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
@@ -11026,45 +11961,550 @@ export function WorkbenchLayout({
   const mobileNavigationDocked = isMobileShell && shouldDockNavigationPanel(mobilePaneLayout);
   const mobileAuxiliaryDocked = isMobileShell && shouldDockAuxiliaryPanel(mobilePaneLayout);
   const availableSearchWorkspaces = useMemo(
-    () => navigationGroups.map((group) => group.workspace),
-    [navigationGroups]
+    () => mergeWorkspaceCatalogs(
+      searchWorkspaceCatalog,
+      navigationGroups.map((group) => group.workspace)
+    ),
+    [navigationGroups, searchWorkspaceCatalog]
   );
+  const currentWorkspaceGroup = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ?? null,
+    [currentWorkspaceId, navigationGroups]
+  );
+  const searchScope = searchRequest?.scope ?? null;
+  const submittedSearchKeyword = searchRequest?.keyword ?? "";
   const sessionSearchResults = useMemo(() => {
-    const normalizedKeyword = searchKeyword.trim().toLowerCase();
+    if (searchScope !== "code" && searchScope !== "all") {
+      return [] as NavigationSessionEntry[];
+    }
+
+    const normalizedKeyword = normalizeSearchKeyword(submittedSearchKeyword);
 
     if (!normalizedKeyword) {
       return [] as NavigationSessionEntry[];
     }
 
-    return flattenedSessions.filter((item) => {
-      const sessionTitle = (item.session.title || "").toLowerCase();
-      const workspaceName = item.workspace.name.toLowerCase();
-      const providerName = formatProviderLabel(item.session.provider, "full").toLowerCase();
-
-      return (
-        sessionTitle.includes(normalizedKeyword) ||
-        workspaceName.includes(normalizedKeyword) ||
-        providerName.includes(normalizedKeyword)
-      );
-    });
-  }, [flattenedSessions, searchKeyword]);
-
+    return flattenedSessions.filter((item) => includesNormalizedSearch(
+      normalizedKeyword,
+      item.session.title,
+      item.workspace.name,
+      formatProviderLabel(item.session.provider, "full")
+    ));
+  }, [flattenedSessions, searchScope, submittedSearchKeyword]);
+  const displayedAffairsSearchResults = useMemo(
+    () => sortAffairsSearchResults(affairsSearchResults, affairsSearchSortMode),
+    [affairsSearchResults, affairsSearchSortMode]
+  );
   useEffect(() => {
-    const fallbackWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? "";
-
-    if (!fallbackWorkspaceId) {
+    if (!searchModalOpen) {
       return;
     }
 
-    setSearchWorkspaceId((current) => {
-      if (!current) {
-        return fallbackWorkspaceId;
+    let disposed = false;
+
+    void listWorkspaces()
+      .then((response) => {
+        if (disposed) {
+          return;
+        }
+
+        setSearchWorkspaceCatalog(Array.isArray(response.items) ? response.items : []);
+      })
+      .catch(() => {
+        if (disposed) {
+          return;
+        }
+
+        // 工作区目录拉取失败时退回导航快照，别把整个搜索做死。
+        setSearchWorkspaceCatalog((current) => current);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [searchModalOpen]);
+  useEffect(() => {
+    if (!searchModalOpen) {
+      setCodeSearchLoading(false);
+      setAffairsSearchLoading(false);
+      return;
+    }
+
+    const normalizedKeyword = normalizeSearchKeyword(submittedSearchKeyword);
+    const searchKeywords = splitSearchKeywords(submittedSearchKeyword);
+
+    if (searchKeywords.length === 0) {
+      setCodeSearchError(null);
+      setCodeSearchResults([]);
+      setCodeSearchLoading(false);
+      setAffairsSearchError(null);
+      setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+      setAffairsSearchLoading(false);
+      return;
+    }
+
+    if (!searchScope) {
+      setCodeSearchLoading(false);
+      setAffairsSearchLoading(false);
+      return;
+    }
+
+    if (availableSearchWorkspaces.length === 0) {
+      setCodeSearchError(null);
+      setCodeSearchResults([]);
+      setCodeSearchLoading(false);
+      setAffairsSearchError(null);
+      setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+      setAffairsSearchLoading(false);
+      return;
+    }
+
+    let disposed = false;
+    const requestId = affairsSearchRequestIdRef.current + 1;
+    affairsSearchRequestIdRef.current = requestId;
+
+    const trimmedKeyword = submittedSearchKeyword.trim();
+    const runCodeSearch = async () => {
+      const workspaceSearches = availableSearchWorkspaces.map((workspace) =>
+        listAllCodeSearchFilesForKeywords(workspace.id, searchKeywords)
+          .then((items) => ({
+            workspace,
+            items
+          }))
+      );
+
+      const results = await Promise.allSettled(workspaceSearches);
+      if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+        return;
       }
 
-      const exists = navigationGroups.some((group) => group.workspace.id === current);
-      return exists ? current : fallbackWorkspaceId;
-    });
-  }, [currentWorkspaceId, navigationGroups]);
+      const fulfilled = results
+        .filter((item): item is PromiseFulfilledResult<{ workspace: WorkspaceDto; items: FileNodeDto[] }> => item.status === "fulfilled")
+        .map((item) => item.value);
+      const codeResults = fulfilled
+        .flatMap((item) => item.items
+          .filter((file) => includesNormalizedSearch(normalizedKeyword, file.name, file.path, file.snippet))
+          .map<CodeSearchResult>((file) => ({
+            workspaceId: item.workspace.id,
+            workspaceName: item.workspace.name,
+            file
+          })))
+        .sort(compareCodeSearchResults);
+      const hasFailure = results.some((item) => item.status === "rejected");
+
+      setCodeSearchResults(codeResults);
+      setCodeSearchError(fulfilled.length === 0 && hasFailure ? t("shell.searchCodeFailed") : null);
+      setCodeSearchLoading(false);
+    };
+
+    const runAffairsSearch = async () => {
+      const workspaceSearches = availableSearchWorkspaces.map((workspace) => {
+        const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspace.id) ?? null;
+
+        return Promise.allSettled([
+          withPromiseTimeout(getAffairsLibrarySnapshot(workspace.id)),
+          listAllAffairsSearchDocumentsForKeywords(workspace.id, searchKeywords),
+          withPromiseTimeout(listAffairsLightweightSessions(workspace.id)),
+          withPromiseTimeout(listButlerInboxItems({ workspaceId: workspace.id }))
+        ]).then(([snapshotResult, documentResult, lightweightResult, inboxResult]) => ({
+          workspace,
+          workspaceGroup,
+          snapshotResult,
+          documentResult,
+          lightweightResult,
+          inboxResult
+        }));
+      });
+
+      const results = await Promise.allSettled([
+        withPromiseTimeout(listButlerFollowUpTasks()),
+        ...workspaceSearches
+      ]);
+      if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+        return;
+      }
+
+        const followUpItems = results[0]?.status === "fulfilled" && Array.isArray(results[0].value.items)
+          ? results[0].value.items
+          : [];
+        const workspaceResults = results
+          .slice(1)
+          .filter((item): item is PromiseFulfilledResult<{
+            workspace: WorkspaceDto;
+            workspaceGroup: WorkspaceSessionGroup | null;
+            snapshotResult: PromiseSettledResult<Awaited<ReturnType<typeof getAffairsLibrarySnapshot>>>;
+            documentResult: PromiseSettledResult<AffairsLibraryDocumentRecordDto[]>;
+            lightweightResult: PromiseSettledResult<Awaited<ReturnType<typeof listAffairsLightweightSessions>>>;
+            inboxResult: PromiseSettledResult<Awaited<ReturnType<typeof listButlerInboxItems>>>;
+          }> => item.status === "fulfilled")
+          .map((item) => item.value);
+
+        const documentsByIdentity = new Map<string, AffairsSearchDocumentResult>();
+        workspaceResults.forEach((result) => {
+          const libraryInfo = resolveAffairsSearchLibraryInfo(result.workspace, result.snapshotResult);
+          const documentItems = result.documentResult.status === "fulfilled" && Array.isArray(result.documentResult.value)
+            ? result.documentResult.value
+            : [];
+          documentItems.forEach((record) => {
+            if (!includesNormalizedSearch(
+              normalizedKeyword,
+              getAffairsDocumentDisplayName(record),
+              record.title,
+              record.path,
+              record.summary,
+              record.tags.join(" "),
+              record.derivedTags.join(" ")
+            )) {
+              return;
+            }
+
+            const dedupePath = normalizeWorkbenchFilePath(record.path) || record.path.trim();
+            const candidate: AffairsSearchDocumentResult = {
+              kind: "document",
+              workspaceId: libraryInfo.workspaceId,
+              libraryRootDir: libraryInfo.libraryRootDir,
+              libraryLabel: libraryInfo.libraryLabel,
+              record,
+              searchScore:
+                scoreNormalizedSearchValue(normalizedKeyword, record.title, {
+                  exact: 74,
+                  prefix: 54,
+                  includes: 36,
+                  occurrence: 6
+                })
+                + scoreNormalizedSearchValue(normalizedKeyword, record.path, {
+                  exact: 42,
+                  prefix: 30,
+                  includes: 18,
+                  occurrence: 4
+                })
+                + scoreNormalizedSearchValue(normalizedKeyword, record.summary, {
+                  exact: 20,
+                  prefix: 14,
+                  includes: 9,
+                  occurrence: 2
+                })
+                + scoreNormalizedSearchValue(normalizedKeyword, record.tags.join(" "), {
+                  exact: 8,
+                  prefix: 6,
+                  includes: 4,
+                  occurrence: 1
+                })
+                + scoreNormalizedSearchValue(normalizedKeyword, record.derivedTags.join(" "), {
+                  exact: 6,
+                  prefix: 4,
+                  includes: 3,
+                  occurrence: 1
+                }),
+              snippet: buildAffairsDocumentSnippet(record, trimmedKeyword),
+              dedupePath
+            };
+            const identity = `${libraryInfo.libraryRootDir || libraryInfo.workspaceId}::${dedupePath}`;
+            const existing = documentsByIdentity.get(identity);
+            if (!existing || compareAffairsDocumentSearchResults(candidate, existing) < 0) {
+              documentsByIdentity.set(identity, candidate);
+            }
+          });
+        });
+        const documents = [...documentsByIdentity.values()].sort(compareAffairsDocumentSearchResults);
+
+        const seenTagKeys = new Set<string>();
+        const tags = workspaceResults
+          .flatMap((result) => {
+            const libraryInfo = resolveAffairsSearchLibraryInfo(result.workspace, result.snapshotResult);
+            const snapshotTags = result.snapshotResult.status === "fulfilled" && Array.isArray(result.snapshotResult.value.tags)
+              ? result.snapshotResult.value.tags
+              : [];
+            return snapshotTags
+              .filter((tag) => includesNormalizedSearch(normalizedKeyword, tag.name, tag.path, tag.rootType))
+              .map<AffairsSearchTagResult>((tag) => ({
+                kind: "tag",
+                workspaceId: libraryInfo.workspaceId,
+                libraryRootDir: libraryInfo.libraryRootDir,
+                libraryLabel: libraryInfo.libraryLabel,
+                tag,
+                searchScore:
+                  scoreNormalizedSearchValue(normalizedKeyword, tag.name, {
+                    exact: 68,
+                    prefix: 48,
+                    includes: 30,
+                    occurrence: 6
+                  })
+                  + scoreNormalizedSearchValue(normalizedKeyword, tag.path, {
+                    exact: 26,
+                    prefix: 18,
+                    includes: 10,
+                    occurrence: 2
+                  })
+                  + scoreNormalizedSearchValue(normalizedKeyword, tag.rootType, {
+                    exact: 4,
+                    prefix: 3,
+                    includes: 2,
+                    occurrence: 1
+                  })
+              }));
+          })
+          .filter((item) => {
+            const identity = `${item.libraryRootDir || item.workspaceId}::${item.tag.path}`;
+            if (seenTagKeys.has(identity)) {
+              return false;
+            }
+            seenTagKeys.add(identity);
+            return true;
+          })
+          .sort(compareAffairsTagSearchResults);
+
+        const conversations = workspaceResults
+          .flatMap((result) => {
+            const lightweightItems = result.lightweightResult.status === "fulfilled" && Array.isArray(result.lightweightResult.value.items)
+              ? result.lightweightResult.value.items
+              : [];
+            const agentItems = result.workspaceGroup?.affairsAssistantSessions ?? [];
+
+            return [
+              ...lightweightItems
+                .filter((session) => includesNormalizedSearch(
+                  normalizedKeyword,
+                  session.title,
+                  result.workspace.name,
+                  formatProviderLabel(session.provider, "full")
+                ))
+                .map<AffairsSearchConversationResult>((session) => ({
+                  kind: "conversation",
+                  workspaceId: result.workspace.id,
+                  workspaceName: result.workspace.name,
+                  session,
+                  conversationKind: "lightweight",
+                  searchScore:
+                    scoreNormalizedSearchValue(normalizedKeyword, session.title, {
+                      exact: 72,
+                      prefix: 52,
+                      includes: 34,
+                      occurrence: 6
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, result.workspace.name, {
+                      exact: 10,
+                      prefix: 7,
+                      includes: 5,
+                      occurrence: 1
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, formatProviderLabel(session.provider, "full"), {
+                      exact: 4,
+                      prefix: 3,
+                      includes: 2,
+                      occurrence: 1
+                    })
+                })),
+              ...agentItems
+                .filter((session) => includesNormalizedSearch(
+                  normalizedKeyword,
+                  session.title,
+                  result.workspace.name,
+                  formatProviderLabel(session.provider, "full")
+                ))
+                .map<AffairsSearchConversationResult>((session) => ({
+                  kind: "conversation",
+                  workspaceId: result.workspace.id,
+                  workspaceName: result.workspace.name,
+                  session,
+                  conversationKind: "agent",
+                  searchScore:
+                    scoreNormalizedSearchValue(normalizedKeyword, session.title, {
+                      exact: 72,
+                      prefix: 52,
+                      includes: 34,
+                      occurrence: 6
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, result.workspace.name, {
+                      exact: 10,
+                      prefix: 7,
+                      includes: 5,
+                      occurrence: 1
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, formatProviderLabel(session.provider, "full"), {
+                      exact: 4,
+                      prefix: 3,
+                      includes: 2,
+                      occurrence: 1
+                    })
+                }))
+            ];
+          })
+          .sort(compareAffairsConversationSearchResults);
+
+        const todos = workspaceResults
+          .flatMap((result) => {
+            const inboxItems = result.inboxResult.status === "fulfilled" && Array.isArray(result.inboxResult.value.items)
+              ? result.inboxResult.value.items
+              : [];
+            return [
+              ...inboxItems
+                .filter((item) => item.workspaceId === result.workspace.id)
+                .filter((item) => includesNormalizedSearch(normalizedKeyword, item.title, item.content, item.projectName))
+                .map<AffairsSearchTodoResult>((item) => ({
+                  kind: "todo",
+                  workspaceId: result.workspace.id,
+                  workspaceName: result.workspace.name,
+                  todoKind: "inbox",
+                  id: `inbox:${item.id}`,
+                  title: item.title,
+                  summary: item.content,
+                  statusLabel: item.status,
+                  updatedAt: item.updatedAt,
+                  searchScore:
+                    scoreNormalizedSearchValue(normalizedKeyword, item.title, {
+                      exact: 72,
+                      prefix: 52,
+                      includes: 34,
+                      occurrence: 6
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, item.content, {
+                      exact: 26,
+                      prefix: 18,
+                      includes: 12,
+                      occurrence: 3
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, item.projectName, {
+                      exact: 8,
+                      prefix: 6,
+                      includes: 4,
+                      occurrence: 1
+                    })
+                })),
+              ...followUpItems
+                .filter((item) => item.workspaceId === result.workspace.id)
+                .filter((item) => includesNormalizedSearch(
+                  normalizedKeyword,
+                  item.sessionTitle,
+                  item.objective,
+                  item.projectName,
+                  item.waitingReason,
+                  item.lastAutomationSummary
+                ))
+                .map<AffairsSearchTodoResult>((item) => ({
+                  kind: "todo",
+                  workspaceId: result.workspace.id,
+                  workspaceName: result.workspace.name,
+                  todoKind: "follow_up",
+                  id: `follow-up:${item.id}`,
+                  title: item.sessionTitle?.trim() || item.projectName,
+                  summary: item.objective,
+                  statusLabel: item.status,
+                  updatedAt: item.updatedAt,
+                  searchScore:
+                    scoreNormalizedSearchValue(normalizedKeyword, item.sessionTitle?.trim() || item.projectName, {
+                      exact: 72,
+                      prefix: 52,
+                      includes: 34,
+                      occurrence: 6
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, item.objective, {
+                      exact: 26,
+                      prefix: 18,
+                      includes: 12,
+                      occurrence: 3
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, item.waitingReason, {
+                      exact: 14,
+                      prefix: 10,
+                      includes: 6,
+                      occurrence: 2
+                    })
+                    + scoreNormalizedSearchValue(normalizedKeyword, item.lastAutomationSummary, {
+                      exact: 10,
+                      prefix: 7,
+                      includes: 5,
+                      occurrence: 1
+                    })
+                }))
+            ];
+          })
+          .sort(compareAffairsTodoSearchResults);
+
+        const hasAffairsFailure = workspaceResults.some((result) =>
+          result.snapshotResult.status === "rejected"
+          || result.documentResult.status === "rejected"
+          || result.lightweightResult.status === "rejected"
+          || result.inboxResult.status === "rejected"
+        ) || results[0]?.status === "rejected";
+        const hasAffairsSuccess = workspaceResults.some((result) =>
+          result.snapshotResult.status === "fulfilled"
+          || result.documentResult.status === "fulfilled"
+          || result.lightweightResult.status === "fulfilled"
+          || result.inboxResult.status === "fulfilled"
+        );
+
+        setAffairsSearchResults({
+          documents,
+          tags,
+          conversations,
+          todos
+        });
+        setAffairsSearchError(!hasAffairsSuccess && hasAffairsFailure ? t("shell.searchAffairsFailed") : null);
+        setAffairsSearchLoading(false);
+    };
+
+    if (searchScope === "code") {
+      setAffairsSearchError(null);
+      setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+      setAffairsSearchLoading(false);
+      setCodeSearchLoading(true);
+      setCodeSearchError(null);
+      void runCodeSearch().catch((error) => {
+        if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+          return;
+        }
+        setCodeSearchResults([]);
+        setCodeSearchError(error instanceof Error ? error.message : t("shell.searchCodeFailed"));
+        setCodeSearchLoading(false);
+      });
+    } else if (searchScope === "affairs") {
+      setCodeSearchError(null);
+      setCodeSearchResults([]);
+      setCodeSearchLoading(false);
+      setAffairsSearchLoading(true);
+      setAffairsSearchError(null);
+      void runAffairsSearch().catch((error) => {
+        if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+          return;
+        }
+        setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+        setAffairsSearchError(error instanceof Error ? error.message : t("shell.searchAffairsFailed"));
+        setAffairsSearchLoading(false);
+      });
+    } else {
+      setCodeSearchLoading(true);
+      setCodeSearchError(null);
+      setAffairsSearchLoading(true);
+      setAffairsSearchError(null);
+      void runCodeSearch().catch((error) => {
+        if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+          return;
+        }
+        setCodeSearchResults([]);
+        setCodeSearchError(error instanceof Error ? error.message : t("shell.searchCodeFailed"));
+        setCodeSearchLoading(false);
+      });
+      void runAffairsSearch().catch((error) => {
+        if (disposed || requestId !== affairsSearchRequestIdRef.current) {
+          return;
+        }
+        setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+        setAffairsSearchError(error instanceof Error ? error.message : t("shell.searchAffairsFailed"));
+        setAffairsSearchLoading(false);
+      });
+    }
+
+    return () => {
+      disposed = true;
+    };
+  }, [
+    availableSearchWorkspaces,
+    navigationGroups,
+    searchScope,
+    submittedSearchKeyword,
+    searchModalOpen
+  ]);
 
   useEffect(() => {
     if (currentSessionId && !isDraftSession && sessionWorkspaceId) {
@@ -11316,45 +12756,37 @@ export function WorkbenchLayout({
     [upsertNavigationSession]
   );
 
-  function openSearchModal(nextMode?: SearchMode) {
-    if (nextMode) {
-      setSearchMode(nextMode);
-    }
-
+  const openSearchModal = useCallback(() => {
     setSearchModalOpen(true);
-  }
+  }, []);
 
-  function closeSearchModal() {
+  const closeSearchModal = useCallback(() => {
     setSearchModalOpen(false);
-    setSearchMode("sessions");
+  }, []);
+
+  const clearSearchState = useCallback(() => {
     setSearchKeyword("");
+    setSearchRequest(null);
     setCodeSearchError(null);
     setCodeSearchResults([]);
     setCodeSearchLoading(false);
-  }
+    setAffairsSearchError(null);
+    setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+    setAffairsSearchLoading(false);
+  }, []);
 
-  async function handleCodeSearch() {
-    const keyword = searchKeyword.trim();
-
-    if (!keyword || !searchWorkspaceId.trim()) {
-      setCodeSearchResults([]);
-      setCodeSearchError(null);
-      return;
+  const openAffairsSearchState = useCallback((workspaceId: string, nextState: AffairsViewState, options?: { closeSearchModal?: boolean }) => {
+    if (options?.closeSearchModal !== false) {
+      closeSearchModal();
     }
-
-    setCodeSearchLoading(true);
-    setCodeSearchError(null);
-
-    try {
-      const response = await searchFiles(searchWorkspaceId, keyword);
-      setCodeSearchResults(response.items);
-    } catch (error) {
-      setCodeSearchResults([]);
-      setCodeSearchError(error instanceof Error ? error.message : t("shell.searchCodeFailed"));
-    } finally {
-      setCodeSearchLoading(false);
+    setSelectedWorkspaceId(workspaceId);
+    writeWorkspaceWorkbenchMode(workspaceId, "affairs");
+    setAffairsViewState(nextState);
+    const targetPath = buildWorkspaceAffairsPath(workspaceId);
+    if (location.pathname !== targetPath) {
+      navigate(targetPath);
     }
-  }
+  }, [closeSearchModal, location.pathname, navigate]);
 
   function applyWorkbenchShellPanelWidths(nextLeftWidth: number, nextRightWidth: number) {
     const shellElement = workbenchShellRef.current;
@@ -11471,13 +12903,13 @@ export function WorkbenchLayout({
 
     writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
     if (nextMode === "affairs") {
+      const nextAffairsViewState = createDefaultAffairsLibraryLandingState(
+        currentWorkspaceId,
+        affairsViewState ?? readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
+      );
       flushSync(() => {
-        setAffairsViewState((current) =>
-          createDefaultAffairsLibraryLandingState(
-            currentWorkspaceId,
-            current ?? readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
-          )
-        );
+        setAffairsRightCollapsed(false);
+        setAffairsViewState(nextAffairsViewState);
       });
     }
     const targetPath = resolveValidWorkbenchModeLastPath(currentWorkspaceId, nextMode)
@@ -11623,6 +13055,12 @@ export function WorkbenchLayout({
         return;
       }
 
+      if (!event.shiftKey && normalizedKey === "f" && platform.isDesktop) {
+        event.preventDefault();
+        openSearchModal();
+        return;
+      }
+
       if (!event.shiftKey && normalizedKey === "k") {
         event.preventDefault();
         focusComposer();
@@ -11640,7 +13078,7 @@ export function WorkbenchLayout({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [navigate, refreshNavigation, isMobileShell, goToConversationTab]);
+  }, [currentWorkspaceId, goToConversationTab, isMobileShell, navigate, openSearchModal, platform.isDesktop, refreshNavigation]);
 
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
@@ -11796,8 +13234,12 @@ export function WorkbenchLayout({
       return;
     }
 
+    if (routeWorkbenchMode !== "affairs") {
+      return;
+    }
+
     setAffairsRightCollapsed(effectiveAffairsViewState.primarySection !== "library");
-  }, [effectiveAffairsViewState?.primarySection, shouldUseAffairsShell]);
+  }, [effectiveAffairsViewState?.primarySection, routeWorkbenchMode, shouldUseAffairsShell]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
@@ -12716,35 +14158,148 @@ export function WorkbenchLayout({
 
       <WorkspaceSearchModal
         open={searchModalOpen}
-        mode={searchMode}
+        scope={searchScope}
         keyword={searchKeyword}
-        codeWorkspaceId={searchWorkspaceId}
+        affairsSortMode={affairsSearchSortMode}
+        sessionResults={sessionSearchResults}
         codeResults={codeSearchResults}
         codeLoading={codeSearchLoading}
         codeError={codeSearchError}
-        workspaceOptions={availableSearchWorkspaces}
-        sessionResults={sessionSearchResults}
+        affairsResults={displayedAffairsSearchResults}
+        affairsLoading={affairsSearchLoading}
+        affairsError={affairsSearchError}
         onClose={closeSearchModal}
-        onModeChange={(mode) => {
-          setSearchMode(mode);
-          setCodeSearchError(null);
-          setCodeSearchResults([]);
-        }}
         onKeywordChange={(value) => {
           setSearchKeyword(value);
-          if (searchMode === "code" && !value.trim()) {
-            setCodeSearchResults([]);
-            setCodeSearchError(null);
-          }
+          setSearchRequest(null);
+          setCodeSearchResults([]);
+          setCodeSearchError(null);
+          setCodeSearchLoading(false);
+          setAffairsSearchError(null);
+          setAffairsSearchResults(EMPTY_AFFAIRS_SEARCH_RESULTS);
+          setAffairsSearchLoading(false);
         }}
-        onCodeWorkspaceChange={(workspaceId) => setSearchWorkspaceId(workspaceId)}
-        onCodeSearch={() => {
-          void handleCodeSearch();
+        onAffairsSortModeChange={setAffairsSearchSortMode}
+        onClearSearch={clearSearchState}
+        onSubmitSearch={(scope) => {
+          const trimmedKeyword = searchKeyword.trim();
+          if (!trimmedKeyword) {
+            return;
+          }
+          setSearchRequest({
+            keyword: trimmedKeyword,
+            scope
+          });
         }}
         onOpenSession={(sessionId) => {
           closeSearchModal();
           const entry = flattenedSessions.find((item) => item.session.sessionId === sessionId) ?? null;
           navigate(entry ? buildWorkspaceSessionPath(entry.workspace.id, sessionId) : buildWorkspaceHomePath());
+        }}
+        onOpenCodeFile={(item) => {
+          closeSearchModal();
+          setSelectedWorkspaceId(item.workspaceId);
+          writeWorkspaceWorkbenchMode(item.workspaceId, "code");
+          revealWorkspaceFile({
+            workspaceId: item.workspaceId,
+            filePath: item.file.path,
+            openViewer: item.file.kind === "file"
+          });
+          const targetPath = resolveValidWorkbenchModeLastPath(item.workspaceId, "code")
+            ?? resolveStoredConversationPath(item.workspaceId)
+            ?? buildWorkspaceSessionIndexPath(item.workspaceId);
+          if (location.pathname !== targetPath) {
+            navigate(targetPath);
+          }
+        }}
+        onOpenAffairsDocument={(item) => {
+          const currentState = readAffairsViewState(item.workspaceId) ?? createDefaultAffairsViewState(item.workspaceId);
+          const baseState = currentState.primarySection === "library"
+            ? currentState
+            : createDefaultAffairsLibraryLandingState(item.workspaceId, currentState);
+          openAffairsSearchState(item.workspaceId, {
+            ...baseState,
+            workspaceId: item.workspaceId,
+            primarySection: "library",
+            pendingLibraryPreview: {
+              requestId: `${item.record.documentId || item.dedupePath}:${Date.now()}`,
+              filePath: item.record.path,
+              title: getAffairsDocumentDisplayName(item.record)
+            }
+          }, { closeSearchModal: false });
+        }}
+        onLocateAffairsDocument={(item) => {
+          const parentFolderPath = getParentFolderPathFromFilePath(item.record.path);
+          openAffairsSearchState(item.workspaceId, {
+            ...createDefaultAffairsLibraryLandingState(
+              item.workspaceId,
+              readAffairsViewState(item.workspaceId) ?? createDefaultAffairsViewState(item.workspaceId)
+            ),
+            workspaceId: item.workspaceId,
+            primarySection: "library",
+            browseMode: "folder",
+            selectedNodeId: parentFolderPath ? `library:folder:${parentFolderPath}` : "library:all",
+            selectedFolderPath: parentFolderPath,
+            selectedFolderEntryPath: null,
+            selectedTagPath: null,
+            selectedTagPaths: [],
+            selectedFavoriteId: null,
+            selectedObjectId: item.record.documentId,
+            selectedDocumentId: item.record.documentId,
+            auxiliaryTab: "detail",
+            pendingLibraryPreview: null
+          });
+        }}
+        onOpenAffairsTag={(item) => {
+          openAffairsSearchState(item.workspaceId, {
+            ...createDefaultAffairsLibraryLandingState(
+              item.workspaceId,
+              readAffairsViewState(item.workspaceId) ?? createDefaultAffairsViewState(item.workspaceId)
+            ),
+            workspaceId: item.workspaceId,
+            primarySection: "library",
+            browseMode: "tag",
+            selectedNodeId: `library:tag:${item.tag.path}`,
+            selectedFolderPath: null,
+            selectedFolderEntryPath: null,
+            selectedTagPath: item.tag.path,
+            selectedTagPaths: [item.tag.path],
+            selectedFavoriteId: null,
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            auxiliaryTab: "detail",
+            pendingLibraryPreview: null
+          });
+        }}
+        onOpenAffairsConversation={(item) => {
+          const selectedNodeId = item.conversationKind === "agent"
+            ? `conversation:agent:session:${item.session.sessionId}`
+            : `conversation:lightweight:session:${item.session.sessionId}`;
+          openAffairsSearchState(item.workspaceId, {
+            ...createDefaultAffairsViewState(item.workspaceId),
+            workspaceId: item.workspaceId,
+            primarySection: "conversation",
+            selectedNodeId,
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            auxiliaryTab: "detail",
+            pendingLibraryPreview: null
+          });
+        }}
+        onOpenAffairsTodo={(item) => {
+          const selectedNodeId = item.todoKind === "follow_up"
+            ? "workbench:todo:follow_up"
+            : "workbench:todo:inbox";
+          openAffairsSearchState(item.workspaceId, {
+            ...createDefaultAffairsViewState(item.workspaceId),
+            workspaceId: item.workspaceId,
+            primarySection: "workbench",
+            selectedNodeId,
+            selectedObjectId: item.id,
+            selectedDocumentId: null,
+            auxiliaryTab: "detail",
+            pendingLibraryPreview: null
+          });
         }}
       />
 

@@ -27,7 +27,8 @@ const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   selectedTagPath: null,
   selectedTagPaths: [],
   selectedDocumentId: null,
-  selectedFavoriteId: null
+  selectedFavoriteId: null,
+  pendingLibraryPreview: null
 };
 
 function buildModeSnapshotKey(workspaceId: string) {
@@ -205,7 +206,14 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
       ? snapshot.selectedTagPaths.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
       : (snapshot.selectedTagPath?.trim() ? [snapshot.selectedTagPath.trim()] : DEFAULT_AFFAIRS_STATE.selectedTagPaths),
     selectedDocumentId: snapshot.selectedDocumentId ?? DEFAULT_AFFAIRS_STATE.selectedDocumentId,
-    selectedFavoriteId: snapshot.selectedFavoriteId ?? DEFAULT_AFFAIRS_STATE.selectedFavoriteId
+    selectedFavoriteId: snapshot.selectedFavoriteId ?? DEFAULT_AFFAIRS_STATE.selectedFavoriteId,
+    pendingLibraryPreview: snapshot.pendingLibraryPreview && typeof snapshot.pendingLibraryPreview === "object"
+      ? {
+          requestId: typeof snapshot.pendingLibraryPreview.requestId === "string" ? snapshot.pendingLibraryPreview.requestId : "",
+          filePath: typeof snapshot.pendingLibraryPreview.filePath === "string" ? snapshot.pendingLibraryPreview.filePath : "",
+          title: typeof snapshot.pendingLibraryPreview.title === "string" ? snapshot.pendingLibraryPreview.title : ""
+        }
+      : DEFAULT_AFFAIRS_STATE.pendingLibraryPreview
   };
 }
 
@@ -229,7 +237,8 @@ export function createDefaultAffairsViewState(workspaceId: string): AffairsViewS
     selectedTagPath: DEFAULT_AFFAIRS_STATE.selectedTagPath,
     selectedTagPaths: DEFAULT_AFFAIRS_STATE.selectedTagPaths,
     selectedDocumentId: DEFAULT_AFFAIRS_STATE.selectedDocumentId,
-    selectedFavoriteId: DEFAULT_AFFAIRS_STATE.selectedFavoriteId
+    selectedFavoriteId: DEFAULT_AFFAIRS_STATE.selectedFavoriteId,
+    pendingLibraryPreview: DEFAULT_AFFAIRS_STATE.pendingLibraryPreview
   };
 }
 
@@ -254,6 +263,7 @@ export function createDefaultAffairsLibraryLandingState(
     selectedTagPath: null,
     selectedTagPaths: [],
     selectedDocumentId: null,
-    selectedFavoriteId: null
+    selectedFavoriteId: null,
+    pendingLibraryPreview: null
   };
 }

@@ -2798,7 +2798,9 @@ export function AffairsWorkbenchProvider({
   }, [binding?.enabled, selectedObject, state.selectedFolderEntryPath, state.selectedFolderPath, workspaceId]);
 
   useEffect(() => {
-    const selectedId = selectedObject.record?.id ?? null;
+    const selectedId = activeSection === "library"
+      ? (selectedObject.record?.id ?? state.selectedDocumentId ?? state.selectedObjectId ?? null)
+      : (selectedObject.record?.id ?? null);
     const defaultNodeId = resolveDefaultNodeId(activeSection, automationRecords, binding);
 
     const nextState: AffairsViewState = {
@@ -4202,6 +4204,26 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     workspaceName,
     conversationExportingSessionId
   ]);
+
+  useEffect(() => {
+    const request = state.pendingLibraryPreview;
+    if (!request) {
+      return;
+    }
+
+    const filePath = request.filePath.trim();
+    if (filePath) {
+      setViewerState({
+        filePath,
+        title: request.title.trim() || resolveDocumentDisplayName(filePath)
+      });
+    }
+
+    onStateChange({
+      ...state,
+      pendingLibraryPreview: null
+    });
+  }, [onStateChange, state]);
 
   return (
     <AffairsWorkbenchContext.Provider value={contextValue}>

@@ -339,6 +339,7 @@ export interface AffairsLibrarySnapshotDto {
 
 export interface AffairsLibraryDocumentListDto {
   total: number;
+  visibleEntryTotal?: number;
   offset: number;
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
@@ -1572,6 +1573,7 @@ export function listAffairsLibraryDocuments(
     selectedTagPath?: string | null;
     selectedTagPaths?: string[] | null;
     selectedFavoriteId?: string | null;
+    keyword?: string | null;
     offset?: number;
     limit?: number;
   }
@@ -1594,6 +1596,9 @@ export function listAffairsLibraryDocuments(
   }
   if (query.selectedFavoriteId?.trim()) {
     search.set("selectedFavoriteId", query.selectedFavoriteId.trim());
+  }
+  if (query.keyword?.trim()) {
+    search.set("keyword", query.keyword.trim());
   }
   if (typeof query.offset === "number") {
     search.set("offset", String(query.offset));
