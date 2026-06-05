@@ -212,6 +212,52 @@ describe("sqlite 启动引导", () => {
     expect(deviceSessionIndex?.name).toBe("idx_auth_tokens_device_session_id");
   });
 
+  it("可以在旧版 user_teable_form_bindings 缺少 enabled 列时完成启动", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-teable-form-binding-enabled-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE user_teable_form_bindings (
+        form_binding_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        table_id TEXT NOT NULL,
+        view_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        linked_mirror_types_json TEXT NOT NULL,
+        inbound_action TEXT NOT NULL CHECK (inbound_action IN ('create_todo', 'append_session_context', 'request_tag_assignment', 'none')),
+        open_url TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        source_workspace_ids_json TEXT NOT NULL DEFAULT '[]',
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(user_teable_form_bindings)")
+      .all() as Array<{ name: string }>;
+    const enabledIndex = client.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_teable_form_bindings_user_enabled'")
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["enabled", "source_workspace_ids_json"])
+    );
+    expect(enabledIndex?.name).toBe("idx_user_teable_form_bindings_user_enabled");
+  });
+
   it("可以把旧 auth_tokens 的 caller_kind 约束平滑升级到支持 workspace_session", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-auth-token-caller-kind-bootstrap-"));
     tempDirs.push(tempDir);

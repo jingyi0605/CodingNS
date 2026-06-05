@@ -82,6 +82,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
   ensureAuthTokenDeviceColumns(db);
+  ensureUserTeableFormBindingsPreSchemaCompatibility(db);
   ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
   ensureAuthTokenCallerKindSchema(db);
@@ -126,6 +127,21 @@ function ensureAuthTokenDeviceColumns(db: BetterSqliteDatabase): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_device_session_id ON auth_tokens(device_session_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_workspace_id ON auth_tokens(workspace_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_auth_tokens_session_id ON auth_tokens(session_id)");
+}
+
+function ensureUserTeableFormBindingsPreSchemaCompatibility(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_form_bindings")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(user_teable_form_bindings)")
+    .all() as Array<{ name?: string }>;
+  const columnNames = new Set(columns.map((column) => column.name ?? ""));
+
+  if (!columnNames.has("enabled")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
+  }
 }
 
 function ensureAuthTokenCallerKindSchema(db: BetterSqliteDatabase): void {
