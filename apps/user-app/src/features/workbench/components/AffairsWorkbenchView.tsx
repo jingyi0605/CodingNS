@@ -2404,6 +2404,10 @@ export function AffairsWorkbenchProvider({
     () => state.selectedFolderPath?.trim() || null,
     [state.selectedFolderPath]
   );
+  const libraryDocumentAutoReloadVersion = useMemo(
+    () => state.browseMode === "folder" ? librarySnapshot?.status.lastCompletedAt ?? null : null,
+    [librarySnapshot?.status.lastCompletedAt, state.browseMode]
+  );
 
   useEffect(() => {
     if (activeSection !== "library" || !binding?.enabled || state.browseMode !== "folder") {
@@ -2500,6 +2504,24 @@ export function AffairsWorkbenchProvider({
       const snapshot = await getAffairsLibrarySnapshot(workspaceId);
       setLibrarySnapshot((previous) => areLibrarySnapshotsEqual(previous, snapshot) ? previous : snapshot);
       writeCachedLibrarySnapshot(workspaceId, snapshot);
+      if (activeSection === "library" && binding) {
+        setLibraryDocumentsLoading(true);
+        try {
+          const response = await listAffairsLibraryDocuments(workspaceId, {
+            browseMode: state.browseMode,
+            selectedFolderPath: effectiveSelectedFolderPath,
+            selectedTagPath: state.selectedTagPath,
+            selectedTagPaths,
+            selectedFavoriteId: state.selectedFavoriteId,
+            offset: 0,
+            limit: LIBRARY_STAGE_PAGE_SIZE
+          });
+          setLibraryDocumentPage((previous) => areLibraryDocumentPagesEqual(previous, response) ? previous : response);
+          writeCachedLibraryDocumentPage(workspaceId, state, response);
+        } finally {
+          setLibraryDocumentsLoading(false);
+        }
+      }
       showToast({
         title: t("shell.affairsLibraryRefreshQueued"),
         description: t("shell.affairsLibraryRefreshQueuedDescription"),
@@ -2518,7 +2540,7 @@ export function AffairsWorkbenchProvider({
   };
 
   useEffect(() => {
-    if (activeSection !== "library" || !binding) {
+    if (activeSection !== "library" || !binding?.enabled) {
       setLibraryDocumentPage(null);
       setLibraryDocumentsLoading(false);
       return;
@@ -2571,8 +2593,8 @@ export function AffairsWorkbenchProvider({
     };
   }, [
     activeSection,
-    binding,
-    librarySnapshot?.status.lastCompletedAt,
+    binding?.enabled,
+    libraryDocumentAutoReloadVersion,
     state.browseMode,
     state.selectedFavoriteId,
     state.selectedFolderEntryPath,

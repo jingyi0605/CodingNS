@@ -4306,7 +4306,6 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-
   it("列表视图下标签筛选后的文档点击只更新选中态，不会重新请求列表", async () => {
     const filteredResponse = createDocumentListResponse([
       {
@@ -4623,6 +4622,77 @@ describe("AffairsWorkbenchView", () => {
     expect(await screen.findByRole("button", {
       name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusFresh") })
     })).toBeInTheDocument();
+  }, 10_000);
+
+  it("标签筛选浏览时，状态刷新不会因为 lastCompletedAt 变化而自动重拉当前列表", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot
+      .mockResolvedValueOnce(createLibrarySnapshot({
+        status: {
+          state: "running",
+          dirtyReasons: ["refresh_requested"],
+          lastRequestedAt: "2026-05-31T08:00:00.000Z",
+          lastStartedAt: "2026-05-31T08:00:00.000Z",
+          lastCompletedAt: null,
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: "task-1",
+          runningStage: "index",
+          errorSummary: null
+        }
+      }))
+      .mockResolvedValue(createLibrarySnapshot({
+        status: {
+          state: "fresh",
+          dirtyReasons: [],
+          lastRequestedAt: "2026-05-31T08:00:00.000Z",
+          lastStartedAt: "2026-05-31T08:00:00.000Z",
+          lastCompletedAt: "2026-05-31T08:00:03.000Z",
+          lastFailedAt: null,
+          nextAllowedAt: null,
+          runningTaskId: null,
+          runningStage: null,
+          errorSummary: null
+        }
+      }));
+    conversationApiMock.listAffairsLibraryDocuments.mockReset();
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse([
+      {
+        documentId: "doc-filtered-1",
+        path: "客户/投标文件.docx",
+        title: "投标文件",
+        summary: "筛选结果摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: ["类型/文本"],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]));
+
+    renderWorkbenchWithState({
+      ...createState(),
+      browseMode: "tag",
+      selectedNodeId: "library:tag:类型/文本",
+      selectedTagPath: "类型/文本",
+      selectedTagPaths: ["类型/文本"]
+    });
+
+    await screen.findByText("投标文件.docx");
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledTimes(1);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 3_300));
+
+    await waitFor(() => {
+      expect(conversationApiMock.getAffairsLibrarySnapshot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(await screen.findByRole("button", {
+      name: t("shell.affairsLibraryStatusIndicatorAction", { status: t("shell.affairsLibraryStatusFresh") })
+    })).toBeInTheDocument();
+    expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledTimes(1);
   }, 10_000);
 
   it("目录模式下即使索引还在 running，也会主动重拉当前目录列表", async () => {
