@@ -948,6 +948,7 @@ CREATE TABLE IF NOT EXISTS user_affairs_library_settings (
   enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
   favorites_json TEXT,
   last_workspace_id TEXT,
+  dashboard_state_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES auth_users(id)

@@ -971,12 +971,12 @@ function ensureUserAffairsLibrarySettingsSchema(db: BetterSqliteDatabase): void 
         enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
         favorites_json TEXT,
         last_workspace_id TEXT,
+        dashboard_state_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES auth_users(id)
       )
     `);
-    return;
   }
 
   const columns = db
@@ -992,7 +992,93 @@ function ensureUserAffairsLibrarySettingsSchema(db: BetterSqliteDatabase): void 
     db.exec("ALTER TABLE user_affairs_library_settings ADD COLUMN last_workspace_id TEXT");
   }
 
+  if (!columnNames.has("dashboard_state_json")) {
+    db.exec("ALTER TABLE user_affairs_library_settings ADD COLUMN dashboard_state_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
   migrateLegacyAffairsLibrarySettings(db);
+  migrateLegacyDashboardStatesIntoGlobalAffairsSettings(db);
+}
+
+interface LegacyDashboardProfileRow {
+  user_id: string;
+  affairs_dashboard_states_json: string;
+}
+
+function migrateLegacyDashboardStatesIntoGlobalAffairsSettings(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_preference_profiles") || !tableExists(db, "user_affairs_library_settings")) {
+    return;
+  }
+
+  const rows = db
+    .prepare("SELECT user_id, affairs_dashboard_states_json FROM user_preference_profiles")
+    .all() as LegacyDashboardProfileRow[];
+
+  const updateStatement = db.prepare(`
+    UPDATE user_affairs_library_settings
+    SET dashboard_state_json = ?
+    WHERE user_id = ?
+      AND (dashboard_state_json IS NULL OR TRIM(dashboard_state_json) = '' OR dashboard_state_json = '{}')
+  `);
+
+  for (const row of rows) {
+    const dashboardState = pickLatestLegacyDashboardState(
+      parseJsonObjectRecord(row.affairs_dashboard_states_json)
+    );
+
+    if (!dashboardState) {
+      continue;
+    }
+
+    updateStatement.run(JSON.stringify(dashboardState), row.user_id);
+  }
+}
+
+function pickLatestLegacyDashboardState(
+  dashboardStatesByWorkspace: Record<string, unknown>
+): Record<string, unknown> | null {
+  const candidates = Object.entries(dashboardStatesByWorkspace)
+    .map(([workspaceId, rawState]) => normalizeLegacyDashboardStateCandidate(workspaceId, rawState))
+    .filter((item): item is { state: Record<string, unknown>; score: number; updatedAt: string } => item !== null)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
+
+  return candidates[0]?.state ?? null;
+}
+
+function normalizeLegacyDashboardStateCandidate(
+  workspaceId: string,
+  rawState: unknown
+): { state: Record<string, unknown>; score: number; updatedAt: string } | null {
+  if (typeof rawState !== "object" || rawState === null || Array.isArray(rawState)) {
+    return null;
+  }
+
+  const state: Record<string, unknown> = {
+    ...(rawState as Record<string, unknown>),
+    workspaceId: "affairs-global"
+  };
+  const shortcutApps = Array.isArray(state.shortcutApps) ? state.shortcutApps : [];
+  const tabs = Array.isArray(state.tabs) ? state.tabs : [];
+  const widgetCount = tabs.reduce((total: number, tab: unknown) => {
+    if (typeof tab !== "object" || tab === null || Array.isArray(tab)) {
+      return total;
+    }
+    return total + (Array.isArray((tab as Record<string, unknown>).widgets) ? ((tab as Record<string, unknown>).widgets as unknown[]).length : 0);
+  }, 0);
+  const updatedAt = typeof state.updatedAt === "string" && state.updatedAt.trim()
+    ? state.updatedAt.trim()
+    : "";
+
+  return {
+    state,
+    score: shortcutApps.length * 100 + widgetCount,
+    updatedAt: updatedAt || workspaceId
+  };
 }
 
 function migrateLegacyAffairsLibrarySettings(db: BetterSqliteDatabase): void {

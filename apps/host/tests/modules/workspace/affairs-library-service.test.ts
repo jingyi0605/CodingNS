@@ -95,6 +95,7 @@ function createService(options: {
     enabled: boolean;
     favoritesJson: string | null;
     lastWorkspaceId: string | null;
+    dashboardStateJson?: string | null;
     createdAt: string;
     updatedAt: string;
   } | null;
@@ -104,6 +105,7 @@ function createService(options: {
     enabled: boolean;
     favoritesJson: string | null;
     lastWorkspaceId: string | null;
+    dashboardStateJson?: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -113,6 +115,7 @@ function createService(options: {
     enabled: boolean;
     favoritesJson: string | null;
     lastWorkspaceId: string | null;
+    dashboardStateJson?: string | null;
     createdAt: string;
     updatedAt: string;
   } | null;
@@ -176,6 +179,7 @@ function createService(options: {
         enabled: item.affairsLibraryEnabled === true,
         favoritesJson: item.affairsLibraryFavoritesJson ?? null,
         lastWorkspaceId: item.workspaceId,
+        dashboardStateJson: "{}",
         createdAt: item.updatedAt,
         updatedAt: item.updatedAt
       }))),
@@ -187,6 +191,7 @@ function createService(options: {
           enabled: true,
           favoritesJson: "[]",
           lastWorkspaceId: "workspace-1",
+          dashboardStateJson: "{}",
           createdAt: "2026-05-31T06:00:00.000Z",
           updatedAt: "2026-05-31T06:00:00.000Z"
         }))
@@ -2640,10 +2645,157 @@ describe("AffairsLibraryService global binding", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("全局事务工作台状态会保存在用户级事务配置里", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-dashboard-state-"));
+    const upsert = vi.fn((record) => record);
+
+    const service = new AffairsLibraryService(
+      {
+        getWorkspaceOrThrow: vi.fn(() => createWorkspace(rootDir)),
+        list: vi.fn(() => [createWorkspace(rootDir)])
+      } as never,
+      {
+        findByWorkspaceIdAndUserId: vi.fn(() => null),
+        upsert: vi.fn(),
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        findLatestAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        findByUserId: vi.fn(() => ({
+          userId: "workspace-session-user",
+          rootDir,
+          enabled: true,
+          favoritesJson: "[]",
+          lastWorkspaceId: "workspace-1",
+          dashboardStateJson: "{\"workspaceId\":\"affairs-global\",\"tabs\":[]}",
+          createdAt: "2026-06-03T02:00:00.000Z",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        })),
+        upsert
+      } as never,
+      {
+        has: vi.fn(() => false),
+        register: vi.fn(),
+        enqueue: vi.fn(() => ({
+          taskId: "task-1",
+          taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+          key: "workspace-1",
+          executionLane: "helper_process",
+          deduped: false,
+          promise: Promise.resolve(createIndexerResult("index")),
+          cancel: vi.fn()
+        })),
+        peek: vi.fn(() => null)
+      } as never,
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      } as never
+    );
+
+    const dashboardState = service.updateGlobalDashboardState("workspace-session-user", {
+      workspaceId: "affairs-global",
+      activeTabId: "tab-1",
+      tabs: [{ id: "tab-1", title: "快捷应用", widgets: [], layout: [] }]
+    });
+
+    expect(dashboardState).toMatchObject({
+      workspaceId: "affairs-global",
+      activeTabId: "tab-1"
+    });
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "workspace-session-user",
+      rootDir,
+      enabled: true,
+      favoritesJson: "[]",
+      lastWorkspaceId: "workspace-1",
+      dashboardStateJson: expect.stringContaining("\"activeTabId\":\"tab-1\"")
+    }));
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("旧 workspace 级保存绑定和收藏时不会清掉全局事务工作台状态", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-workspace-preserve-dashboard-"));
+    const upsert = vi.fn((record) => record);
+    const dashboardStateJson = "{\"workspaceId\":\"affairs-global\",\"activeTabId\":\"tab-1\",\"tabs\":[]}";
+
+    const service = new AffairsLibraryService(
+      {
+        getWorkspaceOrThrow: vi.fn(() => createWorkspace(rootDir)),
+        list: vi.fn(() => [createWorkspace(rootDir)])
+      } as never,
+      {
+        findByWorkspaceIdAndUserId: vi.fn(() => null),
+        upsert: vi.fn(),
+        listEnabledAffairsLibraries: vi.fn(() => []),
+        findAnyEnabledAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        findLatestAffairsLibraryByWorkspaceId: vi.fn(() => null),
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        findByUserId: vi.fn(() => ({
+          userId: "workspace-session-user",
+          rootDir,
+          enabled: true,
+          favoritesJson: "[]",
+          lastWorkspaceId: "workspace-1",
+          dashboardStateJson,
+          createdAt: "2026-06-03T02:00:00.000Z",
+          updatedAt: "2026-06-03T02:00:00.000Z"
+        })),
+        upsert
+      } as never,
+      {
+        has: vi.fn(() => false),
+        register: vi.fn(),
+        enqueue: vi.fn(() => ({
+          taskId: "task-1",
+          taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+          key: "workspace-1",
+          executionLane: "helper_process",
+          deduped: false,
+          promise: Promise.resolve(createIndexerResult("index")),
+          cancel: vi.fn()
+        })),
+        peek: vi.fn(() => null)
+      } as never,
+      {
+        info: vi.fn(),
+        warn: vi.fn()
+      } as never
+    );
+
+    service.saveBinding("workspace-1", "workspace-session-user", rootDir);
+    service.updateFavorites("workspace-1", "workspace-session-user", [
+      { kind: "folder", path: ".", label: "全部资料" }
+    ]);
+
+    expect(upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      userId: "workspace-session-user",
+      rootDir,
+      lastWorkspaceId: "workspace-1",
+      dashboardStateJson
+    }));
+    expect(upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      userId: "workspace-session-user",
+      favoritesJson: JSON.stringify([{ kind: "folder", path: ".", label: "全部资料" }]),
+      lastWorkspaceId: "workspace-1",
+      dashboardStateJson
+    }));
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("全局收藏接口只更新用户级收藏，不再写 legacy 镜像", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-favorites-"));
     const upsert = vi.fn((record) => record);
     const legacyUpsert = vi.fn();
+    const dashboardStateJson = "{\"workspaceId\":\"affairs-global\",\"activeTabId\":\"tab-1\",\"tabs\":[]}";
 
     const service = new AffairsLibraryService(
       {
@@ -2665,6 +2817,7 @@ describe("AffairsLibraryService global binding", () => {
           enabled: true,
           favoritesJson: "[]",
           lastWorkspaceId: "workspace-1",
+          dashboardStateJson,
           createdAt: "2026-06-03T02:00:00.000Z",
           updatedAt: "2026-06-03T02:00:00.000Z"
         })),
@@ -2708,7 +2861,8 @@ describe("AffairsLibraryService global binding", () => {
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
       userId: "workspace-session-user",
       favoritesJson: JSON.stringify(favorites),
-      lastWorkspaceId: "workspace-1"
+      lastWorkspaceId: "workspace-1",
+      dashboardStateJson
     }));
     expect(legacyUpsert).not.toHaveBeenCalled();
 

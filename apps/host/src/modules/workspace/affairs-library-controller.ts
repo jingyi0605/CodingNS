@@ -38,6 +38,10 @@ interface UpdateAffairsLibraryFavoritesBody {
   favorites?: AffairsLibraryFavoriteRecord[];
 }
 
+interface UpdateAffairsDashboardStateBody {
+  dashboardState?: unknown;
+}
+
 interface ListAffairsLibraryDocumentsQuery {
   browseMode?: string;
   selectedFolderPath?: string;
@@ -118,6 +122,27 @@ export class AffairsLibraryController {
     });
   };
 
+  readonly getGlobalDashboardState = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      dashboardState: this.affairsLibraryService.getGlobalDashboardState(requireUserId(request))
+    });
+  };
+
+  readonly updateGlobalDashboardState = async (
+    request: FastifyRequest<{ Body: UpdateAffairsDashboardStateBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      dashboardState: this.affairsLibraryService.updateGlobalDashboardState(
+        requireUserId(request),
+        request.body.dashboardState ?? {}
+      )
+    });
+  };
+
   readonly getBinding = async (
     request: FastifyRequest<{ Params: WorkspaceParams }>,
     reply: FastifyReply
@@ -132,10 +157,10 @@ export class AffairsLibraryController {
     reply: FastifyReply
   ): Promise<void> => {
     const binding = this.affairsLibraryService.saveBinding(
-        request.params.workspaceId,
-        requireUserId(request),
-        request.body.rootDir?.trim() ?? ""
-      );
+      request.params.workspaceId,
+      requireUserId(request),
+      request.body.rootDir?.trim() ?? ""
+    );
     this.onBindingChanged?.(request.params.workspaceId);
     reply.send(binding);
   };
@@ -145,10 +170,10 @@ export class AffairsLibraryController {
     reply: FastifyReply
   ): Promise<void> => {
     const binding = this.affairsLibraryService.setEnabled(
-        request.params.workspaceId,
-        requireUserId(request),
-        request.body.enabled === true
-      );
+      request.params.workspaceId,
+      requireUserId(request),
+      request.body.enabled === true
+    );
     this.onBindingChanged?.(request.params.workspaceId);
     reply.send(binding);
   };

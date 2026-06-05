@@ -256,6 +256,7 @@ interface UserAffairsLibrarySettingLike {
   enabled: boolean;
   favoritesJson: string | null;
   lastWorkspaceId: string | null;
+  dashboardStateJson?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,6 +266,35 @@ interface AffairsLibraryConfigPayload {
   mirrorRoot?: string;
   includedHiddenPaths?: string[];
   folderOpenBehavior?: "single_click" | "double_click";
+}
+
+function parseDashboardStateJson(value: string | null | undefined): Record<string, unknown> {
+  const raw = value?.trim();
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return normalizeDashboardStatePayload(JSON.parse(raw) as unknown);
+  } catch {
+    return {};
+  }
+}
+
+function normalizeDashboardStatePayload(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "事务工作台配置必须是对象",
+      field: "dashboardState"
+    });
+  }
+
+  return {
+    ...(value as Record<string, unknown>),
+    workspaceId: "affairs-global"
+  };
 }
 
 interface IndexStatusFilePayload {
@@ -499,6 +529,7 @@ export class AffairsLibraryService {
       enabled: true,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? timestamp,
       updatedAt: timestamp
     });
@@ -532,6 +563,7 @@ export class AffairsLibraryService {
       enabled,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
@@ -556,11 +588,36 @@ export class AffairsLibraryService {
       enabled: currentSetting?.enabled ?? false,
       favoritesJson: JSON.stringify(normalizedFavorites),
       lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
 
     return normalizedFavorites;
+  }
+
+  getGlobalDashboardState(userId: string): Record<string, unknown> {
+    const currentSetting = this.resolveLibrarySetting(userId, null);
+    return parseDashboardStateJson(currentSetting?.dashboardStateJson);
+  }
+
+  updateGlobalDashboardState(userId: string, dashboardState: unknown): Record<string, unknown> {
+    const normalizedState = normalizeDashboardStatePayload(dashboardState);
+    const currentSetting = this.resolveLibrarySetting(userId, null);
+    const timestamp = nowIso();
+
+    this.upsertLibrarySetting({
+      userId,
+      rootDir: currentSetting?.rootDir ?? null,
+      enabled: currentSetting?.enabled ?? false,
+      favoritesJson: currentSetting?.favoritesJson ?? "[]",
+      lastWorkspaceId: currentSetting?.lastWorkspaceId ?? null,
+      dashboardStateJson: JSON.stringify(normalizedState),
+      createdAt: currentSetting?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+
+    return normalizedState;
   }
 
   saveBinding(workspaceId: string, userId: string, rootDir: string): AffairsLibraryBindingDto {
@@ -575,6 +632,7 @@ export class AffairsLibraryService {
       enabled: true,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? timestamp,
       updatedAt: timestamp
     });
@@ -607,6 +665,7 @@ export class AffairsLibraryService {
       enabled,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
@@ -1279,6 +1338,7 @@ export class AffairsLibraryService {
       enabled: currentSetting?.enabled ?? false,
       favoritesJson: JSON.stringify(normalizedFavorites),
       lastWorkspaceId: workspaceId,
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? nowIso(),
       updatedAt: nowIso()
     });
@@ -3918,6 +3978,7 @@ export class AffairsLibraryService {
       enabled: legacy?.affairsLibraryEnabled === true,
       favoritesJson: legacy?.affairsLibraryFavoritesJson ?? "[]",
       lastWorkspaceId: legacy?.workspaceId ?? (workspaceScope || null),
+      dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? legacy?.updatedAt ?? nowIso(),
       updatedAt: legacy?.updatedAt ?? nowIso()
     });
@@ -3931,6 +3992,7 @@ export class AffairsLibraryService {
       enabled: record.enabled === true,
       favoritesJson: record.favoritesJson ?? null,
       lastWorkspaceId: record.lastWorkspaceId?.trim() || null,
+      dashboardStateJson: record.dashboardStateJson?.trim() || "{}",
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     });
@@ -3951,6 +4013,7 @@ export class AffairsLibraryService {
         enabled: item.affairsLibraryEnabled === true,
         favoritesJson: item.affairsLibraryFavoritesJson ?? null,
         lastWorkspaceId: item.workspaceId,
+        dashboardStateJson: "{}",
         createdAt: item.updatedAt,
         updatedAt: item.updatedAt
       }))
@@ -3978,6 +4041,7 @@ export class AffairsLibraryService {
       enabled: legacy.affairsLibraryEnabled === true,
       favoritesJson: legacy.affairsLibraryFavoritesJson ?? null,
       lastWorkspaceId: legacy.workspaceId,
+      dashboardStateJson: "{}",
       createdAt: legacy.updatedAt,
       updatedAt: legacy.updatedAt
     };

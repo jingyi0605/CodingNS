@@ -947,6 +947,7 @@ export interface UserAffairsLibrarySettingRecord {
   enabled: boolean;
   favoritesJson: string | null;
   lastWorkspaceId: string | null;
+  dashboardStateJson: string;
   createdAt: string;
   updatedAt: string;
 }

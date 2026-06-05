@@ -10,4 +10,6 @@ export async function registerAffairsRoutes(
   app.put("/api/affairs/library-binding", affairsLibraryController.saveGlobalBinding);
   app.put("/api/affairs/library-enabled", affairsLibraryController.setGlobalEnabled);
   app.put("/api/affairs/library-favorites", affairsLibraryController.updateGlobalFavorites);
+  app.get("/api/affairs/dashboard-state", affairsLibraryController.getGlobalDashboardState);
+  app.put("/api/affairs/dashboard-state", affairsLibraryController.updateGlobalDashboardState);
 }

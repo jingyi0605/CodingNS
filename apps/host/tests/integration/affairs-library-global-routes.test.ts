@@ -44,6 +44,12 @@ describe("affairs library global routes", () => {
       }),
       updateGlobalFavorites: vi.fn(async (_request, reply) => {
         reply.send({ items: [] });
+      }),
+      getGlobalDashboardState: vi.fn(async (_request, reply) => {
+        reply.send({ dashboardState: { workspaceId: "affairs-global", tabs: [] } });
+      }),
+      updateGlobalDashboardState: vi.fn(async (_request, reply) => {
+        reply.send({ dashboardState: { workspaceId: "affairs-global", tabs: [] } });
       })
     } as unknown as AffairsLibraryController;
 
@@ -100,5 +106,25 @@ describe("affairs library global routes", () => {
     });
     expect(favoritesResponse.statusCode).toBe(200);
     expect(controller.updateGlobalFavorites).toHaveBeenCalledTimes(1);
+
+    const dashboardStateResponse = await app.inject({
+      method: "GET",
+      url: "/api/affairs/dashboard-state"
+    });
+    expect(dashboardStateResponse.statusCode).toBe(200);
+    expect(controller.getGlobalDashboardState).toHaveBeenCalledTimes(1);
+
+    const updateDashboardStateResponse = await app.inject({
+      method: "PUT",
+      url: "/api/affairs/dashboard-state",
+      payload: {
+        dashboardState: {
+          workspaceId: "affairs-global",
+          tabs: []
+        }
+      }
+    });
+    expect(updateDashboardStateResponse.statusCode).toBe(200);
+    expect(controller.updateGlobalDashboardState).toHaveBeenCalledTimes(1);
   });
 });
