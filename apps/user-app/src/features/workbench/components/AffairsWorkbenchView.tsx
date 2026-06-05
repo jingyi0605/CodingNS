@@ -2392,7 +2392,10 @@ export function AffairsWorkbenchProvider({
     () => new Set(favoriteEntries.filter((item) => item.kind === "folder").map((item) => item.path)),
     [favoriteEntries]
   );
-  const selectedTagPaths = useMemo(() => resolveSelectedTagPaths(state), [state]);
+  const selectedTagPaths = useMemo(
+    () => resolveSelectedTagPaths(state),
+    [state.selectedTagPath, state.selectedTagPaths]
+  );
   const libraryTagFacetCounts = useMemo(
     () => libraryDocumentPage?.tagFacetCounts ?? {},
     [libraryDocumentPage?.tagFacetCounts]

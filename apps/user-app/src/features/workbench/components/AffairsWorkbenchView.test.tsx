@@ -4307,6 +4307,65 @@ describe("AffairsWorkbenchView", () => {
   });
 
 
+  it("列表视图下标签筛选后的文档点击只更新选中态，不会重新请求列表", async () => {
+    const filteredResponse = createDocumentListResponse([
+      {
+        documentId: "doc-filtered-1",
+        path: "客户/投标文件.docx",
+        title: "投标文件",
+        summary: "筛选结果摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: ["类型/文本"],
+        derivedTags: [],
+        isFavorite: false
+      }
+    ]);
+    conversationApiMock.listAffairsLibraryDocuments.mockImplementation((_workspaceId, options) => {
+      if (options?.browseMode === "tag" && Array.isArray(options.selectedTagPaths) && options.selectedTagPaths.length > 0) {
+        return Promise.resolve(filteredResponse);
+      }
+      return Promise.resolve(createDocumentListResponse());
+    });
+
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    await user.click(findTagTreeNode("类型")?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle")!);
+    await user.click(within(findTagTreeNode("类型")!).getByRole("button", { name: /文本/ }));
+    await user.click(screen.getByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+    const row = await screen.findByRole("button", { name: /投标文件\.docx/i });
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenLastCalledWith("workspace-1", {
+        browseMode: "tag",
+        selectedFolderPath: null,
+        selectedTagPath: "类型/文本",
+        selectedTagPaths: ["类型/文本"],
+        selectedFavoriteId: null,
+        offset: 0,
+        limit: 120
+      });
+    });
+    const requestCountBeforeClick = conversationApiMock.listAffairsLibraryDocuments.mock.calls.length;
+
+    await user.click(row);
+
+    await waitFor(() => {
+      expect(row.className).toContain("active");
+    });
+    await waitFor(() => {
+      const detailPanel = document.querySelector(".affairs-detail-block");
+      expect(detailPanel).not.toBeNull();
+      expect(within(detailPanel as HTMLElement).getByRole("heading", { name: "投标文件.docx" })).toBeInTheDocument();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(conversationApiMock.listAffairsLibraryDocuments.mock.calls.length).toBe(requestCountBeforeClick);
+  });
+
   it("标签树显示手动业务标签，同时继续隐藏来源、主题、状态这类噪音根标签", async () => {
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
