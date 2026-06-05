@@ -2606,6 +2606,37 @@ describe("AffairsLibraryService global binding", () => {
   });
 });
 
+describe("AffairsLibraryService write editing", () => {
+  it("文本预览会返回版本号，并允许通过 write 写回", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-write-"));
+    fs.writeFileSync(path.join(rootDir, "note.md"), "# 标题\n\n原始内容\n", "utf8");
+    const service = createService({ rootDir });
+
+    const preview = service.previewDocument("workspace-1", "user-1", "note.md");
+
+    expect(preview.version).toBeTruthy();
+    expect(preview.capabilities.canEdit).toBe(true);
+
+    const result = service.operateFile("workspace-1", "user-1", {
+      opType: "write",
+      srcPath: "note.md",
+      content: "# 标题\n\n更新后内容\n",
+      expectedVersion: preview.version
+    });
+
+    expect(result).toEqual({
+      success: true,
+      opType: "write",
+      sourcePath: "note.md",
+      targetPath: "note.md"
+    });
+    expect(fs.readFileSync(path.join(rootDir, "note.md"), "utf8")).toContain("更新后内容");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+});
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -7,6 +7,7 @@ import type { WorkspaceNavigationStateRepository } from "../../storage/repositor
 import type { UserAffairsLibrarySettingRepository } from "../../storage/repositories/user-affairs-library-setting-repository.js";
 import type { FileNode } from "../../types/domain.js";
 import {
+  MAX_TEXT_FILE_BYTES,
   MAX_PREVIEW_FILE_BYTES,
   MAX_RESOURCE_PREVIEW_FILE_BYTES
 } from "../file/file-constants.js";
@@ -17,6 +18,7 @@ import {
   isResourcePreviewKind
 } from "../file/file-preview-types.js";
 import { normalizeRelativePath } from "../file/path-normalizer.js";
+import { hashContent } from "../../shared/utils/hash.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
 import type { WorkspaceService } from "./workspace-service.js";
@@ -212,7 +214,7 @@ export interface AffairsLibraryDocumentListDto {
   directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
 }
 
-export type AffairsLibraryOperationType = "delete" | "move" | "copy" | "create_directory" | "create_file";
+export type AffairsLibraryOperationType = "delete" | "move" | "copy" | "create_directory" | "create_file" | "write";
 
 export interface AffairsLibraryDownloadDto {
   workspaceId: string;
@@ -1337,7 +1339,9 @@ export class AffairsLibraryService {
       kind: previewKind,
       reason: null,
       content: buffer.toString("utf8"),
-      version: null,
+      version: shouldEnableAffairsLibraryInlineEditing(previewKind, fileSize || buffer.byteLength)
+        ? hashContent(buffer)
+        : null,
       size: fileSize || buffer.byteLength,
       updatedAt: resolved.stats?.mtime.toISOString() ?? null
     });
@@ -1371,6 +1375,7 @@ export class AffairsLibraryService {
       srcPath?: string;
       dstPath?: string | null;
       content?: string | null;
+      expectedVersion?: string | null;
     }
   ): AffairsLibraryOperationResultDto {
     const opType = input.opType;
@@ -1380,6 +1385,7 @@ export class AffairsLibraryService {
       && opType !== "copy"
       && opType !== "create_directory"
       && opType !== "create_file"
+      && opType !== "write"
     ) {
       throw new AppError({
         statusCode: 400,
@@ -1430,6 +1436,51 @@ export class AffairsLibraryService {
       kind: "any"
     });
     this.ensureUserContentPath(source.relativePath);
+
+    if (opType === "write") {
+      if (!source.stats?.isFile()) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "NOT_A_FILE",
+          detail: "指定路径不是文件",
+          field: "srcPath"
+        });
+      }
+
+      const currentBuffer = fs.readFileSync(source.absolutePath);
+      ensureEditableAffairsLibraryTextBuffer(currentBuffer);
+      const currentVersion = hashContent(currentBuffer);
+      const expectedVersion = input.expectedVersion?.trim() ?? "";
+
+      if (!expectedVersion) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_CONTENT",
+          detail: "保存文件必须提供 expectedVersion",
+          field: "expectedVersion"
+        });
+      }
+
+      if (expectedVersion !== currentVersion) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "FILE_VERSION_CONFLICT",
+          detail: "文件已被其他修改覆盖，请先刷新再保存",
+          field: "expectedVersion"
+        });
+      }
+
+      const nextBuffer = Buffer.from(input.content ?? "", "utf8");
+      ensureWritableAffairsLibraryTextBuffer(nextBuffer);
+      fs.writeFileSync(source.absolutePath, nextBuffer);
+      this.afterFileMutation(workspaceId, source.rootDir, `library_write:${source.relativePath}`, source.relativePath);
+      return {
+        success: true,
+        opType,
+        sourcePath: source.relativePath,
+        targetPath: source.relativePath
+      };
+    }
 
     if (opType === "delete") {
       if (source.stats?.isDirectory()) {
@@ -3987,6 +4038,45 @@ function buildOfficeDocumentVersion(fileSize: number, updatedAt: string | null):
   }
 
   return `${updatedAt}:${fileSize}`;
+}
+
+function shouldEnableAffairsLibraryInlineEditing(
+  previewKind: FilePreviewResult["kind"],
+  fileSize: number
+): boolean {
+  return fileSize <= MAX_TEXT_FILE_BYTES
+    && (previewKind === "text" || previewKind === "markdown" || previewKind === "html");
+}
+
+function ensureEditableAffairsLibraryTextBuffer(buffer: Buffer): void {
+  if (buffer.byteLength > MAX_TEXT_FILE_BYTES) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "FILE_TOO_LARGE",
+      detail: "文件过大，暂不支持直接编辑",
+      field: "srcPath"
+    });
+  }
+
+  if (buffer.includes(0)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "BINARY_FILE_NOT_SUPPORTED",
+      detail: "二进制文件暂不支持直接编辑",
+      field: "srcPath"
+    });
+  }
+}
+
+function ensureWritableAffairsLibraryTextBuffer(buffer: Buffer): void {
+  if (buffer.byteLength > MAX_TEXT_FILE_BYTES) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "FILE_TOO_LARGE",
+      detail: "文件过大，暂不支持直接保存",
+      field: "content"
+    });
+  }
 }
 
 function hasPendingAutoTasks(state: AffairsLibraryAutoTaskState): boolean {

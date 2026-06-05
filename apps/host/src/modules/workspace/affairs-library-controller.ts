@@ -63,6 +63,7 @@ interface AffairsLibraryOperationBody {
   srcPath?: string;
   dstPath?: string | null;
   content?: string | null;
+  expectedVersion?: string | null;
 }
 
 export class AffairsLibraryController {
@@ -342,7 +343,8 @@ export class AffairsLibraryController {
           opType: request.body.opType ?? "delete",
           srcPath: request.body.srcPath?.trim(),
           dstPath: request.body.dstPath?.trim() ?? null,
-          content: typeof request.body.content === "string" ? request.body.content : null
+          content: typeof request.body.content === "string" ? request.body.content : null,
+          expectedVersion: typeof request.body.expectedVersion === "string" ? request.body.expectedVersion : null
         }
       )
     );

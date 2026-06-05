@@ -395,7 +395,7 @@ export interface AffairsLibraryDownloadDto {
   updatedAt: string;
 }
 
-export type AffairsLibraryOperationType = "delete" | "move" | "copy" | "create_directory" | "create_file";
+export type AffairsLibraryOperationType = "delete" | "move" | "copy" | "create_directory" | "create_file" | "write";
 
 export interface AffairsLibraryOperationResultDto {
   success: true;
@@ -1664,7 +1664,13 @@ export function downloadAffairsLibraryFile(workspaceId: string, filePath: string
 
 export function operateAffairsLibraryFile(
   workspaceId: string,
-  payload: { opType: AffairsLibraryOperationType; srcPath?: string; dstPath?: string | null; content?: string | null }
+  payload: {
+    opType: AffairsLibraryOperationType;
+    srcPath?: string;
+    dstPath?: string | null;
+    content?: string | null;
+    expectedVersion?: string | null;
+  }
 ) {
   return httpClient.request<AffairsLibraryOperationResultDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-ops`,
