@@ -80,6 +80,13 @@ export interface FileViewerPanelProps {
     filePath: string,
     options?: FilePreviewRequestOptions
   ) => Promise<FilePreviewDto>;
+  saveHandler?: (input: {
+    workspaceId: string;
+    filePath: string;
+    content: string;
+    expectedVersion: string;
+    preview: FilePreviewDto;
+  }) => Promise<void>;
   saveDisabledReason?: string | null;
   officeDisplayMode?: "default" | "reading";
 }
@@ -314,6 +321,7 @@ export function FileViewerPanel({
   showDetachAction = false,
   onDetach,
   previewLoader = getFilePreview,
+  saveHandler = defaultFileViewerSaveHandler,
   saveDisabledReason = null,
   officeDisplayMode = "default"
 }: FileViewerPanelProps) {
@@ -551,7 +559,13 @@ export function FileViewerPanel({
         ? presentationSavedContent ?? editorContent
         : editorContent;
 
-      await saveFileContent(safeWorkspaceId, safeFilePath, nextContent, preview.version);
+      await saveHandler({
+        workspaceId: safeWorkspaceId,
+        filePath: safeFilePath,
+        content: nextContent,
+        expectedVersion: preview.version,
+        preview
+      });
       const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
         officeDisplayMode
       });
@@ -1192,6 +1206,16 @@ function buildViewerTabs(input: {
   }
 
   return tabs;
+}
+
+async function defaultFileViewerSaveHandler(input: {
+  workspaceId: string;
+  filePath: string;
+  content: string;
+  expectedVersion: string;
+  preview: FilePreviewDto;
+}): Promise<void> {
+  await saveFileContent(input.workspaceId, input.filePath, input.content, input.expectedVersion);
 }
 
 function buildFormatActions(input: {

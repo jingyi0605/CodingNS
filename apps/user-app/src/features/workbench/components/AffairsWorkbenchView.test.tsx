@@ -263,6 +263,7 @@ const docsApiMock = vi.hoisted(() => ({
 
 const fileContextApiMock = vi.hoisted(() => ({
   getFilePreview: vi.fn(),
+  saveFileContent: vi.fn(),
   getFilePreviewLink: vi.fn(),
   getFileTree: vi.fn()
 }));
@@ -636,6 +637,7 @@ vi.mock("../../../platform/platform-provider", () => ({
 
 vi.mock("../../conversation/api/file-context-api", () => ({
   getFilePreview: fileContextApiMock.getFilePreview,
+  saveFileContent: fileContextApiMock.saveFileContent,
   getFilePreviewLink: fileContextApiMock.getFilePreviewLink,
   getFileTree: fileContextApiMock.getFileTree
 }));
@@ -1210,21 +1212,22 @@ describe("AffairsWorkbenchView", () => {
     clearSessionProviderPickerCapabilityCache();
 
     fileContextApiMock.getFilePreview.mockReset();
+    fileContextApiMock.saveFileContent.mockReset();
     fileContextApiMock.getFilePreview.mockResolvedValue({
       workspaceId: "workspace-1",
       path: "tools/report/index.html",
       supported: true,
       kind: "html",
       reason: null,
-      content: null,
-      version: null,
+      content: "<html><body><h1>报表</h1></body></html>",
+      version: "workspace-preview-v1",
       size: 0,
       updatedAt: null,
       previewPath: "/preview/files/token/tools/report/index.html",
       previewUrl: "http://127.0.0.1:3002/preview/files/token/tools/report/index.html",
       onlyOffice: null,
       capabilities: {
-        canEdit: false,
+        canEdit: true,
         canRefresh: true,
         canResize: true,
         canZoom: false,
@@ -1629,13 +1632,13 @@ describe("AffairsWorkbenchView", () => {
       kind: "text",
       reason: null,
       content: "这是事务文档内容",
-      version: null,
+      version: "affairs-preview-v1",
       size: 24,
       updatedAt: "2026-05-31T08:00:00.000Z",
       previewPath: null,
       previewUrl: null,
       capabilities: {
-        canEdit: false,
+        canEdit: true,
         canRefresh: true,
         canResize: true,
         canZoom: false,
@@ -1859,7 +1862,30 @@ describe("AffairsWorkbenchView", () => {
       await screen.findByRole("dialog", { name: "Exchange 分层通讯簿.txt" })
     ).toBeInTheDocument();
     expect(await screen.findByText(/纯文本|Plain Text/)).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: t("conversation.fileViewerEdit") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") })).toBeInTheDocument();
+  });
+
+  it("事务文档预览编辑后会走文档库写回接口保存", async () => {
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    await userEvent.dblClick(card);
+
+    await userEvent.click(await screen.findByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "这是更新后的事务文档内容");
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.operateAffairsLibraryFile).toHaveBeenCalledWith("workspace-1", {
+        opType: "write",
+        srcPath: "Exchange 分层通讯簿.txt",
+        content: "这是更新后的事务文档内容",
+        expectedVersion: "affairs-preview-v1"
+      });
+    });
+    expect(fileContextApiMock.saveFileContent).not.toHaveBeenCalled();
   });
 
   it("目录详情标题会居中显示，并复用和文档详情一致的摘要折叠逻辑", async () => {
@@ -6356,7 +6382,7 @@ describe("AffairsWorkbenchView", () => {
       supported: true,
       kind: "html",
       reason: null,
-      content: null,
+      content: "<html><body><h1>会员管理</h1></body></html>",
       version: "preview-1",
       size: 4096,
       updatedAt: "2026-06-04T09:30:00.000Z",
@@ -6364,7 +6390,7 @@ describe("AffairsWorkbenchView", () => {
       previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
       onlyOffice: null,
       capabilities: {
-        canEdit: false,
+        canEdit: true,
         canRefresh: true,
         canResize: true,
         canZoom: false,
@@ -6692,6 +6718,65 @@ describe("AffairsWorkbenchView", () => {
       expect(screen.getByRole("dialog", { name: "Exchange 分层通讯簿.txt" })).toBeInTheDocument();
     });
     expect(fileContextApiMock.getFilePreview).toHaveBeenCalledWith("workspace-2", "Exchange 分层通讯簿.txt");
+  });
+
+  it("文档库来源的快捷应用预览编辑后会走文档库写回接口保存", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:30:00.000Z");
+    dashboardState.shortcutApps = [
+      createAffairsShortcutAppState({
+        title: "会员管理",
+        sourceKind: "affairs_library",
+        workspaceId: "workspace-2",
+        entryPath: "Obsidian/Tools/会员管理.html"
+      }, "2026-06-04T10:30:00.000Z")
+    ];
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    conversationApiMock.getAffairsLibraryPreview.mockResolvedValue({
+      workspaceId: "workspace-2",
+      path: "Obsidian/Tools/会员管理.html",
+      supported: true,
+      kind: "html",
+      reason: null,
+      content: "<html><body><h1>会员管理</h1></body></html>",
+      version: "shortcut-affairs-v1",
+      size: 4096,
+      updatedAt: "2026-06-04T10:30:00.000Z",
+      previewPath: "/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      previewUrl: "http://127.0.0.1:3002/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html",
+      onlyOffice: null,
+      capabilities: {
+        canEdit: true,
+        canRefresh: true,
+        canResize: true,
+        canZoom: false,
+        canPaginate: false
+      }
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailLaunchAction", { title: "会员管理" }) }));
+    await userEvent.click(await screen.findByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "<html><body><h1>会员管理-已更新</h1></body></html>");
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.operateAffairsLibraryFile).toHaveBeenCalledWith("workspace-2", {
+        opType: "write",
+        srcPath: "Obsidian/Tools/会员管理.html",
+        content: "<html><body><h1>会员管理-已更新</h1></body></html>",
+        expectedVersion: "shortcut-affairs-v1"
+      });
+    });
+    expect(fileContextApiMock.saveFileContent).not.toHaveBeenCalled();
   });
 
   it("锁定状态下会隐藏标签页添加按钮", async () => {

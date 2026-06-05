@@ -4286,6 +4286,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
         workspaceId={workspaceId}
         viewerState={viewerState}
         onClose={() => setViewerState(null)}
+        onSaved={() => refreshLibraryNow()}
       />
       </AffairsDashboardContext.Provider>
     </AffairsWorkbenchContext.Provider>
@@ -4661,7 +4662,16 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
           previewLoader={previewingShortcut.sourceKind === "affairs_library"
             ? ((targetWorkspaceId, targetFilePath, options) => getAffairsLibraryPreviewWithOptions(targetWorkspaceId, targetFilePath, options))
             : undefined}
-          saveDisabledReason={t("shell.affairsShortcutRailPreviewEditDisabled")}
+          saveHandler={previewingShortcut.sourceKind === "affairs_library"
+            ? (async ({ workspaceId: targetWorkspaceId, filePath: targetFilePath, content, expectedVersion }) => {
+                await operateAffairsLibraryFile(targetWorkspaceId, {
+                  opType: "write",
+                  srcPath: targetFilePath,
+                  content,
+                  expectedVersion
+                });
+              })
+            : undefined}
           showDetachAction={platform.isDesktop && platform.bridge.supported}
           onDetach={() => void handleDetachShortcutPreview()}
         />
@@ -12426,11 +12436,13 @@ function readError(error: unknown, fallback: string): string {
 function AffairsLibraryFileViewerModal({
   workspaceId,
   viewerState,
-  onClose
+  onClose,
+  onSaved
 }: {
   workspaceId: string;
   viewerState: AffairsLibraryViewerState;
   onClose: () => void;
+  onSaved: () => Promise<void> | void;
 }) {
   if (!viewerState) {
     return null;
@@ -12445,6 +12457,7 @@ function AffairsLibraryFileViewerModal({
       officeDisplayMode="default"
       open={true}
       onClose={onClose}
+      onSaved={onSaved}
     />
   );
 }
@@ -12492,6 +12505,7 @@ function AffairsLibraryInlineViewer({
               officeDisplayMode="reading"
               open={true}
               onClose={() => undefined}
+              onSaved={() => undefined}
             />
           )}
         </div>
@@ -12527,7 +12541,8 @@ function AffairsLibraryFileViewerSurface({
   chrome,
   officeDisplayMode,
   open,
-  onClose
+  onClose,
+  onSaved
 }: {
   workspaceId: string;
   filePath: string;
@@ -12536,6 +12551,7 @@ function AffairsLibraryFileViewerSurface({
   officeDisplayMode?: "default" | "reading";
   open: boolean;
   onClose: () => void;
+  onSaved: () => Promise<void> | void;
 }) {
   const previewLoader = useMemo(
     () => (targetWorkspaceId: string, targetFilePath: string) =>
@@ -12553,9 +12569,16 @@ function AffairsLibraryFileViewerSurface({
       chrome={chrome === "window" ? "inline" : chrome}
       windowTitle={windowTitle}
       onClose={onClose}
-      onSaved={() => undefined}
+      onSaved={onSaved}
       previewLoader={previewLoader}
-      saveDisabledReason={t("shell.affairsLibraryViewerEditDisabled")}
+      saveHandler={async ({ workspaceId: targetWorkspaceId, filePath: targetFilePath, content, expectedVersion }) => {
+        await operateAffairsLibraryFile(targetWorkspaceId, {
+          opType: "write",
+          srcPath: targetFilePath,
+          content,
+          expectedVersion
+        });
+      }}
       officeDisplayMode={officeDisplayMode}
     />
   );

@@ -223,6 +223,45 @@ describe("FileViewerModal", () => {
     expect(fileApiMock.getFilePreview).toHaveBeenCalledTimes(1);
   });
 
+  it("传入自定义 saveHandler 时，会优先走自定义保存逻辑", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const saveHandler = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="notes.txt"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+          saveHandler={saveHandler}
+        />
+      </ToastProvider>
+    );
+
+    await user.click(await screen.findByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "custom saved content");
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(saveHandler).toHaveBeenCalledTimes(1);
+    });
+    expect(saveHandler).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-1",
+      filePath: "notes.txt",
+      content: "custom saved content",
+      expectedVersion: "preview-version-1"
+    }));
+    expect(fileApiMock.saveFileContent).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledWith("notes.txt");
+    });
+  });
+
   it("有 diff 数据时依然保持代码预览，并显示新增和修改标尺", async () => {
     fileApiMock.getFilePreview.mockResolvedValue(
       createPreviewResponse({
