@@ -2503,6 +2503,117 @@ describe("AffairsLibraryService global binding", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("文档列表支持按 keyword 匹配标题、路径、摘要和标签", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-keyword-export-"));
+    seedExistingArtifacts(rootDir);
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.writeFileSync(
+      path.join(exportDir, "taxonomy.json"),
+      JSON.stringify({ nodes: [{ path: "客户/重要", name: "重要", root_type: "manual", parent_path: "客户", depth: 1 }] })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "bootstrap.json"),
+      JSON.stringify({ folders: [{ path: "客户资料", name: "客户资料", parent_path: null, direct_document_count: 2, document_count: 2 }] })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "meta-1.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-1",
+            path: "客户资料/跟进记录.md",
+            title: "跟进记录",
+            summary: "客户回访纪要",
+            direct_tags: ["客户/重要"],
+            derived_tags: [],
+            mtime: "2026-06-05T08:00:00.000Z"
+          },
+          {
+            document_id: "doc-2",
+            path: "客户资料/发票台账.md",
+            title: "发票台账",
+            summary: "普通财务记录",
+            direct_tags: ["财务"],
+            derived_tags: [],
+            mtime: "2026-06-05T08:00:00.000Z"
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-06-05T08:00:00.000Z",
+        entries: { taxonomy: "taxonomy.json", bootstrap: "bootstrap.json" },
+        meta_shards: [{ path: "meta-1.json" }]
+      })
+    );
+
+    const service = createService({ rootDir });
+
+    expect(service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      keyword: "回访"
+    }).items.map((item) => item.documentId)).toEqual(["doc-1"]);
+
+    expect(service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      keyword: "客户/重要"
+    }).items.map((item) => item.documentId)).toEqual(["doc-1"]);
+
+    expect(service.listDocuments("workspace-1", "user-1", {
+      browseMode: "tag",
+      keyword: "发票台账"
+    }).items.map((item) => item.documentId)).toEqual(["doc-2"]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("folder 模式会返回当前目录真实可见总条数，而不是只返回已加载文档数", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-folder-visible-entry-total-"));
+    fs.mkdirSync(path.join(rootDir, "项目文档"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, "项目文档", "子目录A"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, "项目文档", "子目录B"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "项目文档", "说明1.md"), "# one");
+    fs.writeFileSync(path.join(rootDir, "项目文档", "说明2.md"), "# two");
+
+    const service = createService({ rootDir });
+    const result = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "项目文档",
+      offset: 1,
+      limit: 1
+    });
+
+    expect(result.total).toBe(2);
+    expect(result.visibleEntryTotal).toBe(4);
+    expect(result.items).toHaveLength(1);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("folder 模式的实时列表也支持 keyword 过滤", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-keyword-folder-"));
+    fs.mkdirSync(path.join(rootDir, "客户资料"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "客户资料", "跟进记录.md"), "客户回访纪要");
+    fs.writeFileSync(path.join(rootDir, "客户资料", "发票台账.md"), "普通财务记录");
+
+    const service = createService({ rootDir });
+    const result = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "客户资料",
+      keyword: "跟进"
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.items.map((item) => item.path)).toEqual(["客户资料/跟进记录.md"]);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("全局绑定接口会优先复用用户级配置", () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-global-binding-"));
 

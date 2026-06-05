@@ -201,12 +201,14 @@ export interface ListAffairsLibraryDocumentsInput {
   selectedTagPath?: string | null;
   selectedTagPaths?: string[] | null;
   selectedFavoriteId?: string | null;
+  keyword?: string | null;
   offset?: number;
   limit?: number;
 }
 
 export interface AffairsLibraryDocumentListDto {
   total: number;
+  visibleEntryTotal?: number;
   offset: number;
   limit: number;
   items: AffairsLibraryDocumentRecordDto[];
@@ -404,6 +406,7 @@ interface AffairsLibraryDirectoryHintTaskResult {
   refreshedAt: string;
   source: AffairsLibraryDirectorySourceDto;
   itemCount: number;
+  childDirectoryCount: number;
   changedPaths: string[];
   items: AffairsLibraryDocumentRecordDto[];
   generatedAt: string | null;
@@ -415,6 +418,7 @@ interface AffairsLibraryHotDirectoryCacheEntry {
   rootDir: string;
   directoryPath: string;
   items: AffairsLibraryDocumentRecordDto[];
+  childDirectoryCount: number;
   updatedAtMs: number;
   source: AffairsLibraryDirectorySourceDto;
   dirty: boolean;
@@ -432,6 +436,7 @@ interface AffairsLibraryHotDirectoryCacheEntry {
 
 interface AffairsLibraryFolderDocumentsBuildResult {
   items: AffairsLibraryDocumentRecordDto[];
+  childDirectoryCount: number;
   source: AffairsLibraryDirectorySourceDto;
   generatedAt: string | null;
   filesystemObservedAt: string | null;
@@ -791,6 +796,7 @@ export class AffairsLibraryService {
     if (!binding || !binding.enabled) {
       return {
         total: 0,
+        visibleEntryTotal: 0,
         offset: 0,
         limit: normalizePositiveInt(input.limit, 120, 400),
         items: [],
@@ -804,6 +810,7 @@ export class AffairsLibraryService {
     const browseMode = input.browseMode === "tag" ? "tag" : "folder";
     const offset = Math.max(0, normalizePositiveInt(input.offset, 0, Number.MAX_SAFE_INTEGER));
     const limit = normalizePositiveInt(input.limit, 120, 400);
+    const normalizedKeyword = normalizeDocumentSearchKeyword(input.keyword);
     const indexStatus = this.readIndexStatus(workspaceId, binding);
     const selectedFavorite = favorites.find(
       (item) => buildFavoriteNodeId(item.kind, item.path) === (input.selectedFavoriteId?.trim() ?? "")
@@ -813,6 +820,7 @@ export class AffairsLibraryService {
     if (browseMode === "folder") {
       return this.listLiveFolderDocuments(workspaceId, binding.rootDir, favorites, exportData, selectedFavorite, {
         selectedFolderPath: input.selectedFolderPath,
+        keyword: normalizedKeyword,
         offset,
         limit,
         indexStatus
@@ -822,6 +830,7 @@ export class AffairsLibraryService {
     if (!exportData) {
       return {
         total: 0,
+        visibleEntryTotal: 0,
         offset,
         limit,
         items: [],
@@ -831,6 +840,10 @@ export class AffairsLibraryService {
     }
 
     const filtered = exportData.documents.filter((document) => {
+      if (!matchesDocumentKeyword(document, normalizedKeyword)) {
+        return false;
+      }
+
       if (browseMode === "tag") {
         const tagPaths = selectedFavorite?.kind === "tag"
           ? [selectedFavorite.path]
@@ -860,6 +873,7 @@ export class AffairsLibraryService {
 
     return {
       total: filtered.length,
+      visibleEntryTotal: filtered.length,
       offset,
       limit,
       items,
@@ -878,6 +892,7 @@ export class AffairsLibraryService {
     selectedFavorite: AffairsLibraryFavoriteRecord | null,
     input: {
       selectedFolderPath?: string | null;
+      keyword?: string;
       offset: number;
       limit: number;
       indexStatus: AffairsLibraryIndexStatusDto;
@@ -933,7 +948,7 @@ export class AffairsLibraryService {
       : directoryResult.source;
 
     if (!liveScanDecision.avoidSyncScan) {
-      this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, directoryResult.source, {
+      this.updateHotDirectoryCache(workspaceId, rootDir, normalizedDirectoryPath, items, directoryResult.childDirectoryCount, directoryResult.source, {
         preserveStatus: directoryStatus.state === "running" || directoryStatus.state === "queued"
           || directoryStatus.state === "queue_timeout",
         generatedAt: directoryResult.generatedAt,
@@ -959,6 +974,7 @@ export class AffairsLibraryService {
     } else {
       const fallbackEntry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, normalizedDirectoryPath);
       fallbackEntry.items = directoryResult.items;
+      fallbackEntry.childDirectoryCount = directoryResult.childDirectoryCount;
       fallbackEntry.source = directoryResult.source;
       fallbackEntry.generatedAt = directoryResult.generatedAt;
       fallbackEntry.filesystemObservedAt = directoryResult.filesystemObservedAt;
@@ -982,7 +998,12 @@ export class AffairsLibraryService {
       this.scheduleDirectoryHintRefresh(workspaceId, normalizedDirectoryPath, "large_directory_live_scan");
     }
 
-    const resultItems = items.slice(input.offset, input.offset + input.limit);
+    const keyword = input.keyword?.trim() ?? "";
+    const filteredItems = keyword
+      ? items.filter((item) => matchesDocumentKeyword(item, keyword))
+      : items;
+    const resultItems = filteredItems.slice(input.offset, input.offset + input.limit);
+    const visibleEntryTotal = directoryResult.childDirectoryCount + filteredItems.length;
     writeAffairsLibraryDebugLog({
       event: "folder_list_served",
       processRole: "host",
@@ -1000,7 +1021,9 @@ export class AffairsLibraryService {
         generatedAt: directoryResult.generatedAt,
         filesystemObservedAt: directoryResult.filesystemObservedAt,
         estimatedDocumentCount: liveScanDecision.estimatedDocumentCount,
-        total: items.length,
+        total: filteredItems.length,
+        visibleEntryTotal,
+        childDirectoryCount: directoryResult.childDirectoryCount,
         returned: resultItems.length,
         offset: input.offset,
         limit: input.limit,
@@ -1009,7 +1032,8 @@ export class AffairsLibraryService {
     });
 
     return {
-      total: items.length,
+      total: filteredItems.length,
+      visibleEntryTotal,
       offset: input.offset,
       limit: input.limit,
       items: resultItems,
@@ -1140,6 +1164,7 @@ export class AffairsLibraryService {
     if (cached && cached.items.length > 0) {
       return {
         items: cached.items,
+        childDirectoryCount: cached.childDirectoryCount,
         source: staleReason ? "stale_fallback" : cached.source,
         generatedAt: cached.generatedAt,
         filesystemObservedAt: cached.filesystemObservedAt,
@@ -1172,6 +1197,7 @@ export class AffairsLibraryService {
 
     return {
       items,
+      childDirectoryCount: countDirectChildFoldersFromSnapshot(normalizedFolderPath, exportData),
       source: directoryStatus?.source ?? "snapshot",
       generatedAt: exportData?.generatedAt ?? directoryStatus?.generatedAt ?? null,
       filesystemObservedAt: directoryStatus?.filesystemObservedAt ?? null,
@@ -2410,6 +2436,7 @@ export class AffairsLibraryService {
       rootDir,
       directoryPath: normalizedDirectoryPath,
       items: [],
+      childDirectoryCount: 0,
       updatedAtMs: 0,
       source: "snapshot",
       dirty: true,
@@ -2433,6 +2460,7 @@ export class AffairsLibraryService {
     rootDir: string,
     directoryPath: string,
     items: AffairsLibraryDocumentRecordDto[],
+    childDirectoryCount: number,
     source: AffairsLibraryDirectorySourceDto,
     options: {
       preserveStatus?: boolean;
@@ -2448,6 +2476,7 @@ export class AffairsLibraryService {
     const entry = this.getOrCreateHotDirectoryEntry(workspaceId, rootDir, directoryPath);
     entry.rootDir = rootDir;
     entry.items = items;
+    entry.childDirectoryCount = childDirectoryCount;
     entry.updatedAtMs = Date.now();
     entry.source = source;
     entry.lastRefreshRequestedAt = options.requestedAt ?? entry.lastRefreshRequestedAt;
@@ -2591,6 +2620,7 @@ export class AffairsLibraryService {
       refreshedAt: completedAt,
       source: liveResult.source,
       itemCount: liveResult.items.length,
+      childDirectoryCount: liveResult.childDirectoryCount,
       changedPaths,
       items: liveResult.items,
       generatedAt: liveResult.generatedAt,
@@ -2632,6 +2662,7 @@ export class AffairsLibraryService {
         meta.rootDir,
         meta.directoryPath,
         result.items,
+        result.childDirectoryCount,
         result.source,
         {
           requestedAt: this.getOrCreateHotDirectoryEntry(workspaceId, meta.rootDir, meta.directoryPath).lastRefreshRequestedAt,
@@ -4385,6 +4416,27 @@ function shouldForceFullRebuild(reason: string): boolean {
     || normalizedReason.includes(AFFAIRS_LIBRARY_INDEX_DIRTY_REASONS.missingExportManifest);
 }
 
+function normalizeDocumentSearchKeyword(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function matchesDocumentKeyword(
+  document: Pick<AffairsLibraryDocumentRecordDto, "title" | "path" | "summary" | "tags" | "derivedTags">,
+  normalizedKeyword: string
+): boolean {
+  if (!normalizedKeyword) {
+    return true;
+  }
+
+  return [
+    document.title,
+    document.path,
+    document.summary,
+    ...document.tags,
+    ...document.derivedTags
+  ].some((value) => value?.toLowerCase().includes(normalizedKeyword));
+}
+
 function matchesFavorite(
   favorite: AffairsLibraryFavoriteRecord,
   documentPath: string,
@@ -4533,6 +4585,54 @@ function readAffairsLibraryConfigSafe(rootDir: string): {
   };
 }
 
+function countDirectChildFoldersFromSnapshot(
+  normalizedFolderPath: string,
+  exportData: AffairsLibraryExportData | null
+): number {
+  if (!exportData) {
+    return 0;
+  }
+  const normalizedCurrentPath = normalizeFolderPath(normalizedFolderPath);
+  return exportData.folders.filter((folder) => normalizeFolderPath(folder.parentPath) === normalizedCurrentPath).length;
+}
+
+function countVisibleDirectChildDirectories(
+  targetDir: string,
+  normalizedFolderPath: string,
+  includedHiddenPaths: readonly string[]
+): number {
+  if (!fs.existsSync(targetDir)) {
+    return 0;
+  }
+  let stats: fs.Stats | null = null;
+  try {
+    stats = fs.statSync(targetDir);
+  } catch {
+    stats = null;
+  }
+  if (!stats?.isDirectory()) {
+    return 0;
+  }
+  let count = 0;
+  for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      continue;
+    }
+    const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
+    if (relativePath === '.ai-index' || relativePath.startsWith('.ai-index/')) {
+      continue;
+    }
+    if (
+      (entry.name.startsWith('.') || hasHiddenPathSegment(relativePath))
+      && !isIncludedHiddenPath(relativePath, includedHiddenPaths)
+    ) {
+      continue;
+    }
+    count += 1;
+  }
+  return count;
+}
+
 function buildAffairsFolderDocumentsFromFilesystem(
   rootDir: string,
   normalizedFolderPath: string,
@@ -4623,6 +4723,7 @@ function buildAffairsFolderDocumentsFromFilesystem(
 
   return {
     items: [...documentMap.values()],
+    childDirectoryCount: countVisibleDirectChildDirectories(targetDir, normalizedFolderPath, config.includedHiddenPaths),
     source: hasLiveData && hasSnapshotData
       ? "mixed"
       : hasLiveData
@@ -4654,6 +4755,7 @@ export async function runAffairsLibraryDirectoryHintInHelper(input: {
     refreshedAt: nowIso(),
     source: result.source,
     itemCount: result.items.length,
+    childDirectoryCount: result.childDirectoryCount,
     changedPaths: result.items.map((item) => item.path).sort((left, right) => left.localeCompare(right, "zh-CN")),
     items: result.items,
     generatedAt: result.generatedAt,

@@ -286,6 +286,24 @@ describe("spec004 文件管理能力", () => {
       ])
     );
 
+    const contentSearch = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/search?workspaceId=${workspaceId}&keyword=${encodeURIComponent("第二套消息真相")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(contentSearch.statusCode).toBe(200);
+    expect(contentSearch.json().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "docs/readme.md",
+          matchSource: "content",
+          snippet: expect.stringContaining("第二套消息真相")
+        })
+      ])
+    );
+
     const previewBinary = await hosted.app.inject({
       method: "GET",
       url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("binary.bin")}`,
