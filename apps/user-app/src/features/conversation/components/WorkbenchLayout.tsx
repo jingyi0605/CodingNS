@@ -159,8 +159,8 @@ import {
 import { buildSessionTitlePresentation } from "../session-title";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import {
+  buildAffairsPath,
   buildDraftSessionPath,
-  buildWorkspaceAffairsPath,
   buildWorkspaceDebugPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
@@ -1010,6 +1010,7 @@ function normalizeSearchKeywordTerms(value: string | string[]): string[] {
   return result;
 }
 
+const AFFAIRS_GLOBAL_WORKSPACE_ID = "affairs-global";
 const GLOBAL_SEARCH_SOURCE_TIMEOUT_MS = 6000;
 const CODE_SEARCH_PAGE_SIZE = 100;
 const AFFAIRS_SEARCH_DOCUMENT_PAGE_SIZE = 200;
@@ -5536,9 +5537,11 @@ function SidebarContent({
   }, [platform, showToast]);
 
   const openAffairsInExternalWindow = useCallback(async (workspaceId: string) => {
+    const routePath = buildAffairsPath();
     const result = await openAffairsExternalWindow(platform, {
       workspaceId,
-      focusOwner: "affairs-workbench"
+      focusOwner: "affairs-workbench",
+      routePath
     });
 
     if (!result.ok) {
@@ -9967,6 +9970,7 @@ export function WorkbenchLayout({
   const pendingArchiveStateBySessionIdRef = useRef(new Map<string, boolean>());
   const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
+  const lastExplicitWorkbenchModeRef = useRef<WorkbenchMode | null>(null);
   const fileRevealRequestIdRef = useRef(0);
   const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
@@ -11743,15 +11747,20 @@ export function WorkbenchLayout({
       ? "butler"
       : "conversation";
   const routeWorkbenchMode = resolveWorkbenchModeFromPath(location.pathname);
+  const rememberedRouteWorkbenchMode = location.pathname.startsWith("/settings")
+    ? lastExplicitWorkbenchModeRef.current
+    : null;
   const activeWorkbenchMode: WorkbenchMode = routeWorkbenchMode
+    ?? rememberedRouteWorkbenchMode
     ?? (currentWorkspaceId ? readWorkspaceWorkbenchMode(currentWorkspaceId) : null)
     ?? WORKBENCH_MODE_DEFAULT;
-  const effectiveAffairsViewState = currentWorkspaceId
-    ? affairsViewState ?? createDefaultAffairsViewState(currentWorkspaceId)
+  const affairsWorkspaceId = activeWorkbenchMode === "affairs" ? AFFAIRS_GLOBAL_WORKSPACE_ID : currentWorkspaceId;
+  const effectiveAffairsViewState = affairsWorkspaceId
+    ? affairsViewState ?? createDefaultAffairsViewState(affairsWorkspaceId)
     : null;
   const shouldUseAffairsShell =
     activeWorkbenchMode === "affairs"
-    && Boolean(currentWorkspaceId && effectiveAffairsViewState);
+    && Boolean(affairsWorkspaceId && effectiveAffairsViewState);
   const shouldRenderAffairsWorkbench =
     routeWorkbenchMode === "affairs"
     && shouldUseAffairsShell;
@@ -11764,6 +11773,14 @@ export function WorkbenchLayout({
     && !affairsRightCollapsed;
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
+
+  useEffect(() => {
+    if (!routeWorkbenchMode) {
+      return;
+    }
+
+    lastExplicitWorkbenchModeRef.current = routeWorkbenchMode;
+  }, [routeWorkbenchMode]);
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -12510,28 +12527,27 @@ export function WorkbenchLayout({
   }, [currentSessionId, isDraftSession, location.pathname, location.search, sessionWorkspaceId]);
 
   useEffect(() => {
-    if (!currentWorkspaceId || routeWorkbenchMode === null) {
+    if (!affairsWorkspaceId || routeWorkbenchMode === null) {
       return;
     }
 
-    writeWorkspaceWorkbenchMode(currentWorkspaceId, activeWorkbenchMode);
-    writeWorkbenchModeLastPath(currentWorkspaceId, activeWorkbenchMode, `${location.pathname}${location.search}`);
-  }, [activeWorkbenchMode, currentWorkspaceId, location.pathname, location.search, routeWorkbenchMode]);
+    writeWorkspaceWorkbenchMode(affairsWorkspaceId, activeWorkbenchMode);
+    writeWorkbenchModeLastPath(affairsWorkspaceId, activeWorkbenchMode, `${location.pathname}${location.search}`);
+  }, [activeWorkbenchMode, affairsWorkspaceId, location.pathname, location.search, routeWorkbenchMode]);
 
   useEffect(() => {
-    if (!currentWorkspaceId) {
+    if (!affairsWorkspaceId) {
       setAffairsViewState(null);
       return;
     }
 
     setAffairsViewState(
       createDefaultAffairsLibraryLandingState(
-        currentWorkspaceId,
-        readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
+        affairsWorkspaceId,
+        readAffairsViewState(affairsWorkspaceId) ?? createDefaultAffairsViewState(affairsWorkspaceId)
       )
     );
-  }, [currentWorkspaceId]);
-
+  }, [affairsWorkspaceId]);
 
   useEffect(() => {
     if (!affairsViewState) {
@@ -12642,7 +12658,7 @@ export function WorkbenchLayout({
     ensureInfoPanelReady();
 
     if (activeWorkbenchMode === "affairs") {
-      const targetPath = buildWorkspaceAffairsPath(workspaceId);
+      const targetPath = buildAffairsPath();
 
       if (location.pathname !== targetPath) {
         navigate(targetPath);
@@ -12770,9 +12786,12 @@ export function WorkbenchLayout({
       closeSearchModal();
     }
     setSelectedWorkspaceId(workspaceId);
-    writeWorkspaceWorkbenchMode(workspaceId, "affairs");
-    setAffairsViewState(nextState);
-    const targetPath = buildWorkspaceAffairsPath(workspaceId);
+    writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, "affairs");
+    setAffairsViewState({
+      ...nextState,
+      workspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID
+    });
+    const targetPath = buildAffairsPath();
     if (location.pathname !== targetPath) {
       navigate(targetPath);
     }
@@ -12887,33 +12906,39 @@ export function WorkbenchLayout({
   }
 
   function handleSelectWorkbenchMode(nextMode: WorkbenchMode) {
-    if (!currentWorkspaceId || routeWorkbenchMode === nextMode) {
+    if (routeWorkbenchMode === nextMode) {
       return;
     }
 
-    writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
     if (nextMode === "affairs") {
+      writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, nextMode);
       const nextAffairsViewState = createDefaultAffairsLibraryLandingState(
-        currentWorkspaceId,
-        affairsViewState ?? readAffairsViewState(currentWorkspaceId) ?? createDefaultAffairsViewState(currentWorkspaceId)
+        AFFAIRS_GLOBAL_WORKSPACE_ID,
+        affairsViewState ?? readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID) ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
       );
       flushSync(() => {
         setAffairsRightCollapsed(false);
         setAffairsViewState(nextAffairsViewState);
       });
+      navigate(buildAffairsPath());
+      return;
     }
+
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
     const targetPath = resolveValidWorkbenchModeLastPath(currentWorkspaceId, nextMode)
-      ?? (nextMode === "affairs"
-        ? buildWorkspaceAffairsPath(currentWorkspaceId)
-        : resolveValidWorkbenchModeLastPath(currentWorkspaceId, "code")
-          ?? buildWorkspaceSessionIndexPath(currentWorkspaceId));
+      ?? resolveValidWorkbenchModeLastPath(currentWorkspaceId, "code")
+      ?? buildWorkspaceSessionIndexPath(currentWorkspaceId);
 
     navigate(targetPath);
   }
 
   function goToConversationTab() {
-    if (activeWorkbenchMode === "affairs" && currentWorkspaceId) {
-      navigate(buildWorkspaceAffairsPath(currentWorkspaceId));
+    if (activeWorkbenchMode === "affairs") {
+      navigate(buildAffairsPath());
       return;
     }
 
@@ -13757,6 +13782,7 @@ export function WorkbenchLayout({
           data-info-ready={infoPanelReady}
           data-parallel-conversation-active={isParallelConversationActive ? "true" : undefined}
           data-parallel-sidebar-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
+          data-workbench-mode={activeWorkbenchMode}
           data-runtime-platform={platform.platform}
           data-os-family={platform.ui.osFamily}
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
@@ -13900,7 +13926,7 @@ export function WorkbenchLayout({
                   </div>
 
                   {shouldRenderAffairsWorkbench ? (
-                    <AffairsWorkbenchView workspaceId={currentWorkspaceId!} />
+                    <AffairsWorkbenchView workspaceId={AFFAIRS_GLOBAL_WORKSPACE_ID} />
                   ) : (
                     <CodeWorkbenchView>
                       <Outlet />

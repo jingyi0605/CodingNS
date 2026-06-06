@@ -99,7 +99,7 @@ function normalizeLegacyAffairsSelectedNodeId(
 }
 
 export function resolveWorkbenchModeFromPath(pathname: string): WorkbenchMode | null {
-  if (matchPath("/workspaces/:workspaceId/affairs", pathname)) {
+  if (matchPath("/affairs", pathname) || matchPath("/workspaces/:workspaceId/affairs", pathname)) {
     return "affairs";
   }
 

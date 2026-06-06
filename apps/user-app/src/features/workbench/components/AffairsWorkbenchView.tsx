@@ -44,7 +44,7 @@ import {
   readAffairsDashboardState,
   writeAffairsDashboardState
 } from "../utils/affairs-dashboard-state";
-import { buildWorkspaceAffairsPath } from "../utils/workbench-navigation";
+import { buildAffairsPath } from "../utils/workbench-navigation";
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
@@ -1418,10 +1418,10 @@ function buildWorkspaceHtmlSourceWorkspaceOptions(
 
 function resolveAffairsLibrarySourceWorkspaceOption(
   binding: AffairsLibraryBindingDto | null,
-  currentWorkspaceId: string
+  currentWorkspaceId: string | null | undefined
 ): WorkspaceHtmlSourceScopeOption | null {
   const rootDir = binding?.rootDir?.trim() ?? "";
-  const workspaceId = binding?.workspaceId?.trim() || currentWorkspaceId.trim();
+  const workspaceId = binding?.workspaceId?.trim() || currentWorkspaceId?.trim() || AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID;
   if (!rootDir || !workspaceId) {
     return null;
   }
@@ -1435,7 +1435,7 @@ function resolveAffairsLibrarySourceWorkspaceOption(
 }
 
 function resolveWorkspaceHtmlSourceDefaultWorkspaceId(input: {
-  currentWorkspaceId: string;
+  currentWorkspaceId: string | null | undefined;
   currentLibraryWorkspace: WorkspaceHtmlSourceScopeOption | null;
   options: WorkspaceHtmlSourceScopeOption[];
 }): string {
@@ -1444,7 +1444,7 @@ function resolveWorkspaceHtmlSourceDefaultWorkspaceId(input: {
     return currentLibraryWorkspaceValue;
   }
 
-  const currentWorkspaceId = input.currentWorkspaceId.trim();
+  const currentWorkspaceId = input.currentWorkspaceId?.trim() ?? "";
   if (currentWorkspaceId && input.options.some((option) => option.value === currentWorkspaceId)) {
     return currentWorkspaceId;
   }
@@ -1650,12 +1650,12 @@ export function AffairsWorkbenchProvider({
         }
       : null
   }), [affairsSetupCompleted, butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
-  const isAffairsRoute = location.pathname === buildWorkspaceAffairsPath(workspaceId);
+  const isAffairsRoute = location.pathname === buildAffairsPath();
   const ensureAffairsRoute = useCallback(() => {
     if (isAffairsRoute) {
       return;
     }
-    navigate(buildWorkspaceAffairsPath(workspaceId));
+    navigate(buildAffairsPath());
   }, [isAffairsRoute, navigate, workspaceId]);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
@@ -1811,7 +1811,7 @@ export function AffairsWorkbenchProvider({
     setLightweightConversationSessionsLoading(true);
     try {
       const response = await listAffairsLightweightSessions(workspaceId);
-      setLightweightConversationSessions(response.items);
+      setLightweightConversationSessions(Array.isArray(response.items) ? response.items : []);
     } catch (error) {
       showToast({
         tone: "error",
@@ -2386,7 +2386,7 @@ export function AffairsWorkbenchProvider({
     };
   }, [
     librarySnapshot?.binding?.enabled,
-    librarySnapshot?.status.state,
+    librarySnapshot?.status?.state,
     workspaceId
   ]);
 
@@ -2486,8 +2486,8 @@ export function AffairsWorkbenchProvider({
     [state.selectedFolderPath]
   );
   const libraryDocumentAutoReloadVersion = useMemo(
-    () => state.browseMode === "folder" ? librarySnapshot?.status.lastCompletedAt ?? null : null,
-    [librarySnapshot?.status.lastCompletedAt, state.browseMode]
+    () => state.browseMode === "folder" ? librarySnapshot?.status?.lastCompletedAt ?? null : null,
+    [librarySnapshot?.status?.lastCompletedAt, state.browseMode]
   );
 
   useEffect(() => {
@@ -15533,15 +15533,15 @@ function persistAffairsTagTreeState(workspaceId: string, state: StoredAffairsTag
 }
 
 function buildAffairsLibrarySnapshotCacheKey(workspaceId: string) {
-  return `affairs.library.snapshot.${workspaceId}`;
+  return `affairs.library.snapshot.${AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID}`;
 }
 
 function buildAffairsLightweightConversationSessionsCacheKey(workspaceId: string) {
-  return `affairs.conversation.lightweight.sessions.${workspaceId}`;
+  return `affairs.conversation.lightweight.sessions.${AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID}`;
 }
 
 function buildAffairsLibraryConfigCacheKey(workspaceId: string) {
-  return `affairs.library.config.${workspaceId}`;
+  return `affairs.library.config.${AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID}`;
 }
 
 function buildAffairsLibraryDocumentPageCacheKey(workspaceId: string, state: AffairsViewState) {

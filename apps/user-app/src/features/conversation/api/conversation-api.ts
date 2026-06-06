@@ -1489,7 +1489,7 @@ export function updateWorkspaceNavigationState(
 
 export function getAffairsLibraryBinding(workspaceId: string) {
   return httpClient.request<AffairsLibraryBindingDto | null>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`
+    "/api/affairs/library-binding"
   );
 }
 
@@ -1514,7 +1514,7 @@ export function updateGlobalAffairsDashboardState(payload: { dashboardState: unk
 
 export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
   return httpClient.request<AffairsLibraryBindingDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-binding`,
+    "/api/affairs/library-binding",
     {
       method: "PUT",
       body: JSON.stringify(payload)
@@ -1531,7 +1531,7 @@ export function saveGlobalAffairsLibraryBinding(payload: { rootDir: string }) {
 
 export function setAffairsLibraryEnabled(workspaceId: string, payload: { enabled: boolean }) {
   return httpClient.request<AffairsLibraryBindingDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-enabled`,
+    "/api/affairs/library-enabled",
     {
       method: "PUT",
       body: JSON.stringify(payload)
@@ -1548,13 +1548,13 @@ export function setGlobalAffairsLibraryEnabled(payload: { enabled: boolean }) {
 
 export function getAffairsLibrarySnapshot(workspaceId: string) {
   return httpClient.request<AffairsLibrarySnapshotDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-snapshot`
+    "/api/affairs/library-snapshot"
   );
 }
 
 export function getAffairsLibraryConfig(workspaceId: string) {
   return httpClient.request<AffairsLibraryConfigDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-config`
+    "/api/affairs/library-config"
   );
 }
 
@@ -1568,7 +1568,7 @@ export function saveAffairsLibraryConfig(
   }
 ) {
   return httpClient.request<AffairsLibraryConfigDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-config`,
+    "/api/affairs/library-config",
     {
       method: "PUT",
       body: JSON.stringify(payload)
@@ -1618,7 +1618,7 @@ export function listAffairsLibraryDocuments(
     search.set("limit", String(query.limit));
   }
   return httpClient.request<AffairsLibraryDocumentListDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-documents?${search.toString()}`
+    `/api/affairs/library-documents?${search.toString()}`
   );
 }
 
@@ -1639,7 +1639,7 @@ export function listAffairsLibraryFiles(
 
   const suffix = search.toString();
   return httpClient.request<{ items: FileNodeDto[] }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-files${suffix ? `?${suffix}` : ""}`
+    `/api/affairs/library-files${suffix ? `?${suffix}` : ""}`
   );
 }
 
@@ -1663,7 +1663,7 @@ export function getAffairsLibraryPreviewWithOptions(
   }
 
   return httpClient.request<AffairsLibraryPreviewDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-preview?${search.toString()}`
+    `/api/affairs/library-preview?${search.toString()}`
   );
 }
 
@@ -1674,7 +1674,7 @@ export function downloadAffairsLibraryFile(workspaceId: string, filePath: string
   });
 
   return httpClient.request<AffairsLibraryDownloadDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-download?${search.toString()}`
+    `/api/affairs/library-download?${search.toString()}`
   );
 }
 
@@ -1689,7 +1689,7 @@ export function operateAffairsLibraryFile(
   }
 ) {
   return httpClient.request<AffairsLibraryOperationResultDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-ops`,
+    "/api/affairs/library-ops",
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -1707,7 +1707,7 @@ export function requestAffairsLibraryRefresh(
     deduped?: boolean;
     status: AffairsLibraryIndexStatusDto;
     directoryStatus?: AffairsLibraryDirectoryStatusDto | null;
-  }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-refresh`, {
+  }>("/api/affairs/library-refresh", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -1718,7 +1718,7 @@ export function updateAffairsLibraryFavorites(
   payload: { favorites: AffairsLibraryFavoriteRecordDto[] }
 ) {
   return httpClient.request<{ items: AffairsLibraryFavoriteRecordDto[] }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/library-favorites`,
+    "/api/affairs/library-favorites",
     {
       method: "PUT",
       body: JSON.stringify(payload)
@@ -1757,7 +1757,7 @@ export function listAffairsTags(workspaceId: string, query?: { includeDisabled?:
       lastRecomputedAt: string | null;
       lastError: string | null;
     };
-  }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags${suffix}`);
+  }>(`/api/affairs/tags${suffix}`);
 }
 
 export function createAffairsTag(
@@ -1771,7 +1771,7 @@ export function createAffairsTag(
   },
 ) {
   return httpClient.request<AffairsTagDetailWithRulesDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags`,
+    "/api/affairs/tags",
     {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1784,7 +1784,7 @@ export function ensureAffairsTag(
   payload: { path: string },
 ) {
   return httpClient.request<AffairsTagDetailWithRulesDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/ensure`,
+    "/api/affairs/tags/ensure",
     {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1794,7 +1794,7 @@ export function ensureAffairsTag(
 
 export function getAffairsTagDetail(workspaceId: string, tagId: string) {
   return httpClient.request<AffairsTagDetailWithRulesDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`
+    `/api/affairs/tags/${encodeURIComponent(tagId)}`
   );
 }
 
@@ -1810,7 +1810,7 @@ export function updateAffairsTag(
   },
 ) {
   return httpClient.request<AffairsTagDetailWithRulesDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`,
+    `/api/affairs/tags/${encodeURIComponent(tagId)}`,
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1828,7 +1828,7 @@ export function deleteAffairsTag(workspaceId: string, tagId: string) {
       status: "queued";
     } | null;
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/${encodeURIComponent(tagId)}`,
+    `/api/affairs/tags/${encodeURIComponent(tagId)}`,
     {
       method: "DELETE",
     },
@@ -1842,7 +1842,7 @@ export function requestAffairsTagFullRecompute(workspaceId: string) {
     status: "queued";
     scope: "full";
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recompute`,
+    "/api/affairs/tags/recompute",
     {
       method: "POST",
     },
@@ -1851,7 +1851,7 @@ export function requestAffairsTagFullRecompute(workspaceId: string) {
 
 export function getAffairsTagRecomputeTask(workspaceId: string) {
   return httpClient.request<AffairsTaskSnapshotDto | null>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recompute-task`
+    "/api/affairs/tags/recompute-task"
   );
 }
 
@@ -1862,7 +1862,7 @@ export function requestAffairsTagRecoveryRecompute(workspaceId: string) {
     status: "queued";
     scope: "full";
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recovery/recompute`,
+    "/api/affairs/tags/recovery/recompute",
     {
       method: "POST",
     },
@@ -1871,13 +1871,13 @@ export function requestAffairsTagRecoveryRecompute(workspaceId: string) {
 
 export function getAffairsDocumentTagDetails(workspaceId: string, documentId: string) {
   return httpClient.request<AffairsDocumentTagDetailsDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tag-details`
+    `/api/affairs/documents/${encodeURIComponent(documentId)}/tag-details`
   );
 }
 
 export function getAffairsDocumentTagTask(workspaceId: string, documentId: string) {
   return httpClient.request<AffairsTaskSnapshotDto | null>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tag-task`
+    `/api/affairs/documents/${encodeURIComponent(documentId)}/tag-task`
   );
 }
 
@@ -1887,7 +1887,7 @@ export function saveAffairsDocumentTags(workspaceId: string, documentId: string,
     items: AffairsResolvedTagSourceDto[];
     refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tags`,
+    `/api/affairs/documents/${encodeURIComponent(documentId)}/tags`,
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1905,7 +1905,7 @@ export function saveAffairsDocumentTagsWithCreate(
     items: AffairsResolvedTagSourceDto[];
     refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/documents/${encodeURIComponent(documentId)}/tags`,
+    `/api/affairs/documents/${encodeURIComponent(documentId)}/tags`,
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1916,7 +1916,7 @@ export function saveAffairsDocumentTagsWithCreate(
 export function getAffairsFolderTagDetails(workspaceId: string, folderPath: string) {
   const search = new URLSearchParams({ folderPath });
   return httpClient.request<AffairsFolderTagDetailsDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tag-details?${search.toString()}`
+    `/api/affairs/folders/tag-details?${search.toString()}`
   );
 }
 
@@ -1959,14 +1959,14 @@ export interface AffairsTagRecoveryStatusDto {
 
 export function getAffairsTagRecoveryStatus(workspaceId: string) {
   return httpClient.request<AffairsTagRecoveryStatusDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/tags/recovery/status`
+    "/api/affairs/tags/recovery/status"
   );
 }
 
 export function getAffairsFolderTagTask(workspaceId: string, folderPath: string) {
   const search = new URLSearchParams({ folderPath });
   return httpClient.request<AffairsTaskSnapshotDto | null>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tag-task?${search.toString()}`
+    `/api/affairs/folders/tag-task?${search.toString()}`
   );
 }
 
@@ -1976,7 +1976,7 @@ export function saveAffairsFolderTags(workspaceId: string, payload: { folderPath
     items: AffairsResolvedTagSourceDto[];
     refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tags`,
+    "/api/affairs/folders/tags",
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1993,7 +1993,7 @@ export function saveAffairsFolderTagsWithCreate(
     items: AffairsResolvedTagSourceDto[];
     refreshTask: { taskId: string; deduped: boolean; affectedPaths: string[] } | null;
   }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/folders/tags`,
+    "/api/affairs/folders/tags",
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -2332,7 +2332,7 @@ export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options
   }
 
   return httpClient.request<{ item: AffairsAssistantSessionsSnapshotDto }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/assistant-sessions`,
+    "/api/affairs/assistant-sessions",
     {
       headers
     }
@@ -2371,25 +2371,25 @@ export function startLiveSession(payload: StartLivePayload) {
 
 export function listAffairsLightweightSessions(workspaceId: string) {
   return httpClient.request<{ items: SessionSummaryDto[] }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions`
+    "/api/affairs/lightweight-sessions"
   );
 }
 
 export function getAffairsLightweightSession(workspaceId: string, sessionId: string) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`
   );
 }
 
 export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string) {
   return httpClient.request<HistoryPageDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`
   );
 }
 
 export function markAffairsLightweightSessionSeen(workspaceId: string, sessionId: string, seenAt?: string) {
   return httpClient.request<void>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/seen`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/seen`,
     {
       method: "POST",
       body: JSON.stringify(seenAt ? { seenAt } : {})
@@ -2399,7 +2399,7 @@ export function markAffairsLightweightSessionSeen(workspaceId: string, sessionId
 
 export function renameAffairsLightweightSessionTitle(workspaceId: string, sessionId: string, title: string) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/title`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/title`,
     {
       method: "PATCH",
       body: JSON.stringify({ title })
@@ -2413,7 +2413,7 @@ export function updateAffairsLightweightSessionArchiveState(
   archived: boolean
 ) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/archive`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/archive`,
     {
       method: "PATCH",
       body: JSON.stringify({ archived })
@@ -2427,7 +2427,7 @@ export function updateAffairsLightweightSessionFavoriteState(
   favorite: boolean
 ) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/favorite`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/favorite`,
     {
       method: "PATCH",
       body: JSON.stringify({ favorite })
@@ -2437,7 +2437,7 @@ export function updateAffairsLightweightSessionFavoriteState(
 
 export function deleteAffairsLightweightSession(workspaceId: string, sessionId: string) {
   return httpClient.request<void>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "DELETE"
     }
@@ -2449,7 +2449,7 @@ export function startAffairsLightweightSession(
   payload: StartAffairsLightweightSessionPayload
 ) {
   return httpClient.request<AffairsLightweightSessionTurnResponseDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions`,
+    "/api/affairs/lightweight-sessions",
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -2463,7 +2463,7 @@ export async function startAffairsLightweightSessionStream(
   onEvent: (event: AffairsLightweightSessionStreamEventDto) => void | Promise<void>
 ) {
   const response = await httpClient.requestRaw(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/stream`,
+    "/api/affairs/lightweight-sessions/stream",
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -2478,7 +2478,7 @@ export function sendAffairsLightweightSessionMessage(
   payload: SendAffairsLightweightSessionMessagePayload
 ) {
   return httpClient.request<AffairsLightweightSessionTurnResponseDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",
       body: JSON.stringify(payload)
@@ -2493,7 +2493,7 @@ export async function sendAffairsLightweightSessionMessageStream(
   onEvent: (event: AffairsLightweightSessionStreamEventDto) => void | Promise<void>
 ) {
   const response = await httpClient.requestRaw(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages/stream`,
+    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages/stream`,
     {
       method: "POST",
       body: JSON.stringify(payload)

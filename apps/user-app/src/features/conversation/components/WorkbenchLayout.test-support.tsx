@@ -390,6 +390,7 @@ export function renderWorkbenchRoute(
               path="/workspaces/:workspaceId/sessions/:sessionId"
               element={<CurrentLocationProbe />}
             />
+            <Route path="/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/butler" element={<CurrentLocationProbe />} />
@@ -810,7 +811,7 @@ export function mockAffairsLibraryFetch() {
   global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
     const url = String(rawInput);
 
-    if (url.includes("/api/workspaces/workspace-1/affairs/library-snapshot")) {
+    if (url.includes("/api/affairs/library-snapshot")) {
       return createJsonResponse({
         binding: {
           workspaceId: "workspace-1",
@@ -870,7 +871,7 @@ export function mockAffairsLibraryFetch() {
       });
     }
 
-    if (url.includes("/api/workspaces/workspace-1/affairs/library-documents")) {
+    if (url.includes("/api/affairs/library-documents")) {
       const parsedUrl = new URL(url, "https://codingns.local");
       const browseMode = parsedUrl.searchParams.get("browseMode");
       const selectedFolderPath = parsedUrl.searchParams.get("selectedFolderPath");
@@ -899,7 +900,7 @@ export function mockAffairsLibraryFetch() {
       });
     }
 
-    if (url.includes("/api/workspaces/workspace-1/affairs/library-config")) {
+    if (url.includes("/api/affairs/library-config")) {
       return createJsonResponse({
         binding: {
           workspaceId: "workspace-1",
@@ -918,11 +919,11 @@ export function mockAffairsLibraryFetch() {
       });
     }
 
-    if (url.includes("/api/workspaces/workspace-1/affairs/lightweight-sessions")) {
+    if (url.includes("/api/affairs/lightweight-sessions")) {
       return createJsonResponse({ items: [] });
     }
 
-    if (url.includes("/api/workspaces/workspace-1/affairs/assistant-sessions")) {
+    if (url.includes("/api/affairs/assistant-sessions")) {
       return createJsonResponse({
         item: {
           projectId: null,

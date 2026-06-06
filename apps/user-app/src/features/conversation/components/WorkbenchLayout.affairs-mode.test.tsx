@@ -69,7 +69,7 @@ describe("WorkbenchLayout", () => {
       }
     ]);
     const user = userEvent.setup();
-    const view = renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    const view = renderWorkbenchRoute("/affairs");
     await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") });
     const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
 
@@ -161,7 +161,7 @@ describe("WorkbenchLayout", () => {
       }
     ]);
 
-    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    renderWorkbenchRoute("/affairs");
 
     const affairsButton = await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") });
     fireEvent.contextMenu(affairsButton, { clientX: 220, clientY: 120 });
@@ -183,7 +183,8 @@ describe("WorkbenchLayout", () => {
       expect.anything(),
       expect.objectContaining({
         workspaceId: "workspace-1",
-        focusOwner: "affairs-workbench"
+        focusOwner: "affairs-workbench",
+        routePath: "/affairs"
       })
     );
   });
@@ -273,7 +274,7 @@ describe("WorkbenchLayout", () => {
     ]);
 
     const user = userEvent.setup();
-    const view = renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    const view = renderWorkbenchRoute("/affairs");
     await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") });
     const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
 
@@ -299,7 +300,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.queryByRole("button", { name: t("shell.hideInfoSidebar") })).not.toBeInTheDocument();
   });
 
-  it("打开 affairs 路由时会直接激活事务模式", async () => {
+  it("直接打开全局 affairs 路由时会激活事务模式", async () => {
     mockAffairsLibraryFetch();
     MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
       {
@@ -313,7 +314,7 @@ describe("WorkbenchLayout", () => {
         ]
       }
     ]);
-    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    renderWorkbenchRoute("/affairs");
 
     expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") })).toBeInTheDocument();
@@ -341,7 +342,7 @@ describe("WorkbenchLayout", () => {
     ]);
 
     const user = userEvent.setup();
-    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    renderWorkbenchRoute("/affairs");
 
     await user.click(await screen.findByRole("tab", { name: t("shell.affairsWorkbenchNav") }));
 
@@ -372,7 +373,7 @@ describe("WorkbenchLayout", () => {
     ]);
 
     const user = userEvent.setup();
-    renderWorkbenchRoute("/workspaces/workspace-1/affairs");
+    renderWorkbenchRoute("/affairs");
 
     await user.click(await screen.findByRole("tab", { name: t("shell.affairsConversationNav") }));
 
