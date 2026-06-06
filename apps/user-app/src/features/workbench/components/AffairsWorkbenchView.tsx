@@ -225,6 +225,9 @@ import type {
   ShortcutAppSourceKind,
   ShortcutAppState
 } from "../types/workbench-mode";
+import { TeableBlockPicker } from "../teable/TeableBlockPicker";
+import { TeableWorkbenchBlock } from "../teable/TeableWorkbenchBlock";
+import type { TeableBlockSelection, TeableRuntimeBlockConfig } from "../teable/api/teable-runtime-api";
 
 interface AffairsWorkbenchProviderProps {
   workspaceId: string;
@@ -768,7 +771,7 @@ interface AffairsWorkbenchContextValue {
 }
 
 type DashboardWidgetSizePreset = "small" | "medium" | "large";
-type DashboardWidgetPaletteType = "todo" | "automation" | "html";
+type DashboardWidgetPaletteType = "todo" | "automation" | "html" | "teable";
 const AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY = "__affairs_current_library__";
 
 type WorkspaceHtmlSourceScopeOption =
@@ -867,6 +870,10 @@ function resolveDefaultDashboardWidgetSize(widget: Pick<DashboardWidgetState, "t
   }
 
   if (htmlVariant === "app" || htmlVariant === "embed") {
+    return "large";
+  }
+
+  if (widget.type === "teable") {
     return "large";
   }
 
@@ -13353,23 +13360,6 @@ function resolveDashboardTabTitleLabel(tabTitle: string): string {
     : tabTitle;
 }
 
-function resolveDashboardWidgetHint(widget: Pick<DashboardWidgetState, "type" | "variant">): string {
-  if (widget.type === "todo") {
-    return t("shell.affairsWorkbenchWidgetTodoHint");
-  }
-  if (widget.type === "automation") {
-    return t("shell.affairsWorkbenchWidgetAutomationHint");
-  }
-  const htmlVariant = resolveDashboardHtmlWidgetVariant(widget);
-  if (htmlVariant === "app") {
-    return t("shell.affairsWorkbenchWidgetHtmlAppHint");
-  }
-  if (htmlVariant === "stat") {
-    return t("shell.affairsWorkbenchWidgetHtmlStatHint");
-  }
-  return t("shell.affairsWorkbenchWidgetHtmlEmbedHint");
-}
-
 function resolveDashboardWidgetBadgeLabel(
   widget: DashboardWidgetState,
   todoCount: number,
@@ -13380,6 +13370,9 @@ function resolveDashboardWidgetBadgeLabel(
   }
   if (widget.type === "automation") {
     return t("shell.affairsWorkbenchWidgetCountValue", { count: automationCount });
+  }
+  if (widget.type === "teable") {
+    return t("shell.affairsWorkbenchWidgetTeableBadge");
   }
   return t("shell.affairsWorkbenchHtmlWidgetBadge");
 }
@@ -13456,6 +13449,7 @@ function AffairsDashboardView({
   const [editingTabTitle, setEditingTabTitle] = useState("");
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetPaletteType>("todo");
   const [selectedHtmlVariant, setSelectedHtmlVariant] = useState<DashboardHtmlWidgetVariant>("embed");
+  const [selectedTeableBlock, setSelectedTeableBlock] = useState<TeableBlockSelection | null>(null);
   const currentLibraryWorkspaceOption = useMemo(
     () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
     [globalLibraryBinding, workspaceId]
@@ -13509,6 +13503,7 @@ function AffairsDashboardView({
     if (!editorOpen) {
       setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
       setHtmlEntryPath("");
+      setSelectedTeableBlock(null);
     }
   }, [defaultHtmlSourceWorkspaceId, editorOpen]);
 
@@ -13702,6 +13697,18 @@ function AffairsDashboardView({
             view: "list"
           }
         });
+      } else if (selectedWidgetType === "teable") {
+        if (!selectedTeableBlock) {
+          throw new Error(t("shell.teableRuntimeSelectionRequired"));
+        }
+        addDashboardWidget({
+          type: "teable",
+          title: widgetTitle.trim() || selectedTeableBlock.config.title,
+          config: {
+            ...selectedTeableBlock.config,
+            title: widgetTitle.trim() || selectedTeableBlock.config.title
+          }
+        });
       } else {
         const source = await validateHtmlSourceSelection(selectedHtmlSourceWorkspaceOption, htmlEntryPath);
         addDashboardWidget({
@@ -13719,6 +13726,7 @@ function AffairsDashboardView({
       setWidgetTitle("");
       setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
       setHtmlEntryPath("");
+      setSelectedTeableBlock(null);
       setEditorOpen(false);
     } catch (error) {
       showToast({
@@ -13734,6 +13742,7 @@ function AffairsDashboardView({
     htmlSourceWorkspaceId,
     selectedHtmlVariant,
     selectedHtmlSourceWorkspaceOption,
+    selectedTeableBlock,
     selectedWidgetType,
     showToast,
     submitting,
@@ -13884,7 +13893,7 @@ function AffairsDashboardView({
         {!layoutLocked && editorOpen ? (
           <form className="affairs-dashboard-editor-panel" onSubmit={handleAddWidget}>
             <div className="affairs-dashboard-editor-types" role="tablist" aria-label={t("shell.affairsWorkbenchAddWidgetAction")}>
-              {(["todo", "automation", "html"] as DashboardWidgetPaletteType[]).map((type) => (
+              {(["todo", "automation", "teable", "html"] as DashboardWidgetPaletteType[]).map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -13895,13 +13904,18 @@ function AffairsDashboardView({
                       setHtmlSourceWorkspaceId(defaultHtmlSourceWorkspaceId);
                       setHtmlEntryPath("");
                     }
+                    if (type !== "teable") {
+                      setSelectedTeableBlock(null);
+                    }
                   }}
                 >
                   {type === "todo"
                     ? t("shell.affairsWorkbenchWidgetTypeTodo")
                     : type === "automation"
                       ? t("shell.affairsWorkbenchWidgetTypeAutomation")
-                      : t("shell.affairsWorkbenchWidgetTypeHtml")}
+                      : type === "teable"
+                        ? t("shell.affairsWorkbenchWidgetTypeTeable")
+                        : t("shell.affairsWorkbenchWidgetTypeHtml")}
                 </button>
               ))}
             </div>
@@ -13915,7 +13929,12 @@ function AffairsDashboardView({
                 placeholder={t("shell.affairsWorkbenchWidgetTitlePlaceholder")}
               />
             </label>
-            {selectedWidgetType === "html" ? (
+            {selectedWidgetType === "teable" ? (
+              <TeableBlockPicker
+                title={widgetTitle}
+                onSelectionChange={setSelectedTeableBlock}
+              />
+            ) : selectedWidgetType === "html" ? (
               <>
                 <div className="affairs-dashboard-inline-field-group">
                   <label className="affairs-dashboard-inline-field" htmlFor="affairs-dashboard-widget-source-workspace">
@@ -14008,6 +14027,23 @@ function AffairsDashboardView({
                 minHeight: `${Math.max(180, (layout?.h ?? 5) * DASHBOARD_GRID_ROW_HEIGHT_PX)}px`
               };
 
+              if (widget.type === "teable") {
+                return (
+                  <AffairsDashboardTeableWidgetCard
+                    key={widget.id}
+                    widget={widget}
+                    style={itemStyle}
+                    editable={!layoutLocked}
+                    todoCount={filteredTodoRecords.length}
+                    automationCount={automationRecords.length}
+                    gestureKind={activeGesture?.widgetId === widget.id ? activeGesture.kind : null}
+                    onMovePointerDown={(event) => beginWidgetGesture(event, widget.id, "move")}
+                    onResizePointerDown={(event, resizeMode) => beginWidgetGesture(event, widget.id, "resize", resizeMode)}
+                    onRemove={() => removeDashboardWidget(widget.id)}
+                  />
+                );
+              }
+
               return (
                 <AffairsDashboardWidgetCard
                   key={widget.id}
@@ -14070,7 +14106,6 @@ function AffairsDashboardWidgetCard({
   onResizePointerDown: (event: ReactPointerEvent<HTMLElement>, resizeMode: "x" | "y" | "xy") => void;
   onRemove: () => void;
 }) {
-  const hint = resolveDashboardWidgetHint(widget);
   return (
     <section
       className={[
@@ -14086,30 +14121,27 @@ function AffairsDashboardWidgetCard({
         onPointerDown={editable ? onMovePointerDown : undefined}
       >
         <div className="affairs-dashboard-widget-header-main">
-          <div>
-            <h3>{widget.title}</h3>
-            {hint ? <p>{hint}</p> : null}
-          </div>
+          <h3>{widget.title}</h3>
         </div>
         <div className="affairs-dashboard-widget-header-meta">
           <span className="affairs-inline-pill">
             {resolveDashboardWidgetBadgeLabel(widget, todoCount, automationCount)}
           </span>
-          {headerAction}
-          {editable ? (
-            <div className="affairs-dashboard-widget-toolbar">
+          <div className="affairs-dashboard-widget-toolbar">
+            {headerAction}
+            {editable ? (
               <button
                 type="button"
-              className="affairs-dashboard-toolbar-icon-button danger"
-              title={t("shell.affairsWorkbenchRemoveWidgetAction")}
-              aria-label={t("shell.affairsWorkbenchRemoveWidgetAction")}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onRemove}
-            >
+                className="affairs-dashboard-toolbar-icon-button danger"
+                title={t("shell.affairsWorkbenchRemoveWidgetAction")}
+                aria-label={t("shell.affairsWorkbenchRemoveWidgetAction")}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={onRemove}
+              >
                 <AffairsDashboardRemoveIcon />
               </button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </div>
       <div className="affairs-dashboard-widget-body">{children}</div>
@@ -14133,6 +14165,52 @@ function AffairsDashboardWidgetCard({
         </>
       ) : null}
     </section>
+  );
+}
+
+function AffairsDashboardTeableWidgetCard({
+  widget,
+  style,
+  editable,
+  todoCount,
+  automationCount,
+  gestureKind,
+  onMovePointerDown,
+  onResizePointerDown,
+  onRemove
+}: {
+  widget: DashboardWidgetState;
+  style: CSSProperties;
+  editable: boolean;
+  todoCount: number;
+  automationCount: number;
+  gestureKind: "move" | "resize" | null;
+  onMovePointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  onResizePointerDown: (event: ReactPointerEvent<HTMLElement>, resizeMode: "x" | "y" | "xy") => void;
+  onRemove: () => void;
+}) {
+  return (
+    <DashboardWidgetErrorBoundary fallbackTitle={t("shell.affairsWorkbenchWidgetErrorTitle")}>
+      <TeableWorkbenchBlock
+        config={widget.config as unknown as TeableRuntimeBlockConfig}
+        render={({ headerActions, content }) => (
+          <AffairsDashboardWidgetCard
+            widget={widget}
+            style={style}
+            editable={editable}
+            todoCount={todoCount}
+            automationCount={automationCount}
+            gestureKind={gestureKind}
+            headerAction={headerActions}
+            onMovePointerDown={onMovePointerDown}
+            onResizePointerDown={onResizePointerDown}
+            onRemove={onRemove}
+          >
+            {content}
+          </AffairsDashboardWidgetCard>
+        )}
+      />
+    </DashboardWidgetErrorBoundary>
   );
 }
 
@@ -14200,6 +14278,8 @@ function AffairsDashboardWidgetHost({
           onUpdateConfig={onUpdateConfig}
           onOpen={onOpenAutomation}
         />
+      ) : widget.type === "teable" ? (
+        <TeableWorkbenchBlock config={widget.config as unknown as TeableRuntimeBlockConfig} />
       ) : (
         <AffairsDashboardHtmlWidget widget={widget} workspaceId={workspaceId} />
       )}
@@ -18029,4 +18109,3 @@ function resolveLibraryDetailEmptyText(status: AffairsLibraryIndexStatusDto | nu
 
   return status.errorSummary?.trim() || t("shell.affairsDetailEmpty");
 }
-

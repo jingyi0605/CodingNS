@@ -8540,7 +8540,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .affairs-dashboard-widget-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -8557,22 +8557,30 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-dashboard-widget-header-main {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  flex: 1 1 auto;
+  align-items: center;
   gap: 10px;
+  min-height: 30px;
 }
 
 .affairs-dashboard-widget-header h3 {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 30px;
 }
 
 .affairs-dashboard-widget-header-meta {
   display: flex;
-  align-items: flex-end;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  flex-direction: column;
 }
 
 
@@ -8593,7 +8601,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-height: 30px;
+}
+
+.affairs-dashboard-widget-header .affairs-inline-pill {
+  min-height: 30px;
+  line-height: 1;
 }
 
 .affairs-dashboard-widget-inline-tabs {
@@ -12610,4 +12624,121 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
 .affairs-doc-row .affairs-stage-item-meta,
 .affairs-folder-row .affairs-stage-item-meta {
   text-align: left;
+}
+
+.teable-runtime-picker,
+.teable-runtime-form-view,
+.teable-runtime-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.teable-runtime-grid-shell {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+}
+
+.teable-runtime-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.teable-runtime-grid-table th,
+.teable-runtime-grid-table td {
+  max-width: 220px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teable-runtime-grid-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-card-bg, rgba(255, 255, 255, 0.92));
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+
+.teable-runtime-grid-table tbody tr {
+  cursor: pointer;
+}
+
+.teable-runtime-grid-table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.teable-runtime-cell[data-readonly="true"],
+.teable-runtime-readonly-value {
+  color: var(--text-muted, #64748b);
+}
+
+.teable-runtime-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.teable-runtime-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.teable-runtime-link-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teable-runtime-calendar-view,
+.teable-runtime-kanban-view {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.teable-runtime-calendar-day,
+.teable-runtime-kanban-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+}
+
+.teable-runtime-calendar-day > strong,
+.teable-runtime-kanban-column > strong {
+  font-size: 12px;
+  color: var(--text-muted, #64748b);
+}
+
+.teable-runtime-calendar-day button,
+.teable-runtime-kanban-column button {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 8px 10px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.teable-runtime-calendar-day button:hover,
+.teable-runtime-kanban-column button:hover {
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(59, 130, 246, 0.06);
 }

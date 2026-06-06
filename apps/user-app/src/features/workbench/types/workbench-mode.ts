@@ -7,7 +7,8 @@ export type AffairsAuxiliaryTab = "detail" | "assistant";
 export type DashboardWidgetType =
   | "todo"
   | "automation"
-  | "html";
+  | "html"
+  | "teable";
 
 export type DashboardHtmlWidgetVariant = "app" | "stat" | "embed";
 

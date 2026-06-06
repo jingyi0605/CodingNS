@@ -284,6 +284,17 @@ const htmlPreviewBridgeMock = vi.hoisted(() => ({
   }))
 }));
 
+const teableRuntimeApiMock = vi.hoisted(() => ({
+  listTeableRuntimeTables: vi.fn(),
+  listTeableRuntimeViews: vi.fn(),
+  listTeableRuntimeFields: vi.fn(),
+  listTeableRuntimeRecords: vi.fn(),
+  createTeableRuntimeRecord: vi.fn(),
+  updateTeableRuntimeRecord: vi.fn(),
+  deleteTeableRuntimeRecords: vi.fn(),
+  listTeableLinkedRecordOptions: vi.fn()
+}));
+
 vi.mock("../../conversation/api/conversation-api", async () => {
   const actual = await vi.importActual<object>("../../conversation/api/conversation-api");
   return {
@@ -664,6 +675,21 @@ vi.mock("../../../platform/preview/codingns-workspace-bridge", () => ({
 vi.mock("../../../platform/preview/html-preview-workspace-bridge", () => ({
   createHtmlPreviewWorkspaceBridge: htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge
 }));
+
+vi.mock("../teable/api/teable-runtime-api", async () => {
+  const actual = await vi.importActual<object>("../teable/api/teable-runtime-api");
+  return {
+    ...actual,
+    listTeableRuntimeTables: teableRuntimeApiMock.listTeableRuntimeTables,
+    listTeableRuntimeViews: teableRuntimeApiMock.listTeableRuntimeViews,
+    listTeableRuntimeFields: teableRuntimeApiMock.listTeableRuntimeFields,
+    listTeableRuntimeRecords: teableRuntimeApiMock.listTeableRuntimeRecords,
+    createTeableRuntimeRecord: teableRuntimeApiMock.createTeableRuntimeRecord,
+    updateTeableRuntimeRecord: teableRuntimeApiMock.updateTeableRuntimeRecord,
+    deleteTeableRuntimeRecords: teableRuntimeApiMock.deleteTeableRuntimeRecords,
+    listTeableLinkedRecordOptions: teableRuntimeApiMock.listTeableLinkedRecordOptions
+  };
+});
 
 vi.mock("../../conversation/timeline-source-items", () => ({
   buildConversationTimelineSourceItems: () => []
@@ -1192,6 +1218,62 @@ describe("AffairsWorkbenchView", () => {
     showToastMock.mockClear();
     docsApiMock.destroyEditor.mockReset();
     docsApiMock.docEditor.mockReset();
+    Object.values(teableRuntimeApiMock).forEach((mock) => mock.mockReset());
+    teableRuntimeApiMock.listTeableRuntimeTables.mockResolvedValue({
+      tables: [{ tableId: "tbl-1", tableName: "客户跟进" }]
+    });
+    teableRuntimeApiMock.listTeableRuntimeViews.mockResolvedValue({
+      views: [{
+        viewId: "viw-1",
+        viewName: "主表格",
+        viewType: "grid",
+        options: {},
+        columnMeta: {
+          fld_formula: { width: 120 },
+          fld_title: { width: 240 },
+          fld_hidden: { hidden: true }
+        }
+      }, {
+        viewId: "frm-create",
+        viewName: "客户录入表单",
+        viewType: "form",
+        options: {
+          fields: [
+            { fieldId: "fld_title", label: "客户标题", required: true },
+            { fieldId: "fld_hidden", hidden: true },
+            { fieldId: "fld_formula", hidden: true }
+          ]
+        }
+      }, {
+        viewId: "frm-edit",
+        viewName: "客户维护表单",
+        viewType: "form",
+        options: {
+          fields: [
+            { fieldId: "fld_title", label: "维护标题", required: true },
+            { fieldId: "fld_formula", hidden: true },
+            { fieldId: "fld_hidden", hidden: true }
+          ]
+        }
+      }]
+    });
+    teableRuntimeApiMock.listTeableRuntimeFields.mockResolvedValue({
+      fields: [
+        { fieldId: "fld_title", fieldName: "标题", fieldType: "singleLineText", isPrimary: true, isComputed: false, isLookup: false, isMultipleCellValue: false, recordRead: true, recordCreate: true, recordUpdate: true, options: {}, linkOptions: null },
+        { fieldId: "fld_formula", fieldName: "得分", fieldType: "formula", isPrimary: false, isComputed: true, isLookup: false, isMultipleCellValue: false, recordRead: true, recordCreate: false, recordUpdate: false, options: {}, linkOptions: null },
+        { fieldId: "fld_hidden", fieldName: "Teable 隐藏字段", fieldType: "singleLineText", isPrimary: false, isComputed: false, isLookup: false, isMultipleCellValue: false, recordRead: true, recordCreate: true, recordUpdate: true, options: {}, linkOptions: null }
+      ]
+    });
+    teableRuntimeApiMock.listTeableRuntimeRecords.mockResolvedValue({
+      records: [{ recordId: "rec-1", fields: { fld_title: "张三跟进", fld_formula: 88, fld_hidden: "不该显示" } }],
+      skip: 0,
+      take: 100,
+      total: 1
+    });
+    teableRuntimeApiMock.updateTeableRuntimeRecord.mockResolvedValue({ record: null });
+    teableRuntimeApiMock.createTeableRuntimeRecord.mockResolvedValue({ record: null });
+    teableRuntimeApiMock.deleteTeableRuntimeRecords.mockResolvedValue({ deletedRecordIds: ["rec-1"] });
+    teableRuntimeApiMock.listTeableLinkedRecordOptions.mockResolvedValue({ options: [], skip: 0, take: 50, hasMore: false });
     docsApiMock.docEditor.mockImplementation(() => ({
       destroyEditor: docsApiMock.destroyEditor
     }));
@@ -7361,7 +7443,7 @@ describe("AffairsWorkbenchView", () => {
     });
   });
 
-  it("事务工作台添加块面板不再提供 Teable 嵌入块", async () => {
+  it("Teable 块会选择表和视图，并用自定义表格渲染记录", async () => {
     const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:30:00.000Z");
     dashboardState.layoutLocked = false;
     writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
@@ -7373,8 +7455,72 @@ describe("AffairsWorkbenchView", () => {
     }, navigationGroupsWithBoundLibraryWorkspace);
 
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeTeable") }));
 
-    expect(screen.queryByText("Teable")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText(t("shell.teableRuntimeTableField"))).toHaveValue("tbl-1");
+    expect(await screen.findByLabelText(t("shell.teableRuntimeViewField"))).toHaveValue("viw-1");
+    expect(await screen.findByLabelText(t("shell.teableRuntimeCreateFormViewField"))).toHaveValue("frm-create");
+    expect(await screen.findByLabelText(t("shell.teableRuntimeEditFormViewField"))).toHaveValue("frm-create");
+    await userEvent.selectOptions(screen.getByLabelText(t("shell.teableRuntimeEditFormViewField")), "frm-edit");
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
+
+    expect(await screen.findByText("张三跟进")).toBeInTheDocument();
+    expect(screen.getByText("88")).toBeInTheDocument();
+    expect(screen.queryByText("Teable 隐藏字段")).toBeNull();
+    expect(screen.queryByText("不该显示")).toBeNull();
+    const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
+    expect(headers.slice(0, 2)).toEqual(["得分", "标题"]);
+    expect(teableRuntimeApiMock.listTeableRuntimeTables).toHaveBeenCalledTimes(1);
+    expect(teableRuntimeApiMock.listTeableRuntimeViews).toHaveBeenCalledWith("tbl-1");
+    expect(teableRuntimeApiMock.listTeableRuntimeRecords).toHaveBeenCalledWith("tbl-1", expect.objectContaining({
+      viewId: "viw-1"
+    }));
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.teableRuntimeRefreshAction") }));
+    await waitFor(() => {
+      expect(teableRuntimeApiMock.listTeableRuntimeViews).toHaveBeenCalledTimes(3);
+    });
+
+    await userEvent.click(screen.getByText("张三跟进"));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.teableRuntimeRecordDrawerTitle") });
+    expect(within(dialog).getByText("维护标题 *")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Teable 隐藏字段")).toBeNull();
+    expect(within(dialog).queryByText("得分")).toBeNull();
+  });
+
+  it("Teable 块新建记录会打开独立模态框", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:40:00.000Z");
+    dashboardState.layoutLocked = false;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.affairsWorkbenchWidgetTypeTeable") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchConfirmAddWidgetAction") }));
+
+    expect(await screen.findByText("张三跟进")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.teableRuntimeCreateRecordAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.teableRuntimeCreateRecordModalTitle") });
+    expect(within(dialog).getByText(t("shell.teableRuntimeCreateRecordFieldsTitle"))).toBeInTheDocument();
+
+    await userEvent.type(within(dialog).getByLabelText("客户标题 *"), "李四跟进");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.teableRuntimeCreateRecordAction") }));
+
+    await waitFor(() => {
+      expect(teableRuntimeApiMock.createTeableRuntimeRecord).toHaveBeenCalledWith("tbl-1", {
+        fld_title: "李四跟进"
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.teableRuntimeCreateRecordModalTitle") })).toBeNull();
+    });
   });
 
 

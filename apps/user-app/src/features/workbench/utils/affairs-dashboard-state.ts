@@ -65,6 +65,10 @@ function resolveDefaultWidgetTitle(
     return t("shell.affairsAutomationStageTitle");
   }
 
+  if (type === "teable") {
+    return t("shell.teableRuntimeDefaultBlockTitle");
+  }
+
 
   if (sourceId?.trim()) {
     return resolvePathLeafName(sourceId);
@@ -266,6 +270,10 @@ function normalizeDashboardWidgetState(
     return null;
   }
 
+  if (normalizedType.type === "teable" && !isRecord(rawWidget.config)) {
+    return null;
+  }
+
   const id = typeof rawWidget.id === "string" && rawWidget.id.trim()
     ? rawWidget.id.trim()
     : createDashboardEntityId("dashboard-widget");
@@ -439,7 +447,7 @@ function normalizeDashboardWidgetType(
   configVariant: unknown,
   rawVariant: unknown
 ): { type: DashboardWidgetType; variant?: DashboardHtmlWidgetVariant } | null {
-  if (value === "todo" || value === "automation") {
+  if (value === "todo" || value === "automation" || value === "teable") {
     return {
       type: value
     };
