@@ -565,7 +565,10 @@ export class TeableMirrorSyncService {
     const syncedAt = nowIso();
 
     if (createdPayload.length > 0) {
-      const createdResponse = await client.createRecords(tableId, { records: createdPayload });
+      const createdResponse = await client.createRecords(tableId, {
+        fieldKeyType: "id",
+        records: createdPayload
+      });
       created = createdResponse.records.length;
       createdResponse.records.forEach((record, index) => {
         const localId = createdLocalIds[index];
@@ -585,7 +588,10 @@ export class TeableMirrorSyncService {
     }
 
     if (updatedPayload.length > 0) {
-      await client.updateRecords(tableId, { records: updatedPayload });
+      await client.updateRecords(tableId, {
+        fieldKeyType: "id",
+        records: updatedPayload
+      });
       updated = updatedPayload.length;
       for (const item of updatedPayload) {
         const localEntry = currentMappings.find((entry) => entry.teableRecordId === item.id);

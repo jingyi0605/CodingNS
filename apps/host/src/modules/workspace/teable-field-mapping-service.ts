@@ -157,7 +157,8 @@ export class TeableFieldMappingService {
       if ((value === undefined || value === null || value === "") && item.required) {
         continue;
       }
-      result[item.targetFieldName] = value ?? null;
+      // Teable 字段名允许用户随时改。同步必须用稳定的字段 ID，不能用会变的显示名称。
+      result[item.targetFieldId] = value ?? null;
     }
     return result;
   }

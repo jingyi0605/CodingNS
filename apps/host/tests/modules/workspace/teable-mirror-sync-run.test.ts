@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { TeableMirrorSyncService } from "../../../src/modules/workspace/teable-mirror-sync-service.js";
+import { TeableFieldMappingService } from "../../../src/modules/workspace/teable-field-mapping-service.js";
+import { TeableApiClient } from "../../../src/modules/workspace/teable-api-client.js";
 import type { AffairsLightweightSessionSummary } from "../../../src/modules/workspace/affairs-lightweight-session-service.js";
 
 function createBindingRepository() {
@@ -56,6 +58,110 @@ function createSession(title: string, sessionId: string): AffairsLightweightSess
 }
 
 describe("TeableMirrorSyncService runMirrorSync", () => {
+  it("同步写入使用 Teable 字段 ID，字段改名后不会继续查旧字段名", async () => {
+    const bindingRepository = createBindingRepository();
+    const mappingRepository = createMappingRepository();
+    const fieldMappingService = new TeableFieldMappingService({} as never, {} as never);
+    const createRecords = vi
+      .spyOn(TeableApiClient.prototype, "createRecords")
+      .mockResolvedValueOnce({ records: [{ id: "rec_tag_1", fields: {} }] });
+
+    const service = new TeableMirrorSyncService(
+      bindingRepository as never,
+      mappingRepository as never,
+      {
+        getGlobalBinding: vi.fn(() => ({
+          baseUrl: "https://teable.example.com",
+          spaceId: "space-1",
+          baseId: "base-1",
+          authRef: "secret://teable/main",
+          enabled: true,
+          mirrorMode: "manual",
+          updatedAt: "2026-06-05T06:00:00.000Z"
+        }))
+      } as never,
+      {
+        loadToken: vi.fn(() => "token-123")
+      } as never,
+      {
+        getConfigs: vi.fn(() => [{
+          configId: "cfg-tags",
+          sourceType: "tags",
+          enabled: true,
+          targetTableId: "tbl_tags",
+          scope: { rootTagIds: ["tag-1"] },
+          updatedAt: "2026-06-05T06:00:00.000Z"
+        }])
+      } as never,
+      {
+        listGlobalTags: vi.fn((_userId: string) => ({
+          items: [{
+            id: "tag-1",
+            path: "客户/重点",
+            name: "重点",
+            rootType: "客户",
+            parentId: null,
+            parentPath: null,
+            description: "重点客户",
+            status: "active",
+            documentCount: 3,
+            createdAt: "2026-06-05T05:00:00.000Z",
+            updatedAt: "2026-06-05T06:00:00.000Z",
+            disabledAt: null
+          }]
+        }))
+      } as never,
+      {
+        listSessions: vi.fn(async () => [])
+      } as never,
+      { list: vi.fn(() => []) } as never,
+      { list: vi.fn(() => []) } as never,
+      { list: vi.fn(() => []) } as never,
+      {
+        list: vi.fn(() => []),
+        findById: vi.fn(() => null)
+      } as never,
+      {
+        resolveMapping: vi.fn(() => ({
+          mappingId: "mapping-tags",
+          configId: "cfg-tags",
+          sourceType: "tags",
+          targetTableId: "tbl_tags",
+          updatedAt: "2026-06-05T06:00:00.000Z",
+          items: [{
+            sourceField: "name",
+            targetFieldId: "fld_customer_name",
+            targetFieldName: "标签名称",
+            required: true
+          }]
+        })),
+        applyMapping: fieldMappingService.applyMapping.bind(fieldMappingService)
+      } as never
+    );
+
+    (service as any).ensureMirrorTable = vi.fn(async () => {
+      return { mirrorType: "tags", tableId: "tbl_tags", tableName: "cn_tags", readOnlyMode: "unknown", lastSyncedAt: null, updatedAt: "2026-06-05T06:00:00.000Z" };
+    });
+
+    const result = await service.runMirrorSync("user-1", {
+      workspaceId: "workspace-1",
+      mirrorTypes: ["tags"]
+    });
+
+    expect(result.state).toBe("succeeded");
+    expect(createRecords).toHaveBeenCalledWith("tbl_tags", {
+      fieldKeyType: "id",
+      records: [{
+        fields: {
+          fld_customer_name: "重点"
+        }
+      }]
+    });
+    expect(createRecords.mock.calls[0]?.[1].records[0]?.fields).not.toHaveProperty("标签名称");
+
+    createRecords.mockRestore();
+  });
+
   it("会把已绑定目标表的镜像数据写入 Teable", async () => {
     const bindingRepository = createBindingRepository();
     const mappingRepository = createMappingRepository();
