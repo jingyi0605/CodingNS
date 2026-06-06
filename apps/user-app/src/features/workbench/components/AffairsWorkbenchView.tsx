@@ -1673,7 +1673,7 @@ export function AffairsWorkbenchProvider({
   const directoryHintKeyRef = useRef<string | null>(null);
   const directoryHintBootstrappedRef = useRef(false);
 
-  const effectiveAuxiliaryTab = resolveAffairsAuxiliaryTabForSection(activeSection, state.auxiliaryTab);
+  const effectiveAuxiliaryTab = resolveAffairsDisplayedAuxiliaryTab(activeSection, state.auxiliaryTab);
 
   useEffect(() => {
     if (typeof butlerStore.initialize === "function") {
@@ -3536,7 +3536,7 @@ export function AffairsWorkbenchProvider({
         selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId(section, automationRecords, binding),
         selectedObjectId: null,
         selectedDocumentId: section === "library" ? null : state.selectedDocumentId,
-        auxiliaryTab: resolveAffairsAuxiliaryTabForSection(section, state.auxiliaryTab)
+        auxiliaryTab: state.auxiliaryTab
       });
     },
     openInitializedSection: (section) => {
@@ -3550,7 +3550,7 @@ export function AffairsWorkbenchProvider({
         selectedNodeId: preservedConversationNodeId ?? resolveDefaultNodeId(section, automationRecords, binding),
         selectedObjectId: null,
         selectedDocumentId: section === "library" ? null : state.selectedDocumentId,
-        auxiliaryTab: resolveAffairsAuxiliaryTabForSection(section, state.auxiliaryTab)
+        auxiliaryTab: state.auxiliaryTab
       });
     },
     selectSidebarNode: (nodeId) => {
@@ -3634,7 +3634,7 @@ export function AffairsWorkbenchProvider({
     selectAuxiliaryTab: (tab) => {
       onStateChange({
         ...state,
-        auxiliaryTab: resolveAffairsAuxiliaryTabForSection(activeSection, tab)
+        auxiliaryTab: activeSection === "library" ? tab : state.auxiliaryTab
       });
     },
     setLibraryBrowseMode: (mode) => {
@@ -16619,7 +16619,7 @@ function buildAffairsAssistantPrefix(context: AffairsObjectContext | null) {
   })}\n\n`;
 }
 
-function resolveAffairsAuxiliaryTabForSection(
+function resolveAffairsDisplayedAuxiliaryTab(
   section: AffairsPrimarySection,
   tab: AffairsAuxiliaryTab | null | undefined
 ): AffairsAuxiliaryTab {

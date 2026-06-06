@@ -2423,6 +2423,43 @@ describe("AffairsWorkbenchView", () => {
     expect(screen.getByRole("tab", { name: t("shell.affairsConversationNav") })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("文档库右栏停在对象详情时，切到工作台再切回来仍保持对象详情", async () => {
+    const user = userEvent.setup();
+    renderWorkbenchWithSectionMenu();
+
+    const detailTab = await screen.findByRole("tab", { name: t("shell.affairsDetailTitle") });
+    expect(detailTab).toHaveClass("workbench-info-tab", "active");
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") }));
+    expect(await screen.findByRole("tab", { name: t("shell.affairsAssistantTitle") })).toHaveClass("workbench-info-tab", "active");
+    expect(screen.queryByRole("tab", { name: t("shell.affairsDetailTitle") })).toBeNull();
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: t("shell.affairsDetailTitle") })).toHaveClass("workbench-info-tab", "active");
+      expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toHaveClass("workbench-info-tab");
+    });
+  });
+
+  it("文档库右栏切到事务助手后，切到对话再切回来仍保持事务助手", async () => {
+    const user = userEvent.setup();
+    renderWorkbenchWithSectionMenu();
+
+    await user.click(await screen.findByRole("tab", { name: t("shell.affairsAssistantTitle") }));
+    expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toHaveClass("workbench-info-tab", "active");
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsConversationNav") }));
+    expect(await screen.findByRole("heading", { name: "事务对话" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: t("shell.affairsAssistantTitle") })).toHaveClass("workbench-info-tab", "active");
+      expect(screen.getByRole("tab", { name: t("shell.affairsDetailTitle") })).toHaveClass("workbench-info-tab");
+    });
+  });
+
   it("文档库左侧栏不再显示旧的说明头和浏览模式切换", async () => {
     renderWorkbench();
 
