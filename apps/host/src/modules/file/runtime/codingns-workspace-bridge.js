@@ -161,11 +161,7 @@
       ? currentUrl.searchParams.get("_cns_parent_origin") || ""
       : "";
 
-    if (previewPath.indexOf("/preview/files/") === 0) {
-      var prefix = "/preview/files/";
-      var remaining = previewPath.slice(prefix.length);
-      previewToken = remaining.split("/")[0] || "";
-    }
+    previewToken = readPreviewTokenFromPath(previewPath);
 
     if (!workspaceId && previewToken) {
       workspaceId = readWorkspaceIdFromPreviewToken(previewToken);
@@ -177,6 +173,23 @@
       hostOrigin: window.location.origin,
       parentOrigin: parentOriginFromQuery
     };
+  }
+
+  function readPreviewTokenFromPath(previewPath) {
+    var prefixes = [
+      "/preview/files/",
+      "/preview/affairs-files/"
+    ];
+
+    for (var index = 0; index < prefixes.length; index += 1) {
+      var prefix = prefixes[index];
+      if (previewPath.indexOf(prefix) === 0) {
+        var remaining = previewPath.slice(prefix.length);
+        return remaining.split("/")[0] || "";
+      }
+    }
+
+    return "";
   }
 
   function readWorkspaceIdFromPreviewToken(token) {
