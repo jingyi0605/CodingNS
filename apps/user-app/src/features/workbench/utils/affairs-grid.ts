@@ -5,32 +5,61 @@ export const AFFAIRS_GRID_ROW_GAP = 12;
 export const AFFAIRS_GRID_VIRTUAL_OVERSCAN_ROWS = 2;
 export const AFFAIRS_GRID_VIRTUALIZATION_MIN_ITEMS = 80;
 
-export function resolveAffairsGridColumnCount(contentWidth: number) {
-  const safeWidth = Math.max(contentWidth, AFFAIRS_GRID_TRACK_MIN_WIDTH);
+export function resolveAffairsGridColumnCount(
+  contentWidth: number,
+  options?: {
+    trackMinWidth?: number;
+    columnGap?: number;
+  }
+) {
+  const trackMinWidth = Math.max(1, options?.trackMinWidth ?? AFFAIRS_GRID_TRACK_MIN_WIDTH);
+  const columnGap = Math.max(0, options?.columnGap ?? AFFAIRS_GRID_COLUMN_GAP);
+  const safeWidth = Math.max(contentWidth, trackMinWidth);
   return Math.max(
     1,
-    Math.floor((safeWidth + AFFAIRS_GRID_COLUMN_GAP) / (AFFAIRS_GRID_TRACK_MIN_WIDTH + AFFAIRS_GRID_COLUMN_GAP))
+    Math.floor((safeWidth + columnGap) / (trackMinWidth + columnGap))
   );
 }
 
 export function shouldVirtualizeAffairsGrid(
   itemCount: number,
   contentWidth: number,
-  viewportHeight: number
+  viewportHeight: number,
+  options?: {
+    itemHeight?: number;
+    trackMinWidth?: number;
+  }
 ) {
+  const itemHeight = Math.max(1, options?.itemHeight ?? AFFAIRS_GRID_ITEM_HEIGHT);
+  const trackMinWidth = Math.max(1, options?.trackMinWidth ?? AFFAIRS_GRID_TRACK_MIN_WIDTH);
   return itemCount >= AFFAIRS_GRID_VIRTUALIZATION_MIN_ITEMS
-    && contentWidth >= AFFAIRS_GRID_TRACK_MIN_WIDTH
-    && viewportHeight >= AFFAIRS_GRID_ITEM_HEIGHT;
+    && contentWidth >= trackMinWidth
+    && viewportHeight >= itemHeight;
 }
 
 export function computeVirtualGridMetrics(
   itemCount: number,
   contentWidth: number,
   viewportHeight: number,
-  scrollTop: number
+  scrollTop: number,
+  options?: {
+    columns?: number;
+    itemHeight?: number;
+    rowGap?: number;
+    trackMinWidth?: number;
+    columnGap?: number;
+  }
 ) {
-  const columns = resolveAffairsGridColumnCount(contentWidth);
-  const rowStride = AFFAIRS_GRID_ITEM_HEIGHT + AFFAIRS_GRID_ROW_GAP;
+  const columns = Math.max(
+    1,
+    options?.columns ?? resolveAffairsGridColumnCount(contentWidth, {
+      trackMinWidth: options?.trackMinWidth,
+      columnGap: options?.columnGap
+    })
+  );
+  const itemHeight = Math.max(1, options?.itemHeight ?? AFFAIRS_GRID_ITEM_HEIGHT);
+  const rowGap = Math.max(0, options?.rowGap ?? AFFAIRS_GRID_ROW_GAP);
+  const rowStride = itemHeight + rowGap;
   const totalRows = Math.ceil(itemCount / columns);
   const visibleRows = Math.max(1, Math.ceil(Math.max(viewportHeight, rowStride) / rowStride));
   const startRow = Math.max(0, Math.floor(scrollTop / rowStride) - AFFAIRS_GRID_VIRTUAL_OVERSCAN_ROWS);
@@ -45,7 +74,7 @@ export function computeVirtualGridMetrics(
     endIndex: Math.min(itemCount, endRow * columns),
     offsetTop: startRow * rowStride,
     totalHeight: totalRows > 0
-      ? totalRows * AFFAIRS_GRID_ITEM_HEIGHT + Math.max(0, totalRows - 1) * AFFAIRS_GRID_ROW_GAP
+      ? totalRows * itemHeight + Math.max(0, totalRows - 1) * rowGap
       : 0
   };
 }
