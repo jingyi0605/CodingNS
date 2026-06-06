@@ -22,22 +22,14 @@ import {
   type TerminalManagerPanelWorkbenchShellOverrides
 } from "../workbench/components/TerminalManagerPanel";
 import {
-  AffairsAuxiliaryPanel,
-  AffairsWorkbenchProvider,
-  AffairsWorkbenchView
-} from "../workbench/components/AffairsWorkbenchView";
-import {
   TerminalPage,
   type TerminalPageWorkbenchShellOverrides
 } from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
-import { buildWorkspaceSessionIndexPath } from "../workbench/utils/workbench-navigation";
 import {
-  createDefaultAffairsLibraryLandingState,
-  readAffairsViewState,
-  writeAffairsViewState
-} from "../workbench/utils/workbench-mode";
-import type { AffairsViewState } from "../workbench/types/workbench-mode";
+  buildWorkspaceAffairsPath,
+  buildWorkspaceSessionIndexPath
+} from "../workbench/utils/workbench-navigation";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../platform/desktop/window-drag";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
@@ -154,6 +146,17 @@ function resolveDesktopCodeWindowRoute(descriptor: WindowDescriptor): string | n
   return workspaceId ? buildWorkspaceSessionIndexPath(workspaceId) : null;
 }
 
+function resolveDesktopAffairsWindowRoute(descriptor: WindowDescriptor): string | null {
+  const routePath = descriptor.payload.routePath?.trim() ?? "";
+
+  if (routePath) {
+    return routePath;
+  }
+
+  const workspaceId = descriptor.workspaceId?.trim() ?? "";
+  return workspaceId ? buildWorkspaceAffairsPath(workspaceId) : null;
+}
+
 function resolveDesktopWindowNativeTitle(
   descriptor: WindowDescriptor,
   navigationGroups: WorkspaceSessionGroup[]
@@ -185,7 +188,6 @@ export function DesktopWindowPage() {
   const [descriptorError, setDescriptorError] = useState<string | null>(null);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [realtimeClient, setRealtimeClient] = useState<WorkbenchRealtimeClient | null>(null);
-  const [affairsViewState, setAffairsViewState] = useState<AffairsViewState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,14 +235,8 @@ export function DesktopWindowPage() {
   useEffect(() => {
     if (!descriptor?.workspaceId) {
       setNavigationGroups([]);
-      setAffairsViewState(null);
       return;
     }
-
-    setAffairsViewState(
-      readAffairsViewState(descriptor.workspaceId)
-      ?? createDefaultAffairsLibraryLandingState(descriptor.workspaceId)
-    );
 
     let cancelled = false;
 
@@ -416,12 +412,19 @@ export function DesktopWindowPage() {
     return <Navigate to={routePath} replace />;
   }
 
-  const workspaceName = descriptor ? resolveDesktopWindowWorkspaceName(descriptor, navigationGroups) : null;
+  if (descriptor.kind === "affairs") {
+    const routePath = resolveDesktopAffairsWindowRoute(descriptor);
 
-  const handleAffairsViewStateChange = (nextState: AffairsViewState) => {
-    setAffairsViewState(nextState);
-    writeAffairsViewState(nextState);
-  };
+    if (!routePath) {
+      return (
+        <main className="desktop-window-page">
+          <p className="status-text">{t("desktopWindow.invalidAffairsTarget")}</p>
+        </main>
+      );
+    }
+
+    return <Navigate to={routePath} replace />;
+  }
 
   let content: JSX.Element | null = null;
 
@@ -475,33 +478,6 @@ export function DesktopWindowPage() {
         externalWindowWorkspaceId={descriptor.workspaceId}
         workbenchShellOverrides={terminalWorkbenchShellOverrides}
       />
-    );
-  } else if (descriptor.kind === "affairs") {
-    const externalWorkspaceId = descriptor.workspaceId?.trim() ?? "";
-    const effectiveAffairsViewState =
-      affairsViewState && affairsViewState.workspaceId === externalWorkspaceId
-        ? affairsViewState
-        : (externalWorkspaceId ? createDefaultAffairsLibraryLandingState(externalWorkspaceId) : null);
-
-    content = externalWorkspaceId && effectiveAffairsViewState ? (
-      <AffairsWorkbenchProvider
-        workspaceId={externalWorkspaceId}
-        workspaceName={workspaceName}
-        navigationGroups={navigationGroups}
-        state={effectiveAffairsViewState}
-        onStateChange={handleAffairsViewStateChange}
-      >
-        <div className="desktop-affairs-window-shell">
-          <div className="desktop-affairs-window-main">
-            <AffairsWorkbenchView workspaceId={externalWorkspaceId} />
-          </div>
-          <aside className="desktop-affairs-window-auxiliary surface-card">
-            <AffairsAuxiliaryPanel workspaceId={externalWorkspaceId} />
-          </aside>
-        </div>
-      </AffairsWorkbenchProvider>
-    ) : (
-      <p className="status-text">{t("desktopWindow.invalidAffairsTarget")}</p>
     );
   }
 

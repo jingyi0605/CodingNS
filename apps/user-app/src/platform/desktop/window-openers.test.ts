@@ -227,7 +227,8 @@ describe("window-openers", () => {
       } as never,
       {
         workspaceId: "workspace-1",
-        workspaceName: "项目一"
+        workspaceName: "项目一",
+        routePath: "/workspaces/workspace-1/affairs"
       }
     );
 
@@ -238,12 +239,14 @@ describe("window-openers", () => {
         kind: "affairs",
         workspaceId: "workspace-1",
         workspaceName: "项目一",
-        focusOwner: "affairs-workbench"
+        focusOwner: "affairs-workbench",
+        payload: { filePath: null, routePath: "/workspaces/workspace-1/affairs" }
       })
     );
     expect(windows.getDescriptor("affairs-workspace-1")).toMatchObject({
       kind: "affairs",
-      mode: "external"
+      mode: "external",
+      payload: { filePath: null, routePath: "/workspaces/workspace-1/affairs" }
     });
   });
 

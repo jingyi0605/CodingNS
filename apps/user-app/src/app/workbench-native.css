@@ -12476,4 +12476,3 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
 }
 
 
-.desktop-affairs-window-shell{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px;height:100%;min-height:0}.desktop-affairs-window-main{min-width:0;min-height:0;height:100%}.desktop-affairs-window-main>.workbench-page{height:100%}.desktop-affairs-window-auxiliary{min-width:0;min-height:0;overflow:hidden}.desktop-affairs-window-auxiliary .affairs-auxiliary-shell,.desktop-affairs-window-auxiliary .affairs-auxiliary-content{height:100%}@media (max-width:1080px){.desktop-affairs-window-shell{grid-template-columns:minmax(0,1fr)}}

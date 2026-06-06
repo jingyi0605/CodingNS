@@ -40,8 +40,6 @@ const fileViewerPanelMock = vi.hoisted(() => vi.fn());
 const gitSidebarMock = vi.hoisted(() => vi.fn());
 const terminalManagerPanelMock = vi.hoisted(() => vi.fn());
 const terminalPageMock = vi.hoisted(() => vi.fn());
-const affairsWorkbenchViewMock = vi.hoisted(() => vi.fn());
-const affairsAuxiliaryPanelMock = vi.hoisted(() => vi.fn());
 const setTitleMock = vi.hoisted(() => vi.fn(async () => undefined));
 const realtimeStartMock = vi.hoisted(() => vi.fn());
 const realtimeCloseMock = vi.hoisted(() => vi.fn());
@@ -115,18 +113,6 @@ vi.mock("../workbench/components/TerminalManagerPanel", () => ({
         {props.navigationGroups.length}
       </div>
     );
-  }
-}));
-
-vi.mock("../workbench/components/AffairsWorkbenchView", () => ({
-  AffairsWorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  AffairsWorkbenchView: (props: { workspaceId: string }) => {
-    affairsWorkbenchViewMock(props);
-    return <div data-testid="desktop-affairs-window">{props.workspaceId}</div>;
-  },
-  AffairsAuxiliaryPanel: (props: { workspaceId: string }) => {
-    affairsAuxiliaryPanelMock(props);
-    return <div data-testid="desktop-affairs-aux">{props.workspaceId}</div>;
   }
 }));
 
@@ -229,6 +215,7 @@ describe("DesktopWindowPage", () => {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/desktop-window/:windowId" element={<DesktopWindowPage />} />
+          <Route path="/workspaces/:workspaceId/affairs" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions/:sessionId" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions" element={<CurrentPathProbe />} />
         </Routes>
@@ -435,7 +422,7 @@ describe("DesktopWindowPage", () => {
   });
 
 
-  it("会根据 descriptor 渲染事务外部窗口壳", async () => {
+  it("事务外部窗口会跳转到完整事务工作台路由", async () => {
     getWindowDescriptorMock.mockResolvedValue({
       ok: true,
       value: {
@@ -454,17 +441,15 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: "affairs-workbench",
-        payload: { filePath: null }
+        payload: { filePath: null, routePath: "/workspaces/workspace-1/affairs" }
       }
     });
 
     renderPage("/desktop-window/affairs-workspace-1");
 
     await waitFor(() => {
-      expect(screen.getByTestId("desktop-affairs-window")).toHaveTextContent("workspace-1");
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/affairs");
     });
-    expect(screen.getByTestId("desktop-affairs-aux")).toHaveTextContent("workspace-1");
-    expect(setTitleMock).toHaveBeenLastCalledWith("CodingNS - Affairs（项目一）");
   });
 
   it("代码外部窗口会跳转到 descriptor 指定路由", async () => {
