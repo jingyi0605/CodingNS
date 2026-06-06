@@ -2307,16 +2307,21 @@ install_or_resolve_pm2() {
   [[ -n "$PM2_BIN" ]] || die error_no_pm2_after_install
 }
 
-write_private_pm2_start_script() {
-  if [[ "$PRIVATE_INSTALL_CONTEXT" != "1" ]]; then
-    return
+resolve_pm2_start_script_path() {
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    PRIVATE_PM2_START_SCRIPT="$PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs"
+  else
+    PRIVATE_PM2_START_SCRIPT="$SELECTED_DATA_DIR/pm2-service/start-codingns.mjs"
   fi
+}
 
+write_private_pm2_start_script() {
   [[ -n "$NODE_BIN" ]] || die error_no_node
   [[ -n "$CODINGNS_SCRIPT" ]] || die error_no_codingns_after_install
 
-  PRIVATE_PM2_START_SCRIPT="$PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs"
-  mkdir -p "$PRIVATE_SERVICE_STATE_DIR"
+  resolve_pm2_start_script_path
+
+  mkdir -p "$(dirname "$PRIVATE_PM2_START_SCRIPT")"
 
   local native_pm2_start_script=""
   local native_codingns_script=""
@@ -2368,6 +2373,7 @@ child.on("error", (error) => {
 
 fs.writeFileSync(outputPath, script);
 EOF
+  chmod +x "$PRIVATE_PM2_START_SCRIPT"
 }
 
 start_pm2_service() {
@@ -2377,23 +2383,24 @@ start_pm2_service() {
   fi
 
   mkdir -p "$SELECTED_DATA_DIR"
+  resolve_pm2_start_script_path
 
   if [[ "$DRY_RUN" == "1" ]]; then
     if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" delete $PROCESS_NAME"
-      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" start $PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter $NODE_BIN"
+      say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" start $PRIVATE_PM2_START_SCRIPT --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter $NODE_BIN"
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" save"
     else
       say_info_custom "pm2 delete $PROCESS_NAME"
-      say_info_custom "pm2 start $NODE_BIN --name $PROCESS_NAME --cwd $HOME --interpreter none -- $CODINGNS_SCRIPT start --host 0.0.0.0 --port $SELECTED_PORT --data-dir $SELECTED_DATA_DIR"
+      say_info_custom "pm2 start $PRIVATE_PM2_START_SCRIPT --name $PROCESS_NAME --cwd $SELECTED_DATA_DIR --interpreter $NODE_BIN"
       say_info_custom "pm2 save"
     fi
     return
   fi
 
-  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-    write_private_pm2_start_script
+  write_private_pm2_start_script
 
+  if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
     if env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" describe "$PROCESS_NAME" >/dev/null 2>&1; then
       say_info info_existing_pm2_process "$PROCESS_NAME"
       env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" delete "$PROCESS_NAME" >/dev/null 2>&1 || true
@@ -2417,10 +2424,62 @@ start_pm2_service() {
     "$PM2_BIN" delete "$PROCESS_NAME" >/dev/null 2>&1 || true
   fi
 
-  "$PM2_BIN" start "$NODE_BIN" --name "$PROCESS_NAME" --cwd "$HOME" --interpreter none -- \
-    "$CODINGNS_SCRIPT" start --host 0.0.0.0 --port "$SELECTED_PORT" --data-dir "$SELECTED_DATA_DIR"
+  "$PM2_BIN" start "$PRIVATE_PM2_START_SCRIPT" --name "$PROCESS_NAME" --cwd "$SELECTED_DATA_DIR" --interpreter "$NODE_BIN"
 
   "$PM2_BIN" save >/dev/null
+}
+
+write_launchd_pm2_resurrect_agent() {
+  local launch_agent_dir="$HOME/Library/LaunchAgents"
+  local launch_agent_path="$launch_agent_dir/com.codingns.pm2-resurrect.plist"
+  local launch_log_dir="$SELECTED_DATA_DIR/pm2-service"
+  local node_bin_dir=""
+  node_bin_dir="$(dirname "$NODE_BIN")"
+
+  mkdir -p "$launch_agent_dir" "$launch_log_dir"
+
+  cat > "$launch_agent_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codingns.pm2-resurrect</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$PM2_BIN</string>
+    <string>resurrect</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PM2_HOME</key>
+    <string>$HOME/.pm2</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$node_bin_dir</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$launch_log_dir/launchd-pm2.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>$launch_log_dir/launchd-pm2.err.log</string>
+</dict>
+</plist>
+EOF
+
+  chmod 644 "$launch_agent_path"
+
+  if command_exists plutil; then
+    plutil -lint "$launch_agent_path" >/dev/null
+  fi
+
+  local launchctl_domain="gui/$(id -u)"
+  launchctl bootout "$launchctl_domain/com.codingns.pm2-resurrect" >/dev/null 2>&1 || true
+  launchctl bootstrap "$launchctl_domain" "$launch_agent_path"
+  launchctl enable "$launchctl_domain/com.codingns.pm2-resurrect" >/dev/null 2>&1 || true
+  launchctl kickstart -k "$launchctl_domain/com.codingns.pm2-resurrect" >/dev/null 2>&1 || true
 }
 
 configure_startup() {
@@ -2450,7 +2509,12 @@ configure_startup() {
   fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
+    if [[ "$startup_platform" == "launchd" ]]; then
+      say_info_custom "cat > $HOME/Library/LaunchAgents/com.codingns.pm2-resurrect.plist"
+      say_info_custom "launchctl bootstrap gui/\$(id -u) $HOME/Library/LaunchAgents/com.codingns.pm2-resurrect.plist"
+      say_info_custom "launchctl kickstart -k gui/\$(id -u)/com.codingns.pm2-resurrect"
+      say_info_custom "pm2 save"
+    elif [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" startup $startup_platform -u $USER --hp $HOME"
       say_info_custom "env ${INSTALL_ENV_ARGS[*]} \"$PM2_BIN\" save"
     else
@@ -2462,35 +2526,33 @@ configure_startup() {
 
   say_info info_configuring_startup "$startup_platform"
 
+  if [[ "$startup_platform" == "launchd" ]]; then
+    write_launchd_pm2_resurrect_agent
+    "$PM2_BIN" save >/dev/null
+    return
+  fi
+
   if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-    if [[ "$startup_platform" == "systemd" ]]; then
-      if is_root_user; then
-        env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
-      elif command_exists sudo; then
-        sudo env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
-      else
-        say_warn warn_linux_startup_no_sudo
-        return
-      fi
+    if is_root_user; then
+      env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
+    elif command_exists sudo; then
+      sudo env PATH="$PATH" "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
     else
-      env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" startup launchd -u "$USER" --hp "$HOME"
+      say_warn warn_linux_startup_no_sudo
+      return
     fi
 
     env "${INSTALL_ENV_ARGS[@]}" "$PM2_BIN" save >/dev/null
     return
   fi
 
-  if [[ "$startup_platform" == "systemd" ]]; then
-    if is_root_user; then
-      env PATH="$PATH" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
-    elif command_exists sudo; then
-      sudo env PATH="$PATH" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
-    else
-      say_warn warn_linux_startup_no_sudo
-      return
-    fi
+  if is_root_user; then
+    env PATH="$PATH" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
+  elif command_exists sudo; then
+    sudo env PATH="$PATH" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
   else
-    "$PM2_BIN" startup launchd -u "$USER" --hp "$HOME"
+    say_warn warn_linux_startup_no_sudo
+    return
   fi
 
   "$PM2_BIN" save >/dev/null
@@ -2554,9 +2616,9 @@ print_success_summary() {
     fi
     if [[ "$START_PM2_SERVICE" != "1" ]]; then
       if [[ "$PRIVATE_INSTALL_CONTEXT" == "1" ]]; then
-        printf -- '- env PM2_HOME=%s %s start %s --name %s --cwd %s --interpreter %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PRIVATE_SERVICE_STATE_DIR/start-codingns.mjs" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$NODE_BIN"
+        printf -- '- env PM2_HOME=%s %s start %s --name %s --cwd %s --interpreter %s\n' "$PRIVATE_PM2_HOME" "$PM2_BIN" "$PRIVATE_PM2_START_SCRIPT" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$NODE_BIN"
       else
-        printf -- '- pm2 start %s --name %s --cwd %s --interpreter none -- %s start --host 0.0.0.0 --port %s --data-dir %s\n' "$NODE_BIN" "$PROCESS_NAME" "$HOME" "$CODINGNS_SCRIPT" "$SELECTED_PORT" "$SELECTED_DATA_DIR"
+        printf -- '- pm2 start %s --name %s --cwd %s --interpreter %s\n' "$PRIVATE_PM2_START_SCRIPT" "$PROCESS_NAME" "$SELECTED_DATA_DIR" "$NODE_BIN"
       fi
     fi
   else
@@ -2595,7 +2657,7 @@ main() {
   ensure_registry_if_needed
   install_or_resolve_codingns
   install_or_resolve_pm2
-  write_private_pm2_start_script
+  resolve_pm2_start_script_path
   write_private_runtime_state
   start_pm2_service
   configure_startup
