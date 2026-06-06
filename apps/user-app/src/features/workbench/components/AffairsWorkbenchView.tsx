@@ -44,6 +44,7 @@ import {
   readAffairsDashboardState,
   writeAffairsDashboardState
 } from "../utils/affairs-dashboard-state";
+import { resolveShortcutAppSmartIcon } from "../utils/affairs-shortcut-icon";
 import { buildAffairsPath } from "../utils/workbench-navigation";
 import type {
   AssistantAutomationRunDto,
@@ -1250,45 +1251,6 @@ function isEmptyDashboardStatePayload(snapshot: unknown): boolean {
 
 function writeGlobalDashboardStateSnapshot(state: AffairsWorkbenchDashboardState): void {
   writeAffairsDashboardState(normalizeGlobalDashboardState(state));
-}
-
-function resolveShortcutAppIconText(title: string): string {
-  const normalizedTitle = title.trim();
-  if (!normalizedTitle) {
-    return "应用";
-  }
-
-  const cjkChars = Array.from(normalizedTitle).filter((char) => /[㐀-鿿]/.test(char));
-  if (cjkChars.length > 0) {
-    return cjkChars.slice(0, 2).join("");
-  }
-
-  const wordChars = normalizedTitle
-    .split(/[\s\-_/]+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .filter(Boolean);
-  if (wordChars.length > 0) {
-    return wordChars.slice(0, 2).join("");
-  }
-
-  return Array.from(normalizedTitle).slice(0, 2).join("").toUpperCase();
-}
-
-function resolveShortcutAppIconStyle(title: string): CSSProperties {
-  const normalizedTitle = title.trim() || "快捷应用";
-  let hash = 0;
-  for (const char of normalizedTitle) {
-    hash = ((hash << 5) - hash) + char.charCodeAt(0);
-    hash |= 0;
-  }
-  const hue = Math.abs(hash) % 360;
-  const accentHue = (hue + 28) % 360;
-  return {
-    background: `linear-gradient(135deg, hsl(${hue} 82% 91%), hsl(${accentHue} 78% 85%))`,
-    color: `hsl(${hue} 46% 20%)`
-  };
 }
 
 async function validateWorkspaceHtmlSource(workspaceId: string, entryPath: string): Promise<{ path: string; title: string }> {
@@ -4705,39 +4667,47 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
           <div className="affairs-shortcut-rail-empty">{t("shell.affairsShortcutRailEmpty")}</div>
         ) : (
           <div className="affairs-shortcut-rail-list" data-editing={editing ? "true" : undefined}>
-            {dashboardState.shortcutApps.map((shortcut) => (
-              <div key={shortcut.id} className="affairs-shortcut-rail-item">
-                {editing ? (
+            {dashboardState.shortcutApps.map((shortcut) => {
+              const smartIcon = resolveShortcutAppSmartIcon({
+                title: shortcut.title,
+                entryPath: shortcut.entryPath,
+                sourceKind: shortcut.sourceKind
+              });
+
+              return (
+                <div key={shortcut.id} className="affairs-shortcut-rail-item">
+                  {editing ? (
+                    <button
+                      type="button"
+                      className="affairs-shortcut-rail-remove-button"
+                      aria-label={t("shell.affairsShortcutRailRemoveAction")}
+                      onClick={() => removeShortcutApp(shortcut.id)}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className="affairs-shortcut-rail-remove-button"
-                    aria-label={t("shell.affairsShortcutRailRemoveAction")}
-                    onClick={() => removeShortcutApp(shortcut.id)}
+                    className="affairs-shortcut-rail-launcher"
+                    aria-label={editing
+                      ? t("shell.affairsShortcutRailEditEntryAction", { title: shortcut.title })
+                      : t("shell.affairsShortcutRailLaunchAction", { title: shortcut.title })}
+                    onClick={() => openShortcutApp(shortcut)}
                   >
-                    <span aria-hidden="true">×</span>
+                    <span
+                      className="affairs-shortcut-rail-icon"
+                      style={smartIcon.style}
+                      aria-hidden="true"
+                    >
+                      {smartIcon.text}
+                    </span>
+                    <span className="affairs-shortcut-rail-copy">
+                      <strong>{shortcut.title}</strong>
+                    </span>
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="affairs-shortcut-rail-launcher"
-                  aria-label={editing
-                    ? t("shell.affairsShortcutRailEditEntryAction", { title: shortcut.title })
-                    : t("shell.affairsShortcutRailLaunchAction", { title: shortcut.title })}
-                  onClick={() => openShortcutApp(shortcut)}
-                >
-                  <span
-                    className="affairs-shortcut-rail-icon"
-                    style={resolveShortcutAppIconStyle(shortcut.title)}
-                    aria-hidden="true"
-                  >
-                    {resolveShortcutAppIconText(shortcut.title)}
-                  </span>
-                  <span className="affairs-shortcut-rail-copy">
-                    <strong>{shortcut.title}</strong>
-                  </span>
-                </button>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )
       ) : null}
