@@ -99,7 +99,7 @@ describe("affairs lightweight session routes", () => {
       url: "/api/workspaces/workspace-1/affairs/lightweight-sessions"
     });
     expect(listResponse.statusCode).toBe(200);
-    expect(service.listSessions).toHaveBeenCalledWith("workspace-1", "user-1");
+    expect(service.listSessions).toHaveBeenCalledWith("affairs-global", "user-1");
 
     const startResponse = await app.inject({
       method: "POST",
@@ -111,7 +111,7 @@ describe("affairs lightweight session routes", () => {
     });
     expect(startResponse.statusCode).toBe(201);
     expect(service.startSession).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: "workspace-1",
+      workspaceId: "affairs-global",
       userId: "user-1",
       provider: "codex",
       content: "请总结今天的重点"
@@ -126,7 +126,7 @@ describe("affairs lightweight session routes", () => {
     });
     expect(sendResponse.statusCode).toBe(201);
     expect(service.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: "workspace-1",
+      workspaceId: "affairs-global",
       sessionId: "light-1",
       userId: "user-1",
       content: "继续"
@@ -140,7 +140,7 @@ describe("affairs lightweight session routes", () => {
       }
     });
     expect(seenResponse.statusCode).toBe(204);
-    expect(service.markSessionSeen).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", "2026-06-03T12:05:00.000Z");
+    expect(service.markSessionSeen).toHaveBeenCalledWith("affairs-global", "light-1", "user-1", "2026-06-03T12:05:00.000Z");
 
     const renameResponse = await app.inject({
       method: "PATCH",
@@ -150,7 +150,7 @@ describe("affairs lightweight session routes", () => {
       }
     });
     expect(renameResponse.statusCode).toBe(200);
-    expect(service.renameSessionTitle).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", "新标题");
+    expect(service.renameSessionTitle).toHaveBeenCalledWith("affairs-global", "light-1", "user-1", "新标题");
 
     const archiveResponse = await app.inject({
       method: "PATCH",
@@ -160,7 +160,7 @@ describe("affairs lightweight session routes", () => {
       }
     });
     expect(archiveResponse.statusCode).toBe(200);
-    expect(service.updateSessionArchiveState).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", true);
+    expect(service.updateSessionArchiveState).toHaveBeenCalledWith("affairs-global", "light-1", "user-1", true);
 
     const favoriteResponse = await app.inject({
       method: "PATCH",
@@ -170,13 +170,13 @@ describe("affairs lightweight session routes", () => {
       }
     });
     expect(favoriteResponse.statusCode).toBe(200);
-    expect(service.updateSessionFavoriteState).toHaveBeenCalledWith("workspace-1", "light-1", "user-1", true);
+    expect(service.updateSessionFavoriteState).toHaveBeenCalledWith("affairs-global", "light-1", "user-1", true);
 
     const deleteResponse = await app.inject({
       method: "DELETE",
       url: "/api/workspaces/workspace-1/affairs/lightweight-sessions/light-1"
     });
     expect(deleteResponse.statusCode).toBe(204);
-    expect(service.deleteSession).toHaveBeenCalledWith("workspace-1", "light-1", "user-1");
+    expect(service.deleteSession).toHaveBeenCalledWith("affairs-global", "light-1", "user-1");
   });
 });

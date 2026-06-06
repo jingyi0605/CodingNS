@@ -50,6 +50,12 @@ describe("affairs library global routes", () => {
       }),
       updateGlobalDashboardState: vi.fn(async (_request, reply) => {
         reply.send({ dashboardState: { workspaceId: "affairs-global", tabs: [] } });
+      }),
+      getSnapshot: vi.fn(async (request, reply) => {
+        reply.send({ workspaceId: (request.params as any).workspaceId });
+      }),
+      listDocuments: vi.fn(async (request, reply) => {
+        reply.send({ workspaceId: (request.params as any).workspaceId, items: [] });
       })
     } as unknown as AffairsLibraryController;
 
@@ -126,5 +132,31 @@ describe("affairs library global routes", () => {
     });
     expect(updateDashboardStateResponse.statusCode).toBe(200);
     expect(controller.updateGlobalDashboardState).toHaveBeenCalledTimes(1);
+
+    const snapshotResponse = await app.inject({
+      method: "GET",
+      url: "/api/affairs/library-snapshot"
+    });
+    expect(snapshotResponse.statusCode).toBe(200);
+    expect(controller.getSnapshot).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ workspaceId: "affairs-global" })
+      }),
+      expect.anything()
+    );
+
+    const documentsResponse = await app.inject({
+      method: "GET",
+      url: "/api/affairs/library-documents?browseMode=folder"
+    });
+    expect(documentsResponse.statusCode).toBe(200);
+    expect(controller.listDocuments).toHaveBeenCalledTimes(1);
+    expect(controller.listDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ workspaceId: "affairs-global" })
+      }),
+      expect.anything()
+    );
   });
 });

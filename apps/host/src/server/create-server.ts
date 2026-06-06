@@ -185,7 +185,7 @@ import { AffairsLibraryDirtyWatchService } from "../modules/workspace/affairs-li
 import { AffairsLightweightSessionController } from "../modules/workspace/affairs-lightweight-session-controller.js";
 import { AffairsLightweightSessionService } from "../modules/workspace/affairs-lightweight-session-service.js";
 import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-library-preview-link-service.js";
-import { AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
+import { AFFAIRS_GLOBAL_WORKSPACE_ID, AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
 import { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
 import { AffairsTagService } from "../modules/workspace/affairs-tag-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
@@ -1430,11 +1430,15 @@ export function createServer(config: HostConfig) {
     affairsLibraryPreviewLinkService,
     onlyOfficeIntegrationService,
     (workspaceId) => {
-      if (!workspaceId?.trim()) {
+      const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+      if (!normalizedWorkspaceId) {
         return;
       }
-      affairsLibraryDirtyWatchService.syncWorkspace(workspaceId);
-      workspaceSessionInstructionWatchService.syncWorkspace(workspaceId);
+      affairsLibraryDirtyWatchService.syncWorkspace(normalizedWorkspaceId);
+      if (normalizedWorkspaceId === AFFAIRS_GLOBAL_WORKSPACE_ID) {
+        return;
+      }
+      workspaceSessionInstructionWatchService.syncWorkspace(normalizedWorkspaceId);
     }
   );
   const affairsLightweightSessionController = new AffairsLightweightSessionController(
@@ -1743,7 +1747,12 @@ export function createServer(config: HostConfig) {
   void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
   void registerOpsRuntimeRoutes(app, opsRuntimeController);
-  void registerAffairsRoutes(app, affairsLibraryController);
+  void registerAffairsRoutes(
+    app,
+    affairsLibraryController,
+    affairsTagController,
+    affairsLightweightSessionController
+  );
   void registerWorkspaceRoutes(
     app,
     workspaceController,

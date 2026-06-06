@@ -45,6 +45,7 @@ import {
   type TaskHelperWorkerHealthSnapshot
 } from "../tasks/task-helper-pool.js";
 
+export const AFFAIRS_GLOBAL_WORKSPACE_ID = "affairs-global";
 const DEFAULT_CONFIG_RELATIVE_PATH = ".ai-index/doc-semantic-index.config.json";
 const INDEX_DIR_RELATIVE_PATH = ".ai-index";
 const EXPORT_DIR_RELATIVE_PATH = ".ai-index/exports";
@@ -293,7 +294,7 @@ function normalizeDashboardStatePayload(value: unknown): Record<string, unknown>
 
   return {
     ...(value as Record<string, unknown>),
-    workspaceId: "affairs-global"
+    workspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID
   };
 }
 
@@ -509,8 +510,8 @@ export class AffairsLibraryService {
   }
 
   getGlobalBinding(userId: string): AffairsLibraryBindingDto | null {
-    const setting = this.resolveLibrarySetting(userId, null);
-    return this.buildBindingFromSetting(setting, null);
+    const setting = this.resolveLibrarySetting(userId, AFFAIRS_GLOBAL_WORKSPACE_ID);
+    return this.buildBindingFromSetting(setting, AFFAIRS_GLOBAL_WORKSPACE_ID);
   }
 
   getBinding(workspaceId: string, userId: string): AffairsLibraryBindingDto | null {
@@ -522,7 +523,7 @@ export class AffairsLibraryService {
     const normalizedRootDir = this.normalizeAndValidateBindingRootDir(rootDir);
     const timestamp = nowIso();
     const currentSetting = this.resolveLibrarySetting(userId, null);
-    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const workspaceId = AFFAIRS_GLOBAL_WORKSPACE_ID;
     const nextSetting = this.upsertLibrarySetting({
       userId,
       rootDir: normalizedRootDir,
@@ -534,10 +535,8 @@ export class AffairsLibraryService {
       updatedAt: timestamp
     });
     this.syncLightweightReconcileTimers();
-    if (workspaceId) {
-      this.scheduleAutoRefresh(workspaceId, "binding_saved");
-    }
-    return this.buildBindingFromSetting(nextSetting, null)!;
+    this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    return this.buildBindingFromSetting(nextSetting, AFFAIRS_GLOBAL_WORKSPACE_ID)!;
   }
 
   setGlobalEnabled(userId: string, enabled: boolean): AffairsLibraryBindingDto {
@@ -556,7 +555,7 @@ export class AffairsLibraryService {
       this.assertLibraryRootDir(rootDir);
     }
 
-    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const workspaceId = AFFAIRS_GLOBAL_WORKSPACE_ID;
     const nextSetting = this.upsertLibrarySetting({
       userId,
       rootDir,
@@ -568,11 +567,11 @@ export class AffairsLibraryService {
       updatedAt: nowIso()
     });
     this.syncLightweightReconcileTimers();
-    if (enabled && workspaceId) {
+    if (enabled) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
     }
 
-    return this.buildBindingFromSetting(nextSetting, null)!;
+    return this.buildBindingFromSetting(nextSetting, AFFAIRS_GLOBAL_WORKSPACE_ID)!;
   }
 
   updateGlobalFavorites(
@@ -581,7 +580,7 @@ export class AffairsLibraryService {
   ): AffairsLibraryFavoriteRecord[] {
     const currentSetting = this.resolveLibrarySetting(userId, null);
     const normalizedFavorites = this.normalizeFavorites(favorites);
-    const workspaceId = this.resolvePreferredWorkspaceId(currentSetting?.lastWorkspaceId ?? null);
+    const workspaceId = AFFAIRS_GLOBAL_WORKSPACE_ID;
     const nextSetting = this.upsertLibrarySetting({
       userId,
       rootDir: currentSetting?.rootDir ?? null,
@@ -611,7 +610,7 @@ export class AffairsLibraryService {
       rootDir: currentSetting?.rootDir ?? null,
       enabled: currentSetting?.enabled ?? false,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
-      lastWorkspaceId: currentSetting?.lastWorkspaceId ?? null,
+      lastWorkspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID,
       dashboardStateJson: JSON.stringify(normalizedState),
       createdAt: currentSetting?.createdAt ?? timestamp,
       updatedAt: timestamp
@@ -621,7 +620,7 @@ export class AffairsLibraryService {
   }
 
   saveBinding(workspaceId: string, userId: string, rootDir: string): AffairsLibraryBindingDto {
-    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    this.assertWorkspaceIdCanUseLegacyAffairsRoute(workspaceId);
     const normalizedRootDir = this.normalizeAndValidateBindingRootDir(rootDir);
 
     const timestamp = nowIso();
@@ -643,7 +642,7 @@ export class AffairsLibraryService {
   }
 
   setEnabled(workspaceId: string, userId: string, enabled: boolean): AffairsLibraryBindingDto {
-    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    this.assertWorkspaceIdCanUseLegacyAffairsRoute(workspaceId);
     const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
     const rootDir = currentSetting?.rootDir?.trim() ?? "";
 
@@ -1328,7 +1327,7 @@ export class AffairsLibraryService {
     userId: string,
     favorites: AffairsLibraryFavoriteRecord[]
   ): AffairsLibraryFavoriteRecord[] {
-    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    this.assertWorkspaceIdCanUseLegacyAffairsRoute(workspaceId);
     const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
     const normalizedFavorites = this.normalizeFavorites(favorites);
 
@@ -3918,7 +3917,9 @@ export class AffairsLibraryService {
 
     const config = this.readConfig(rootDir);
     return {
-      workspaceId: setting?.lastWorkspaceId ?? fallbackWorkspaceId,
+      workspaceId: fallbackWorkspaceId === AFFAIRS_GLOBAL_WORKSPACE_ID
+        ? AFFAIRS_GLOBAL_WORKSPACE_ID
+        : setting?.lastWorkspaceId ?? fallbackWorkspaceId,
       rootDir,
       enabled: setting?.enabled === true,
       mirrorRoot: config.mirrorRoot,
@@ -3977,7 +3978,7 @@ export class AffairsLibraryService {
       rootDir: legacyRootDir,
       enabled: legacy?.affairsLibraryEnabled === true,
       favoritesJson: legacy?.affairsLibraryFavoritesJson ?? "[]",
-      lastWorkspaceId: legacy?.workspaceId ?? (workspaceScope || null),
+      lastWorkspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID,
       dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
       createdAt: currentSetting?.createdAt ?? legacy?.updatedAt ?? nowIso(),
       updatedAt: legacy?.updatedAt ?? nowIso()
@@ -3991,7 +3992,7 @@ export class AffairsLibraryService {
       rootDir: record.rootDir?.trim() || null,
       enabled: record.enabled === true,
       favoritesJson: record.favoritesJson ?? null,
-      lastWorkspaceId: record.lastWorkspaceId?.trim() || null,
+      lastWorkspaceId: this.normalizeAffairsWorkspaceId(record.lastWorkspaceId),
       dashboardStateJson: record.dashboardStateJson?.trim() || "{}",
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
@@ -4002,7 +4003,7 @@ export class AffairsLibraryService {
     if (typeof this.userAffairsLibrarySettingRepository.listEnabled === "function") {
       return this.userAffairsLibrarySettingRepository
         .listEnabled()
-        .filter((item) => Boolean(item.lastWorkspaceId?.trim() && item.rootDir?.trim()));
+        .filter((item) => Boolean(item.rootDir?.trim()));
     }
 
     return this.workspaceNavigationStateRepository
@@ -4012,22 +4013,28 @@ export class AffairsLibraryService {
         rootDir: item.affairsLibraryRootPath ?? null,
         enabled: item.affairsLibraryEnabled === true,
         favoritesJson: item.affairsLibraryFavoritesJson ?? null,
-        lastWorkspaceId: item.workspaceId,
+        lastWorkspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID,
         dashboardStateJson: "{}",
         createdAt: item.updatedAt,
         updatedAt: item.updatedAt
       }))
-      .filter((item) => Boolean(item.lastWorkspaceId?.trim() && item.rootDir?.trim()));
+      .filter((item) => Boolean(item.rootDir?.trim()));
   }
 
   private findEnabledBindingByWorkspaceId(workspaceId: string): UserAffairsLibrarySettingLike | null {
-    const normalizedWorkspaceId = workspaceId.trim();
-    if (!normalizedWorkspaceId) {
-      return null;
-    }
+    const normalizedWorkspaceId = this.normalizeAffairsWorkspaceId(workspaceId);
 
     if (typeof this.userAffairsLibrarySettingRepository.findEnabledByWorkspaceId === "function") {
-      return this.userAffairsLibrarySettingRepository.findEnabledByWorkspaceId(normalizedWorkspaceId);
+      const direct = this.userAffairsLibrarySettingRepository.findEnabledByWorkspaceId(normalizedWorkspaceId);
+      if (direct) {
+        return direct;
+      }
+      if (normalizedWorkspaceId === AFFAIRS_GLOBAL_WORKSPACE_ID && typeof this.userAffairsLibrarySettingRepository.listEnabled === "function") {
+        return this.userAffairsLibrarySettingRepository
+          .listEnabled()
+          .find((item) => item.rootDir?.trim() && item.enabled === true) ?? null;
+      }
+      return null;
     }
 
     const legacy = this.workspaceNavigationStateRepository.findAnyEnabledAffairsLibraryByWorkspaceId(normalizedWorkspaceId);
@@ -4045,6 +4052,19 @@ export class AffairsLibraryService {
       createdAt: legacy.updatedAt,
       updatedAt: legacy.updatedAt
     };
+  }
+
+
+  private normalizeAffairsWorkspaceId(workspaceId?: string | null): string {
+    return workspaceId?.trim() || AFFAIRS_GLOBAL_WORKSPACE_ID;
+  }
+
+  private assertWorkspaceIdCanUseLegacyAffairsRoute(workspaceId: string): void {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId || normalizedWorkspaceId === AFFAIRS_GLOBAL_WORKSPACE_ID) {
+      return;
+    }
+    this.workspaceService.getWorkspaceOrThrow(normalizedWorkspaceId);
   }
 
   private normalizeAndValidateBindingRootDir(rootDir: string): string {
@@ -4091,17 +4111,7 @@ export class AffairsLibraryService {
   }
 
   private resolvePreferredWorkspaceId(preferredWorkspaceId?: string | null): string | null {
-    const normalizedPreferredWorkspaceId = preferredWorkspaceId?.trim() ?? "";
-    if (normalizedPreferredWorkspaceId) {
-      try {
-        this.workspaceService.getWorkspaceOrThrow(normalizedPreferredWorkspaceId);
-        return normalizedPreferredWorkspaceId;
-      } catch {
-        // 旧的随机 workspaceId 已经失效时，直接降级到当前仍可见的工作区。
-      }
-    }
-
-    return this.workspaceService.list()[0]?.id ?? null;
+    return this.normalizeAffairsWorkspaceId(preferredWorkspaceId);
   }
 
   private ensureLibraryEnabled(binding: AffairsLibraryBindingDto): void {

@@ -4,7 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import { HOST_TASK_TYPES, type TaskSnapshot } from "../tasks/task-types.js";
 import type { WorkspaceService } from "./workspace-service.js";
-import type { AffairsLibraryService } from "./affairs-library-service.js";
+import { AFFAIRS_GLOBAL_WORKSPACE_ID, type AffairsLibraryService } from "./affairs-library-service.js";
 import {
   CatalogRepository,
   type ManualTagBindingStats,
@@ -644,8 +644,11 @@ export class AffairsTagService {
   }
 
   private requireBinding(workspaceId: string, userId: string) {
-    this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    const binding = this.affairsLibraryService.getBinding(workspaceId, userId);
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (normalizedWorkspaceId !== AFFAIRS_GLOBAL_WORKSPACE_ID) {
+      this.workspaceService.getWorkspaceOrThrow(normalizedWorkspaceId);
+    }
+    const binding = this.affairsLibraryService.getBinding(normalizedWorkspaceId || AFFAIRS_GLOBAL_WORKSPACE_ID, userId);
     const rootDir = binding?.rootDir?.trim() ?? "";
     if (!rootDir || binding?.enabled !== true) {
       throw new AppError({
