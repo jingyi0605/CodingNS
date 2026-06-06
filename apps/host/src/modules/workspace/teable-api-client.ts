@@ -32,12 +32,14 @@ export interface TeableRecordFields {
 }
 
 export interface TeableCreateRecordsInput {
+  fieldKeyType?: "name" | "id" | "dbFieldName";
   records: Array<{
     fields: TeableRecordFields;
   }>;
 }
 
 export interface TeableUpdateRecordsInput {
+  fieldKeyType?: "name" | "id" | "dbFieldName";
   records: Array<{
     id: string;
     fields: TeableRecordFields;
@@ -54,6 +56,14 @@ export interface TeableFieldSummary {
   name: string;
   type: string;
   isPrimary?: boolean;
+  isComputed?: boolean;
+  isLookup?: boolean;
+  isMultipleCellValue?: boolean;
+  recordRead?: boolean;
+  recordCreate?: boolean;
+  recordUpdate?: boolean;
+  permissions?: Record<string, unknown>;
+  permission?: Record<string, unknown>;
   options?: Record<string, unknown>;
   lookupOptions?: Record<string, unknown>;
 }
@@ -70,6 +80,11 @@ export interface TeableViewSummary {
   type: string;
   shareId?: string | null;
   enableShare?: boolean;
+  options?: Record<string, unknown>;
+  columnMeta?: unknown;
+  filter?: unknown;
+  orderBy?: unknown;
+  group?: unknown;
 }
 
 export interface TeableRecordSummary {
@@ -84,6 +99,7 @@ export interface TeableListRecordsInput {
   viewId?: string;
   take?: number;
   skip?: number;
+  search?: string;
 }
 
 export class TeableApiClient {
@@ -144,7 +160,7 @@ export class TeableApiClient {
     });
   }
 
-  async listRecords(tableId: string, input: TeableListRecordsInput = {}): Promise<{ records: TeableRecordSummary[] }> {
+  async listRecords(tableId: string, input: TeableListRecordsInput = {}): Promise<{ records: TeableRecordSummary[]; total?: number }> {
     const url = new URL(`/api/table/${encodeURIComponent(tableId)}/record`, this.baseUrl);
     for (const field of input.projection ?? []) {
       if (field.trim()) {
@@ -155,13 +171,15 @@ export class TeableApiClient {
     url.searchParams.set("cellFormat", input.cellFormat ?? "json");
     if (input.viewId?.trim()) {
       url.searchParams.set("viewId", input.viewId.trim());
-      url.searchParams.set("ignoreViewQuery", "true");
     }
     if (typeof input.take === "number") {
       url.searchParams.set("take", String(input.take));
     }
     if (typeof input.skip === "number") {
       url.searchParams.set("skip", String(input.skip));
+    }
+    if (input.search?.trim()) {
+      url.searchParams.set("search", input.search.trim());
     }
     return this.request(url.toString());
   }
@@ -170,7 +188,7 @@ export class TeableApiClient {
     return this.request(`/api/table/${encodeURIComponent(tableId)}/record`, {
       method: "POST",
       body: {
-        fieldKeyType: "name",
+        fieldKeyType: input.fieldKeyType ?? "name",
         typecast: true,
         ...input
       }
@@ -181,7 +199,7 @@ export class TeableApiClient {
     return this.request(`/api/table/${encodeURIComponent(tableId)}/record`, {
       method: "PATCH",
       body: {
-        fieldKeyType: "name",
+        fieldKeyType: input.fieldKeyType ?? "name",
         typecast: true,
         ...input
       }

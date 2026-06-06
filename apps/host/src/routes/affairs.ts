@@ -8,6 +8,7 @@ import type { TeableCatalogController } from "../modules/workspace/teable-catalo
 import type { TeableFieldMappingController } from "../modules/workspace/teable-field-mapping-controller.js";
 import type { TeableGlobalBindingController } from "../modules/workspace/teable-global-binding-controller.js";
 import type { TeableMirrorSyncController } from "../modules/workspace/teable-mirror-sync-controller.js";
+import type { TeableRuntimeController } from "../modules/workspace/teable-runtime-controller.js";
 import type { TeableWorkbenchSyncConfigController } from "../modules/workspace/teable-workbench-sync-config-controller.js";
 
 export async function registerAffairsRoutes(
@@ -19,7 +20,8 @@ export async function registerAffairsRoutes(
   teableCatalogController?: TeableCatalogController,
   teableFieldMappingController?: TeableFieldMappingController,
   affairsTagController?: AffairsTagController,
-  affairsLightweightSessionController?: AffairsLightweightSessionController
+  affairsLightweightSessionController?: AffairsLightweightSessionController,
+  teableRuntimeController?: TeableRuntimeController
 ): Promise<void> {
   const withGlobalWorkspace = <TRequest extends { params?: unknown }>(handler: (request: TRequest, reply: any) => Promise<void>) => {
     return async (request: TRequest, reply: any) => {
@@ -43,7 +45,15 @@ export async function registerAffairsRoutes(
     getTableFields: async (_request: any, reply: any) => reply.send([]),
     createTableFields: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
     getMappings: async (_request: any, reply: any) => reply.send({ mappings: [], sourceFieldsByType: { tags: [], sessions: [], todos: [] } }),
-    saveMappings: async (_request: any, reply: any) => reply.send([])
+    saveMappings: async (_request: any, reply: any) => reply.send([]),
+    listTables: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    listViews: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    listFields: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    listRecords: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    createRecord: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    updateRecord: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    deleteRecords: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    listLinkedRecordOptions: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" })
   };
   const legacySyncConfigController = teableMirrorSyncController && "getConfigs" in teableMirrorSyncController
     ? teableMirrorSyncController as unknown as TeableWorkbenchSyncConfigController
@@ -55,6 +65,7 @@ export async function registerAffairsRoutes(
   const teableSyncConfig = normalizedTeableWorkbenchSyncConfigController ?? unavailableController as unknown as TeableWorkbenchSyncConfigController;
   const teableCatalog = teableCatalogController ?? unavailableController as unknown as TeableCatalogController;
   const teableFieldMapping = teableFieldMappingController ?? unavailableController as unknown as TeableFieldMappingController;
+  const teableRuntime = teableRuntimeController ?? unavailableController as unknown as TeableRuntimeController;
 
   app.get("/api/affairs/library-binding", affairsLibraryController.getGlobalBinding);
   app.put("/api/affairs/library-binding", affairsLibraryController.saveGlobalBinding);
@@ -122,6 +133,14 @@ export async function registerAffairsRoutes(
   app.post("/api/affairs/teable/table-fields", teableCatalog.createTableFields);
   app.get("/api/affairs/teable/field-mappings", teableFieldMapping.getMappings);
   app.put("/api/affairs/teable/field-mappings", teableFieldMapping.saveMappings);
+  app.get("/api/affairs/teable/runtime/tables", teableRuntime.listTables);
+  app.get("/api/affairs/teable/runtime/tables/:tableId/views", teableRuntime.listViews);
+  app.get("/api/affairs/teable/runtime/tables/:tableId/fields", teableRuntime.listFields);
+  app.get("/api/affairs/teable/runtime/tables/:tableId/records", teableRuntime.listRecords);
+  app.post("/api/affairs/teable/runtime/tables/:tableId/records", teableRuntime.createRecord);
+  app.patch("/api/affairs/teable/runtime/tables/:tableId/records/:recordId", teableRuntime.updateRecord);
+  app.delete("/api/affairs/teable/runtime/tables/:tableId/records", teableRuntime.deleteRecords);
+  app.get("/api/affairs/teable/runtime/tables/:tableId/fields/:fieldId/link-options", teableRuntime.listLinkedRecordOptions);
   app.post("/api/affairs/teable/mirror-sync", teableMirror.requestMirrorSync);
   app.get("/api/affairs/teable/sync-logs", teableMirror.listSyncLogs);
   app.get("/api/affairs/teable/forms", async (_request, reply) => {

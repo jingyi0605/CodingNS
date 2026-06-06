@@ -195,6 +195,8 @@ import { TeableFieldMappingService } from "../modules/workspace/teable-field-map
 import { TeableGlobalBindingController } from "../modules/workspace/teable-global-binding-controller.js";
 import { TeableGlobalBindingService } from "../modules/workspace/teable-global-binding-service.js";
 import { TeableMirrorSyncController } from "../modules/workspace/teable-mirror-sync-controller.js";
+import { TeableRuntimeController } from "../modules/workspace/teable-runtime-controller.js";
+import { TeableRuntimeService } from "../modules/workspace/teable-runtime-service.js";
 import { TeableWorkbenchSyncConfigController } from "../modules/workspace/teable-workbench-sync-config-controller.js";
 import { TeableWorkbenchSyncConfigService } from "../modules/workspace/teable-workbench-sync-config-service.js";
 import { TeableMirrorSyncService } from "../modules/workspace/teable-mirror-sync-service.js";
@@ -1449,6 +1451,10 @@ export function createServer(config: HostConfig) {
     teableCredentialService,
     config.filePreviewTokenSecret
   );
+  const teableRuntimeService = new TeableRuntimeService(
+    teableGlobalBindingService,
+    teableCredentialService
+  );
   const teableFieldMappingService = new TeableFieldMappingService(
     repositories.userTeableFieldMappingRepository,
     repositories.userTeableWorkbenchSyncConfigRepository
@@ -1501,6 +1507,9 @@ export function createServer(config: HostConfig) {
   );
   const teableCatalogController = new TeableCatalogController(
     teableCatalogService
+  );
+  const teableRuntimeController = new TeableRuntimeController(
+    teableRuntimeService
   );
   const teableFieldMappingController = new TeableFieldMappingController(
     teableFieldMappingService
@@ -1859,7 +1868,8 @@ export function createServer(config: HostConfig) {
     teableCatalogController,
     teableFieldMappingController,
     affairsTagController,
-    affairsLightweightSessionController
+    affairsLightweightSessionController,
+    teableRuntimeController
   );
   void registerWorkspaceRoutes(
     app,
