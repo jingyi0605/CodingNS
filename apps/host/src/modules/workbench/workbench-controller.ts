@@ -38,4 +38,32 @@ export class WorkbenchController {
 
     reply.send(this.workbenchService.getSnapshot(userId));
   };
+
+  readonly getAffairsAssistantSessions = async (
+    request: FastifyRequest<{
+      Params: {
+        workspaceId: string;
+      };
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const userId = requireUserId(request);
+    const refresh = request.headers["x-codingns-affairs-assistant-refresh"] === "true";
+
+    const snapshot = refresh
+      ? await this.workbenchService.refreshAffairsAssistantSessionsSnapshot(request.params.workspaceId, userId, {
+        force: true
+      })
+      : this.workbenchService.getAffairsAssistantSessionsSnapshot(request.params.workspaceId, userId);
+
+    reply.send({
+      item: {
+        projectId: snapshot.projectId,
+        projectWorkspaceId: snapshot.projectWorkspaceId,
+        agentWorkspacePath: snapshot.agentWorkspacePath,
+        sessions: snapshot.sessions,
+        updatedAt: snapshot.updatedAt
+      }
+    });
+  };
 }

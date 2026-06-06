@@ -7,4 +7,8 @@ export async function registerWorkbenchRoutes(
   workbenchController: WorkbenchController
 ): Promise<void> {
   app.get("/api/workbench", workbenchController.getSnapshot);
+  app.get(
+    "/api/workspaces/:workspaceId/affairs/assistant-sessions",
+    workbenchController.getAffairsAssistantSessions
+  );
 }
