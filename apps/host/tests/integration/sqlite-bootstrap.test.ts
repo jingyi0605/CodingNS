@@ -746,6 +746,84 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("事务助手会话快照允许使用全局事务工作台 ID，不再要求真实 workspace 外键", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-affairs-assistant-session-snapshot-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      PRAGMA foreign_keys = ON;
+
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE affairs_assistant_session_snapshots (
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        project_id TEXT,
+        project_workspace_id TEXT,
+        agent_workspace_path TEXT,
+        sessions_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+
+      INSERT INTO auth_users (id) VALUES ('user-1');
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const tableSql = client.db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'affairs_assistant_session_snapshots'"
+      )
+      .get() as { sql: string } | undefined;
+
+    client.db
+      .prepare(
+        `INSERT INTO affairs_assistant_session_snapshots (
+          workspace_id,
+          user_id,
+          project_id,
+          project_workspace_id,
+          agent_workspace_path,
+          sessions_json,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "affairs-global",
+        "user-1",
+        null,
+        null,
+        "/tmp/affairs-agent",
+        "[]",
+        "2026-06-06T14:10:00.000Z"
+      );
+
+    const row = client.db
+      .prepare("SELECT workspace_id, user_id, sessions_json FROM affairs_assistant_session_snapshots")
+      .get() as { workspace_id: string; user_id: string; sessions_json: string } | undefined;
+
+    client.close();
+
+    expect(tableSql?.sql).not.toContain("FOREIGN KEY (workspace_id) REFERENCES workspaces(id)");
+    expect(row).toEqual({
+      workspace_id: "affairs-global",
+      user_id: "user-1",
+      sessions_json: "[]"
+    });
+  });
+
   it("初始化数据库时会创建 workspace_worktrees 表", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-worktree-bootstrap-"));
     tempDirs.push(tempDir);

@@ -38,6 +38,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureSessionRelationColumns(db);
   ensureSessionForkSchema(db);
   ensureSessionChangedFileTables(db);
+  ensureAffairsAssistantSessionSnapshotSchema(db);
   ensureTerminalInstanceProcessIdColumn(db);
   ensureTerminalRuntimeSchema(db);
   ensureTerminalLogSchema(db);
@@ -2334,6 +2335,85 @@ function ensureSessionChangedFileTables(db: BetterSqliteDatabase): void {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
     );
+  `);
+}
+
+function ensureAffairsAssistantSessionSnapshotSchema(db: BetterSqliteDatabase): void {
+  const currentSql = readTableSql(db, "affairs_assistant_session_snapshots");
+
+  if (!currentSql) {
+    db.exec(`
+      CREATE TABLE affairs_assistant_session_snapshots (
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        project_id TEXT,
+        project_workspace_id TEXT,
+        agent_workspace_path TEXT,
+        sessions_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id),
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_affairs_assistant_session_snapshots_user_id
+        ON affairs_assistant_session_snapshots(user_id, updated_at DESC);
+    `);
+    return;
+  }
+
+  if (!currentSql.includes("FOREIGN KEY (workspace_id) REFERENCES workspaces(id)")) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_affairs_assistant_session_snapshots_user_id
+        ON affairs_assistant_session_snapshots(user_id, updated_at DESC);
+    `);
+    return;
+  }
+
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+
+    DROP TABLE IF EXISTS affairs_assistant_session_snapshots_next;
+
+    CREATE TABLE affairs_assistant_session_snapshots_next (
+      workspace_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      project_id TEXT,
+      project_workspace_id TEXT,
+      agent_workspace_path TEXT,
+      sessions_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id),
+      FOREIGN KEY (user_id) REFERENCES auth_users(id)
+    );
+
+    INSERT INTO affairs_assistant_session_snapshots_next (
+      workspace_id,
+      user_id,
+      project_id,
+      project_workspace_id,
+      agent_workspace_path,
+      sessions_json,
+      updated_at
+    )
+    SELECT
+      workspace_id,
+      user_id,
+      project_id,
+      project_workspace_id,
+      agent_workspace_path,
+      sessions_json,
+      updated_at
+    FROM affairs_assistant_session_snapshots;
+
+    DROP TABLE affairs_assistant_session_snapshots;
+
+    ALTER TABLE affairs_assistant_session_snapshots_next
+      RENAME TO affairs_assistant_session_snapshots;
+
+    PRAGMA foreign_keys = ON;
+
+    CREATE INDEX IF NOT EXISTS idx_affairs_assistant_session_snapshots_user_id
+      ON affairs_assistant_session_snapshots(user_id, updated_at DESC);
   `);
 }
 

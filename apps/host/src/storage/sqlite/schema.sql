@@ -815,7 +815,6 @@ CREATE TABLE IF NOT EXISTS affairs_assistant_session_snapshots (
   sessions_json TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, user_id),
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
