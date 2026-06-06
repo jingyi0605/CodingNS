@@ -1460,6 +1460,13 @@ function resolveHtmlPreviewSandbox(src: string): string {
   try {
     const previewUrl = new URL(src, window.location.origin);
 
+    // 受控 HTML 预览页里的 Workspace HTTP bridge 需要保留真实同源身份。
+    // 如果不给 allow-same-origin，H5 iframe 会变成 opaque origin，
+    // 页面里的 fetch('/preview/workspace-bridge/...') 会被浏览器当跨源请求拦掉。
+    if (isCodingNSControlledHtmlPreviewUrl(previewUrl)) {
+      return CROSS_ORIGIN_HTML_PREVIEW_SANDBOX;
+    }
+
     // 桌面端这里通常是 Host 的本地地址，和 Tauri WebView 自身不同源。
     // macOS 的 WKWebView 对跨源 sandbox 更苛刻，不补 allow-same-origin 时，脚本型 HTML 容易直接白屏。
     if (previewUrl.origin !== window.location.origin) {
@@ -1470,6 +1477,11 @@ function resolveHtmlPreviewSandbox(src: string): string {
   }
 
   return DEFAULT_HTML_PREVIEW_SANDBOX;
+}
+
+function isCodingNSControlledHtmlPreviewUrl(url: URL): boolean {
+  return url.pathname.startsWith("/preview/files/")
+    || url.pathname.startsWith("/preview/affairs-files/");
 }
 
 function roundScale(value: number): number {

@@ -3069,7 +3069,7 @@ describe("FileViewerModal", () => {
     );
   });
 
-  it("Web 同源 HTML 预览不放宽 sandbox", async () => {
+  it("Web 受控 HTML 预览会保留同源身份，保证 Workspace HTTP bridge 可用", async () => {
     platformMock.isDesktop = false;
 
     fileApiMock.getFilePreview.mockResolvedValue(
@@ -3102,7 +3102,7 @@ describe("FileViewerModal", () => {
     );
     expect(previewFrame).toHaveAttribute(
       "sandbox",
-      "allow-forms allow-modals allow-scripts"
+      "allow-forms allow-modals allow-scripts allow-same-origin"
     );
   });
 
