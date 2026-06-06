@@ -10390,6 +10390,31 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 0;
 }
 
+.affairs-assistant-timeline .timeline-empty,
+.affairs-assistant-timeline .timeline-status,
+.affairs-assistant-timeline .timeline-status-inline {
+  border-color: transparent;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.affairs-assistant-timeline .timeline-empty {
+  border-style: none;
+}
+
+.workbench-shell[data-workbench-mode="affairs"] .affairs-conversation-timeline-shell .timeline-empty {
+  border-style: none;
+  border-color: transparent;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .affairs-assistant-composer {
   flex: 0 0 auto;
   padding-top: 10px;
