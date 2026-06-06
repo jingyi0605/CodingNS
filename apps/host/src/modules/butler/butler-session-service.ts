@@ -37,6 +37,9 @@ export interface ButlerProjectSessionView {
   ownershipMode: ButlerSessionOwnershipMode;
   status: ButlerSessionStatus;
   runningState: SessionRunningState | null;
+  lastEventAt: string | null;
+  completedAt: string | null;
+  lastSeenAt: string | null;
   lastSummary: string | null;
   lastCheckpointAt: string | null;
   createdAt: string;
@@ -203,6 +206,9 @@ export class ButlerSessionService {
         ownershipMode: record.ownershipMode,
         status: record.status,
         runningState: state?.runningState ?? null,
+        lastEventAt: state?.lastEventAt ?? index?.updatedAt ?? record.updatedAt,
+        completedAt: state?.completedAt ?? (record.status === "closed" ? record.updatedAt : null),
+        lastSeenAt: state?.lastSeenAt ?? null,
         lastSummary: record.lastSummary,
         lastCheckpointAt: record.lastCheckpointAt,
         createdAt: record.createdAt,
@@ -292,6 +298,9 @@ export class ButlerSessionService {
       ownershipMode: created.ownershipMode,
       status: created.status,
       runningState: state?.runningState ?? null,
+      lastEventAt: state?.lastEventAt ?? index?.updatedAt ?? created.updatedAt,
+      completedAt: state?.completedAt ?? (created.status === "closed" ? created.updatedAt : null),
+      lastSeenAt: state?.lastSeenAt ?? null,
       lastSummary: created.lastSummary,
       lastCheckpointAt: created.lastCheckpointAt,
       createdAt: created.createdAt,
@@ -402,6 +411,9 @@ export class ButlerSessionService {
       ownershipMode: updatedRecord.ownershipMode,
       status: updatedRecord.status,
       runningState: state?.runningState ?? null,
+      lastEventAt: state?.lastEventAt ?? index?.updatedAt ?? updatedRecord.updatedAt,
+      completedAt: state?.completedAt ?? (updatedRecord.status === "closed" ? updatedRecord.updatedAt : null),
+      lastSeenAt: state?.lastSeenAt ?? null,
       lastSummary: updatedRecord.lastSummary,
       lastCheckpointAt: updatedRecord.lastCheckpointAt,
       createdAt: updatedRecord.createdAt,
@@ -588,6 +600,9 @@ export class ButlerSessionService {
       ownershipMode: created.ownershipMode,
       status: created.status,
       runningState: "running",
+      lastEventAt: timestamp,
+      completedAt: null,
+      lastSeenAt: null,
       lastSummary: created.lastSummary,
       lastCheckpointAt: created.lastCheckpointAt,
       createdAt: created.createdAt,
@@ -693,6 +708,9 @@ export class ButlerSessionService {
       ownershipMode: created.ownershipMode,
       status: created.status,
       runningState,
+      lastEventAt: candidate.lastEventAt,
+      completedAt: candidate.completedAt,
+      lastSeenAt: candidate.lastSeenAt,
       lastSummary: created.lastSummary,
       lastCheckpointAt: created.lastCheckpointAt,
       createdAt: created.createdAt,
@@ -758,6 +776,9 @@ export class ButlerSessionService {
       ownershipMode: record.ownershipMode,
       status: record.status,
       runningState: state?.runningState ?? null,
+      lastEventAt: state?.lastEventAt ?? index?.updatedAt ?? record.updatedAt,
+      completedAt: state?.completedAt ?? (record.status === "closed" ? record.updatedAt : null),
+      lastSeenAt: state?.lastSeenAt ?? null,
       lastSummary: record.lastSummary,
       lastCheckpointAt: record.lastCheckpointAt,
       createdAt: record.createdAt,

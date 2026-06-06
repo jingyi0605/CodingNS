@@ -49,10 +49,12 @@ export class WorkbenchController {
   ): Promise<void> => {
     const userId = requireUserId(request);
     const refresh = request.headers["x-codingns-affairs-assistant-refresh"] === "true";
+    const awaitRefresh = request.headers["x-codingns-affairs-assistant-await-refresh"] === "true";
 
     const snapshot = refresh
       ? await this.workbenchService.refreshAffairsAssistantSessionsSnapshot(request.params.workspaceId, userId, {
-        force: true
+        force: true,
+        awaitRefresh
       })
       : this.workbenchService.getAffairsAssistantSessionsSnapshot(request.params.workspaceId, userId);
 

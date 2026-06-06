@@ -370,6 +370,131 @@ describe("WorkbenchService", () => {
     });
     expect(requestWorkspaceDiscovery).not.toHaveBeenCalled();
   });
+
+  it("事务助手会话列表刷新默认只调度后台任务，不阻塞返回现有快照", async () => {
+    const scheduleRefresh = vi.fn();
+    const refreshNow = vi.fn(async () => {
+      throw new Error("不应该同步等待刷新任务");
+    });
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never,
+      undefined,
+      undefined,
+      undefined,
+      {
+        readSnapshot: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          projectId: "project-1",
+          projectWorkspaceId: "agent-workspace-1",
+          agentWorkspacePath: "/repo",
+          sessions: [
+            {
+              sessionId: "session-cached",
+              title: "缓存里的会话"
+            }
+          ],
+          updatedAt: "2026-06-06T10:00:00.000Z"
+        })),
+        refreshNow,
+        scheduleRefresh,
+        shouldRefresh: vi.fn(() => true)
+      } as never
+    );
+
+    const snapshot = await service.refreshAffairsAssistantSessionsSnapshot("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(snapshot.sessions).toMatchObject([
+      {
+        sessionId: "session-cached",
+        title: "缓存里的会话"
+      }
+    ]);
+    expect(scheduleRefresh).toHaveBeenCalledWith("workspace-1", "user-1", {
+      force: true,
+      source: "workbench.refresh_affairs_assistant_sessions.background"
+    });
+    expect(refreshNow).not.toHaveBeenCalled();
+  });
+
+  it("事务助手会话列表只有显式要求等待时才同步刷新", async () => {
+    const scheduleRefresh = vi.fn();
+    const refreshNow = vi.fn(async () => ({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      projectId: "project-1",
+      projectWorkspaceId: "agent-workspace-1",
+      agentWorkspacePath: "/repo",
+      sessions: [
+        {
+          sessionId: "session-refreshed",
+          title: "刷新后的会话"
+        }
+      ],
+      updatedAt: "2026-06-06T10:00:10.000Z"
+    }));
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never,
+      undefined,
+      undefined,
+      undefined,
+      {
+        readSnapshot: vi.fn(() => null),
+        refreshNow,
+        scheduleRefresh,
+        shouldRefresh: vi.fn(() => true)
+      } as never
+    );
+
+    const snapshot = await service.refreshAffairsAssistantSessionsSnapshot("workspace-1", "user-1", {
+      force: true,
+      awaitRefresh: true
+    });
+
+    expect(snapshot.sessions).toMatchObject([
+      {
+        sessionId: "session-refreshed",
+        title: "刷新后的会话"
+      }
+    ]);
+    expect(refreshNow).toHaveBeenCalledWith("workspace-1", "user-1", {
+      force: true,
+      source: "workbench.refresh_affairs_assistant_sessions"
+    });
+    expect(scheduleRefresh).not.toHaveBeenCalled();
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {

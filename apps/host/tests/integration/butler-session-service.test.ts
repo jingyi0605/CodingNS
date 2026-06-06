@@ -140,6 +140,11 @@ describe("ButlerSessionService", () => {
       sourceKind: "manual"
     });
     expect(service.listByProject(project.id, "user-1")).toHaveLength(1);
+    expect(service.listByProject(project.id, "user-1")[0]).toMatchObject({
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null
+    });
   });
 
   it("可以为已纳管会话采集后续快照并回写状态", () => {

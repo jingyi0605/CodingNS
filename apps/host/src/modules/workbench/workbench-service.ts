@@ -113,10 +113,20 @@ export class WorkbenchService {
     userId: string,
     options?: {
       force?: boolean;
+      awaitRefresh?: boolean;
     }
   ): Promise<AffairsAssistantSessionSnapshot> {
     if (!this.affairsAssistantSessionSnapshotService) {
       return createEmptyAffairsAssistantSessionsSnapshot(workspaceId, userId);
+    }
+
+    if (!options?.awaitRefresh) {
+      const current = this.getAffairsAssistantSessionsSnapshot(workspaceId, userId);
+      this.affairsAssistantSessionSnapshotService.scheduleRefresh(workspaceId, userId, {
+        force: options?.force ?? false,
+        source: "workbench.refresh_affairs_assistant_sessions.background"
+      });
+      return current;
     }
 
     return await this.affairsAssistantSessionSnapshotService.refreshNow(workspaceId, userId, {

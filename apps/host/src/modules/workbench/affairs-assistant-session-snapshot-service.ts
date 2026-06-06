@@ -1,4 +1,4 @@
-import type { ButlerProject, SessionRunningState } from "../../types/domain.js";
+import type { ButlerProject, SessionActivityState, SessionRunningState } from "../../types/domain.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
 import type { ButlerProjectSessionView, ButlerSessionService } from "../butler/butler-session-service.js";
@@ -39,7 +39,7 @@ export interface AffairsAssistantSessionSummary {
   activitySource: "inferred";
   lastEventAt: string | null;
   completedAt: string | null;
-  lastSeenAt: null;
+  lastSeenAt: string | null;
   activityState: "idle" | "running" | "completed_unread";
 }
 
@@ -318,6 +318,9 @@ function mapButlerProjectSessionToAffairsAssistantSummary(
 ): AffairsAssistantSessionSummary {
   const normalizedProvider = session.provider?.trim() || "codex";
   const updatedAt = session.updatedAt;
+  const runningState = normalizeAffairsRunningState(session.runningState);
+  const completedAt = session.completedAt ?? (session.status === "closed" ? updatedAt : null);
+  const lastEventAt = session.lastEventAt ?? updatedAt;
 
   return {
     sessionId: session.sessionId,
@@ -343,13 +346,35 @@ function mapButlerProjectSessionToAffairsAssistantSummary(
     lastErrorCode: null,
     lastErrorDetail: null,
     resumedAt: null,
-    runningState: normalizeAffairsRunningState(session.runningState),
+    runningState,
     activitySource: "inferred",
-    lastEventAt: updatedAt,
-    completedAt: session.status === "closed" ? updatedAt : null,
-    lastSeenAt: null,
-    activityState: session.status === "running" ? "running" : "completed_unread"
+    lastEventAt,
+    completedAt,
+    lastSeenAt: session.lastSeenAt,
+    activityState: resolveAffairsAssistantActivityState({
+      runningState,
+      status: session.status,
+      completedAt,
+      lastSeenAt: session.lastSeenAt
+    })
   };
+}
+
+function resolveAffairsAssistantActivityState(input: {
+  runningState: AffairsAssistantSessionSummary["runningState"];
+  status: ButlerProjectSessionView["status"];
+  completedAt: string | null;
+  lastSeenAt: string | null;
+}): SessionActivityState {
+  if (input.status === "running" || input.runningState === "starting" || input.runningState === "running") {
+    return "running";
+  }
+
+  if (input.completedAt && (!input.lastSeenAt || input.completedAt > input.lastSeenAt)) {
+    return "completed_unread";
+  }
+
+  return "idle";
 }
 
 function buildAffairsAgentProjectCandidates(
