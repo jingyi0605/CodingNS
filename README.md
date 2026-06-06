@@ -241,10 +241,44 @@ Install PM2:
 npm install -g pm2
 ```
 
-Run the service with a custom port and data directory:
+Run the service with a custom port and data directory.
+
+Do not let PM2 run `codingns` directly. Use a small wrapper script instead, so the saved PM2 dump always points to one stable script and cannot degrade into a bare `codingns` command after restarts:
 
 ```bash
-pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 3300 --data-dir ~/.codingns
+mkdir -p ~/.codingns/pm2-service
+cat > ~/.codingns/pm2-service/start-codingns.mjs <<'EOF'
+import { spawn } from "node:child_process";
+
+const child = spawn("codingns", [
+  "start",
+  "--host", "0.0.0.0",
+  "--port", "3300",
+  "--data-dir", `${process.env.HOME}/.codingns`
+], {
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`
+  },
+  windowsHide: true
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 0);
+});
+
+child.on("error", (error) => {
+  console.error(`[codingns-pm2] failed to start: ${error?.message || error}`);
+  process.exit(1);
+});
+EOF
+
+pm2 start ~/.codingns/pm2-service/start-codingns.mjs --name codingns --cwd ~/.codingns --interpreter "$(which node)"
 ```
 
 Save the process list and generate startup configuration:
@@ -636,10 +670,44 @@ apt-get install -y build-essential python3
 npm install -g pm2
 ```
 
-使用 PM2 托管，并自定义端口和数据目录：
+使用 PM2 托管，并自定义端口和数据目录。
+
+不要让 PM2 直接运行 `codingns`。这里用一个固定启动脚本托管，PM2 的 dump 里只保存这个脚本路径，不会在重启后退化成裸 `codingns` 命令：
 
 ```bash
-pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 3300 --data-dir ~/.codingns
+mkdir -p ~/.codingns/pm2-service
+cat > ~/.codingns/pm2-service/start-codingns.mjs <<'EOF'
+import { spawn } from "node:child_process";
+
+const child = spawn("codingns", [
+  "start",
+  "--host", "0.0.0.0",
+  "--port", "3300",
+  "--data-dir", `${process.env.HOME}/.codingns`
+], {
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`
+  },
+  windowsHide: true
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 0);
+});
+
+child.on("error", (error) => {
+  console.error(`[codingns-pm2] 启动失败：${error?.message || error}`);
+  process.exit(1);
+});
+EOF
+
+pm2 start ~/.codingns/pm2-service/start-codingns.mjs --name codingns --cwd ~/.codingns --interpreter "$(which node)"
 ```
 
 保存当前进程列表并生成开机自启配置：
