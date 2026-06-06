@@ -6928,14 +6928,32 @@ describe("AffairsWorkbenchView", () => {
     await waitFor(() => {
       expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-2", "Obsidian/Tools/会员管理.html");
     });
+    expect(document.querySelector(".affairs-dashboard-html-meta")).toBeNull();
+    expect(screen.queryByText("Obsidian/Tools/会员管理.html")).not.toBeInTheDocument();
+
+    const openHtmlButton = screen.getByRole("button", { name: t("shell.affairsWorkbenchOpenHtmlAction") });
+    expect(openHtmlButton.closest(".affairs-dashboard-widget-header")).not.toBeNull();
+    conversationApiMock.getAffairsLibraryPreview.mockClear();
+    await userEvent.click(openHtmlButton);
     await waitFor(() => {
-      expect(screen.getByText("Obsidian/Tools/会员管理.html")).toBeInTheDocument();
+      expect(openMock).toHaveBeenCalledWith(
+        expect.stringContaining("/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html"),
+        "_blank",
+        "noopener,noreferrer"
+      );
     });
-    const htmlFrame = document.querySelector(".affairs-dashboard-html-frame") as HTMLIFrameElement | null;
+    expect(conversationApiMock.getAffairsLibraryPreview).toHaveBeenCalledWith("workspace-2", "Obsidian/Tools/会员管理.html");
+
+    const htmlFrame = await screen.findByTestId("file-viewer-html-preview") as HTMLIFrameElement;
     expect(htmlFrame).not.toBeNull();
     expect(htmlFrame?.src).toContain("/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html");
     expect(htmlFrame?.src).toContain("_preview=0");
     expect(htmlFrame?.src).toContain("_cns_parent_origin=");
+    const frameShell = htmlFrame.closest(".file-viewer-html-frame-shell");
+    expect(frameShell).not.toBeNull();
+    expect(frameShell?.closest(".affairs-dashboard-widget-body > .file-viewer-inline-panel")).not.toBeNull();
+    expect(document.querySelector(".file-viewer-inline-panel")).not.toBeNull();
+    expect(document.querySelector(".affairs-dashboard-html-frame")).toBeNull();
     await waitFor(() => {
       expect(htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge).toHaveBeenCalledWith(expect.objectContaining({
         iframe: htmlFrame,
@@ -6943,6 +6961,9 @@ describe("AffairsWorkbenchView", () => {
       }));
     });
     expect(fileContextApiMock.getFilePreview).not.toHaveBeenCalled();
+    expect(conversationApiMock.getAffairsLibraryPreviewWithOptions).toHaveBeenCalledWith("workspace-2", "Obsidian/Tools/会员管理.html", expect.objectContaining({
+      officeDisplayMode: "default"
+    }));
     expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-2", expect.objectContaining({
       path: "Obsidian/Tools"
     }));

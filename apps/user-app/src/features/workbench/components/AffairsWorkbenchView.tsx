@@ -193,7 +193,6 @@ import {
 } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
 import { listWorkspaceBridgeDir } from "../../../platform/preview/codingns-workspace-bridge";
-import { createHtmlPreviewWorkspaceBridge } from "../../../platform/preview/html-preview-workspace-bridge";
 import { resolveContextMenuPosition } from "../utils/context-menu-position";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
@@ -849,9 +848,6 @@ const DASHBOARD_WIDGET_SIZE_PRESETS: Record<DashboardWidgetSizePreset, Omit<Dash
   }
 };
 
-const DEFAULT_HTML_PREVIEW_SANDBOX = "allow-forms allow-modals allow-scripts";
-const CROSS_ORIGIN_HTML_PREVIEW_SANDBOX = `${DEFAULT_HTML_PREVIEW_SANDBOX} allow-same-origin`;
-
 const AffairsDashboardContext = createContext<AffairsDashboardContextValue | null>(null);
 
 function resolveDashboardHtmlWidgetVariant(
@@ -1182,23 +1178,6 @@ function buildDashboardDesktopPreviewUrl(previewPath: string): string | null {
   } catch {
     return null;
   }
-}
-
-function resolveDashboardHtmlPreviewSandbox(src: string): string {
-  if (typeof window === "undefined" || !window.location?.origin) {
-    return DEFAULT_HTML_PREVIEW_SANDBOX;
-  }
-
-  try {
-    const previewUrl = new URL(src, window.location.origin);
-    if (previewUrl.origin !== window.location.origin) {
-      return CROSS_ORIGIN_HTML_PREVIEW_SANDBOX;
-    }
-  } catch {
-    return DEFAULT_HTML_PREVIEW_SANDBOX;
-  }
-
-  return DEFAULT_HTML_PREVIEW_SANDBOX;
 }
 
 function resolveErrorMessage(error: unknown, fallbackMessage: string): string {
@@ -14021,6 +14000,9 @@ function AffairsDashboardView({
                   todoCount={filteredTodoRecords.length}
                   automationCount={automationRecords.length}
                   gestureKind={activeGesture?.widgetId === widget.id ? activeGesture.kind : null}
+                  headerAction={widget.type === "html" ? (
+                    <AffairsDashboardHtmlOpenButton widget={widget} workspaceId={workspaceId} />
+                  ) : null}
                   onMovePointerDown={(event) => beginWidgetGesture(event, widget.id, "move")}
                   onResizePointerDown={(event, resizeMode) => beginWidgetGesture(event, widget.id, "resize", resizeMode)}
                   onRemove={() => removeDashboardWidget(widget.id)}
@@ -14381,7 +14363,7 @@ function AffairsDashboardAutomationWidget({
   );
 }
 
-function AffairsDashboardHtmlWidget({
+function useAffairsDashboardHtmlPreviewOpener({
   widget,
   workspaceId
 }: {
@@ -14390,144 +14372,122 @@ function AffairsDashboardHtmlWidget({
 }) {
   const { showToast } = useToast();
   const platform = usePlatform();
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const sourcePath = widget.sourceRef?.sourceId?.trim() ?? "";
   const sourceWorkspaceId = resolveDashboardSourceWorkspaceId(widget.sourceRef, workspaceId);
   const sourceKind = widget.sourceRef?.kind ?? "html_shortcut";
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!sourcePath) {
-      setPreviewUrl(null);
-      setLoading(false);
-      setError(t("shell.affairsWorkbenchHtmlSourceMissing"));
-      return;
+  const previewLoader = useMemo(() => {
+    if (sourceKind !== "affairs_library_html") {
+      return undefined;
     }
 
-    setLoading(true);
-    setError(null);
-    void (sourceKind === "affairs_library_html"
-      ? getAffairsLibraryPreview(sourceWorkspaceId, sourcePath).then((preview) => preview.previewUrl ? {
-          previewPath: preview.previewPath,
-          previewUrl: preview.previewUrl
-        } : Promise.reject(new Error(t("shell.affairsWorkbenchHtmlSourceLoadFailed"))))
-      : getFilePreviewLink(sourceWorkspaceId, sourcePath))
-      .then((previewLink) => {
-        if (cancelled) {
-          return;
-        }
-        setPreviewUrl(buildDashboardPreviewUrl(previewLink, platform.isDesktop));
-      })
-      .catch((nextError) => {
-        if (cancelled) {
-          return;
-        }
-        setError(resolveErrorMessage(nextError, t("shell.affairsWorkbenchHtmlSourceLoadFailed")));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [platform.isDesktop, sourceKind, sourcePath, sourceWorkspaceId]);
+    return (targetWorkspaceId: string, targetFilePath: string, options?: Parameters<typeof getAffairsLibraryPreviewWithOptions>[2]) => (
+      getAffairsLibraryPreviewWithOptions(targetWorkspaceId, targetFilePath, options)
+    );
+  }, [sourceKind]);
 
   const openInWindow = useCallback(() => {
-    if (!previewUrl) {
+    if (!sourcePath) {
+      showToast({ title: t("shell.affairsWorkbenchHtmlSourceLoadFailed"), tone: "error" });
       return;
     }
-    window.open(previewUrl, "_blank", "noopener,noreferrer");
-  }, [previewUrl]);
 
-  if (loading) {
-    return <div className="affairs-stage-empty compact">{t("common.loading")}</div>;
-  }
+    const openPreview = async () => {
+      if (sourceKind === "affairs_library_html") {
+        const preview = await getAffairsLibraryPreview(sourceWorkspaceId, sourcePath);
+        if (!preview.previewUrl && !preview.previewPath) {
+          throw new Error(t("shell.affairsWorkbenchHtmlSourceLoadFailed"));
+        }
+        window.open(buildDashboardPreviewUrl(preview, platform.isDesktop), "_blank", "noopener,noreferrer");
+        return;
+      }
 
-  if (error) {
-    return (
-      <div className="affairs-dashboard-widget-error">
-        <strong>{t("shell.affairsWorkbenchHtmlSourceLoadFailed")}</strong>
-        <p>{error}</p>
-      </div>
-    );
+      const previewLink = await getFilePreviewLink(sourceWorkspaceId, sourcePath);
+      window.open(buildDashboardPreviewUrl(previewLink, platform.isDesktop), "_blank", "noopener,noreferrer");
+    };
+
+    void openPreview().catch((error) => {
+      showToast({
+        title: resolveErrorMessage(error, t("shell.affairsWorkbenchHtmlSourceLoadFailed")),
+        description: sourcePath,
+        tone: "error"
+      });
+    });
+  }, [platform.isDesktop, showToast, sourceKind, sourcePath, sourceWorkspaceId]);
+
+  return {
+    sourceKind,
+    sourcePath,
+    sourceWorkspaceId,
+    previewLoader,
+    openInWindow
+  };
+}
+
+function AffairsDashboardHtmlOpenButton({
+  widget,
+  workspaceId
+}: {
+  widget: DashboardWidgetState;
+  workspaceId: string;
+}) {
+  const { sourcePath, openInWindow } = useAffairsDashboardHtmlPreviewOpener({ widget, workspaceId });
+
+  if (!sourcePath) {
+    return null;
   }
 
   return (
-    <>
-      <div className="affairs-dashboard-html-meta">
-        <span>{sourcePath}</span>
-        <button
-          type="button"
-          className="affairs-dashboard-toolbar-button"
-          onClick={() => {
-            if (!previewUrl) {
-              showToast({ title: t("shell.affairsWorkbenchHtmlSourceLoadFailed"), tone: "error" });
-              return;
-            }
-            openInWindow();
-          }}
-        >
-          {t("shell.affairsWorkbenchOpenHtmlAction")}
-        </button>
-      </div>
-      <AffairsDashboardHtmlFrame src={previewUrl} workspaceId={sourceWorkspaceId} title={widget.title} />
-    </>
+    <button
+      type="button"
+      className="affairs-dashboard-toolbar-button"
+      title={t("shell.affairsWorkbenchOpenHtmlAction")}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={openInWindow}
+    >
+      {t("shell.affairsWorkbenchOpenHtmlAction")}
+    </button>
   );
 }
 
-function AffairsDashboardHtmlFrame({
-  src,
-  workspaceId,
-  title
+function AffairsDashboardHtmlWidget({
+  widget,
+  workspaceId
 }: {
-  src: string | null;
+  widget: DashboardWidgetState;
   workspaceId: string;
-  title: string;
 }) {
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const {
+    sourceKind,
+    sourcePath,
+    sourceWorkspaceId,
+    previewLoader
+  } = useAffairsDashboardHtmlPreviewOpener({ widget, workspaceId });
 
-  useEffect(() => {
-    if (!src) {
-      return;
-    }
-
-    const bridge = createHtmlPreviewWorkspaceBridge({
-      iframe: frameRef.current,
-      workspaceId
-    });
-
-    function handleMessage(event: MessageEvent) {
-      void bridge.onMessage(event);
-    }
-
-    window.addEventListener("message", handleMessage);
-
-    return () => {
-      window.removeEventListener("message", handleMessage);
-      bridge.dispose();
-    };
-  }, [src, workspaceId]);
-
-  if (!src) {
+  if (!sourcePath) {
     return <div className="affairs-stage-empty compact">{t("shell.affairsWorkbenchHtmlSourceMissing")}</div>;
   }
 
   return (
-    <div className="affairs-dashboard-html-frame-shell">
-      <iframe
-        ref={frameRef}
-        key={src}
-        className="affairs-dashboard-html-frame"
-        title={title}
-        src={src}
-        sandbox={resolveDashboardHtmlPreviewSandbox(src)}
-      />
-    </div>
+    <FileViewerPanel
+      workspaceId={sourceWorkspaceId}
+      filePath={sourcePath}
+      open
+      onClose={() => undefined}
+      onSaved={() => undefined}
+      chrome="inline"
+      windowTitle={widget.title}
+      previewLoader={previewLoader}
+      saveHandler={sourceKind === "affairs_library_html"
+        ? (async ({ workspaceId: targetWorkspaceId, filePath: targetFilePath, content, expectedVersion }) => {
+            await operateAffairsLibraryFile(targetWorkspaceId, {
+              opType: "write",
+              srcPath: targetFilePath,
+              content,
+              expectedVersion
+            });
+          })
+        : undefined}
+    />
   );
 }
 

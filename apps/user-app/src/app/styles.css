@@ -18114,6 +18114,17 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 0;
 }
 
+.affairs-dashboard-widget-body > .file-viewer-inline-panel .file-viewer-html-frame-shell {
+  overflow: hidden;
+  padding: 0;
+}
+
+.affairs-dashboard-widget-body > .file-viewer-inline-panel .file-viewer-html-frame {
+  height: 100%;
+  min-height: 0;
+  box-shadow: none;
+}
+
 .file-viewer-window-panel .file-viewer-html-frame-shell,
 .file-viewer-window-panel .file-viewer-media-shell,
 .file-viewer-window-panel .file-viewer-pdf-shell {

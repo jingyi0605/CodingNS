@@ -8483,7 +8483,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-dashboard-inline-help,
 .affairs-dashboard-inline-error,
 .affairs-shortcut-rail-copy span,
-.affairs-dashboard-html-meta span,
 .affairs-dashboard-widget-preview-item span,
 .affairs-dashboard-widget-preview-item p,
 .affairs-dashboard-widget-header p {
@@ -8734,31 +8733,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   line-height: 1.6;
 }
 
-.affairs-dashboard-html-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 
-.affairs-dashboard-html-frame-shell {
-  position: relative;
-  min-height: 0;
-  flex: 1 1 auto;
+.affairs-dashboard-widget-body > .file-viewer-inline-panel {
   border: 1px solid color-mix(in srgb, var(--panel-separator) 62%, transparent);
   border-radius: 14px;
-  overflow: hidden;
   background: var(--panel-bg);
-}
-
-.affairs-dashboard-html-frame {
-  width: 100%;
-  height: 100%;
-  min-height: 320px;
-  border: 0;
-  display: block;
-  background: #ffffff;
 }
 
 .affairs-shortcut-rail {
@@ -9025,8 +9004,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
-  .affairs-dashboard-widget,
-  .affairs-dashboard-html-frame {
+  .affairs-dashboard-widget {
     min-height: 260px;
   }
 }
