@@ -415,6 +415,179 @@ describe("SettingsPage", () => {
     expect(within(dialog).getByRole("button", { name: t("settings.skillOnlyOfficeSaveAction") })).toBeInTheDocument();
   });
 
+  it("桌面设置页的能力管理分类会提供 Teable 设置入口", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    authStore.hydrate(createAuthSession());
+    renderSettingsPage();
+
+    const trigger = screen.getByRole("button", { name: t("settings.teableOpenSettingsAction") });
+    expect(trigger).toBeInTheDocument();
+
+    await userEvent.click(trigger);
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.teableModalTitle") });
+    expect(within(dialog).getByRole("tab", { name: t("settings.teableTabConnectionSettings") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("tab", { name: t("settings.teableTabSyncLogs") })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("tab", { name: t("settings.teableTabMirrors") })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("tab", { name: t("settings.teableTabFieldMappings") })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(t("settings.teableAuthRefLabel"))).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(dialog).getByRole("textbox", { name: t("settings.teableBaseUrlLabel") })).toHaveValue("https://teable.example.com");
+    });
+    expect(within(dialog).getByRole("button", { name: t("settings.teableTestConnectionAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.teableSaveBindingAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("common.cancel") })).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") }));
+    expect(await within(dialog).findByText(t("settings.teableTableSyncListTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: t("settings.teableTableToAddLabel") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.teableAddSyncTableAction") })).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.teableTableSyncConfigTitle"))).toBeInTheDocument();
+    expect(within(dialog).getAllByText("标签镜像表").length).toBeGreaterThan(0);
+    expect(within(dialog).getByRole("combobox", { name: t("settings.teableSyncSourceLabel") })).toHaveValue("tags");
+    expect(within(dialog).getByText(t("settings.teableDocumentTagRootsLabel"))).toBeInTheDocument();
+    expect((await within(dialog).findAllByText("标签名称")).length).toBeGreaterThan(0);
+    expect(within(dialog).getByRole("button", { name: t("settings.teableSaveTableSyncSettingsAction") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.teableSyncNowAction") })).toBeInTheDocument();
+
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: t("settings.teableSyncSourceLabel") }), "sessions");
+    expect(within(dialog).getByText(t("settings.teableWorkspaceScopeAll"))).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabSyncLogs") }));
+    await waitFor(() => {
+      expect(within(dialog).getAllByText(t("settings.teableSyncLogsTitle")).length).toBeGreaterThan(0);
+    });
+    expect(within(dialog).getByText("本地标签变化，已同步到 Teable")).toBeInTheDocument();
+    expect(within(dialog).getByText(t("settings.teableTaskState.succeeded"))).toBeInTheDocument();
+  });
+
+  it("Teable 设置弹窗可以给目标表添加字段并自动映射", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    authStore.hydrate(createAuthSession());
+    renderSettingsPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.teableOpenSettingsAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("settings.teableModalTitle") });
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") }));
+    await within(dialog).findByText(t("settings.teableTableSyncListTitle"));
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: t("settings.teableTableToAddLabel") }), "tbl_form_1");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.teableAddSyncTableAction") }));
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: t("settings.teableSyncSourceLabel") }), "tags");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.teableFieldAutoCreateAction") }));
+
+    const fieldDialog = await screen.findByRole("dialog", { name: t("settings.teableFieldAutoCreateModalTitle") });
+    expect(within(fieldDialog).getByText("标签名称")).toBeInTheDocument();
+    await userEvent.click(within(fieldDialog).getByRole("button", { name: t("settings.teableFieldAutoCreateConfirmAction") }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/affairs/teable/table-fields"),
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    expect(await within(dialog).findByText(t("settings.teableFieldAutoCreateSuccess", { count: 2 }))).toBeInTheDocument();
+  });
+
+  it("Teable 设置弹窗可以保存字段映射", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    authStore.hydrate(createAuthSession());
+    renderSettingsPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.teableOpenSettingsAction") }));
+    const dialog = await screen.findByRole("dialog", { name: t("settings.teableModalTitle") });
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") }));
+    await within(dialog).findByText(t("settings.teableTableSyncListTitle"));
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: t("settings.teableTableToAddLabel") }), "tbl_form_1");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.teableAddSyncTableAction") }));
+    expect(within(dialog).getAllByText("客户收集").length).toBeGreaterThan(0);
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: t("settings.teableSyncSourceLabel") }), "tags");
+    const mappingSelects = await within(dialog).findAllByRole("combobox");
+    await userEvent.selectOptions(mappingSelects[mappingSelects.length - 1], "fld-customer-name");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.teableSaveTableSyncSettingsAction") }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/affairs/teable/field-mappings"),
+        expect.objectContaining({ method: "PUT" })
+      );
+    });
+  });
+
+  it("没有当前工作区时，Teable 设置弹窗仍然可以正常打开并展示镜像配置", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    mockUseWorkbenchShell.mockReturnValue({
+      currentWorkspaceId: null,
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-2",
+            name: "备用工作区"
+          }
+        }
+      ]
+    });
+
+    authStore.hydrate(createAuthSession());
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.teableOpenSettingsAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.teableModalTitle") });
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") }));
+
+    expect(await within(dialog).findByText(t("settings.teableTableSyncListTitle"))).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("settings.teableWorkspaceScopeEmpty"))).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.teableSyncNowAction") })).toBeEnabled();
+  });
+
   it("移动设置页可以打开插件管理弹层", async () => {
     setViewportWidth(390);
     renderSettingsPage();
@@ -424,6 +597,34 @@ describe("SettingsPage", () => {
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.pluginManagementModalTitle") });
     expect(within(dialog).getAllByText("演示插件").length).toBeGreaterThan(0);
+  });
+
+
+  it("移动设置页可以打开 Teable 设置弹层", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const matched = matchSkillManagementPanelRequest(url, method, init);
+
+      if (matched) {
+        return matched;
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    authStore.hydrate(createAuthSession());
+    setViewportWidth(390);
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.abilityManagement")) }));
+    await userEvent.click(screen.getByRole("button", { name: t("settings.teableOpenSettingsAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("settings.teableModalTitle") });
+    expect(within(dialog).getByRole("tab", { name: t("settings.teableTabConnectionSettings") })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.teableTabTableSyncSettings") }));
+    expect(await within(dialog).findByText(t("settings.teableTableSyncListTitle"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("settings.teableSyncNowAction") })).toBeInTheDocument();
   });
 
   it("插件管理弹窗里可以撤销当前工作区授权", async () => {
@@ -1267,6 +1468,287 @@ function matchSkillManagementPanelRequest(
           updatedAt: "2026-06-03T10:00:00.000Z"
         }
       ]
+    });
+  }
+
+  if (url.includes("/api/affairs/teable/overview") && method === "GET") {
+    return createJsonResponse({
+      binding: {
+        binding: {
+          baseUrl: "https://teable.example.com",
+          spaceId: "space_demo",
+          baseId: "base_demo",
+          authRef: "secret://teable/main",
+          enabled: true,
+          mirrorMode: "manual",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        status: "ready",
+        summary: "当前事务工作台已经绑定 Teable，可继续配置推送范围和表单。",
+        updatedAt: "2026-06-03T10:00:00.000Z"
+      },
+      syncConfigs: [
+        {
+          configId: "cfg-tags",
+          sourceType: "tags",
+          enabled: true,
+          scope: { rootTagIds: ["tag-root-1"] },
+          targetTableId: "tbl_tags",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        {
+          configId: "cfg-sessions",
+          sourceType: "sessions",
+          enabled: false,
+          scope: { mode: "selected_workspaces", workspaceIds: ["workspace-1"] },
+          targetTableId: null,
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        {
+          configId: "cfg-todos",
+          sourceType: "todos",
+          enabled: true,
+          scope: { includeWorkspaceTodos: true, includeAffairsTodos: true, workspaceIds: ["workspace-1"] },
+          targetTableId: "tbl_todos",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        }
+      ],
+      mirrorBindings: [
+        {
+          mirrorType: "tags",
+          tableId: "tbl_tags",
+          tableName: "cn_tags",
+          readOnlyMode: "unknown",
+          lastSyncedAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        {
+          mirrorType: "todos",
+          tableId: "tbl_todos",
+          tableName: "cn_todos",
+          readOnlyMode: "unknown",
+          lastSyncedAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        }
+      ],
+      latestMirrorSyncTask: {
+        taskId: "task-teable-1",
+        taskType: "mirror_sync",
+        state: "succeeded",
+        summary: "Teable 镜像同步完成",
+        lastError: null,
+        updatedAt: "2026-06-03T10:01:00.000Z",
+        startedAt: "2026-06-03T10:00:10.000Z",
+        finishedAt: "2026-06-03T10:01:00.000Z",
+        progress: null,
+        result: {
+          state: "succeeded",
+          summary: "Teable 镜像同步完成",
+          syncedMirrorTypes: ["tags", "todos"],
+          failedMirrorTypes: [],
+          counts: {
+            tags: { created: 2, updated: 1, deleted: 0, skipped: 0 },
+            sessions: { created: 0, updated: 0, deleted: 0, skipped: 0 },
+            todos: { created: 3, updated: 0, deleted: 1, skipped: 0 }
+          }
+        }
+      }
+    });
+  }
+
+  if (url.endsWith("/api/affairs/teable/global-binding") && method === "GET") {
+    return createJsonResponse({
+      baseUrl: "https://teable.example.com",
+      spaceId: "space_demo",
+      baseId: "base_demo",
+      authRef: "secret://teable/main",
+      enabled: true,
+      mirrorMode: "manual",
+      updatedAt: "2026-06-03T10:00:00.000Z"
+    });
+  }
+
+  if (url.includes("/api/affairs/teable/table-catalog") && method === "GET") {
+    return createJsonResponse([
+      { tableId: "tbl_tags", tableName: "标签镜像表" },
+      { tableId: "tbl_sessions", tableName: "会话镜像表" },
+      { tableId: "tbl_todos", tableName: "代办镜像表" },
+      { tableId: "tbl_form_1", tableName: "客户收集" }
+    ]);
+  }
+
+  if (url.includes("/api/affairs/teable/table-fields") && method === "GET") {
+    const tableId = new URL(url, "http://localhost").searchParams.get("tableId");
+    if (tableId === "tbl_tags") {
+      return createJsonResponse([
+        { fieldId: "fld-tag-name", fieldName: "标签名称", fieldType: "singleLineText", isPrimary: true },
+        { fieldId: "fld-tag-path", fieldName: "标签路径", fieldType: "singleLineText", isPrimary: false }
+      ]);
+    }
+    if (tableId === "tbl_todos") {
+      return createJsonResponse([
+        { fieldId: "fld-todo-title", fieldName: "标题", fieldType: "singleLineText", isPrimary: true }
+      ]);
+    }
+    if (tableId === "tbl_form_1") {
+      return createJsonResponse([
+        { fieldId: "fld-customer-name", fieldName: "客户姓名", fieldType: "singleLineText", isPrimary: true },
+        { fieldId: "fld-customer-phone", fieldName: "联系电话", fieldType: "singleLineText", isPrimary: false }
+      ]);
+    }
+    return createJsonResponse([
+      { fieldId: "fld-session-title", fieldName: "会话标题", fieldType: "singleLineText", isPrimary: true }
+    ]);
+  }
+
+  if (url.includes("/api/affairs/teable/table-fields") && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    return createJsonResponse((body.fields ?? []).map((field: Record<string, unknown>, index: number) => ({
+      sourceField: field.sourceField,
+      targetFieldId: `fld-auto-${index + 1}`,
+      targetFieldName: field.fieldName,
+      required: field.required === true,
+      fieldType: field.fieldType ?? "singleLineText"
+    })));
+  }
+
+  if (url.includes("/api/affairs/teable/sync-logs") && method === "GET") {
+    return createJsonResponse([
+      {
+        logId: "log-teable-1",
+        triggerType: "local_change",
+        sourceTypes: ["tags"],
+        taskId: "task-teable-1",
+        state: "succeeded",
+        summary: "本地标签变化，已同步到 Teable",
+        counts: {
+          tags: { created: 1, updated: 0, deleted: 0, skipped: 2 }
+        },
+        errorDetail: null,
+        reason: "tag_definition_saved:tag-root-1",
+        startedAt: "2026-06-03T10:00:10.000Z",
+        finishedAt: "2026-06-03T10:01:00.000Z",
+        createdAt: "2026-06-03T10:00:09.000Z",
+        updatedAt: "2026-06-03T10:01:00.000Z"
+      }
+    ]);
+  }
+
+
+  if (url.includes("/api/affairs/teable/field-mappings") && method === "GET") {
+    return createJsonResponse({
+      mappings: [
+        {
+          mappingId: "mapping-tags",
+          configId: "cfg-tags",
+          sourceType: "tags",
+          targetTableId: "tbl_tags",
+          items: [],
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        {
+          mappingId: "mapping-todos",
+          configId: "cfg-todos",
+          sourceType: "todos",
+          targetTableId: "tbl_todos",
+          items: [],
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        }
+      ],
+      sourceFieldsByType: {
+        tags: [
+          { key: "tagName", label: "标签名称", type: "text", required: true },
+          { key: "tagPath", label: "标签路径", type: "text", required: true }
+        ],
+        sessions: [
+          { key: "sessionTitle", label: "会话标题", type: "text", required: true }
+        ],
+        todos: [
+          { key: "title", label: "代办标题", type: "text", required: true }
+        ]
+      }
+    });
+  }
+
+  if (url.includes("/api/affairs/teable/field-mappings") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    return createJsonResponse(body.items ?? []);
+  }
+
+  if (url.endsWith("/api/affairs/teable/global-binding") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    return createJsonResponse({
+      baseUrl: body.baseUrl ?? "",
+      spaceId: body.spaceId ?? "",
+      baseId: body.baseId ?? "",
+      authRef: body.authRef ?? "",
+      enabled: body.enabled === true,
+      mirrorMode: body.mirrorMode ?? "manual",
+      updatedAt: "2026-06-03T10:02:00.000Z"
+    });
+  }
+
+  if (url.endsWith("/api/affairs/teable/workbench-sync-config") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    return createJsonResponse(body.items ?? []);
+  }
+
+  if (url.endsWith("/api/affairs/teable/mirror-sync") && method === "POST") {
+    return createJsonResponse({
+      taskId: "task-teable-2",
+      deduped: false,
+      taskType: "mirror_sync",
+      state: "queued",
+      summary: "Teable 镜像同步任务已入队",
+      updatedAt: "2026-06-03T10:03:00.000Z"
+    });
+  }
+
+  if (url.includes("/api/workspaces/") && url.includes("/affairs/tags") && method === "GET") {
+    throw new Error("Teable 设置不应该按每个工作区读取文档库标签");
+  }
+
+  if (url.includes("/api/affairs/tags") && method === "GET") {
+    return createJsonResponse({
+      items: [
+        {
+          id: "tag-root-1",
+          path: "客户",
+          name: "客户",
+          rootType: "manual",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 12,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        },
+        {
+          id: "tag-child-1",
+          path: "客户/重点客户",
+          name: "重点客户",
+          rootType: "manual",
+          parentId: "tag-root-1",
+          parentPath: "客户",
+          description: null,
+          status: "active",
+          documentCount: 4,
+          createdAt: "2026-06-03T10:00:00.000Z",
+          updatedAt: "2026-06-03T10:00:00.000Z"
+        }
+      ],
+      summary: {
+        totalActiveTags: 2,
+        totalDisabledTags: 0,
+        totalRuleEnabledTags: 0,
+        totalBoundDocuments: 12
+      },
+      status: {
+        recomputeState: "idle",
+        lastRecomputedAt: null,
+        lastError: null
+      }
     });
   }
 

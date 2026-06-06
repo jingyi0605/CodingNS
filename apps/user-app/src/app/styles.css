@@ -1078,6 +1078,29 @@ textarea {
   color: inherit;
 }
 
+input[type="checkbox"]:not([role="switch"]) {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.terminal-manager-proxy-switch input[type="checkbox"],
+.settings-provider-matrix-switch input[type="checkbox"],
+.settings-mobile-switch input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  flex: initial;
+}
+
 button {
   cursor: pointer;
   border: none;
@@ -8995,7 +9018,7 @@ textarea:focus-visible {
   color: var(--text-secondary);
 }
 
-.conversation-butler-modal .workbench-modal-field input,
+.conversation-butler-modal .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]),
 .conversation-butler-modal .workbench-modal-field textarea {
   width: 100%;
   border-radius: 10px;
@@ -9009,7 +9032,7 @@ textarea:focus-visible {
     background var(--transition-fast);
 }
 
-.conversation-butler-modal .workbench-modal-field input {
+.conversation-butler-modal .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]) {
   min-height: 36px;
   padding: 0 12px;
 }
@@ -9022,18 +9045,18 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
-.conversation-butler-modal .workbench-modal-field input::placeholder,
+.conversation-butler-modal .workbench-modal-field input:not([type="checkbox"]):not([type="radio"])::placeholder,
 .conversation-butler-modal .workbench-modal-field textarea::placeholder {
   color: var(--modal-control-placeholder);
 }
 
-.conversation-butler-modal .workbench-modal-field input:hover,
+.conversation-butler-modal .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):hover,
 .conversation-butler-modal .workbench-modal-field textarea:hover {
   border-color: color-mix(in srgb, var(--modal-control-border-hover) 76%, var(--modal-list-item-border));
   background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
 }
 
-.conversation-butler-modal .workbench-modal-field input:focus,
+.conversation-butler-modal .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):focus,
 .conversation-butler-modal .workbench-modal-field textarea:focus {
   outline: none;
   border-color: var(--modal-control-border-focus);
@@ -17081,7 +17104,7 @@ textarea:focus-visible {
   gap: 16px;
 }
 
-.workbench-modal-field input,
+.workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
 .workbench-modal-field select,
 .workbench-modal-field textarea {
   width: 100%;
@@ -17106,19 +17129,19 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
-.workbench-modal-field input::placeholder,
+.workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"])::placeholder,
 .workbench-modal-field textarea::placeholder {
   color: var(--modal-control-placeholder);
 }
 
-.workbench-modal-field input:hover,
+.workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]):hover,
 .workbench-modal-field select:hover,
 .workbench-modal-field textarea:hover {
   border-color: var(--modal-control-border-hover);
   background: var(--modal-control-surface-hover);
 }
 
-.workbench-modal-field input:focus,
+.workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]):focus,
 .workbench-modal-field select:focus,
 .workbench-modal-field textarea:focus {
   outline: none;
@@ -17652,31 +17675,25 @@ textarea:focus-visible {
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]) {
   width: 16px;
   height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
   margin: 0;
+  padding: 0;
   position: relative;
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--modal-checkbox-border);
-  border-radius: 5px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
-  transition:
-    border-color var(--transition-fast),
-    background var(--transition-fast),
-    box-shadow var(--transition-fast);
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  accent-color: var(--accent);
 }
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):hover,
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]):hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-secondary));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):checked,
 .workbench-modal-layer .conversation-selection-action-dialog input[type="checkbox"]:not([role="switch"]):checked {
-  border-color: color-mix(in srgb, var(--accent) 80%, #0a84ff);
-  background: color-mix(in srgb, var(--accent) 88%, #0a84ff);
-  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: none;
 }
 
 .workbench-modal-layer .workbench-modal-card input[type="checkbox"]:not([role="switch"]):checked::after,
@@ -23819,6 +23836,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .settings-onlyoffice-modal[data-layout="form"] {
   width: min(860px, calc(100vw - 40px));
 }
+
+
+
+
+
 
 .settings-onlyoffice-modal-body,
 .settings-onlyoffice-modal-layout {
@@ -30685,7 +30707,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-primary) 16%);
 }
 
-.workspace-inbox-panel .workbench-modal-field input,
+.workspace-inbox-panel .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]),
 .workspace-inbox-panel .workbench-modal-field select,
 .workspace-inbox-panel .workbench-modal-field textarea {
   width: 100%;
@@ -30700,7 +30722,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     background var(--transition-fast);
 }
 
-.workspace-inbox-panel .workbench-modal-field input,
+.workspace-inbox-panel .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]),
 .workspace-inbox-panel .workbench-modal-field select {
   min-height: 38px;
   padding: 0 12px;
@@ -30725,19 +30747,19 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   line-height: 1.55;
 }
 
-.workspace-inbox-panel .workbench-modal-field input::placeholder,
+.workspace-inbox-panel .workbench-modal-field input:not([type="checkbox"]):not([type="radio"])::placeholder,
 .workspace-inbox-panel .workbench-modal-field textarea::placeholder {
   color: var(--modal-control-placeholder);
 }
 
-.workspace-inbox-panel .workbench-modal-field input:hover,
+.workspace-inbox-panel .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):hover,
 .workspace-inbox-panel .workbench-modal-field select:hover,
 .workspace-inbox-panel .workbench-modal-field textarea:hover {
   border-color: color-mix(in srgb, var(--modal-control-border-hover) 76%, var(--modal-list-item-border));
   background: transparent;
 }
 
-.workspace-inbox-panel .workbench-modal-field input:focus,
+.workspace-inbox-panel .workbench-modal-field input:not([type="checkbox"]):not([type="radio"]):focus,
 .workspace-inbox-panel .workbench-modal-field select:focus,
 .workspace-inbox-panel .workbench-modal-field textarea:focus {
   outline: none;
@@ -34302,5 +34324,382 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
   .settings-plugin-modal-list {
     max-height: none;
+  }
+}
+
+.settings-teable-modal[data-layout="form"] {
+  max-width: min(960px, 100%);
+}
+
+.settings-teable-modal-body,
+.settings-teable-modal-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-teable-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-teable-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid rgba(120, 134, 168, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.settings-teable-tab:hover,
+.settings-teable-tab:focus-visible {
+  border-color: rgba(86, 132, 255, 0.32);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.settings-teable-tab.active {
+  border-color: rgba(86, 132, 255, 0.42);
+  background: rgba(86, 132, 255, 0.1);
+  color: #295dff;
+}
+
+.settings-teable-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-teable-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.settings-teable-metric-card {
+  position: relative;
+  display: flex;
+  min-height: 112px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(120, 134, 168, 0.22);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px 16px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.settings-teable-metric-card:hover,
+.settings-teable-metric-card:focus-visible {
+  border-color: rgba(86, 132, 255, 0.34);
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.08);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.settings-teable-metric-card[data-tone="success"] .settings-teable-metric-value {
+  color: #107c41;
+}
+
+.settings-teable-metric-card[data-tone="warning"] .settings-teable-metric-value {
+  color: #b76e00;
+}
+
+.settings-teable-metric-card[data-tone="danger"] .settings-teable-metric-value {
+  color: #cb3a31;
+}
+
+.settings-teable-metric-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.settings-teable-metric-value {
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.settings-teable-metric-tooltip {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-teable-status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.settings-teable-status-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-teable-status-description {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-teable-switch-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-teable-switch-caption {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.settings-teable-config-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.settings-teable-config-item .modal-list-item-main,
+.settings-teable-config-item .modal-list-item-copy {
+  width: 100%;
+}
+
+.settings-teable-config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-teable-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-teable-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-teable-radio-line {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.settings-teable-radio-line input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.settings-teable-radio-line span {
+  color: var(--text-primary);
+}
+
+.settings-teable-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-teable-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border-bottom: 1px solid rgba(120, 134, 168, 0.14);
+  padding: 7px 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.settings-teable-choice-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-teable-choice-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.settings-teable-choice-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-teable-choice-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-teable-choice-copy small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+
+.settings-teable-table-sync-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.5fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.settings-teable-table-picker,
+.settings-teable-table-sync-main {
+  min-width: 0;
+}
+
+.settings-teable-table-picker .modal-list {
+  max-height: min(52vh, 460px);
+  overflow: auto;
+}
+
+.settings-teable-table-picker .modal-list-item {
+  min-height: 42px;
+  padding: 8px 0;
+}
+
+.settings-teable-table-picker .modal-list-item-copy {
+  flex-direction: row;
+  align-items: center;
+}
+
+.settings-teable-table-add-panel {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.settings-teable-table-add-panel .modal-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-teable-table-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(120, 134, 168, 0.18);
+  padding-bottom: 12px;
+}
+
+.settings-teable-table-summary > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-teable-table-summary span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-teable-table-summary strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.settings-teable-workspace-list {
+  margin-top: 10px;
+}
+
+.settings-teable-table-sync-main .modal-list-item[data-interactive="true"] {
+  width: 100%;
+  text-align: left;
+}
+
+@media (max-width: 860px) {
+  .settings-teable-table-sync-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-teable-table-add-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.settings-teable-modal-actions {
+  gap: 12px;
+}
+
+.settings-teable-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-teable-field-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-teable-field-picker .modal-list-item-leading input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .settings-teable-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-teable-action-group {
+    width: 100%;
+  }
+
+  .settings-teable-action-group .secondary-button,
+  .settings-teable-action-group .primary-button {
+    flex: 1 1 0;
   }
 }

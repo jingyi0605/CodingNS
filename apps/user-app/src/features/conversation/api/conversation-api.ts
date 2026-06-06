@@ -1,4 +1,5 @@
 import { httpClient } from "../../../network/http-client";
+import { getHostRequestUrl } from "../../../config/env";
 import { ApiError } from "../../../shared/network/api-error";
 import type { FileNodeDto } from "./file-context-api";
 
@@ -146,6 +147,10 @@ export interface AffairsLibraryConfigDto {
   canWrite: boolean;
   applyConfigTaskId?: string;
   applyConfigStatus?: AffairsLibraryIndexStatusDto;
+}
+
+export interface AffairsDashboardStateDto {
+  dashboardState: unknown;
 }
 
 export interface AffairsLibraryIndexStatusDto {
@@ -403,6 +408,171 @@ export interface AffairsLibraryOperationResultDto {
   opType: AffairsLibraryOperationType;
   sourcePath: string;
   targetPath: string | null;
+}
+
+export type TeableMirrorModeDto = "manual" | "scheduled" | "event_driven";
+export type TeableSyncSourceTypeDto = "tags" | "sessions" | "todos";
+export type TeableMirrorReadOnlyModeDto = "role_based" | "matrix_based" | "unknown";
+export interface TeableGlobalBindingDto {
+  baseUrl: string;
+  spaceId: string;
+  baseId: string;
+  authRef: string;
+  enabled: boolean;
+  mirrorMode: TeableMirrorModeDto;
+  updatedAt: string;
+}
+
+export interface TeableGlobalBindingOverviewDto {
+  binding: TeableGlobalBindingDto | null;
+  status: "unbound" | "ready" | "disabled" | "config_invalid";
+  summary: string;
+  updatedAt: string | null;
+}
+
+export interface TeableWorkbenchSyncConfigDto {
+  configId: string;
+  sourceType: TeableSyncSourceTypeDto;
+  enabled: boolean;
+  scope:
+    | {
+        rootTagIds: string[];
+      }
+    | {
+        mode: "all_workspaces";
+      }
+    | {
+        mode: "selected_workspaces";
+        workspaceIds: string[];
+      }
+    | {
+        includeWorkspaceTodos: boolean;
+        includeAffairsTodos: boolean;
+        workspaceIds?: string[];
+      };
+  targetTableId: string | null;
+  updatedAt: string;
+}
+
+export interface TeableMirrorTableBindingDto {
+  mirrorType: TeableSyncSourceTypeDto;
+  tableId: string;
+  tableName: string;
+  readOnlyMode: TeableMirrorReadOnlyModeDto;
+  lastSyncedAt: string | null;
+  updatedAt: string;
+}
+
+export interface TeableMirrorSyncResultDto {
+  state: "succeeded" | "partial_failed" | "failed";
+  summary: string;
+  syncedMirrorTypes: TeableSyncSourceTypeDto[];
+  failedMirrorTypes: Array<{
+    mirrorType: TeableSyncSourceTypeDto;
+    detail: string;
+  }>;
+  counts: Record<TeableSyncSourceTypeDto, {
+    created: number;
+    updated: number;
+    deleted: number;
+    skipped: number;
+  }>;
+}
+
+export interface TeableSyncTaskSnapshotDto {
+  taskId: string;
+  taskType: "mirror_sync";
+  state: "queued" | "running" | "succeeded" | "partial_failed" | "failed";
+  summary: string | null;
+  lastError: string | null;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  progress: {
+    phase: string;
+    label: string | null;
+    detail: string | null;
+    current: number | null;
+    total: number | null;
+    percent: number | null;
+    updatedAt: string;
+  } | null;
+  result: TeableMirrorSyncResultDto | null;
+}
+
+export interface TeableMirrorSyncTaskRequestDto {
+  taskId: string;
+  deduped: boolean;
+  taskType: "mirror_sync";
+  state: "queued";
+  summary: string;
+  updatedAt: string;
+}
+
+export interface TeableSyncLogDto {
+  logId: string;
+  triggerType: "manual" | "local_change" | "retry";
+  sourceTypes: TeableSyncSourceTypeDto[];
+  taskId: string | null;
+  state: "queued" | "running" | "succeeded" | "partial_failed" | "failed";
+  summary: string;
+  counts: Partial<TeableMirrorSyncResultDto["counts"]>;
+  errorDetail: string | null;
+  reason: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeableOverviewDto {
+  binding: TeableGlobalBindingOverviewDto;
+  syncConfigs: TeableWorkbenchSyncConfigDto[];
+  mirrorBindings: TeableMirrorTableBindingDto[];
+  latestMirrorSyncTask: TeableSyncTaskSnapshotDto | null;
+}
+
+export interface TeableTableCatalogItemDto {
+  tableId: string;
+  tableName: string;
+}
+
+export interface TeableFieldSummaryDto {
+  fieldId: string;
+  fieldName: string;
+  fieldType: string;
+  isPrimary: boolean;
+}
+
+export interface TeableCreatedFieldMappingDto {
+  sourceField: string;
+  targetFieldId: string;
+  targetFieldName: string;
+  required: boolean;
+  fieldType: string;
+}
+
+export interface TeableFieldMappingItemDto {
+  sourceField: string;
+  targetFieldId: string;
+  targetFieldName: string;
+  required: boolean;
+}
+
+export interface TeableFieldMappingDto {
+  mappingId: string;
+  configId: string;
+  sourceType: TeableSyncSourceTypeDto;
+  targetTableId: string;
+  items: TeableFieldMappingItemDto[];
+  updatedAt: string;
+}
+
+export interface TeableSourceFieldDefinitionDto {
+  key: string;
+  label: string;
+  type: "text" | "number" | "boolean" | "datetime";
+  required: boolean;
 }
 
 export type DebugServiceRoleDto = "frontend" | "backend" | "worker" | "mock" | "custom";
@@ -1497,21 +1667,6 @@ export function getGlobalAffairsLibraryBinding() {
   return httpClient.request<AffairsLibraryBindingDto | null>("/api/affairs/library-binding");
 }
 
-export interface AffairsDashboardStateDto {
-  dashboardState: Record<string, unknown>;
-}
-
-export function getGlobalAffairsDashboardState() {
-  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state");
-}
-
-export function updateGlobalAffairsDashboardState(payload: { dashboardState: unknown }) {
-  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state", {
-    method: "PUT",
-    body: JSON.stringify(payload)
-  });
-}
-
 export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
   return httpClient.request<AffairsLibraryBindingDto>(
     "/api/affairs/library-binding",
@@ -1738,7 +1893,146 @@ export function updateGlobalAffairsLibraryFavorites(
   );
 }
 
+export function getGlobalAffairsDashboardState() {
+  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state");
+}
+
+export function updateGlobalAffairsDashboardState(payload: { dashboardState: unknown }) {
+  return httpClient.request<AffairsDashboardStateDto>("/api/affairs/dashboard-state", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getTeableGlobalBinding() {
+  return httpClient.request<TeableGlobalBindingDto | null>("/api/affairs/teable/global-binding");
+}
+
+export function saveTeableGlobalBinding(payload: {
+  baseUrl: string;
+  spaceId: string;
+  baseId: string;
+  authRef: string;
+  authToken?: string;
+  enabled: boolean;
+  mirrorMode: TeableMirrorModeDto;
+}) {
+  return httpClient.request<TeableGlobalBindingDto>("/api/affairs/teable/global-binding", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getTeableWorkbenchSyncConfigs() {
+  return httpClient.request<TeableWorkbenchSyncConfigDto[]>("/api/affairs/teable/workbench-sync-config");
+}
+
+export function saveTeableWorkbenchSyncConfigs(payload: {
+  items: Array<{
+    sourceType: TeableSyncSourceTypeDto;
+    enabled: boolean;
+    scope?: Record<string, unknown>;
+    targetTableId?: string | null;
+  }>;
+}) {
+  return httpClient.request<TeableWorkbenchSyncConfigDto[]>("/api/affairs/teable/workbench-sync-config", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getTeableOverview() {
+  return httpClient.request<TeableOverviewDto>("/api/affairs/teable/overview");
+}
+
+export function requestTeableMirrorSync(payload: {
+  mirrorTypes?: TeableSyncSourceTypeDto[];
+}) {
+  return httpClient.request<TeableMirrorSyncTaskRequestDto>("/api/affairs/teable/mirror-sync", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getTeableSyncLogs(limit = 50) {
+  const search = new URLSearchParams();
+  search.set("limit", String(limit));
+  return httpClient.request<TeableSyncLogDto[]>(`/api/affairs/teable/sync-logs?${search.toString()}`);
+}
+
+export function getTeableTableCatalog() {
+  return httpClient.request<TeableTableCatalogItemDto[]>("/api/affairs/teable/table-catalog");
+}
+
+export function getTeableTableFields(tableId: string) {
+  const search = new URLSearchParams({ tableId });
+  return httpClient.request<TeableFieldSummaryDto[]>(`/api/affairs/teable/table-fields?${search.toString()}`);
+}
+
+export function createTeableTableFields(payload: {
+  tableId: string;
+  fields: Array<{
+    sourceField: string;
+    fieldName: string;
+    fieldType: "singleLineText" | "longText" | "date";
+    required?: boolean;
+  }>;
+}) {
+  return httpClient.request<TeableCreatedFieldMappingDto[]>("/api/affairs/teable/table-fields", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getTeableFieldMappings() {
+  return httpClient.request<{
+    mappings: TeableFieldMappingDto[];
+    sourceFieldsByType: Record<TeableSyncSourceTypeDto, TeableSourceFieldDefinitionDto[]>;
+  }>("/api/affairs/teable/field-mappings");
+}
+
+export function saveTeableFieldMappings(payload: {
+  items: Array<{
+    configId: string;
+    sourceType: TeableSyncSourceTypeDto;
+    targetTableId: string;
+    items: Array<{
+      sourceField: string;
+      targetFieldId: string;
+      targetFieldName: string;
+      required?: boolean;
+    }>;
+  }>;
+}) {
+  return httpClient.request<TeableFieldMappingDto[]>("/api/affairs/teable/field-mappings", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function listAffairsTags(workspaceId: string, query?: { includeDisabled?: boolean }) {
+  const search = new URLSearchParams();
+  if (query?.includeDisabled === true) {
+    search.set("includeDisabled", "true");
+  }
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return httpClient.request<{
+    items: AffairsTagNodeDto[];
+    summary: {
+      totalActiveTags: number;
+      totalDisabledTags: number;
+      totalRuleEnabledTags: number;
+      totalBoundDocuments: number;
+    };
+    status: {
+      recomputeState: "idle" | "queued" | "running" | "succeeded" | "failed";
+      lastRecomputedAt: string | null;
+      lastError: string | null;
+    };
+  }>(`/api/affairs/tags${suffix}`);
+}
+
+export function listGlobalAffairsTags(query?: { includeDisabled?: boolean }) {
   const search = new URLSearchParams();
   if (query?.includeDisabled === true) {
     search.set("includeDisabled", "true");

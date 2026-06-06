@@ -31,6 +31,7 @@ import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagemen
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { PluginManagementModal } from "../../../settings/PluginManagementModal";
+import { TeableSettingsModal } from "../../../settings/TeableSettingsModal";
 import { SettingsSwitch } from "../../../settings/SettingsSwitch";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
@@ -378,6 +379,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
   const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
   const [remoteAccessModalOpen, setRemoteAccessModalOpen] = useState(false);
   const [pluginManagementModalOpen, setPluginManagementModalOpen] = useState(false);
+  const [teableSettingsModalOpen, setTeableSettingsModalOpen] = useState(false);
   const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
   const {
     theme,
@@ -413,6 +415,10 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateDebugPortPools
   } = model;
   const pluginManagementWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const teableWorkspaceOptions = navigationGroups.map((group) => ({
+    id: group.workspace.id,
+    name: group.workspace.name?.trim() || group.workspace.id
+  }));
 
   return (
     <div className="settings-page">
@@ -583,6 +589,24 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                   triggerClassName="settings-button"
                   triggerLabel={t("settings.skillOnlyOfficeOpenSettingsAction")}
                 />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.teableEntryTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.teableEntryDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  className="settings-button"
+                  type="button"
+                  onClick={() => setTeableSettingsModalOpen(true)}
+                >
+                  {t("settings.teableOpenSettingsAction")}
+                </button>
               </div>
             </div>
 
@@ -853,6 +877,12 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         mobile={false}
         workspaceId={pluginManagementWorkspaceId}
         onClose={() => setPluginManagementModalOpen(false)}
+      />
+      <TeableSettingsModal
+        open={teableSettingsModalOpen}
+        mobile={false}
+        workspaceOptions={teableWorkspaceOptions}
+        onClose={() => setTeableSettingsModalOpen(false)}
       />
     </div>
   );
@@ -1396,8 +1426,13 @@ function MobileRemoteAccessSection({ model }: { model: SettingsPageModel }) {
 
 function MobileAbilityManagementSection() {
   const [pluginManagementModalOpen, setPluginManagementModalOpen] = useState(false);
+  const [teableSettingsModalOpen, setTeableSettingsModalOpen] = useState(false);
   const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
   const pluginManagementWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const teableWorkspaceOptions = navigationGroups.map((group) => ({
+    id: group.workspace.id,
+    name: group.workspace.name?.trim() || group.workspace.id
+  }));
 
   return (
     <>
@@ -1433,6 +1468,21 @@ function MobileAbilityManagementSection() {
               mobile
             />
           </div>
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.teableEntryTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.teableEntryDescription")}
+              </span>
+            </div>
+            <button
+              className="settings-mobile-primary-button"
+              type="button"
+              onClick={() => setTeableSettingsModalOpen(true)}
+            >
+              {t("settings.teableOpenSettingsAction")}
+            </button>
+          </div>
         </div>
         <div className="settings-mobile-ability-stack">
           <div className="settings-mobile-panel-shell settings-mobile-provider-shell">
@@ -1460,6 +1510,12 @@ function MobileAbilityManagementSection() {
         mobile
         workspaceId={pluginManagementWorkspaceId}
         onClose={() => setPluginManagementModalOpen(false)}
+      />
+      <TeableSettingsModal
+        open={teableSettingsModalOpen}
+        mobile
+        workspaceOptions={teableWorkspaceOptions}
+        onClose={() => setTeableSettingsModalOpen(false)}
       />
     </>
   );

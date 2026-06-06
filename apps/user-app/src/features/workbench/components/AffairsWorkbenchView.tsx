@@ -104,12 +104,12 @@ import {
   getAffairsAssistantSessionsSnapshot,
   getAffairsDocumentTagDetails,
   getAffairsDocumentTagTask,
+  getGlobalAffairsDashboardState,
   getAffairsTagRecoveryStatus,
   getAffairsFolderTagTask,
   getAffairsFolderTagDetails,
   getAffairsTagDetail,
   getGlobalAffairsLibraryBinding,
-  getGlobalAffairsDashboardState,
   listAffairsTags,
   listAffairsLightweightSessions,
   markAffairsLightweightSessionSeen,
@@ -142,8 +142,8 @@ import {
   updateSessionArchiveState,
   updateSessionFavoriteState,
   updateAffairsTag,
-  updateGlobalAffairsLibraryFavorites,
-  updateGlobalAffairsDashboardState
+  updateGlobalAffairsDashboardState,
+  updateGlobalAffairsLibraryFavorites
 } from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { FileViewerPanel } from "../../conversation/components/FileViewerModal";
@@ -197,7 +197,12 @@ import { resolveContextMenuPosition } from "../utils/context-menu-position";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import {
+  AFFAIRS_GRID_COLUMN_GAP,
+  AFFAIRS_GRID_ITEM_HEIGHT,
+  AFFAIRS_GRID_ROW_GAP,
+  AFFAIRS_GRID_TRACK_MIN_WIDTH,
   computeVirtualGridMetrics,
+  resolveAffairsGridColumnCount,
   shouldVirtualizeAffairsGrid
 } from "../utils/affairs-grid";
 import {
@@ -442,6 +447,11 @@ type LibraryEntry =
       documentId: string;
     };
 
+type VirtualLibraryEntrySlot = {
+  index: number;
+  entry: LibraryEntry | null;
+};
+
 type LibraryContextMenuTarget =
   | {
       kind: "document";
@@ -630,6 +640,7 @@ interface AffairsWorkbenchContextValue {
   libraryDocumentsLoading: boolean;
   libraryRefreshPending: boolean;
   libraryDocumentTotal: number;
+  libraryVisibleEntryTotal: number;
   libraryDocumentHasMore: boolean;
   binding: AffairsLibraryBindingDto | null;
   globalLibraryBinding: AffairsLibraryBindingDto | null;
@@ -1811,7 +1822,7 @@ export function AffairsWorkbenchProvider({
     setLightweightConversationSessionsLoading(true);
     try {
       const response = await listAffairsLightweightSessions(workspaceId);
-      setLightweightConversationSessions(Array.isArray(response.items) ? response.items : []);
+      setLightweightConversationSessions(response.items);
     } catch (error) {
       showToast({
         tone: "error",
@@ -3489,6 +3500,7 @@ export function AffairsWorkbenchProvider({
     libraryDocumentsLoading,
     libraryRefreshPending,
     libraryDocumentTotal: libraryDocumentPage?.total ?? 0,
+    libraryVisibleEntryTotal: libraryDocumentPage?.visibleEntryTotal ?? (libraryDocumentPage?.total ?? 0),
     libraryDocumentHasMore: (libraryDocumentPage?.items.length ?? 0) < (libraryDocumentPage?.total ?? 0),
     binding,
     globalLibraryBinding,
@@ -5228,6 +5240,7 @@ export function AffairsSidebarPanel() {
     activeSection,
     agentWorkspaceId,
     agentConversationSessions,
+    agentConversationSessionsReady,
     agentConversationSessionsLoading,
     binding,
     butlerStore,
@@ -7832,24 +7845,31 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     navigateLibraryTag,
     libraryDocumentsLoading,
     libraryRefreshPending,
+    libraryDocumentTotal,
+    libraryVisibleEntryTotal,
     libraryDocumentHasMore,
     loadMoreLibraryDocuments,
     refreshLibrary,
     selectLibraryFolderEntry,
     setLibraryViewMode,
-    selectSidebarNode
+    selectSidebarNode,
+    navigationGroups
   } = useAffairsWorkbenchInternal();
   const stageScrollRef = useRef<HTMLDivElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-
   useEffect(() => {
     if (settingsOpen && activeSection !== "library") {
       setSettingsOpen(false);
     }
   }, [activeSection, settingsOpen]);
+
   const [stageViewportHeight, setStageViewportHeight] = useState(0);
   const [stageViewportWidth, setStageViewportWidth] = useState(0);
   const [stageScrollTop, setStageScrollTop] = useState(0);
+  const [measuredListRowHeight, setMeasuredListRowHeight] = useState(LIST_ITEM_HEIGHT);
+  const [measuredGridColumns, setMeasuredGridColumns] = useState<number | null>(null);
+  const [measuredGridItemHeight, setMeasuredGridItemHeight] = useState(AFFAIRS_GRID_ITEM_HEIGHT);
+  const [measuredGridRowGap, setMeasuredGridRowGap] = useState(AFFAIRS_GRID_ROW_GAP);
   const [sortState, setSortState] = useState<LibrarySortState>({
     mode: "recent",
     direction: "desc"
@@ -7905,26 +7925,73 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     () => sortLibraryEntries(libraryEntries, sortState),
     [libraryEntries, sortState]
   );
-  const gridMetrics = useMemo(
-    () => computeVirtualGridMetrics(sortedLibraryEntries.length, stageViewportWidth, stageViewportHeight, stageScrollTop),
-    [sortedLibraryEntries.length, stageViewportHeight, stageViewportWidth, stageScrollTop]
+  const estimatedLibraryEntryCount = useMemo(() => {
+    if (activeSection !== "library") {
+      return 0;
+    }
+
+    if (state.browseMode === "folder") {
+      return Math.max(sortedLibraryEntries.length, libraryVisibleEntryTotal);
+    }
+
+    return Math.max(filteredDocuments.length, libraryVisibleEntryTotal);
+  }, [
+    activeSection,
+    filteredDocuments.length,
+    libraryVisibleEntryTotal,
+    sortedLibraryEntries.length,
+    state.browseMode
+  ]);
+  const effectiveGridColumns = useMemo(
+    () => Math.max(
+      1,
+      measuredGridColumns ?? resolveAffairsGridColumnCount(stageViewportWidth, {
+        trackMinWidth: AFFAIRS_GRID_TRACK_MIN_WIDTH,
+        columnGap: AFFAIRS_GRID_COLUMN_GAP
+      })
+    ),
+    [measuredGridColumns, stageViewportWidth]
   );
-  const visibleGridEntries = useMemo(
-    () => sortedLibraryEntries.slice(gridMetrics.startIndex, gridMetrics.endIndex),
+  const gridMetrics = useMemo(
+    () => computeVirtualGridMetrics(estimatedLibraryEntryCount, stageViewportWidth, stageViewportHeight, stageScrollTop, {
+      columns: effectiveGridColumns,
+      itemHeight: measuredGridItemHeight,
+      rowGap: measuredGridRowGap,
+      trackMinWidth: AFFAIRS_GRID_TRACK_MIN_WIDTH,
+      columnGap: AFFAIRS_GRID_COLUMN_GAP
+    }),
+    [
+      effectiveGridColumns,
+      estimatedLibraryEntryCount,
+      measuredGridItemHeight,
+      measuredGridRowGap,
+      stageViewportHeight,
+      stageViewportWidth,
+      stageScrollTop
+    ]
+  );
+  const visibleGridSlots = useMemo(
+    () => buildVirtualLibraryEntrySlots(sortedLibraryEntries, gridMetrics.startIndex, gridMetrics.endIndex),
     [gridMetrics.endIndex, gridMetrics.startIndex, sortedLibraryEntries]
   );
   const listMetrics = useMemo(
-    () => computeVirtualListMetrics(sortedLibraryEntries.length, stageViewportHeight, stageScrollTop),
-    [sortedLibraryEntries.length, stageViewportHeight, stageScrollTop]
+    () => computeVirtualListMetrics(estimatedLibraryEntryCount, stageViewportHeight, stageScrollTop, {
+      rowHeight: measuredListRowHeight
+    }),
+    [estimatedLibraryEntryCount, measuredListRowHeight, stageViewportHeight, stageScrollTop]
   );
-  const visibleListEntries = useMemo(
-    () => sortedLibraryEntries.slice(listMetrics.startIndex, listMetrics.endIndex),
+  const visibleListSlots = useMemo(
+    () => buildVirtualLibraryEntrySlots(sortedLibraryEntries, listMetrics.startIndex, listMetrics.endIndex),
     [sortedLibraryEntries, listMetrics.endIndex, listMetrics.startIndex]
   );
   const shouldVirtualizeGrid = shouldVirtualizeAffairsGrid(
-    sortedLibraryEntries.length,
+    estimatedLibraryEntryCount,
     stageViewportWidth,
-    stageViewportHeight
+    stageViewportHeight,
+    {
+      itemHeight: measuredGridItemHeight,
+      trackMinWidth: AFFAIRS_GRID_TRACK_MIN_WIDTH
+    }
   );
   const folderBreadcrumbs = useMemo(
     () => buildFolderBreadcrumbs(state.selectedFolderPath),
@@ -8039,6 +8106,79 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     };
   }, [activeSection, state.viewMode, sortedLibraryEntries.length]);
 
+  useLayoutEffect(() => {
+    if (activeSection !== "library") {
+      return;
+    }
+    const container = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    const syncMeasurements = () => {
+      if (state.viewMode === "list") {
+        const nextRowHeight = measureAffairsFinderRowHeight(container);
+        if (nextRowHeight && Math.abs(nextRowHeight - measuredListRowHeight) > 0.5) {
+          setMeasuredListRowHeight(nextRowHeight);
+        }
+        return;
+      }
+
+      const nextGridLayout = measureAffairsGridLayout(container);
+      if (nextGridLayout.columns && nextGridLayout.columns !== measuredGridColumns) {
+        setMeasuredGridColumns(nextGridLayout.columns);
+      }
+      if (nextGridLayout.itemHeight && Math.abs(nextGridLayout.itemHeight - measuredGridItemHeight) > 0.5) {
+        setMeasuredGridItemHeight(nextGridLayout.itemHeight);
+      }
+      if (nextGridLayout.rowGap !== null && Math.abs(nextGridLayout.rowGap - measuredGridRowGap) > 0.5) {
+        setMeasuredGridRowGap(nextGridLayout.rowGap);
+      }
+    };
+
+    let frameId = window.requestAnimationFrame(syncMeasurements);
+    const timeoutId = window.setTimeout(syncMeasurements, 80);
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        window.cancelAnimationFrame(frameId);
+        window.clearTimeout(timeoutId);
+      };
+    }
+
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(syncMeasurements);
+    });
+    observer.observe(container);
+    const grid = container.querySelector<HTMLElement>(".affairs-doc-grid");
+    const listRow = container.querySelector<HTMLElement>(".affairs-finder-row");
+    const gridItem = container.querySelector<HTMLElement>(".affairs-doc-item.grid");
+    if (grid) {
+      observer.observe(grid);
+    }
+    if (listRow) {
+      observer.observe(listRow);
+    }
+    if (gridItem) {
+      observer.observe(gridItem);
+    }
+
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    activeSection,
+    measuredGridColumns,
+    measuredGridItemHeight,
+    measuredGridRowGap,
+    measuredListRowHeight,
+    sortedLibraryEntries.length,
+    state.viewMode
+  ]);
+
   useEffect(() => {
     const container = state.viewMode === "list" ? listScrollRef.current : stageScrollRef.current;
     if (!container || activeSection !== "library") {
@@ -8050,6 +8190,35 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       if (!libraryDocumentHasMore || libraryDocumentsLoading) {
         return;
       }
+      const loadedEntryCount = sortedLibraryEntries.length;
+      if (loadedEntryCount <= 0 || loadedEntryCount >= estimatedLibraryEntryCount) {
+        return;
+      }
+      const viewportHeight = container.clientHeight;
+      const nextMetrics = state.viewMode === "list"
+        ? computeVirtualListMetrics(estimatedLibraryEntryCount, viewportHeight, container.scrollTop, {
+            rowHeight: measuredListRowHeight
+          })
+        : computeVirtualGridMetrics(
+            estimatedLibraryEntryCount,
+            measureStageScrollContentWidth(container),
+            viewportHeight,
+            container.scrollTop,
+            {
+              columns: effectiveGridColumns,
+              itemHeight: measuredGridItemHeight,
+              rowGap: measuredGridRowGap,
+              trackMinWidth: AFFAIRS_GRID_TRACK_MIN_WIDTH,
+              columnGap: AFFAIRS_GRID_COLUMN_GAP
+            }
+          );
+      const preloadThreshold = state.viewMode === "list"
+        ? Math.max(12, Math.ceil(Math.max(viewportHeight, measuredListRowHeight) / measuredListRowHeight))
+        : Math.max(effectiveGridColumns * 3, effectiveGridColumns * 2, 18);
+      if (nextMetrics.endIndex >= loadedEntryCount - preloadThreshold) {
+        void loadMoreLibraryDocuments();
+        return;
+      }
       const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
       if (remaining <= 320) {
         void loadMoreLibraryDocuments();
@@ -8059,7 +8228,19 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     container.addEventListener("scroll", handleScroll, { passive: true });
     handleScroll();
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [activeSection, libraryDocumentHasMore, libraryDocumentsLoading, loadMoreLibraryDocuments, state.viewMode]);
+  }, [
+    activeSection,
+    effectiveGridColumns,
+    estimatedLibraryEntryCount,
+    libraryDocumentHasMore,
+    libraryDocumentsLoading,
+    loadMoreLibraryDocuments,
+    measuredGridItemHeight,
+    measuredGridRowGap,
+    measuredListRowHeight,
+    sortedLibraryEntries.length,
+    state.viewMode
+  ]);
 
   useEffect(() => () => {
     document.documentElement.removeAttribute("data-workbench-finder-column-resizing");
@@ -8684,13 +8865,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   }
 
   if (activeSection === "conversation") {
-    return (
-      <div className="affairs-main-panel">
-        <section className="affairs-stage-panel">
-          <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
-        </section>
-      </div>
-    );
+    return <AffairsConversationInitState workspaceId={workspaceId} />;
   }
 
   return (
@@ -8732,25 +8907,32 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                     <div className="affairs-doc-grid-spacer" style={{ height: `${gridMetrics.totalHeight}px` }}>
                       <div
                         className="affairs-doc-grid affairs-doc-grid-virtual"
-                        style={{ transform: `translateY(${gridMetrics.offsetTop}px)` }}
+                        style={{ top: `${gridMetrics.offsetTop}px` }}
                       >
-                        {visibleGridEntries.map((entry) => (
-                          entry.kind === "folder" ? (
-                            <button
-                              key={entry.id}
-                              type="button"
-                              className={state.selectedFolderEntryPath === entry.path ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
-                              onClick={() => handleLibraryFolderEntryClick(entry.path)}
-                              onDoubleClick={() => openLibraryFolderEntry(entry.path)}
-                              onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
-                            >
-                              <div className="affairs-doc-icon">{renderFolderShape()}</div>
-                              <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
-                              <div className="affairs-doc-footer">
-                                <span className="affairs-doc-muted">{t("shell.affairsLibraryFolderCardCount", { count: entry.count })}</span>
-                              </div>
-                            </button>
-                          ) : (
+                        {visibleGridSlots.map((slot) => {
+                          const entry = slot.entry;
+                          if (!entry) {
+                            return <AffairsGridPlaceholderCard key={`grid-placeholder-${slot.index}`} />;
+                          }
+                          if (entry.kind === "folder") {
+                            return (
+                              <button
+                                key={entry.id}
+                                type="button"
+                                className={state.selectedFolderEntryPath === entry.path ? "affairs-doc-item grid active" : "affairs-doc-item grid"}
+                                onClick={() => handleLibraryFolderEntryClick(entry.path)}
+                                onDoubleClick={() => openLibraryFolderEntry(entry.path)}
+                                onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
+                              >
+                                <div className="affairs-doc-icon">{renderFolderShape()}</div>
+                                <div className="affairs-doc-title" title={entry.title}>{entry.title}</div>
+                                <div className="affairs-doc-footer">
+                                  <span className="affairs-doc-muted">{t("shell.affairsLibraryFolderCardCount", { count: entry.count })}</span>
+                                </div>
+                              </button>
+                            );
+                          }
+                          return (
                             <button
                               key={entry.id}
                               type="button"
@@ -8770,8 +8952,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                                 <span className="affairs-doc-muted">{formatRelativeMeta(entry.updatedAt)}</span>
                               </div>
                             </button>
-                          )
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ) : (
@@ -8818,7 +9000,9 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   )}
                 </div>
                 {libraryDocumentsLoading || libraryDocumentHasMore ? (
-                  <div className="affairs-doc-grid-loading">{t("common.loading")}</div>
+                  <div className="affairs-doc-grid-loading-overlay" aria-hidden="true">
+                    <div className="affairs-doc-grid-loading">{t("common.loading")}</div>
+                  </div>
                 ) : null}
                 </div>
                   </>
@@ -8861,42 +9045,54 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                 </div>
                 <div ref={listScrollRef} className="affairs-finder-list affairs-finder-viewport" onContextMenu={openBlankContextMenu}>
                   <div className="affairs-finder-spacer" style={{ height: `${listMetrics.totalHeight}px` }}>
-                    <div className="affairs-finder-virtual" style={{ transform: `translateY(${listMetrics.offsetTop}px)` }}>
-                      {visibleListEntries.map((entry) => (
-                        entry.kind === "folder" ? (
+                    <div className="affairs-finder-virtual" style={{ top: `${listMetrics.offsetTop}px` }}>
+                      {visibleListSlots.map((slot) => {
+                        const entry = slot.entry;
+                        if (!entry) {
+                          return (
+                            <AffairsFinderPlaceholderRow
+                              key={`list-placeholder-${slot.index}`}
+                              gridTemplateColumns={finderGridTemplateColumns}
+                            />
+                          );
+                        }
+                        if (entry.kind === "folder") {
+                          return (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              className={state.selectedFolderEntryPath === entry.path ? "affairs-finder-row active" : "affairs-finder-row"}
+                              onClick={() => handleLibraryFolderEntryClick(entry.path)}
+                              onDoubleClick={() => openLibraryFolderEntry(entry.path)}
+                              onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
+                              style={{ gridTemplateColumns: finderGridTemplateColumns }}
+                            >
+                              <span className="affairs-finder-name-cell">
+                                <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
+                                <span className="affairs-finder-name" title={entry.title}>{entry.title}</span>
+                              </span>
+                              <span className="affairs-finder-cell">{formatLibrarySize(null)}</span>
+                              <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
+                              <span className="affairs-finder-cell">{t("shell.affairsFinderKindFolder")}</span>
+                              <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt)}</span>
+                            </button>
+                          );
+                        }
+                        return (
                           <button
                             key={entry.id}
                             type="button"
-                            className={state.selectedFolderEntryPath === entry.path ? "affairs-finder-row active" : "affairs-finder-row"}
-                            onClick={() => handleLibraryFolderEntryClick(entry.path)}
-                            onDoubleClick={() => openLibraryFolderEntry(entry.path)}
+                            className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-finder-row active" : "affairs-finder-row"}
+                            onClick={() => selectObject(entry.documentId)}
                             onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
                             style={{ gridTemplateColumns: finderGridTemplateColumns }}
+                            onDoubleClick={() => {
+                              const record = documentRecords.find((item) => item.id === entry.documentId);
+                              if (record) {
+                                openLibraryViewer(record);
+                              }
+                            }}
                           >
-                            <span className="affairs-finder-name-cell">
-                              <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
-                              <span className="affairs-finder-name" title={entry.title}>{entry.title}</span>
-                            </span>
-                            <span className="affairs-finder-cell">{formatLibrarySize(null)}</span>
-                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt)}</span>
-                            <span className="affairs-finder-cell">{t("shell.affairsFinderKindFolder")}</span>
-                            <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt)}</span>
-                          </button>
-                        ) : (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-finder-row active" : "affairs-finder-row"}
-                        onClick={() => selectObject(entry.documentId)}
-                        onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
-                        style={{ gridTemplateColumns: finderGridTemplateColumns }}
-                        onDoubleClick={() => {
-                          const record = documentRecords.find((item) => item.id === entry.documentId);
-                          if (record) {
-                            openLibraryViewer(record);
-                          }
-                        }}
-                      >
                             <span className="affairs-finder-name-cell">
                               <span className="affairs-finder-icon">{renderDocumentShape(entry.path, "row")}</span>
                               <span className="affairs-finder-name" title={entry.title}>{entry.title}</span>
@@ -8906,12 +9102,14 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             <span className="affairs-finder-cell">{resolveFinderKindLabel(entry.path)}</span>
                             <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt)}</span>
                           </button>
-                        )
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                   {libraryDocumentsLoading || libraryDocumentHasMore ? (
-                    <div className="affairs-finder-loading">{t("common.loading")}</div>
+                    <div className="affairs-finder-loading-overlay" aria-hidden="true">
+                      <div className="affairs-finder-loading">{t("common.loading")}</div>
+                    </div>
                   ) : null}
                 </div>
                 </div>
@@ -13162,7 +13360,6 @@ function resolveDashboardWidgetHint(widget: Pick<DashboardWidgetState, "type" | 
   if (widget.type === "automation") {
     return t("shell.affairsWorkbenchWidgetAutomationHint");
   }
-
   const htmlVariant = resolveDashboardHtmlWidgetVariant(widget);
   if (htmlVariant === "app") {
     return t("shell.affairsWorkbenchWidgetHtmlAppHint");
@@ -13227,7 +13424,9 @@ export function AffairsDashboardLockToolbarButton({ className }: { className?: s
   );
 }
 
-function AffairsDashboardView() {
+function AffairsDashboardView({
+}: {
+}) {
   const {
     filteredTodoRecords,
     automationRecords,
@@ -13854,6 +14053,7 @@ function AffairsDashboardWidgetCard({
   automationCount,
   gestureKind,
   children,
+  headerAction,
   onMovePointerDown,
   onResizePointerDown,
   onRemove
@@ -13865,10 +14065,12 @@ function AffairsDashboardWidgetCard({
   automationCount: number;
   gestureKind: "move" | "resize" | null;
   children: ReactNode;
+  headerAction?: ReactNode;
   onMovePointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onResizePointerDown: (event: ReactPointerEvent<HTMLElement>, resizeMode: "x" | "y" | "xy") => void;
   onRemove: () => void;
 }) {
+  const hint = resolveDashboardWidgetHint(widget);
   return (
     <section
       className={[
@@ -13886,13 +14088,14 @@ function AffairsDashboardWidgetCard({
         <div className="affairs-dashboard-widget-header-main">
           <div>
             <h3>{widget.title}</h3>
-            <p>{resolveDashboardWidgetHint(widget)}</p>
+            {hint ? <p>{hint}</p> : null}
           </div>
         </div>
         <div className="affairs-dashboard-widget-header-meta">
           <span className="affairs-inline-pill">
             {resolveDashboardWidgetBadgeLabel(widget, todoCount, automationCount)}
           </span>
+          {headerAction}
           {editable ? (
             <div className="affairs-dashboard-widget-toolbar">
               <button
@@ -15638,10 +15841,12 @@ function mergePagedLibraryDocumentPage(
 ): AffairsLibraryDocumentListDto {
   return {
     total: response.total,
+    visibleEntryTotal: response.visibleEntryTotal ?? previous?.visibleEntryTotal ?? response.total,
     offset: 0,
     limit: Math.max(previous?.limit ?? 0, response.limit),
     items: mergeDocumentPageItems(previous?.items ?? [], response.items),
-    tagFacetCounts: response.tagFacetCounts ?? previous?.tagFacetCounts ?? {}
+    tagFacetCounts: response.tagFacetCounts ?? previous?.tagFacetCounts ?? {},
+    directoryStatus: response.directoryStatus ?? previous?.directoryStatus ?? null
   };
 }
 
@@ -15679,7 +15884,12 @@ function areLibraryDocumentPagesEqual(
   if (!left || !right) {
     return false;
   }
-  if (left.total !== right.total || left.offset !== right.offset || left.limit !== right.limit) {
+  if (
+    left.total !== right.total
+    || (left.visibleEntryTotal ?? left.total) !== (right.visibleEntryTotal ?? right.total)
+    || left.offset !== right.offset
+    || left.limit !== right.limit
+  ) {
     return false;
   }
   if (JSON.stringify(left.tagFacetCounts ?? {}) !== JSON.stringify(right.tagFacetCounts ?? {})) {
@@ -15780,16 +15990,20 @@ function parseIncludedHiddenPaths(input: string): string[] {
 function computeVirtualListMetrics(
   itemCount: number,
   viewportHeight: number,
-  scrollTop: number
+  scrollTop: number,
+  options?: {
+    rowHeight?: number;
+  }
 ) {
-  const visibleRows = Math.max(1, Math.ceil(Math.max(viewportHeight, LIST_ITEM_HEIGHT) / LIST_ITEM_HEIGHT));
-  const startRow = Math.max(0, Math.floor(scrollTop / LIST_ITEM_HEIGHT) - LIST_VIRTUAL_OVERSCAN_ROWS);
+  const rowHeight = Math.max(1, options?.rowHeight ?? LIST_ITEM_HEIGHT);
+  const visibleRows = Math.max(1, Math.ceil(Math.max(viewportHeight, rowHeight) / rowHeight));
+  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - LIST_VIRTUAL_OVERSCAN_ROWS);
   const endRow = Math.min(itemCount, startRow + visibleRows + LIST_VIRTUAL_OVERSCAN_ROWS * 2);
   return {
     startIndex: startRow,
     endIndex: endRow,
-    offsetTop: startRow * LIST_ITEM_HEIGHT,
-    totalHeight: itemCount * LIST_ITEM_HEIGHT
+    offsetTop: startRow * rowHeight,
+    totalHeight: itemCount * rowHeight
   };
 }
 
@@ -15798,6 +16012,114 @@ function measureStageScrollContentWidth(element: HTMLElement) {
   const paddingLeft = Number.parseFloat(styles.paddingLeft || "0");
   const paddingRight = Number.parseFloat(styles.paddingRight || "0");
   return Math.max(0, element.clientWidth - paddingLeft - paddingRight);
+}
+
+function readMeasuredPixelValue(value: string | null | undefined): number | null {
+  const nextValue = Number.parseFloat(value ?? "");
+  return Number.isFinite(nextValue) && nextValue > 0 ? nextValue : null;
+}
+
+function readMeasuredTrackCount(gridTemplateColumns: string | null | undefined): number | null {
+  const normalizedValue = String(gridTemplateColumns ?? "").trim();
+  if (!normalizedValue || normalizedValue === "none") {
+    return null;
+  }
+  const tracks = normalizedValue
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return tracks.length > 0 ? tracks.length : null;
+}
+
+function measureAffairsFinderRowHeight(container: HTMLElement | null): number | null {
+  if (!container) {
+    return null;
+  }
+  const row = container.querySelector<HTMLElement>(".affairs-finder-row:not(.is-placeholder)") ?? container.querySelector<HTMLElement>(".affairs-finder-row");
+  if (!row) {
+    return null;
+  }
+  const rectHeight = row.getBoundingClientRect().height;
+  if (rectHeight > 0) {
+    return rectHeight;
+  }
+  return readMeasuredPixelValue(window.getComputedStyle(row).height);
+}
+
+function measureAffairsGridLayout(container: HTMLElement | null): {
+  columns: number | null;
+  itemHeight: number | null;
+  rowGap: number | null;
+} {
+  if (!container) {
+    return {
+      columns: null,
+      itemHeight: null,
+      rowGap: null
+    };
+  }
+  const grid = container.querySelector<HTMLElement>(".affairs-doc-grid");
+  const item = container.querySelector<HTMLElement>(".affairs-doc-item.grid:not(.is-placeholder)") ?? container.querySelector<HTMLElement>(".affairs-doc-item.grid");
+  const gridStyles = grid ? window.getComputedStyle(grid) : null;
+  const itemRectHeight = item?.getBoundingClientRect().height ?? 0;
+  return {
+    columns: readMeasuredTrackCount(gridStyles?.gridTemplateColumns),
+    itemHeight: itemRectHeight > 0 ? itemRectHeight : readMeasuredPixelValue(item ? window.getComputedStyle(item).height : null),
+    rowGap: readMeasuredPixelValue(gridStyles?.rowGap)
+  };
+}
+
+function buildVirtualLibraryEntrySlots(
+  loadedEntries: LibraryEntry[],
+  startIndex: number,
+  endIndex: number
+): VirtualLibraryEntrySlot[] {
+  const slots: VirtualLibraryEntrySlot[] = [];
+  for (let index = startIndex; index < endIndex; index += 1) {
+    slots.push({
+      index,
+      entry: loadedEntries[index] ?? null
+    });
+  }
+  return slots;
+}
+
+function AffairsGridPlaceholderCard() {
+  return (
+    <div className="affairs-doc-item grid is-placeholder" aria-hidden="true">
+      <div className="affairs-doc-icon">
+        <div className="affairs-doc-placeholder-icon" />
+      </div>
+      <div className="affairs-doc-placeholder-lines">
+        <span />
+        <span />
+      </div>
+      <div className="affairs-doc-footer">
+        <span className="affairs-doc-placeholder-meta" />
+      </div>
+    </div>
+  );
+}
+
+function AffairsFinderPlaceholderRow({ gridTemplateColumns }: { gridTemplateColumns: string }) {
+  return (
+    <div
+      className="affairs-finder-row is-placeholder"
+      style={{ gridTemplateColumns }}
+      aria-hidden="true"
+    >
+      <span className="affairs-finder-name-cell">
+        <span className="affairs-finder-icon">
+          <span className="affairs-finder-placeholder-icon" />
+        </span>
+        <span className="affairs-finder-placeholder-line affairs-finder-placeholder-line-main" />
+      </span>
+      <span className="affairs-finder-placeholder-line affairs-finder-placeholder-line-short" />
+      <span className="affairs-finder-placeholder-line affairs-finder-placeholder-line-short" />
+      <span className="affairs-finder-placeholder-line affairs-finder-placeholder-line-short" />
+      <span className="affairs-finder-placeholder-line affairs-finder-placeholder-line-short" />
+    </div>
+  );
 }
 
 function sortLibraryEntries(entries: LibraryEntry[], sortState: LibrarySortState): LibraryEntry[] {
@@ -17707,3 +18029,4 @@ function resolveLibraryDetailEmptyText(status: AffairsLibraryIndexStatusDto | nu
 
   return status.errorSummary?.trim() || t("shell.affairsDetailEmpty");
 }
+

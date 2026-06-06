@@ -13,7 +13,7 @@ import type {
 } from "../types/workbench-mode";
 
 const AFFAIRS_DASHBOARD_STATE_KEY_PREFIX = "workbench.affairs.dashboard.";
-const AFFAIRS_DASHBOARD_STATE_VERSION = 6;
+const AFFAIRS_DASHBOARD_STATE_VERSION = 7;
 const AFFAIRS_DASHBOARD_STATE_CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 const WORKSPACE_HTML_PATH_PATTERN = /\.(html?|HTML?)$/;
 
@@ -64,6 +64,7 @@ function resolveDefaultWidgetTitle(
   if (type === "automation") {
     return t("shell.affairsAutomationStageTitle");
   }
+
 
   if (sourceId?.trim()) {
     return resolvePathLeafName(sourceId);

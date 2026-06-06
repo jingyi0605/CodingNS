@@ -207,8 +207,8 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsAssistantSessionsSnapshot: vi.fn(),
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
-  getGlobalAffairsLibraryBinding: vi.fn(),
   getGlobalAffairsDashboardState: vi.fn(),
+  getGlobalAffairsLibraryBinding: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getAffairsDocumentTagTask: vi.fn(),
   getProviderCapabilities: vi.fn(),
@@ -254,6 +254,7 @@ const conversationApiMock = vi.hoisted(() => ({
   updateSessionArchiveState: vi.fn(),
   updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
+  updateGlobalAffairsDashboardState: vi.fn(),
   updateGlobalAffairsLibraryFavorites: vi.fn()
 }));
 
@@ -273,8 +274,8 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsAssistantSessionsSnapshot: conversationApiMock.getAffairsAssistantSessionsSnapshot,
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
-    getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
     getGlobalAffairsDashboardState: conversationApiMock.getGlobalAffairsDashboardState,
+    getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getAffairsDocumentTagTask: conversationApiMock.getAffairsDocumentTagTask,
     getProviderCapabilities: conversationApiMock.getProviderCapabilities,
@@ -320,6 +321,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     updateSessionArchiveState: conversationApiMock.updateSessionArchiveState,
     updateSessionFavoriteState: conversationApiMock.updateSessionFavoriteState,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
+    updateGlobalAffairsDashboardState: conversationApiMock.updateGlobalAffairsDashboardState,
     updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites
   };
 });

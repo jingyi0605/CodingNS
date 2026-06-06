@@ -9,6 +9,7 @@ import { userPreferenceStore } from "../../../preferences/user-preference-store"
 import { clearProviderCatalogStore } from "../../conversation/capability/provider-catalog-store";
 import { clearSessionProviderPickerCapabilityCache } from "../../conversation/components/SessionProviderPicker";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
+import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   AffairsAuxiliaryPanel,
@@ -20,7 +21,7 @@ import {
 import { useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type { AffairsViewState } from "../types/workbench-mode";
 import { resolveAffairsDocumentVisual } from "../utils/affairs-document-visual";
-import { createAffairsShortcutAppState, createDefaultAffairsDashboardState } from "../utils/affairs-dashboard-state";
+import { createAffairsDashboardWidgetState, createAffairsShortcutAppState, createDefaultAffairsDashboardState } from "../utils/affairs-dashboard-state";
 
 const desktopBridgeMock = vi.hoisted(() => ({
   fs: {
@@ -51,6 +52,7 @@ const platformStateMock = vi.hoisted(() => ({
 }));
 
 const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
+const showToastMock = vi.hoisted(() => vi.fn(() => "toast-test-id"));
 
 const liveSessionControllerMock = vi.hoisted(() => ({
   useLiveSessionController: vi.fn()
@@ -255,8 +257,8 @@ const conversationApiMock = vi.hoisted(() => ({
   updateSessionArchiveState: vi.fn(),
   updateSessionFavoriteState: vi.fn(),
   updateAffairsTag: vi.fn(),
-  updateGlobalAffairsLibraryFavorites: vi.fn(),
-  updateGlobalAffairsDashboardState: vi.fn()
+  updateGlobalAffairsDashboardState: vi.fn(),
+  updateGlobalAffairsLibraryFavorites: vi.fn()
 }));
 
 const docsApiMock = vi.hoisted(() => ({
@@ -340,8 +342,8 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     updateSessionArchiveState: conversationApiMock.updateSessionArchiveState,
     updateSessionFavoriteState: conversationApiMock.updateSessionFavoriteState,
     updateAffairsTag: conversationApiMock.updateAffairsTag,
-    updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites,
-    updateGlobalAffairsDashboardState: conversationApiMock.updateGlobalAffairsDashboardState
+    updateGlobalAffairsDashboardState: conversationApiMock.updateGlobalAffairsDashboardState,
+    updateGlobalAffairsLibraryFavorites: conversationApiMock.updateGlobalAffairsLibraryFavorites
   };
 });
 
@@ -641,6 +643,13 @@ vi.mock("../../../platform/platform-provider", () => ({
   })
 }));
 
+vi.mock("../../../shared/toast", () => ({
+  useToast: () => ({
+    showToast: showToastMock,
+    dismissToast: vi.fn()
+  })
+}));
+
 vi.mock("../../conversation/api/file-context-api", () => ({
   getFilePreview: fileContextApiMock.getFilePreview,
   saveFileContent: fileContextApiMock.saveFileContent,
@@ -708,7 +717,7 @@ function createState(): AffairsViewState {
   };
 }
 
-function createAgentSnapshotSession(overrides: Partial<any> = {}) {
+function createAgentSnapshotSession(overrides: Partial<SessionSummaryDto> = {}) {
   return {
     sessionId: overrides.sessionId ?? "agent-session-1",
     workspaceId: overrides.workspaceId ?? "workspace-2",
@@ -1180,6 +1189,7 @@ describe("AffairsWorkbenchView", () => {
   });
 
   beforeEach(() => {
+    showToastMock.mockClear();
     docsApiMock.destroyEditor.mockReset();
     docsApiMock.docEditor.mockReset();
     docsApiMock.docEditor.mockImplementation(() => ({
@@ -1357,11 +1367,11 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.startAffairsLightweightSessionStream.mockReset();
     conversationApiMock.updateSessionArchiveState.mockReset();
     conversationApiMock.updateSessionFavoriteState.mockReset();
-    conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
     conversationApiMock.updateGlobalAffairsDashboardState.mockReset();
     conversationApiMock.updateGlobalAffairsDashboardState.mockImplementation(async (payload) => ({
       dashboardState: payload.dashboardState
     }));
+    conversationApiMock.updateGlobalAffairsLibraryFavorites.mockReset();
     liveSessionControllerMock.useLiveSessionController.mockReset();
 
     desktopBridgeMock.fs.openFile.mockClear();
@@ -3066,7 +3076,7 @@ describe("AffairsWorkbenchView", () => {
       ...createState(),
       primarySection: "library",
       selectedNodeId: "library:all"
-    }, navigationGroups);
+    }, navigationGroupsWithBoundLibraryWorkspace);
 
     await waitFor(() => {
       expect(butlerRuntimeCallsMock.initialize).toHaveBeenCalled();
@@ -3294,17 +3304,26 @@ describe("AffairsWorkbenchView", () => {
         }
       })
     ];
+    conversationApiMock.getAffairsAssistantSessionsSnapshot.mockResolvedValue({
+      item: {
+        projectId: "project-2",
+        projectWorkspaceId: "workspace-2",
+        agentWorkspacePath: "/Users/jackson/SynologyDrive",
+        sessions: [
+          createAgentSnapshotSession({
+            sessionId: "agent-session-history-1",
+            title: "事务 Agent 会话",
+            rawStoreRef: "butler://butler-session-history-1"
+          })
+        ],
+        updatedAt: "2026-06-03T13:10:00.000Z"
+      }
+    });
 
     renderWorkbenchWithCustomNavigationGroups({
       ...createState(),
       auxiliaryTab: "assistant"
-    }, createNavigationGroupsWithAgentSessions([
-      createAgentSnapshotSession({
-        sessionId: "agent-session-history-1",
-        title: "事务 Agent 会话",
-        rawStoreRef: "butler://butler-session-history-1"
-      })
-    ]));
+    }, navigationGroupsWithBoundLibraryWorkspace);
 
     await user.click(await screen.findByRole("button", { name: t("shell.butlerHistoryAction") }));
     const historyDialog = await screen.findByRole("dialog", { name: t("shell.affairsConversationSidebarTitle") });
@@ -4069,6 +4088,350 @@ describe("AffairsWorkbenchView", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /文件夹110/i })).toBeInTheDocument();
     });
+  });
+
+  it("网格视图虚拟滚动高度按总条数估算，不再只按已加载条数计算", async () => {
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-doc-grid-scroll")) {
+          return 300;
+        }
+        return originalClientWidth?.get ? originalClientWidth.get.call(this) : 0;
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-doc-grid-scroll")) {
+          return 400;
+        }
+        return originalClientHeight?.get ? originalClientHeight.get.call(this) : 0;
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-doc-grid-scroll")) {
+          return 20000;
+        }
+        return originalScrollHeight?.get ? originalScrollHeight.get.call(this) : 0;
+      }
+    });
+
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: []
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValueOnce({
+      total: 240,
+      offset: 0,
+      limit: 120,
+      tagFacetCounts: {},
+      items: Array.from({ length: 120 }, (_, index) => ({
+        documentId: `doc-${index + 1}`,
+        path: `文档${String(index + 1).padStart(3, "0")}.txt`,
+        title: `文档${String(index + 1).padStart(3, "0")}`,
+        summary: "事务文档摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }))
+    });
+
+    try {
+      renderWorkbench();
+
+      await waitFor(() => {
+        const spacer = document.querySelector(".affairs-doc-grid-spacer") as HTMLDivElement | null;
+        expect(spacer).not.toBeNull();
+        expect(spacer?.style.height).toBe("13908px");
+      });
+    } finally {
+      if (originalClientWidth) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      }
+    }
+  });
+
+  it("列表视图虚拟滚动优先使用后端返回的当前目录可见总条数", async () => {
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 400;
+        }
+        return originalClientHeight?.get ? originalClientHeight.get.call(this) : 0;
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 50000;
+        }
+        return originalScrollHeight?.get ? originalScrollHeight.get.call(this) : 0;
+      }
+    });
+
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: [
+        {
+          path: "子目录A",
+          name: "子目录A",
+          parentPath: null,
+          depth: 0,
+          directDocumentCount: 0,
+          documentCount: 0,
+          createdAt: "2026-05-30T08:00:00.000Z",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        },
+        {
+          path: "子目录B",
+          name: "子目录B",
+          parentPath: null,
+          depth: 0,
+          directDocumentCount: 0,
+          documentCount: 0,
+          createdAt: "2026-05-30T08:00:00.000Z",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        }
+      ]
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue({
+      total: 2,
+      visibleEntryTotal: 4,
+      offset: 0,
+      limit: 120,
+      tagFacetCounts: {},
+      items: [
+        {
+          documentId: "doc-1",
+          path: "说明1.md",
+          title: "说明1",
+          summary: "事务文档摘要",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          createdAt: "2026-05-30T08:00:00.000Z",
+          sizeBytes: 2048,
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        },
+        {
+          documentId: "doc-2",
+          path: "说明2.md",
+          title: "说明2",
+          summary: "事务文档摘要",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          createdAt: "2026-05-30T08:00:00.000Z",
+          sizeBytes: 2048,
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }
+      ]
+    });
+
+    try {
+      renderWorkbench();
+      await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+      await waitFor(() => {
+        const spacer = document.querySelector('.affairs-finder-spacer') as HTMLDivElement | null;
+        expect(spacer).not.toBeNull();
+        expect(spacer?.style.height).toBe('160px');
+      });
+
+      const virtual = document.querySelector(".affairs-finder-virtual") as HTMLDivElement | null;
+      expect(virtual).not.toBeNull();
+      expect(virtual?.style.top).toBe("0px");
+      expect(virtual?.style.transform).toBe("");
+    } finally {
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      }
+    }
+  });
+
+  it("列表视图接近已加载尾部时会按总条数提前继续加载", async () => {
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 400;
+        }
+        return originalClientHeight?.get ? originalClientHeight.get.call(this) : 0;
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 50000;
+        }
+        return originalScrollHeight?.get ? originalScrollHeight.get.call(this) : 0;
+      }
+    });
+
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: []
+    }));
+    conversationApiMock.listAffairsLibraryDocuments
+      .mockResolvedValueOnce({
+        total: 240,
+        offset: 0,
+        limit: 120,
+        tagFacetCounts: {},
+        items: Array.from({ length: 120 }, (_, index) => ({
+          documentId: `doc-${index + 1}`,
+          path: `文档${String(index + 1).padStart(3, "0")}.txt`,
+          title: `文档${String(index + 1).padStart(3, "0")}`,
+          summary: "事务文档摘要",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          createdAt: "2026-05-30T08:00:00.000Z",
+          sizeBytes: 2048,
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }))
+      })
+      .mockResolvedValueOnce({
+        total: 240,
+        offset: 120,
+        limit: 120,
+        tagFacetCounts: {},
+        items: Array.from({ length: 120 }, (_, index) => ({
+          documentId: `doc-${index + 121}`,
+          path: `文档${String(index + 121).padStart(3, "0")}.txt`,
+          title: `文档${String(index + 121).padStart(3, "0")}`,
+          summary: "事务文档摘要",
+          updatedAt: "2026-05-31T08:00:00.000Z",
+          createdAt: "2026-05-30T08:00:00.000Z",
+          sizeBytes: 2048,
+          tags: [],
+          derivedTags: [],
+          isFavorite: false
+        }))
+      });
+
+    try {
+      renderWorkbench();
+      await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+      const listViewport = await waitFor(() => {
+        const element = document.querySelector(".affairs-finder-list");
+        if (!(element instanceof HTMLDivElement)) {
+          throw new Error("未找到事务文档列表视口");
+        }
+        return element;
+      });
+
+      act(() => {
+        listViewport.scrollTop = 3840;
+        fireEvent.scroll(listViewport);
+      });
+
+      await waitFor(() => {
+        expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenCalledWith("workspace-1", expect.objectContaining({
+          offset: 120,
+          limit: 120
+        }));
+      });
+    } finally {
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      }
+    }
+  });
+
+  it("列表视图虚拟内容用 top 定位，避免滚动时把 scrollHeight 越撑越大", async () => {
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 400;
+        }
+        return originalClientHeight?.get ? originalClientHeight.get.call(this) : 0;
+      }
+    });
+
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      folders: []
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue({
+      total: 240,
+      visibleEntryTotal: 240,
+      offset: 0,
+      limit: 120,
+      tagFacetCounts: {},
+      items: Array.from({ length: 120 }, (_, index) => ({
+        documentId: `doc-${index + 1}`,
+        path: `文档${String(index + 1).padStart(3, "0")}.txt`,
+        title: `文档${String(index + 1).padStart(3, "0")}`,
+        summary: "事务文档摘要",
+        updatedAt: "2026-05-31T08:00:00.000Z",
+        createdAt: "2026-05-30T08:00:00.000Z",
+        sizeBytes: 2048,
+        tags: [],
+        derivedTags: [],
+        isFavorite: false
+      }))
+    });
+
+    try {
+      renderWorkbench();
+      await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+      const listViewport = await waitFor(() => {
+        const element = document.querySelector(".affairs-finder-list");
+        if (!(element instanceof HTMLDivElement)) {
+          throw new Error("未找到事务文档列表视口");
+        }
+        return element;
+      });
+
+      act(() => {
+        listViewport.scrollTop = 1600;
+        fireEvent.scroll(listViewport);
+      });
+
+      await waitFor(() => {
+        const virtual = document.querySelector(".affairs-finder-virtual") as HTMLDivElement | null;
+        expect(virtual).not.toBeNull();
+        expect(virtual?.style.top).toBe("1520px");
+        expect(virtual?.style.transform).toBe("");
+      });
+    } finally {
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+    }
   });
 
   it("列表视图点击表头可以切换排序", async () => {
@@ -6790,7 +7153,6 @@ describe("AffairsWorkbenchView", () => {
       selectedNodeId: "workbench:overview"
     }, navigationGroupsWithBoundLibraryWorkspace);
 
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailLaunchAction", { title: "会员管理" }) }));
     await userEvent.click(await screen.findByRole("tab", { name: t("conversation.fileViewerEdit") }));
     const editor = await screen.findByTestId("file-viewer-editor");
@@ -6892,7 +7254,7 @@ describe("AffairsWorkbenchView", () => {
     localDashboardState.activeTabId = "local-tab-1";
     writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
 
-    const remoteDashboardState = createDefaultAffairsDashboardState("affairs-global", "2026-06-04T10:10:00.000Z");
+    const remoteDashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T10:10:00.000Z");
     remoteDashboardState.layoutLocked = false;
     remoteDashboardState.tabs = [
       ...remoteDashboardState.tabs,
@@ -6938,7 +7300,6 @@ describe("AffairsWorkbenchView", () => {
     ];
     localDashboardState.activeTabId = "local-migrate-tab-1";
     writeViewSnapshot("workbench.affairs.dashboard.workspace-1", localDashboardState);
-
     conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValueOnce({
       dashboardState: {}
     });
@@ -6953,9 +7314,7 @@ describe("AffairsWorkbenchView", () => {
     expect(await screen.findByRole("tab", { name: /本地迁移看板/i })).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(
-        conversationApiMock.updateGlobalAffairsDashboardState
-      ).toHaveBeenCalledWith({
+      expect(conversationApiMock.updateGlobalAffairsDashboardState).toHaveBeenCalledWith({
         dashboardState: expect.objectContaining({
           workspaceId: "affairs-global",
           layoutLocked: false,
@@ -6963,6 +7322,22 @@ describe("AffairsWorkbenchView", () => {
         })
       });
     });
+  });
+
+  it("事务工作台添加块面板不再提供 Teable 嵌入块", async () => {
+    const dashboardState = createDefaultAffairsDashboardState("workspace-1", "2026-06-04T09:30:00.000Z");
+    dashboardState.layoutLocked = false;
+    writeViewSnapshot("workbench.affairs.dashboard.workspace-1", dashboardState);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "workbench",
+      selectedNodeId: "workbench:overview"
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsWorkbenchAddWidgetAction") }));
+
+    expect(screen.queryByText("Teable")).not.toBeInTheDocument();
   });
 
 

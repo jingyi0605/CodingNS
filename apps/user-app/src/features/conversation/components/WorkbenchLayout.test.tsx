@@ -2949,6 +2949,18 @@ describe("WorkbenchLayout", () => {
         });
       }
 
+      if (url.includes("/api/workspaces/workspace-1/affairs/assistant-sessions")) {
+        return createJsonResponse({
+          item: {
+            projectId: null,
+            projectWorkspaceId: null,
+            agentWorkspacePath: null,
+            sessions: [],
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          }
+        });
+      }
+
       return affairsFetch(rawInput);
     }) as typeof fetch;
 
