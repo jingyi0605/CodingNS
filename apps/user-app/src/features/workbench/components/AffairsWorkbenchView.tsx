@@ -9706,8 +9706,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                 <ButlerAnchoredPopover
                   open={assistantHistoryOpen && assistantHistoryButtonRef.current !== null}
                   className="affairs-assistant-history-popover"
-                  backdropClassName="affairs-assistant-history-backdrop"
-                  showBackdrop
                   anchorRef={assistantHistoryButtonRef}
                   popoverRef={assistantHistoryPopoverRef}
                   role="dialog"

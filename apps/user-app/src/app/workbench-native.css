@@ -9682,17 +9682,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   z-index: 2501;
 }
 
-.affairs-assistant-history-backdrop {
-  position: fixed;
-  inset: 0;
-  border: 0;
-  padding: 0;
-  background: rgba(241, 243, 247, 0.76);
-  cursor: default;
-  backdrop-filter: blur(10px) saturate(120%);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-}
-
 .affairs-assistant-history-popover {
   z-index: 2501;
 }

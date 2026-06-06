@@ -3446,6 +3446,7 @@ describe("AffairsWorkbenchView", () => {
 
     await user.click(await screen.findByRole("button", { name: t("shell.butlerHistoryAction") }));
     const historyDialog = await screen.findByRole("dialog", { name: t("shell.affairsConversationSidebarTitle") });
+    expect(document.querySelector(".affairs-assistant-history-backdrop")).toBeNull();
     await user.click(within(historyDialog).getByText("事务 Agent 会话").closest("button") as HTMLButtonElement);
 
     await waitFor(() => {
