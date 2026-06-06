@@ -51,7 +51,7 @@ vi.mock("../../../network/realtime-client", () => ({
   RealtimeClient: realtimeMock.MockRealtimeClient
 }));
 
-import { ButlerRuntimeStore } from "./butler-runtime-store";
+import { ButlerRuntimeStore, resetButlerRuntimeBootstrapCacheForTests } from "./butler-runtime-store";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { ApiError } from "../../../shared/network/api-error";
 import {
@@ -142,6 +142,7 @@ function createControlSession(
 describe("ButlerRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetButlerRuntimeBootstrapCacheForTests();
     realtimeMock.instances.length = 0;
     userPreferenceStore.resetToLocalFallback();
 
@@ -305,6 +306,23 @@ describe("ButlerRuntimeStore", () => {
       initialized: false,
       bootstrapErrorCode: "INVALID_RESPONSE",
       error: "服务返回了无效的 JSON 响应：Unexpected token '<'"
+    });
+  });
+
+  it("已完成过启动检查后，新建 store 会复用缓存状态，避免重复显示连接检查", async () => {
+    const firstStore = new ButlerRuntimeStore("workspace-1");
+    await firstStore.initialize();
+
+    const secondStore = new ButlerRuntimeStore("workspace-2");
+
+    expect(secondStore.getState()).toMatchObject({
+      loading: false,
+      initialized: true,
+      affairsSetupCompleted: true,
+      activeProvider: "codex",
+      profile: {
+        displayName: "阿尔文"
+      }
     });
   });
 

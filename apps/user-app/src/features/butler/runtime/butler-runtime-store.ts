@@ -84,6 +84,20 @@ const BUTLER_TERMINAL_SYNC_DEBOUNCE_MS = 400;
 const BUTLER_DIAGNOSTIC_RAW_REF_PREFIX = "butler-diagnostic://";
 const BUTLER_PENDING_RUN_GRACE_MS = 15_000;
 
+interface ButlerRuntimeBootstrapCache {
+  initialized: boolean;
+  affairsSetupCompleted: boolean;
+  profile: ButlerProfileDto | null;
+  activeProvider: ButlerProviderId;
+  bootstrapErrorCode: string | null;
+}
+
+let butlerRuntimeBootstrapCache: ButlerRuntimeBootstrapCache | null = null;
+
+export function resetButlerRuntimeBootstrapCacheForTests(): void {
+  butlerRuntimeBootstrapCache = null;
+}
+
 export class ButlerRuntimeStore {
   private state: ButlerRuntimeState;
   private listeners = new Set<ButlerRuntimeListener>();
@@ -100,16 +114,17 @@ export class ButlerRuntimeStore {
   } | null = null;
 
   constructor(private readonly workspaceId: string | null) {
+    const cachedBootstrap = butlerRuntimeBootstrapCache;
     this.state = {
-      loading: true,
+      loading: cachedBootstrap ? false : true,
       sending: false,
       switchingProvider: false,
-      initialized: false,
-      affairsSetupCompleted: false,
-      profile: null,
-      activeProvider: "codex",
+      initialized: cachedBootstrap?.initialized ?? false,
+      affairsSetupCompleted: cachedBootstrap?.affairsSetupCompleted ?? false,
+      profile: cachedBootstrap?.profile ?? null,
+      activeProvider: cachedBootstrap?.activeProvider ?? "codex",
       controlSession: null,
-      capabilities: createButlerFallbackCapabilities("codex"),
+      capabilities: createButlerFallbackCapabilities(cachedBootstrap?.activeProvider ?? "codex"),
       overview: null,
       events: [],
       messages: [],
@@ -122,7 +137,7 @@ export class ButlerRuntimeStore {
       contextUsage: null,
       permissionRequests: [],
       error: null,
-      bootstrapErrorCode: null
+      bootstrapErrorCode: cachedBootstrap?.bootstrapErrorCode ?? null
     };
   }
 
@@ -142,8 +157,9 @@ export class ButlerRuntimeStore {
   getState = () => this.state;
 
   async initialize(): Promise<void> {
+    const hasUsableBootstrap = this.state.initialized && this.state.profile !== null;
     this.patch({
-      loading: true,
+      loading: hasUsableBootstrap ? false : true,
       error: null,
       bootstrapErrorCode: null
     });
@@ -153,6 +169,13 @@ export class ButlerRuntimeStore {
 
       if (!profileResponse.initialized || !profileResponse.profile) {
         this.clearPendingRun();
+        butlerRuntimeBootstrapCache = {
+          initialized: false,
+          affairsSetupCompleted: false,
+          profile: null,
+          activeProvider: "codex",
+          bootstrapErrorCode: null
+        };
         this.patch({
           loading: false,
           initialized: false,
@@ -178,6 +201,13 @@ export class ButlerRuntimeStore {
       }
 
       const profile = profileResponse.profile;
+      butlerRuntimeBootstrapCache = {
+        initialized: true,
+        affairsSetupCompleted: profileResponse.affairsSetupCompleted ?? profileResponse.initialized,
+        profile,
+        activeProvider: profile.providerId,
+        bootstrapErrorCode: null
+      };
       this.patch({
         initialized: true,
         affairsSetupCompleted: profileResponse.affairsSetupCompleted ?? profileResponse.initialized,
@@ -191,6 +221,13 @@ export class ButlerRuntimeStore {
         loading: false
       });
     } catch (error) {
+      butlerRuntimeBootstrapCache = {
+        initialized: false,
+        affairsSetupCompleted: false,
+        profile: null,
+        activeProvider: "codex",
+        bootstrapErrorCode: resolveBootstrapErrorCode(error)
+      };
       this.patch({
         loading: false,
         error: toErrorMessage(error),
@@ -221,12 +258,26 @@ export class ButlerRuntimeStore {
         capabilities: createButlerFallbackCapabilities(response.profile.providerId),
         bootstrapErrorCode: null
       });
+      butlerRuntimeBootstrapCache = {
+        initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
+        profile: response.profile,
+        activeProvider: response.profile.providerId,
+        bootstrapErrorCode: null
+      };
       await this.reloadForProvider(response.profile.providerId);
     } catch (error) {
       this.patch({
         error: toErrorMessage(error),
         bootstrapErrorCode: resolveBootstrapErrorCode(error)
       });
+      butlerRuntimeBootstrapCache = {
+        initialized: false,
+        affairsSetupCompleted: false,
+        profile: null,
+        activeProvider: "codex",
+        bootstrapErrorCode: resolveBootstrapErrorCode(error)
+      };
       throw error;
     } finally {
       this.patch({
@@ -307,6 +358,13 @@ export class ButlerRuntimeStore {
         profile: response.profile,
         activeProvider: response.profile.providerId
       });
+      butlerRuntimeBootstrapCache = {
+        initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
+        profile: response.profile,
+        activeProvider: response.profile.providerId,
+        bootstrapErrorCode: null
+      };
       await Promise.all([
         this.refreshCapabilities(response.profile.providerId),
         this.refreshOverview(),
@@ -351,6 +409,13 @@ export class ButlerRuntimeStore {
         profile: response.profile,
         activeProvider: response.profile.providerId
       });
+      butlerRuntimeBootstrapCache = {
+        initialized: true,
+        affairsSetupCompleted: response.affairsSetupCompleted ?? response.initialized,
+        profile: response.profile,
+        activeProvider: response.profile.providerId,
+        bootstrapErrorCode: null
+      };
     } catch (error) {
       this.patch({
         error: toErrorMessage(error)
