@@ -188,6 +188,17 @@ import { AffairsLibraryPreviewLinkService } from "../modules/workspace/affairs-l
 import { AFFAIRS_GLOBAL_WORKSPACE_ID, AffairsLibraryService } from "../modules/workspace/affairs-library-service.js";
 import { AffairsTagController } from "../modules/workspace/affairs-tag-controller.js";
 import { AffairsTagService } from "../modules/workspace/affairs-tag-service.js";
+import { TeableCatalogController } from "../modules/workspace/teable-catalog-controller.js";
+import { TeableCatalogService } from "../modules/workspace/teable-catalog-service.js";
+import { TeableFieldMappingController } from "../modules/workspace/teable-field-mapping-controller.js";
+import { TeableFieldMappingService } from "../modules/workspace/teable-field-mapping-service.js";
+import { TeableGlobalBindingController } from "../modules/workspace/teable-global-binding-controller.js";
+import { TeableGlobalBindingService } from "../modules/workspace/teable-global-binding-service.js";
+import { TeableMirrorSyncController } from "../modules/workspace/teable-mirror-sync-controller.js";
+import { TeableWorkbenchSyncConfigController } from "../modules/workspace/teable-workbench-sync-config-controller.js";
+import { TeableWorkbenchSyncConfigService } from "../modules/workspace/teable-workbench-sync-config-service.js";
+import { TeableMirrorSyncService } from "../modules/workspace/teable-mirror-sync-service.js";
+import { TeableCredentialService } from "../modules/workspace/teable-credential-service.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAffairsRoutes } from "../routes/affairs.js";
@@ -313,6 +324,13 @@ import { TerminalLogSegmentRepository } from "../storage/repositories/terminal-l
 import { TerminalRuntimeSessionRepository } from "../storage/repositories/terminal-runtime-session-repository.js";
 import { UserPreferenceProfileRepository } from "../storage/repositories/user-preference-profile-repository.js";
 import { UserAffairsLibrarySettingRepository } from "../storage/repositories/user-affairs-library-setting-repository.js";
+import { UserTeableGlobalSettingRepository } from "../storage/repositories/user-teable-global-setting-repository.js";
+import { UserTeableWorkbenchSyncConfigRepository } from "../storage/repositories/user-teable-workbench-sync-config-repository.js";
+import { UserTeableMirrorTableBindingRepository } from "../storage/repositories/user-teable-mirror-table-binding-repository.js";
+import { UserTeableMirrorRecordMappingRepository } from "../storage/repositories/user-teable-mirror-record-mapping-repository.js";
+import { UserTeableCredentialRepository } from "../storage/repositories/user-teable-credential-repository.js";
+import { UserTeableFieldMappingRepository } from "../storage/repositories/user-teable-field-mapping-repository.js";
+import { UserTeableSyncLogRepository } from "../storage/repositories/user-teable-sync-log-repository.js";
 import { UserQuickPhrasePreferenceRepository } from "../storage/repositories/user-quick-phrase-preference-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { WorkspaceWorktreeRepository } from "../storage/repositories/workspace-worktree-repository.js";
@@ -348,7 +366,10 @@ export function createServer(config: HostConfig) {
   const enableWechatClawHelper = !process.env.VITEST || enableWechatClawHelperInTests;
 
   const app = Fastify({
-    logger: false
+    logger: false,
+    routerOptions: {
+      maxParamLength: 512
+    }
   });
   let shuttingDown = false;
   const stopTerminalDebugEventLoopLagMonitor = startTerminalDebugEventLoopLagMonitor();
@@ -369,6 +390,13 @@ export function createServer(config: HostConfig) {
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
     affairsAssistantSessionSnapshotRepository: new AffairsAssistantSessionSnapshotRepository(database.db),
     userAffairsLibrarySettingRepository: new UserAffairsLibrarySettingRepository(database.db),
+    userTeableGlobalSettingRepository: new UserTeableGlobalSettingRepository(database.db),
+    userTeableCredentialRepository: new UserTeableCredentialRepository(database.db),
+    userTeableWorkbenchSyncConfigRepository: new UserTeableWorkbenchSyncConfigRepository(database.db),
+    userTeableMirrorTableBindingRepository: new UserTeableMirrorTableBindingRepository(database.db),
+    userTeableMirrorRecordMappingRepository: new UserTeableMirrorRecordMappingRepository(database.db),
+    userTeableFieldMappingRepository: new UserTeableFieldMappingRepository(database.db),
+    userTeableSyncLogRepository: new UserTeableSyncLogRepository(database.db),
     parallelSessionGroupRepository: new ParallelSessionGroupRepository(database.db),
     parallelSessionMemberRepository: new ParallelSessionMemberRepository(database.db),
     sessionIsolatedWorkspaceRepository: new SessionIsolatedWorkspaceRepository(database.db),
@@ -1405,6 +1433,27 @@ export function createServer(config: HostConfig) {
   const affairsLightweightSessionService = new AffairsLightweightSessionService(
     path.dirname(config.databasePath)
   );
+  const teableCredentialService = new TeableCredentialService(
+    repositories.userTeableCredentialRepository,
+    config.teableCredentialSecret
+  );
+  const teableGlobalBindingService = new TeableGlobalBindingService(
+    repositories.userTeableGlobalSettingRepository,
+    teableCredentialService
+  );
+  const teableWorkbenchSyncConfigService = new TeableWorkbenchSyncConfigService(
+    repositories.userTeableWorkbenchSyncConfigRepository
+  );
+  const teableCatalogService = new TeableCatalogService(
+    teableGlobalBindingService,
+    teableCredentialService,
+    config.filePreviewTokenSecret
+  );
+  const teableFieldMappingService = new TeableFieldMappingService(
+    repositories.userTeableFieldMappingRepository,
+    repositories.userTeableWorkbenchSyncConfigRepository
+  );
+
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
@@ -1444,11 +1493,65 @@ export function createServer(config: HostConfig) {
   const affairsLightweightSessionController = new AffairsLightweightSessionController(
     affairsLightweightSessionService
   );
+  const teableGlobalBindingController = new TeableGlobalBindingController(
+    teableGlobalBindingService
+  );
+  const teableWorkbenchSyncConfigController = new TeableWorkbenchSyncConfigController(
+    teableWorkbenchSyncConfigService
+  );
+  const teableCatalogController = new TeableCatalogController(
+    teableCatalogService
+  );
+  const teableFieldMappingController = new TeableFieldMappingController(
+    teableFieldMappingService
+  );
+
   const affairsTagService = new AffairsTagService(
     workspaceService,
     affairsLibraryService,
     taskManager
   );
+  const teableMirrorSyncService = new TeableMirrorSyncService(
+    repositories.userTeableMirrorTableBindingRepository,
+    repositories.userTeableMirrorRecordMappingRepository,
+    taskManager,
+    teableGlobalBindingService,
+    teableCredentialService,
+    teableWorkbenchSyncConfigService,
+    affairsTagService,
+    affairsLightweightSessionService,
+    repositories.butlerInboxItemRepository,
+    repositories.butlerProjectRepository,
+    repositories.butlerFollowUpTaskRepository,
+    repositories.workspaceRepository,
+    teableFieldMappingService,
+    repositories.userTeableSyncLogRepository
+  );
+  const requestTeableLocalChangeSyncForUser = (
+    userId: string,
+    mirrorTypes: Array<"tags" | "sessions" | "todos">,
+    reason: string
+  ) => {
+    teableMirrorSyncService.requestLocalChangeMirrorSync(userId, {
+      mirrorTypes,
+      reason
+    });
+  };
+  const requestTeableTodoLocalChangeSync = (reason: string) => {
+    for (const userId of repositories.authUserRepository.listIds()) {
+      requestTeableLocalChangeSyncForUser(userId, ["todos"], reason);
+    }
+  };
+  affairsTagService.configureTeableMirrorSyncNotifier((userId, reason) => {
+    requestTeableLocalChangeSyncForUser(userId, ["tags"], reason);
+  });
+  affairsLightweightSessionService.configureTeableMirrorSyncNotifier((userId, reason) => {
+    requestTeableLocalChangeSyncForUser(userId, ["sessions"], reason);
+  });
+  butlerInboxService.configureTeableMirrorSyncNotifier(requestTeableTodoLocalChangeSync);
+  butlerFollowUpService.configureTeableMirrorSyncNotifier(requestTeableTodoLocalChangeSync);
+  const teableMirrorSyncController = new TeableMirrorSyncController(teableMirrorSyncService);
+
   const affairsTagController = new AffairsTagController(affairsTagService);
   const worktreeController = new WorktreeController(
     worktreeManager,
@@ -1750,6 +1853,11 @@ export function createServer(config: HostConfig) {
   void registerAffairsRoutes(
     app,
     affairsLibraryController,
+    teableGlobalBindingController,
+    teableMirrorSyncController,
+    teableWorkbenchSyncConfigController,
+    teableCatalogController,
+    teableFieldMappingController,
     affairsTagController,
     affairsLightweightSessionController
   );

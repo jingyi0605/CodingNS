@@ -107,6 +107,8 @@ export interface AffairsTagRecoveryStatusDto {
 }
 
 export class AffairsTagService {
+  private teableMirrorSyncNotifier: ((userId: string, reason: string) => void) | null = null;
+
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly affairsLibraryService: AffairsLibraryService,
@@ -115,8 +117,21 @@ export class AffairsTagService {
     this.registerBackgroundTasks();
   }
 
+  configureTeableMirrorSyncNotifier(notifier: (userId: string, reason: string) => void): void {
+    this.teableMirrorSyncNotifier = notifier;
+  }
+
   listTags(workspaceId: string, userId: string, input: { includeDisabled?: boolean } = {}) {
     const { dbPath } = this.requireBinding(workspaceId, userId);
+    return this.listTagsFromCatalog(dbPath, input);
+  }
+
+  listGlobalTags(userId: string, input: { includeDisabled?: boolean } = {}) {
+    const { dbPath } = this.requireGlobalBinding(userId);
+    return this.listTagsFromCatalog(dbPath, input);
+  }
+
+  private listTagsFromCatalog(dbPath: string, input: { includeDisabled?: boolean } = {}) {
     const repository = new CatalogRepository(dbPath);
     const definitions = repository.listTagDefinitions(input.includeDisabled === true);
     const enabledRules = repository.listAllEnabledTagRules();
@@ -266,6 +281,7 @@ export class AffairsTagService {
         },
       },
     );
+    this.notifyTeableTagChanged(userId, `tag_definition_ensured:${lastTagId}`);
     return this.getTagDetail(workspaceId, userId, lastTagId);
   }
 
@@ -399,6 +415,7 @@ export class AffairsTagService {
         },
       );
     }
+    this.notifyTeableTagChanged(userId, `tag_definition_saved:${result.id}`);
     return detail;
   }
 
@@ -432,6 +449,7 @@ export class AffairsTagService {
         },
       },
     );
+    this.notifyTeableTagChanged(userId, `tag_definition_deleted:${tagId}`);
     return {
       deletedTagIds,
       deletedPaths,
@@ -511,6 +529,7 @@ export class AffairsTagService {
         },
       },
     );
+    this.notifyTeableTagChanged(userId, `manual_document_binding_saved:${documentId}`);
     return {
       target: {
         type: "document" as const,
@@ -609,6 +628,10 @@ export class AffairsTagService {
     };
   }
 
+  private notifyTeableTagChanged(userId: string, reason: string): void {
+    this.teableMirrorSyncNotifier?.(userId, reason);
+  }
+
   saveFolderTagBindings(workspaceId: string, userId: string, folderPath: string, tagIds: string[]) {
     const { dbPath, rootDir } = this.requireBinding(workspaceId, userId);
     const normalizedFolderPath = normalizeFolderPath(folderPath);
@@ -629,6 +652,7 @@ export class AffairsTagService {
         },
       },
     );
+    this.notifyTeableTagChanged(userId, `folder_binding_saved:${normalizedFolderPath}`);
     return {
       target: {
         type: "folder" as const,
@@ -661,6 +685,23 @@ export class AffairsTagService {
     // 事务文档库标签接口会直接打开 SQLite；如果用户库还是旧 schema，
     // prepareStatements 阶段就会因为缺表直接炸掉。
     // 所以每次进入标签链路前先补一次幂等迁移，保证旧库也能安全读写。
+    initCatalog(createAffairsIndexerRuntimeConfig(rootDir));
+    return {
+      rootDir,
+      dbPath: resolveCatalogDbPath(rootDir),
+    };
+  }
+
+  private requireGlobalBinding(userId: string) {
+    const binding = this.affairsLibraryService.getGlobalBinding(userId);
+    const rootDir = binding?.rootDir?.trim() ?? "";
+    if (!rootDir || binding?.enabled !== true) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "AFFAIRS_LIBRARY_BINDING_REQUIRED",
+        detail: "事务文档库还没有启用",
+      });
+    }
     initCatalog(createAffairsIndexerRuntimeConfig(rootDir));
     return {
       rootDir,

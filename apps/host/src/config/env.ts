@@ -17,6 +17,7 @@ export interface HostConfig {
   pluginRootDir: string;
   filePreviewTokenSecret: string;
   gitCredentialSecret: string;
+  teableCredentialSecret: string;
   geminiHomeDir: string;
   geminiCliPath: string;
   kimiHomeDir: string;
@@ -144,6 +145,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.gitCredentialSecret ??
       process.env.CODINGNS_GIT_CREDENTIAL_SECRET ??
       resolvePersistentSecret(path.join(hostDataDir, "git-credential-key")),
+    teableCredentialSecret:
+      overrides.teableCredentialSecret ??
+      process.env.CODINGNS_TEABLE_CREDENTIAL_SECRET ??
+      resolvePersistentSecret(path.join(hostDataDir, "teable-credential-key")),
     geminiHomeDir,
     geminiCliPath,
     kimiHomeDir,

@@ -47,6 +47,7 @@ interface ButlerInboxItemInput {
 
 export class ButlerInboxService {
   private readonly taskManager: TaskManager;
+  private teableMirrorSyncNotifier: ((reason: string) => void) | null = null;
   private butlerInboxAnalysisService?: Pick<
     ButlerInboxAnalysisService,
     "prepareTodoAnalysisSession" | "readTodoAnalysisResult"
@@ -87,6 +88,10 @@ export class ButlerInboxService {
     this.butlerControlSessionService = input.butlerControlSessionService;
     this.butlerSessionService = input.butlerSessionService;
     this.butlerFollowUpService = input.butlerFollowUpService;
+  }
+
+  configureTeableMirrorSyncNotifier(notifier: (reason: string) => void): void {
+    this.teableMirrorSyncNotifier = notifier;
   }
 
   listItems(filters?: {
@@ -139,7 +144,9 @@ export class ButlerInboxService {
       closedAt: status === "closed" ? timestamp : null
     };
 
-    return this.toView(this.butlerInboxItemRepository.create(record), project);
+    const view = this.toView(this.butlerInboxItemRepository.create(record), project);
+    this.notifyTeableTodoChanged(`inbox_item_created:${record.id}`);
+    return view;
   }
 
   updateItem(itemId: string, input: ButlerInboxItemInput): ButlerInboxItemView {
@@ -165,7 +172,9 @@ export class ButlerInboxService {
       closedAt: nextStatus === "closed" ? current.closedAt ?? nowIso() : null
     };
 
-    return this.toView(this.butlerInboxItemRepository.update(updated), project);
+    const view = this.toView(this.butlerInboxItemRepository.update(updated), project);
+    this.notifyTeableTodoChanged(`inbox_item_updated:${itemId}`);
+    return view;
   }
 
   async analyzeItem(itemId: string, userId: string): Promise<ButlerInboxAnalyzeResult> {
@@ -330,6 +339,7 @@ export class ButlerInboxService {
   deleteItem(itemId: string): void {
     this.requireItem(itemId);
     this.butlerInboxItemRepository.delete(itemId);
+    this.notifyTeableTodoChanged(`inbox_item_deleted:${itemId}`);
   }
 
   private registerBackgroundTasks(): void {
@@ -530,6 +540,10 @@ export class ButlerInboxService {
       workspaceId: project.workspaceId,
       projectLifecycleStatus: project.lifecycleStatus
     };
+  }
+
+  private notifyTeableTodoChanged(reason: string): void {
+    this.teableMirrorSyncNotifier?.(reason);
   }
 
   private recoverStaleAnalysisState(

@@ -72,6 +72,18 @@ export class AffairsTagController {
     ));
   };
 
+  readonly listGlobalTags = async (
+    request: FastifyRequest<{ Querystring: ListTagsQuery }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(this.affairsTagService.listGlobalTags(
+      requireUserId(request),
+      {
+        includeDisabled: request.query.includeDisabled === "true",
+      },
+    ));
+  };
+
   readonly createTag = async (
     request: FastifyRequest<{ Params: WorkspaceParams; Body: SaveTagBody }>,
     reply: FastifyReply,

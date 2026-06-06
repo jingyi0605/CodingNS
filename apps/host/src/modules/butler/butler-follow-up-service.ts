@@ -160,6 +160,7 @@ class FollowUpTaskCancelledError extends Error {
 export class ButlerFollowUpService {
   private readonly permissionRequestSweepAtByTaskId = new Map<string, number>();
   private readonly activeExecutionStateByTaskId = new Map<string, FollowUpTaskExecutionState>();
+  private teableMirrorSyncNotifier: ((reason: string) => void) | null = null;
 
   constructor(
     private readonly butlerProfileService: Pick<ButlerProfileService, "ensureInitialized">,
@@ -194,6 +195,10 @@ export class ButlerFollowUpService {
       "resolveBlockingInspection"
     > = new SessionProviderUsageLimitGuardService(sessionHistoryService)
   ) {}
+
+  configureTeableMirrorSyncNotifier(notifier: (reason: string) => void): void {
+    this.teableMirrorSyncNotifier = notifier;
+  }
 
   listTasks(filters: {
     statuses?: ButlerFollowUpTaskStatus[];
@@ -358,6 +363,7 @@ export class ButlerFollowUpService {
       updatedAt: timestamp,
       completedAt: null
     });
+    this.notifyTeableTodoChanged(`follow_up_created:${task.id}`);
 
     const processed = await this.processTask(task.id);
     return mapTaskView(
@@ -832,7 +838,13 @@ export class ButlerFollowUpService {
       this.permissionRequestSweepAtByTaskId.delete(normalizedTask.id);
     }
 
-    return this.butlerFollowUpTaskRepository.update(normalizedTask) ?? normalizedTask;
+    const updated = this.butlerFollowUpTaskRepository.update(normalizedTask) ?? normalizedTask;
+    this.notifyTeableTodoChanged(`follow_up_updated:${updated.id}`);
+    return updated;
+  }
+
+  private notifyTeableTodoChanged(reason: string): void {
+    this.teableMirrorSyncNotifier?.(reason);
   }
 
   private requireAssistantDecisionPersisted(

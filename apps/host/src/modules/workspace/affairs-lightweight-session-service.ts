@@ -159,8 +159,13 @@ interface LightweightRuntimeConfigFile {
 export class AffairsLightweightSessionService {
   private readonly sessionLocks = new Map<string, Promise<unknown>>();
   private readonly sessionDocumentCache = new Map<string, AffairsLightweightSessionDocument>();
+  private teableMirrorSyncNotifier: ((userId: string, reason: string) => void) | null = null;
 
   constructor(private readonly hostDataRootDir: string) {}
+
+  configureTeableMirrorSyncNotifier(notifier: (userId: string, reason: string) => void): void {
+    this.teableMirrorSyncNotifier = notifier;
+  }
 
   async listSessions(workspaceId: string, userId: string): Promise<AffairsLightweightSessionSummary[]> {
     const workspaceDir = this.resolveWorkspaceDir(workspaceId);
@@ -237,7 +242,7 @@ export class AffairsLightweightSessionService {
     return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
       ...session,
       title: normalizedTitle
-    }));
+    }), "session_title_renamed");
   }
 
   async updateSessionArchiveState(
@@ -250,7 +255,7 @@ export class AffairsLightweightSessionService {
     return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
       ...session,
       isArchived: archived
-    }));
+    }), "session_archive_changed");
   }
 
   async updateSessionFavoriteState(
@@ -263,7 +268,7 @@ export class AffairsLightweightSessionService {
     return this.updateSessionSummary(workspaceId, sessionId, userId, (session) => ({
       ...session,
       isFavorite: favorite
-    }));
+    }), "session_favorite_changed");
   }
 
   async deleteSession(workspaceId: string, sessionId: string, userId: string): Promise<void> {
@@ -271,6 +276,7 @@ export class AffairsLightweightSessionService {
     await this.requireSessionDocument(workspaceId, sessionId, userId);
     await fs.unlink(this.resolveSessionFilePath(workspaceId, sessionId));
     this.sessionDocumentCache.delete(sessionId);
+    this.notifyTeableSessionChanged(userId, `session_deleted:${workspaceId}:${sessionId}`);
   }
 
   async startSession(input: StartAffairsLightweightSessionInput): Promise<AffairsLightweightSessionTurnResult> {
@@ -318,6 +324,7 @@ export class AffairsLightweightSessionService {
     };
 
     await this.writeSessionDocument(document);
+    this.notifyTeableSessionChanged(input.userId, `session_started:${input.workspaceId}:${sessionId}`);
     return this.runTurn(document, {
       workspaceId: input.workspaceId,
       userId: input.userId,
@@ -538,6 +545,7 @@ export class AffairsLightweightSessionService {
         messages: [...workingDocument.messages, assistantMessage]
       };
       await this.writeSessionDocument(completedDocument);
+      this.notifyTeableSessionChanged(input.userId, `session_completed:${input.workspaceId}:${baseDocument.session.sessionId}`);
       const result = {
         session: completedDocument.session,
         acceptedAt: now,
@@ -571,6 +579,7 @@ export class AffairsLightweightSessionService {
         }
       };
       await this.writeSessionDocument(failedDocument);
+      this.notifyTeableSessionChanged(input.userId, `session_failed:${input.workspaceId}:${baseDocument.session.sessionId}`);
       await onEvent?.({
         type: "error",
         errorCode: error instanceof AppError ? error.errorCode : "LIGHTWEIGHT_RUNTIME_FAILED",
@@ -915,7 +924,8 @@ export class AffairsLightweightSessionService {
     workspaceId: string,
     sessionId: string,
     userId: string,
-    updater: (session: AffairsLightweightSessionSummary) => AffairsLightweightSessionSummary
+    updater: (session: AffairsLightweightSessionSummary) => AffairsLightweightSessionSummary,
+    reason?: string
   ): Promise<AffairsLightweightSessionSummary> {
     const document = await this.requireSessionDocument(workspaceId, sessionId, userId);
     const nextSession = updater(document.session);
@@ -923,6 +933,7 @@ export class AffairsLightweightSessionService {
       ...document,
       session: nextSession
     });
+    this.notifyTeableSessionChanged(userId, `${reason ?? "session_updated"}:${workspaceId}:${sessionId}`);
     return nextSession;
   }
 
@@ -939,6 +950,10 @@ export class AffairsLightweightSessionService {
       return;
     }
     this.sessionDocumentCache.set(sessionId, cloneSessionDocument(document));
+  }
+
+  private notifyTeableSessionChanged(userId: string, reason: string): void {
+    this.teableMirrorSyncNotifier?.(userId, reason);
   }
 
   private readCachedSessionDocument(sessionId: string | null): AffairsLightweightSessionDocument | null {

@@ -27,6 +27,7 @@ export const HOST_TASK_TYPES = {
   affairsLibraryTagRecompute: "affairs.library_tag_recompute",
   affairsLibraryTagApplyBindings: "affairs.library_tag_apply_bindings",
   affairsLibraryTagExportRefresh: "affairs.library_tag_export_refresh",
+  teableMirrorSync: "teable.mirror_sync",
   pluginScheduleTrigger: "plugin.schedule.trigger",
   pluginActionExecute: "plugin.action.execute",
   presentationExportPdf: "presentation.export_pdf",

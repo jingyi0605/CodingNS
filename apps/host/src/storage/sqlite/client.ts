@@ -57,6 +57,14 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalInstanceDebugSchema(db);
   ensureUserPreferenceProfileSchema(db);
   ensureUserAffairsLibrarySettingsSchema(db);
+  ensureUserTeableGlobalSettingsSchema(db);
+  ensureUserTeableCredentialsSchema(db);
+  ensureUserTeableWorkbenchSyncConfigsSchema(db);
+  ensureUserTeableMirrorTableBindingsSchema(db);
+  ensureUserTeableMirrorRecordMappingsSchema(db);
+  ensureUserTeableFormBindingsSchema(db);
+  ensureUserTeableFieldMappingsSchema(db);
+  ensureUserTeableInboundRecordMappingsSchema(db);
   ensureButlerProfileSchema(db);
   ensureButlerControlSessionSchema(db);
   ensureButlerControlTimerSchema(db);
@@ -1079,6 +1087,270 @@ function normalizeLegacyDashboardStateCandidate(
     score: shortcutApps.length * 100 + widgetCount,
     updatedAt: updatedAt || workspaceId
   };
+}
+
+function ensureUserTeableGlobalSettingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_global_settings")) {
+    db.exec(`
+      CREATE TABLE user_teable_global_settings (
+        user_id TEXT PRIMARY KEY,
+        base_url TEXT,
+        space_id TEXT,
+        base_id TEXT,
+        auth_ref TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        mirror_mode TEXT NOT NULL DEFAULT 'manual' CHECK (mirror_mode IN ('manual', 'scheduled', 'event_driven')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      )
+    `);
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(user_teable_global_settings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("base_id")) {
+    db.exec("ALTER TABLE user_teable_global_settings ADD COLUMN base_id TEXT");
+  }
+
+  if (!columnNames.has("mirror_mode")) {
+    db.exec("ALTER TABLE user_teable_global_settings ADD COLUMN mirror_mode TEXT NOT NULL DEFAULT 'manual'");
+  }
+}
+
+function ensureUserTeableCredentialsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_credentials")) {
+    db.exec(`
+      CREATE TABLE user_teable_credentials (
+        user_id TEXT NOT NULL,
+        auth_ref TEXT NOT NULL,
+        token_ciphertext TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, auth_ref),
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      )
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_credentials_user_updated_at
+      ON user_teable_credentials(user_id, updated_at DESC)
+  `);
+}
+
+function ensureUserTeableWorkbenchSyncConfigsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_workbench_sync_configs")) {
+    db.exec(`
+      CREATE TABLE user_teable_workbench_sync_configs (
+        config_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK (source_type IN ('tags', 'sessions', 'todos')),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        scope_json TEXT NOT NULL,
+        target_table_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id),
+        UNIQUE (user_id, source_type)
+      )
+    `);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_user_teable_workbench_sync_configs_user
+        ON user_teable_workbench_sync_configs(user_id, source_type)
+    `);
+    return;
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_workbench_sync_configs_user
+      ON user_teable_workbench_sync_configs(user_id, source_type)
+  `);
+}
+
+function ensureUserTeableMirrorTableBindingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_mirror_table_bindings")) {
+    db.exec(`
+      CREATE TABLE user_teable_mirror_table_bindings (
+        binding_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        mirror_type TEXT NOT NULL CHECK (mirror_type IN ('tags', 'sessions', 'todos')),
+        table_id TEXT NOT NULL,
+        table_name TEXT NOT NULL,
+        read_only_mode TEXT NOT NULL CHECK (read_only_mode IN ('role_based', 'matrix_based', 'unknown')),
+        last_synced_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id),
+        UNIQUE (user_id, mirror_type)
+      )
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_mirror_table_bindings_user
+      ON user_teable_mirror_table_bindings(user_id, mirror_type)
+  `);
+}
+
+function ensureUserTeableMirrorRecordMappingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_mirror_record_mappings")) {
+    db.exec(`
+      CREATE TABLE user_teable_mirror_record_mappings (
+        mapping_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        mirror_type TEXT NOT NULL CHECK (mirror_type IN ('tags', 'sessions', 'todos')),
+        local_id TEXT NOT NULL,
+        teable_record_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        last_synced_at TEXT NOT NULL,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id),
+        UNIQUE (user_id, mirror_type, local_id)
+      )
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_mirror_record_mappings_user
+      ON user_teable_mirror_record_mappings(user_id, mirror_type, updated_at DESC)
+  `);
+}
+
+function ensureUserTeableFormBindingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_form_bindings")) {
+    db.exec(`
+      CREATE TABLE user_teable_form_bindings (
+        form_binding_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        source_workspace_ids_json TEXT NOT NULL DEFAULT '[]',
+        table_id TEXT NOT NULL,
+        view_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        linked_mirror_types_json TEXT NOT NULL,
+        teable_table_id TEXT NOT NULL DEFAULT '',
+        teable_view_id TEXT NOT NULL DEFAULT '',
+        teable_share_id TEXT,
+        teable_form_name TEXT NOT NULL DEFAULT '',
+        display_name TEXT NOT NULL DEFAULT '',
+        open_mode TEXT NOT NULL DEFAULT 'embed' CHECK (open_mode IN ('embed', 'external')),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        inbound_action TEXT NOT NULL CHECK (inbound_action IN ('create_todo', 'append_session_context', 'request_tag_assignment', 'none')),
+        open_url TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id)
+      )
+    `);
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(user_teable_form_bindings)")
+    .all() as Array<{ name?: string }>;
+  const columnNames = new Set(columns.map((item) => item.name ?? ""));
+  if (!columnNames.has("source_workspace_ids_json")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN source_workspace_ids_json TEXT NOT NULL DEFAULT '[]'");
+    db.exec(`
+      UPDATE user_teable_form_bindings
+      SET source_workspace_ids_json = json_array(workspace_id)
+      WHERE COALESCE(TRIM(source_workspace_ids_json), '') = ''
+         OR source_workspace_ids_json = '[]'
+    `);
+  }
+  if (!columnNames.has("teable_table_id")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN teable_table_id TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE user_teable_form_bindings SET teable_table_id = table_id WHERE COALESCE(TRIM(teable_table_id), '') = ''");
+  }
+  if (!columnNames.has("teable_view_id")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN teable_view_id TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE user_teable_form_bindings SET teable_view_id = view_id WHERE COALESCE(TRIM(teable_view_id), '') = ''");
+  }
+  if (!columnNames.has("teable_share_id")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN teable_share_id TEXT");
+  }
+  if (!columnNames.has("teable_form_name")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN teable_form_name TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE user_teable_form_bindings SET teable_form_name = name WHERE COALESCE(TRIM(teable_form_name), '') = ''");
+  }
+  if (!columnNames.has("display_name")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE user_teable_form_bindings SET display_name = name WHERE COALESCE(TRIM(display_name), '') = ''");
+  }
+  if (!columnNames.has("open_mode")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'");
+  }
+  if (!columnNames.has("enabled")) {
+    db.exec("ALTER TABLE user_teable_form_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_form_bindings_user_workspace
+      ON user_teable_form_bindings(user_id, workspace_id, updated_at DESC)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_form_bindings_user_enabled
+      ON user_teable_form_bindings(user_id, enabled, updated_at DESC)
+  `);
+}
+
+function ensureUserTeableFieldMappingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_field_mappings")) {
+    db.exec(`
+      CREATE TABLE user_teable_field_mappings (
+        mapping_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        config_id TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK (source_type IN ('tags', 'sessions', 'todos')),
+        target_table_id TEXT NOT NULL,
+        items_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id),
+        UNIQUE (user_id, config_id)
+      )
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_field_mappings_user
+      ON user_teable_field_mappings(user_id, source_type, updated_at DESC)
+  `);
+}
+
+
+function ensureUserTeableInboundRecordMappingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "user_teable_inbound_record_mappings")) {
+    db.exec(`
+      CREATE TABLE user_teable_inbound_record_mappings (
+        mapping_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        form_binding_id TEXT NOT NULL,
+        teable_record_id TEXT NOT NULL,
+        teable_record_fingerprint TEXT NOT NULL,
+        inbound_action TEXT NOT NULL CHECK (inbound_action IN ('create_todo', 'append_session_context', 'request_tag_assignment', 'none')),
+        target_local_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'skipped', 'failed')),
+        error_detail TEXT,
+        last_synced_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id),
+        UNIQUE (user_id, form_binding_id, teable_record_id)
+      )
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_teable_inbound_record_mappings_user_form
+      ON user_teable_inbound_record_mappings(user_id, form_binding_id, updated_at DESC)
+  `);
 }
 
 function migrateLegacyAffairsLibrarySettings(db: BetterSqliteDatabase): void {

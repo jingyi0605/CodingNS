@@ -952,6 +952,124 @@ export interface UserAffairsLibrarySettingRecord {
   updatedAt: string;
 }
 
+export type TeableMirrorMode = "manual" | "scheduled" | "event_driven";
+export type TeableSyncSourceType = "tags" | "sessions" | "todos";
+export type TeableMirrorReadOnlyMode = "role_based" | "matrix_based" | "unknown";
+export type TeableSyncLogTriggerType = "manual" | "local_change" | "retry";
+export type TeableSyncLogState = "queued" | "running" | "succeeded" | "partial_failed" | "failed";
+
+export interface TeableTagMirrorScope {
+  rootTagIds: string[];
+}
+
+export type TeableSessionMirrorScope =
+  | {
+      mode: "all_workspaces";
+    }
+  | {
+      mode: "selected_workspaces";
+      workspaceIds: string[];
+    };
+
+export interface TeableTodoMirrorScope {
+  includeWorkspaceTodos: boolean;
+  includeAffairsTodos: boolean;
+  workspaceIds?: string[];
+}
+
+export interface TeableFieldMappingItem {
+  sourceField: string;
+  targetFieldId: string;
+  targetFieldName: string;
+  required: boolean;
+}
+
+export interface UserTeableGlobalSettingRecord {
+  userId: string;
+  baseUrl: string | null;
+  spaceId: string | null;
+  baseId: string | null;
+  authRef: string | null;
+  enabled: boolean;
+  mirrorMode: TeableMirrorMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserTeableCredentialRecord {
+  userId: string;
+  authRef: string;
+  tokenCiphertext: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserTeableWorkbenchSyncConfigRecord {
+  configId: string;
+  userId: string;
+  sourceType: TeableSyncSourceType;
+  enabled: boolean;
+  scopeJson: string;
+  targetTableId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserTeableMirrorTableBindingRecord {
+  bindingId: string;
+  userId: string;
+  mirrorType: TeableSyncSourceType;
+  tableId: string;
+  tableName: string;
+  readOnlyMode: TeableMirrorReadOnlyMode;
+  lastSyncedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserTeableMirrorRecordMappingRecord {
+  mappingId: string;
+  userId: string;
+  mirrorType: TeableSyncSourceType;
+  localId: string;
+  teableRecordId: string;
+  fingerprint: string;
+  lastSyncedAt: string;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+
+export interface UserTeableFieldMappingRecord {
+  mappingId: string;
+  userId: string;
+  configId: string;
+  sourceType: TeableSyncSourceType;
+  targetTableId: string;
+  itemsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+
+export interface UserTeableSyncLogRecord {
+  logId: string;
+  userId: string;
+  triggerType: TeableSyncLogTriggerType;
+  sourceTypesJson: string;
+  taskId: string | null;
+  state: TeableSyncLogState;
+  summary: string;
+  countsJson: string;
+  errorDetail: string | null;
+  reason: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProviderControlRecord {
   providerId: ProviderId;
   enabled: boolean;

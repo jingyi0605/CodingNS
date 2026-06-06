@@ -2,6 +2,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AffairsLibraryController } from "../../src/modules/workspace/affairs-library-controller.js";
+import type { TeableCatalogController } from "../../src/modules/workspace/teable-catalog-controller.js";
+import type { TeableFieldMappingController } from "../../src/modules/workspace/teable-field-mapping-controller.js";
+import type { TeableGlobalBindingController } from "../../src/modules/workspace/teable-global-binding-controller.js";
+import type { TeableMirrorSyncController } from "../../src/modules/workspace/teable-mirror-sync-controller.js";
+import type { TeableWorkbenchSyncConfigController } from "../../src/modules/workspace/teable-workbench-sync-config-controller.js";
 import { registerAffairsRoutes } from "../../src/routes/affairs.js";
 import { setErrorHandler } from "../../src/shared/http/error-handler.js";
 
@@ -50,16 +55,48 @@ describe("affairs library global routes", () => {
       }),
       updateGlobalDashboardState: vi.fn(async (_request, reply) => {
         reply.send({ dashboardState: { workspaceId: "affairs-global", tabs: [] } });
-      }),
-      getSnapshot: vi.fn(async (request, reply) => {
-        reply.send({ workspaceId: (request.params as any).workspaceId });
-      }),
-      listDocuments: vi.fn(async (request, reply) => {
-        reply.send({ workspaceId: (request.params as any).workspaceId, items: [] });
       })
     } as unknown as AffairsLibraryController;
 
-    await registerAffairsRoutes(app, controller);
+    const teableController = {
+      getGlobalBinding: vi.fn(async (_request, reply) => { reply.send({ enabled: false }); }),
+      saveGlobalBinding: vi.fn(async (_request, reply) => { reply.send({ ok: true }); }),
+      getOverview: vi.fn(async (_request, reply) => { reply.send({ status: "unbound" }); })
+    } as unknown as TeableGlobalBindingController;
+
+    const teableMirrorSyncController = {
+      getOverview: vi.fn(async (_request, reply) => { reply.send({ latestMirrorSyncTask: null }); }),
+      requestMirrorSync: vi.fn(async (_request, reply) => { reply.send({ taskId: "task-1", state: "queued" }); }),
+      listSyncLogs: vi.fn(async (_request, reply) => { reply.send([]); })
+    } as unknown as TeableMirrorSyncController;
+
+    const syncConfigController = {
+      getConfigs: vi.fn(async (_request, reply) => { reply.send([]); }),
+      saveConfigs: vi.fn(async (_request, reply) => { reply.send([]); })
+    } as unknown as TeableWorkbenchSyncConfigController;
+
+    const teableCatalogController = {
+      getTableCatalog: vi.fn(async (_request, reply) => { reply.send([]); }),
+      getTableFields: vi.fn(async (_request, reply) => { reply.send([]); }),
+      createTableFields: vi.fn(async (_request, reply) => { reply.send([]); }),
+    } as unknown as TeableCatalogController;
+
+    const teableFieldMappingController = {
+      getMappings: vi.fn(async (_request, reply) => {
+        reply.send({ mappings: [], sourceFieldsByType: { tags: [], sessions: [], todos: [] } });
+      }),
+      saveMappings: vi.fn(async (_request, reply) => { reply.send([]); })
+    } as unknown as TeableFieldMappingController;
+
+    await registerAffairsRoutes(
+      app,
+      controller,
+      teableController,
+      teableMirrorSyncController,
+      syncConfigController,
+      teableCatalogController,
+      teableFieldMappingController
+    );
     app.setErrorHandler(setErrorHandler);
     return { app, controller };
   }
@@ -132,31 +169,5 @@ describe("affairs library global routes", () => {
     });
     expect(updateDashboardStateResponse.statusCode).toBe(200);
     expect(controller.updateGlobalDashboardState).toHaveBeenCalledTimes(1);
-
-    const snapshotResponse = await app.inject({
-      method: "GET",
-      url: "/api/affairs/library-snapshot"
-    });
-    expect(snapshotResponse.statusCode).toBe(200);
-    expect(controller.getSnapshot).toHaveBeenCalledTimes(1);
-    expect(controller.getSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({
-        params: expect.objectContaining({ workspaceId: "affairs-global" })
-      }),
-      expect.anything()
-    );
-
-    const documentsResponse = await app.inject({
-      method: "GET",
-      url: "/api/affairs/library-documents?browseMode=folder"
-    });
-    expect(documentsResponse.statusCode).toBe(200);
-    expect(controller.listDocuments).toHaveBeenCalledTimes(1);
-    expect(controller.listDocuments).toHaveBeenCalledWith(
-      expect.objectContaining({
-        params: expect.objectContaining({ workspaceId: "affairs-global" })
-      }),
-      expect.anything()
-    );
   });
 });

@@ -954,6 +954,172 @@ CREATE TABLE IF NOT EXISTS user_affairs_library_settings (
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_teable_global_settings (
+  user_id TEXT PRIMARY KEY,
+  base_url TEXT,
+  space_id TEXT,
+  base_id TEXT,
+  auth_ref TEXT,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  mirror_mode TEXT NOT NULL DEFAULT 'manual' CHECK (mirror_mode IN ('manual', 'scheduled', 'event_driven')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS user_teable_credentials (
+  user_id TEXT NOT NULL,
+  auth_ref TEXT NOT NULL,
+  token_ciphertext TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, auth_ref),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_credentials_user_updated_at
+  ON user_teable_credentials(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_teable_workbench_sync_configs (
+  config_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('tags', 'sessions', 'todos')),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  scope_json TEXT NOT NULL,
+  target_table_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (user_id, source_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_workbench_sync_configs_user
+  ON user_teable_workbench_sync_configs(user_id, source_type);
+
+CREATE TABLE IF NOT EXISTS user_teable_mirror_table_bindings (
+  binding_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  mirror_type TEXT NOT NULL CHECK (mirror_type IN ('tags', 'sessions', 'todos')),
+  table_id TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  read_only_mode TEXT NOT NULL CHECK (read_only_mode IN ('role_based', 'matrix_based', 'unknown')),
+  last_synced_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (user_id, mirror_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_mirror_table_bindings_user
+  ON user_teable_mirror_table_bindings(user_id, mirror_type);
+
+CREATE TABLE IF NOT EXISTS user_teable_mirror_record_mappings (
+  mapping_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  mirror_type TEXT NOT NULL CHECK (mirror_type IN ('tags', 'sessions', 'todos')),
+  local_id TEXT NOT NULL,
+  teable_record_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  last_synced_at TEXT NOT NULL,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (user_id, mirror_type, local_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_mirror_record_mappings_user
+  ON user_teable_mirror_record_mappings(user_id, mirror_type, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_teable_form_bindings (
+  form_binding_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  source_workspace_ids_json TEXT NOT NULL DEFAULT '[]',
+  table_id TEXT NOT NULL,
+  view_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  linked_mirror_types_json TEXT NOT NULL,
+  teable_table_id TEXT NOT NULL DEFAULT '',
+  teable_view_id TEXT NOT NULL DEFAULT '',
+  teable_share_id TEXT,
+  teable_form_name TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  open_mode TEXT NOT NULL DEFAULT 'embed' CHECK (open_mode IN ('embed', 'external')),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  inbound_action TEXT NOT NULL CHECK (inbound_action IN ('create_todo', 'append_session_context', 'request_tag_assignment', 'none')),
+  open_url TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_form_bindings_user_workspace
+  ON user_teable_form_bindings(user_id, workspace_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_form_bindings_user_enabled
+  ON user_teable_form_bindings(user_id, enabled, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_teable_field_mappings (
+  mapping_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  config_id TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('tags', 'sessions', 'todos')),
+  target_table_id TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (user_id, config_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_field_mappings_user
+  ON user_teable_field_mappings(user_id, source_type, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_teable_inbound_record_mappings (
+  mapping_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  form_binding_id TEXT NOT NULL,
+  teable_record_id TEXT NOT NULL,
+  teable_record_fingerprint TEXT NOT NULL,
+  inbound_action TEXT NOT NULL CHECK (inbound_action IN ('create_todo', 'append_session_context', 'request_tag_assignment', 'none')),
+  target_local_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('applied', 'skipped', 'failed')),
+  error_detail TEXT,
+  last_synced_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (user_id, form_binding_id, teable_record_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_inbound_record_mappings_user_form
+  ON user_teable_inbound_record_mappings(user_id, form_binding_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_teable_sync_logs (
+  log_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('manual', 'local_change', 'retry')),
+  source_types_json TEXT NOT NULL,
+  task_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'partial_failed', 'failed')),
+  summary TEXT NOT NULL,
+  counts_json TEXT NOT NULL DEFAULT '{}',
+  error_detail TEXT,
+  reason TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_sync_logs_user_created_at
+  ON user_teable_sync_logs(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_teable_sync_logs_user_state
+  ON user_teable_sync_logs(user_id, state, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS provider_control_profiles (
   provider_id TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
