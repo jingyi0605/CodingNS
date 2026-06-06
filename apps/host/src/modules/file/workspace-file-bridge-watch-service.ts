@@ -113,6 +113,55 @@ export class WorkspaceFileBridgeWatchService {
     return { watchId };
   }
 
+  async watchResolvedDir(input: {
+    scopeId: string;
+    displayWorkspaceId: string;
+    basePath: string;
+    absolutePath: string;
+    options?: WorkspaceFileBridgeWatchDirOptions;
+  }): Promise<{ watchId: string }> {
+    const normalizedOptions = normalizeWatchOptions(input.options ?? {});
+    const watcherKey = buildWatcherKey(input.scopeId, input.basePath, normalizedOptions);
+    let shared = this.sharedWatchers.get(watcherKey);
+
+    if (!shared) {
+      shared = this.createSharedWatcher(
+        watcherKey,
+        input.displayWorkspaceId,
+        input.basePath,
+        input.absolutePath,
+        normalizedOptions
+      );
+      this.sharedWatchers.set(watcherKey, shared);
+    }
+
+    await shared.readyPromise;
+
+    const watchId = createWatchId(++this.watchSeq);
+    shared.subscriptions.add(watchId);
+    this.subscriptions.set(watchId, {
+      watchId,
+      watcherKey,
+      workspaceId: input.displayWorkspaceId,
+      basePath: input.basePath,
+      cursor: 0,
+      events: []
+    });
+
+    this.logger.info(
+      {
+        workspaceId: input.displayWorkspaceId,
+        scopeId: input.scopeId,
+        path: input.basePath,
+        watchId,
+        recursive: normalizedOptions.recursive
+      },
+      "静态 HTML 预览开始监听已解析目录"
+    );
+
+    return { watchId };
+  }
+
   unwatch(watchId: string): { ok: true; watchId: string } {
     const subscription = this.subscriptions.get(watchId);
     if (!subscription) {

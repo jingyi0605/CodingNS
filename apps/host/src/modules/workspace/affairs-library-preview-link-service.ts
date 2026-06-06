@@ -13,6 +13,7 @@ interface AffairsLibraryPreviewTokenPayload {
   workspaceId: string;
   userId: string;
   expiresAt: number;
+  previewPath?: string;
 }
 
 export interface AffairsLibraryPreviewLinkResult {
@@ -26,6 +27,12 @@ export interface PublicAffairsLibraryPreviewResult {
   absolutePath: string;
   relativePath: string;
   contentType: string;
+}
+
+export interface AffairsLibraryPreviewTokenContext {
+  workspaceId: string;
+  userId: string;
+  previewPath: string;
 }
 
 export class AffairsLibraryPreviewLinkService {
@@ -54,7 +61,8 @@ export class AffairsLibraryPreviewLinkService {
     const token = this.createToken({
       workspaceId,
       userId,
-      expiresAt
+      expiresAt,
+      previewPath: resolved.relativePath
     });
 
     return {
@@ -84,13 +92,23 @@ export class AffairsLibraryPreviewLinkService {
     const token = this.createToken({
       workspaceId,
       userId,
-      expiresAt
+      expiresAt,
+      previewPath: resolved.relativePath
     });
 
     return {
       previewPath: buildAffairsPublicPreviewPath(token, resolved.relativePath),
       previewUrl: "",
       expiresAt: new Date(expiresAt).toISOString()
+    };
+  }
+
+  resolveTokenContext(token: string): AffairsLibraryPreviewTokenContext {
+    const payload = this.verifyToken(token);
+    return {
+      workspaceId: payload.workspaceId,
+      userId: payload.userId,
+      previewPath: payload.previewPath ?? ""
     };
   }
 

@@ -1747,6 +1747,7 @@ export function createServer(config: HostConfig) {
     filePreviewService,
     filePreviewLinkService,
     affairsLibraryPreviewLinkService,
+    affairsLibraryService,
     onlyOfficeIntegrationService,
     workspaceFileBridgeService,
     workspaceIndexApplyService

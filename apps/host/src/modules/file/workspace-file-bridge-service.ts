@@ -480,6 +480,16 @@ export class WorkspaceFileBridgeService {
     return await this.watchService.watchDir(workspaceId, requestedPath, options);
   }
 
+  async watchResolvedDir(input: {
+    scopeId: string;
+    displayWorkspaceId: string;
+    basePath: string;
+    absolutePath: string;
+    options?: WorkspaceFileBridgeWatchDirOptions;
+  }): Promise<{ watchId: string }> {
+    return await this.watchService.watchResolvedDir(input);
+  }
+
   unwatch(watchId: string): { ok: true; watchId: string } {
     return this.watchService.unwatch(watchId);
   }

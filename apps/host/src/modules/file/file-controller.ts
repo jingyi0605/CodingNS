@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError, isAppError } from "../../shared/errors/app-error.js";
+import { hashContent } from "../../shared/utils/hash.js";
 import type { FileContentService, FileOperationType } from "./file-content-service.js";
 import type { FilePreviewLinkService } from "./file-preview-link-service.js";
 import type { FilePreviewService } from "./file-preview-service.js";
@@ -14,6 +16,7 @@ import type { WorkspaceIndexApplyService } from "./workspace-index-apply-service
 import type { RecentFileService } from "./recent-file-service.js";
 import type { RecentModifiedFileService } from "./recent-modified-file-service.js";
 import type { AffairsLibraryPreviewLinkService } from "../workspace/affairs-library-preview-link-service.js";
+import type { AffairsLibraryService } from "../workspace/affairs-library-service.js";
 import type { OnlyOfficeIntegrationService } from "../office/onlyoffice-integration-service.js";
 import type {
   WorkspaceFileBridgeListDirOptions,
@@ -121,6 +124,18 @@ interface WorkspaceBridgeApplyIndexConfigBody {
   workspaceId?: string;
 }
 
+type PreviewBridgeContext =
+  | {
+      kind: "workspace";
+      workspaceId: string;
+    }
+  | {
+      kind: "affairs_library";
+      workspaceId: string;
+      userId: string;
+      previewPath: string;
+    };
+
 export class FileController {
   constructor(
     private readonly fileTreeService: FileTreeService,
@@ -131,6 +146,7 @@ export class FileController {
     private readonly filePreviewService: FilePreviewService,
     private readonly filePreviewLinkService: FilePreviewLinkService,
     private readonly affairsLibraryPreviewLinkService: AffairsLibraryPreviewLinkService,
+    private readonly affairsLibraryService: AffairsLibraryService,
     private readonly onlyOfficeIntegrationService: OnlyOfficeIntegrationService,
     private readonly workspaceFileBridgeService: WorkspaceFileBridgeService,
     private readonly workspaceIndexApplyService: WorkspaceIndexApplyService
@@ -495,7 +511,7 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    this.resolvePreviewRequestWorkspaceId(request);
+    this.resolvePreviewBridgeContext(request);
     reply.send(this.workspaceFileBridgeService.getCapabilities());
   };
 
@@ -503,9 +519,15 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeListDirBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      reply.send(this.listAffairsLibraryBridgeDir(context, request.body.path, request.body.options));
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.listDir(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.body.path,
         request.body.options
       )
@@ -516,10 +538,17 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeReadTextBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    const filePath = request.body.path?.trim() ?? "";
+    if (context.kind === "affairs_library") {
+      reply.send(this.readAffairsLibraryBridgeText(context, filePath));
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.readText(
-        this.resolvePreviewRequestWorkspaceId(request),
-        request.body.path?.trim() ?? ""
+        context.workspaceId,
+        filePath
       )
     );
   };
@@ -528,10 +557,29 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeReadTextsBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    const paths = Array.isArray(request.body.paths) ? request.body.paths : [];
+    if (context.kind === "affairs_library") {
+      reply.send({
+        items: paths.map((filePath) => {
+          const safePath = typeof filePath === "string" ? filePath : "";
+          try {
+            return this.readAffairsLibraryBridgeText(context, safePath);
+          } catch (error) {
+            return {
+              path: safePath,
+              error: toPreviewBridgeErrorShape(error, safePath)
+            };
+          }
+        })
+      });
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.readTexts(
-        this.resolvePreviewRequestWorkspaceId(request),
-        Array.isArray(request.body.paths) ? request.body.paths : []
+        context.workspaceId,
+        paths
       )
     );
   };
@@ -540,10 +588,24 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeWriteTextBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    const filePath = request.body.path?.trim() ?? "";
+    if (context.kind === "affairs_library") {
+      reply.send(
+        this.writeAffairsLibraryBridgeText(
+          context,
+          filePath,
+          typeof request.body.content === "string" ? request.body.content : "",
+          request.body.options
+        )
+      );
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.writeText(
-        this.resolvePreviewRequestWorkspaceId(request),
-        request.body.path?.trim() ?? "",
+        context.workspaceId,
+        filePath,
         typeof request.body.content === "string" ? request.body.content : "",
         request.body.options
       )
@@ -554,10 +616,30 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDeleteFileBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    const filePath = request.body.path?.trim() ?? "";
+    if (context.kind === "affairs_library") {
+      const resolvedPath = this.resolveAffairsLibraryBridgePath(context, filePath, {
+        mustExist: true,
+        kind: "file"
+      });
+      reply.send(
+        this.affairsLibraryService.operateFile(
+          context.workspaceId,
+          context.userId,
+          {
+            opType: "delete",
+            srcPath: resolvedPath
+          }
+        )
+      );
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.deleteFile(
-        this.resolvePreviewRequestWorkspaceId(request),
-        request.body.path?.trim() ?? "",
+        context.workspaceId,
+        filePath,
         request.body.options
       )
     );
@@ -567,9 +649,15 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      reply.send(this.statAffairsLibraryBridgePath(context, request.query.path));
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.stat(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.query.path
       )
     );
@@ -579,9 +667,15 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      reply.send({ exists: this.statAffairsLibraryBridgePath(context, request.query.path).exists });
+      return;
+    }
+
     reply.send(
       this.workspaceFileBridgeService.exists(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.query.path
       )
     );
@@ -591,9 +685,18 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDesktopActionBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DESKTOP_ACTION_NOT_SUPPORTED",
+        detail: "事务文档库预览暂不支持通过 workspace bridge 打开本地文件"
+      });
+    }
+
     reply.send(
       this.workspaceFileBridgeService.prepareOpenWorkspaceFile(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.body.path?.trim() ?? ""
       )
     );
@@ -603,9 +706,18 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeDesktopActionBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "DESKTOP_ACTION_NOT_SUPPORTED",
+        detail: "事务文档库预览暂不支持通过 workspace bridge 定位本地文件"
+      });
+    }
+
     reply.send(
       this.workspaceFileBridgeService.prepareRevealWorkspaceFile(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.body.path?.trim() ?? ""
       )
     );
@@ -615,9 +727,33 @@ export class FileController {
     request: FastifyRequest<{ Params: PublicWorkspaceBridgeParams; Querystring: PublicWorkspaceBridgeQuery; Body: WorkspaceBridgeWatchDirBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const context = this.resolvePreviewBridgeContext(request);
+    if (context.kind === "affairs_library") {
+      const resolvedPath = this.resolveAffairsLibraryBridgePath(context, request.body.path?.trim() ?? "", {
+        mustExist: true,
+        kind: "directory",
+        allowRoot: true
+      });
+      const resolved = this.affairsLibraryService.resolvePreviewFile(context.workspaceId, context.userId, resolvedPath, {
+        mustExist: true,
+        kind: "directory",
+        allowRoot: true
+      });
+      reply.send(
+        await this.workspaceFileBridgeService.watchResolvedDir({
+          scopeId: buildAffairsLibraryWatchScopeId(context),
+          displayWorkspaceId: context.workspaceId,
+          basePath: resolved.relativePath,
+          absolutePath: resolved.absolutePath,
+          options: request.body.options
+        })
+      );
+      return;
+    }
+
     reply.send(
       await this.workspaceFileBridgeService.watchDir(
-        this.resolvePreviewRequestWorkspaceId(request),
+        context.workspaceId,
         request.body.path,
         request.body.options
       )
@@ -658,14 +794,14 @@ export class FileController {
   ): Promise<void> => {
     reply.send(
       await this.workspaceIndexApplyService.applyConfig(
-        this.resolvePreviewRequestWorkspaceId(request)
+        this.resolvePreviewBridgeContext(request).workspaceId
       )
     );
   };
 
-  private resolvePreviewRequestWorkspaceId(
+  private resolvePreviewBridgeContext(
     request: FastifyRequest<{ Params?: PublicWorkspaceBridgeParams; Querystring?: PublicWorkspaceBridgeQuery }>
-  ): string {
+  ): PreviewBridgeContext {
     const safeToken = (request.query?.token ?? request.params?.token ?? "").trim();
 
     if (!safeToken) {
@@ -676,7 +812,280 @@ export class FileController {
       });
     }
 
-    return this.filePreviewLinkService.resolveWorkspaceId(safeToken);
+    try {
+      const affairsPreview = this.affairsLibraryPreviewLinkService.resolveTokenContext(safeToken);
+      return {
+        kind: "affairs_library",
+        workspaceId: affairsPreview.workspaceId,
+        userId: affairsPreview.userId,
+        previewPath: affairsPreview.previewPath
+      };
+    } catch {
+      return {
+        kind: "workspace",
+        workspaceId: this.filePreviewLinkService.resolveWorkspaceId(safeToken)
+      };
+    }
+  }
+
+  private listAffairsLibraryBridgeDir(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    requestedPath: string | undefined,
+    options: WorkspaceFileBridgeListDirOptions = {}
+  ): { path: string; items: Array<{ name: string; path: string; kind: "file" | "directory"; size: number | null; mtime: number; hidden: boolean }> } {
+    const requestedLimit = typeof options.limit === "number" ? options.limit : undefined;
+    const resolvedPath = this.resolveAffairsLibraryBridgePath(context, requestedPath?.trim() ?? "", {
+      mustExist: true,
+      kind: "directory",
+      allowRoot: true
+    });
+    const items = this.affairsLibraryService.listFiles(
+      context.workspaceId,
+      context.userId,
+      resolvedPath || null,
+      requestedLimit
+    );
+
+    return {
+      path: resolvedPath,
+      items: items
+        .filter((item) => (options.kind && options.kind !== "any" ? item.kind === options.kind : true))
+        .map((item) => ({
+          name: item.name,
+          path: item.path,
+          kind: item.kind,
+          size: item.size,
+          mtime: item.updatedAt ? Date.parse(item.updatedAt) : 0,
+          hidden: item.name.startsWith(".")
+        }))
+    };
+  }
+
+  private readAffairsLibraryBridgeText(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    requestedPath: string
+  ): { path: string; content: string; mtime: number; size: number } {
+    const resolvedPath = this.resolveAffairsLibraryBridgePath(context, requestedPath, {
+      mustExist: true,
+      kind: "file"
+    });
+    const preview = this.affairsLibraryService.previewDocument(
+      context.workspaceId,
+      context.userId,
+      resolvedPath
+    );
+
+    if (!preview.supported || typeof preview.content !== "string") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "FILE_PREVIEW_NOT_SUPPORTED",
+        detail: preview.reason ?? "当前文件不能通过 workspace bridge 读取",
+        field: "path"
+      });
+    }
+
+    return {
+      path: preview.path,
+      content: preview.content,
+      mtime: preview.updatedAt ? Date.parse(preview.updatedAt) : 0,
+      size: preview.size
+    };
+  }
+
+  private writeAffairsLibraryBridgeText(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    requestedPath: string,
+    content: string,
+    options: WorkspaceFileBridgeWriteTextOptions | undefined
+  ): { path: string; mtime: number; size: number } {
+    const normalizedPath = this.resolveAffairsLibraryBridgePath(context, requestedPath.trim(), {
+      mustExist: false,
+      kind: "file"
+    });
+
+    try {
+      const current = this.readAffairsLibraryBridgeText(context, normalizedPath);
+      if (options?.overwrite === false) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "FILE_ALREADY_EXISTS",
+          detail: "目标文件已存在",
+          field: "path"
+        });
+      }
+      this.affairsLibraryService.operateFile(
+        context.workspaceId,
+        context.userId,
+        {
+          opType: "write",
+          srcPath: normalizedPath,
+          content,
+          expectedVersion: hashContent(Buffer.from(current.content, "utf8"))
+        }
+      );
+    } catch (error) {
+      if (!isFileNotFoundError(error) || options?.createIfMissing !== true) {
+        throw error;
+      }
+      this.affairsLibraryService.operateFile(
+        context.workspaceId,
+        context.userId,
+        {
+          opType: "create_file",
+          dstPath: normalizedPath,
+          content
+        }
+      );
+    }
+
+    const next = this.readAffairsLibraryBridgeText(context, normalizedPath);
+    return {
+      path: next.path,
+      mtime: next.mtime,
+      size: next.size
+    };
+  }
+
+  private statAffairsLibraryBridgePath(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    requestedPath: string | undefined
+  ): { exists: boolean; path: string; name: string; kind: "file" | "directory" | null; size: number | null; mtime: number | null; hidden: boolean } {
+    const normalizedPath = requestedPath?.trim() ?? "";
+
+    try {
+      const resolvedPath = this.resolveAffairsLibraryBridgePath(context, normalizedPath, {
+        mustExist: true,
+        kind: "any",
+        allowRoot: true
+      });
+      const resolved = this.affairsLibraryService.resolvePreviewFile(context.workspaceId, context.userId, resolvedPath, {
+        mustExist: true,
+        kind: "any",
+        allowRoot: true
+      });
+      return {
+        exists: true,
+        path: resolved.relativePath,
+        name: resolved.relativePath ? resolved.relativePath.split("/").pop() ?? resolved.relativePath : "",
+        kind: resolved.stats?.isDirectory() ? "directory" : "file",
+        size: resolved.stats?.isFile() ? resolved.stats.size : null,
+        mtime: resolved.stats ? Math.round(resolved.stats.mtimeMs) : null,
+        hidden: resolved.relativePath.split("/").some((segment) => segment.startsWith("."))
+      };
+    } catch (error) {
+      if (!isFileNotFoundError(error)) {
+        throw error;
+      }
+      return {
+        exists: false,
+        path: normalizedPath,
+        name: normalizedPath.split("/").pop() ?? normalizedPath,
+        kind: null,
+        size: null,
+        mtime: null,
+        hidden: normalizedPath.split("/").some((segment) => segment.startsWith("."))
+      };
+    }
+  }
+
+  private resolveAffairsLibraryBridgePath(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    requestedPath: string,
+    options: {
+      mustExist: boolean;
+      kind: "file" | "directory" | "any";
+      allowRoot?: boolean;
+    }
+  ): string {
+    const normalizedPath = normalizePreviewBridgeRelativePath(requestedPath, options.allowRoot ?? false);
+    const candidates = buildAffairsLibraryBridgePathCandidates(context.previewPath, normalizedPath);
+
+    if (!options.mustExist) {
+      const existingCandidate = this.resolveExistingAffairsLibraryBridgePath(context, candidates, {
+        kind: options.kind,
+        allowRoot: options.allowRoot
+      });
+      if (existingCandidate) {
+        return existingCandidate;
+      }
+
+      const candidateWithExistingParent = this.resolveAffairsLibraryBridgePathWithExistingParent(context, candidates);
+      if (candidateWithExistingParent) {
+        return candidateWithExistingParent;
+      }
+
+      return candidates[0] ?? normalizedPath;
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const resolved = this.affairsLibraryService.resolvePreviewFile(context.workspaceId, context.userId, candidate, {
+          mustExist: options.mustExist,
+          kind: options.kind,
+          allowRoot: options.allowRoot
+        });
+        return resolved.relativePath;
+      } catch (error) {
+        if (!options.mustExist) {
+          throw error;
+        }
+        if (!isFileNotFoundError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return normalizedPath;
+  }
+
+  private resolveExistingAffairsLibraryBridgePath(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    candidates: string[],
+    options: {
+      kind: "file" | "directory" | "any";
+      allowRoot?: boolean;
+    }
+  ): string | null {
+    for (const candidate of candidates) {
+      try {
+        const resolved = this.affairsLibraryService.resolvePreviewFile(context.workspaceId, context.userId, candidate, {
+          mustExist: true,
+          kind: options.kind,
+          allowRoot: options.allowRoot
+        });
+        return resolved.relativePath;
+      } catch (error) {
+        if (!isFileNotFoundError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private resolveAffairsLibraryBridgePathWithExistingParent(
+    context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>,
+    candidates: string[]
+  ): string | null {
+    for (const candidate of candidates) {
+      const parentPath = path.posix.dirname(candidate);
+      const safeParentPath = parentPath === "." ? "" : parentPath;
+      try {
+        this.affairsLibraryService.resolvePreviewFile(context.workspaceId, context.userId, safeParentPath, {
+          mustExist: true,
+          kind: "directory",
+          allowRoot: true
+        });
+        return candidate;
+      } catch (error) {
+        if (!isFileNotFoundError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return null;
   }
 
   private sendWorkspaceBridgeUnwatch(
@@ -928,7 +1337,7 @@ function injectWorkspaceBridgeRuntime(
     `<script src="${runtimeScriptPath}" data-codingns-workspace-id="${workspaceIdAttr}" data-codingns-host-origin="${hostOriginAttr}" data-codingns-parent-origin="${parentOriginAttr}" data-codingns-runtime-version="${runtimeVersionAttr}"></script>`
   ].join("");
 
-  if (html.includes("/preview/runtime/codingns-workspace-bridge.js")) {
+  if (hasInjectedWorkspaceBridgeRuntime(html)) {
     return html;
   }
 
@@ -945,6 +1354,103 @@ function injectWorkspaceBridgeRuntime(
   }
 
   return `${runtimeSnippet}${html}`;
+}
+
+function hasInjectedWorkspaceBridgeRuntime(html: string): boolean {
+  return /<script\b[^>]*\bsrc=(["'])\/preview\/runtime\/codingns-workspace-bridge\.js(?:\?[^"']*)?\1[^>]*>/i.test(html);
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return isAppError(error) && error.errorCode === "FILE_NOT_FOUND";
+}
+
+function toPreviewBridgeErrorShape(error: unknown, fallbackPath: string): {
+  code: string;
+  message: string;
+  path?: string;
+} {
+  if (isAppError(error)) {
+    return {
+      code: error.errorCode,
+      message: error.message,
+      path: typeof error.data === "object" && error.data && "path" in error.data
+        ? String((error.data as { path?: unknown }).path)
+        : fallbackPath
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      code: "INTERNAL_ERROR",
+      message: error.message,
+      path: fallbackPath
+    };
+  }
+
+  return {
+    code: "INTERNAL_ERROR",
+    message: "未知错误",
+    path: fallbackPath
+  };
+}
+
+function buildAffairsLibraryBridgePathCandidates(previewPath: string, requestedPath: string): string[] {
+  const normalizedPreviewPath = normalizePreviewBridgeRelativePath(previewPath, false);
+  const normalizedRequestedPath = normalizePreviewBridgeRelativePath(requestedPath, false);
+  const candidates = [normalizedRequestedPath];
+
+  const previewDir = path.posix.dirname(normalizedPreviewPath);
+  if (!previewDir || previewDir === ".") {
+    return uniqueNonEmptyPaths(candidates);
+  }
+
+  const previewSegments = previewDir.split("/").filter(Boolean);
+
+  for (let index = previewSegments.length; index > 0; index -= 1) {
+    const prefix = previewSegments.slice(0, index).join("/");
+    if (prefix) {
+      candidates.push(path.posix.join(prefix, normalizedRequestedPath));
+    }
+  }
+
+  return uniqueNonEmptyPaths(candidates);
+}
+
+function buildAffairsLibraryWatchScopeId(context: Extract<PreviewBridgeContext, { kind: "affairs_library" }>): string {
+  return [
+    "affairs-library",
+    context.workspaceId,
+    context.userId,
+    normalizePreviewBridgeRelativePath(context.previewPath, true)
+  ].join("::");
+}
+
+function normalizePreviewBridgeRelativePath(pathText: string, allowRoot = false): string {
+  const normalized = String(pathText ?? "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+    .trim();
+
+  if (!normalized || normalized === ".") {
+    return allowRoot ? "" : normalized;
+  }
+
+  return path.posix.normalize(normalized).replace(/^\/+/, "");
+}
+
+function uniqueNonEmptyPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of paths) {
+    const normalized = normalizePreviewBridgeRelativePath(item, true);
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function resolveWorkspaceBridgeRuntimePath(): string {

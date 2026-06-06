@@ -934,10 +934,34 @@ describe("spec004 文件管理能力", () => {
     seedWorkspaceFiles(fixture.workspaceDir);
 
     const affairsRootDir = path.join(fixture.rootDir, "affairs-library-html");
-    mkdirSync(path.join(affairsRootDir, "我的应用", "Plex"), { recursive: true });
+    mkdirSync(path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "Tools"), { recursive: true });
+    mkdirSync(path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "Tools", ".Config"), { recursive: true });
+    mkdirSync(path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "重要信息", "会员信息"), { recursive: true });
     writeFileSync(
-      path.join(affairsRootDir, "我的应用", "Plex", "命令行.html"),
-      "<!doctype html><html><head><title>事务预览</title></head><body>Affairs HTML</body></html>",
+      path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "Tools", "命令行.html"),
+      [
+        "<!doctype html><html><head><title>事务预览</title>",
+        "<script>",
+        "  // 页面自带自愈逻辑可能只是把 runtime 路径当字符串使用，不能因此跳过 Host 注入。",
+        "  const runtimeScriptPath = '/preview/runtime/codingns-workspace-bridge.js?v=self-heal';",
+        "</script>",
+        "</head><body>Affairs HTML</body></html>"
+      ].join(""),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "Tools", ".Config", "会员管理.json"),
+      JSON.stringify({ basePath: "重要信息/会员信息" }),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "重要信息", "会员信息", ".会员索引.json"),
+      JSON.stringify({ basePath: "重要信息/会员信息", files: ["示例会员.md"] }),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "重要信息", "会员信息", "示例会员.md"),
+      "# 示例会员\n",
       "utf8"
     );
 
@@ -961,7 +985,7 @@ describe("spec004 文件管理能力", () => {
 
     const preview = await hosted.app.inject({
       method: "GET",
-      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("我的应用/Plex/命令行.html")}`,
+      url: `/api/workspaces/${workspaceId}/affairs/library-preview?path=${encodeURIComponent("Obsidian/Jackson-Obsi/Tools/命令行.html")}`,
       headers: {
         authorization: `Bearer ${accessToken}`
       }
@@ -976,7 +1000,116 @@ describe("spec004 文件管理能力", () => {
     expect(publicPreview.statusCode).toBe(200);
     expect(publicPreview.headers["content-type"]).toContain("text/html");
     expect(publicPreview.body).toContain("<title>事务预览</title>");
-    expect(publicPreview.body).toContain(`"workspaceId":"${workspaceId}"`);
+    expect(publicPreview.body).toContain(`"workspaceId":"affairs-global"`);
+    expect(publicPreview.body).toContain(`data-codingns-workspace-id="affairs-global"`);
+    expect(publicPreview.body.indexOf('src="/preview/runtime/codingns-workspace-bridge.js')).toBeLessThan(
+      publicPreview.body.indexOf("const runtimeScriptPath = '/preview/runtime/codingns-workspace-bridge.js")
+    );
+
+    const bridgeRead = await hosted.app.inject({
+      method: "POST",
+      url: "/preview/workspace-bridge/read-text",
+      payload: {
+        path: "Tools/.Config/会员管理.json"
+      },
+      query: {
+        token: preview.json().previewPath.split("/")[3]
+      }
+    });
+    expect(bridgeRead.statusCode).toBe(200);
+    expect(bridgeRead.json().path).toBe("Obsidian/Jackson-Obsi/Tools/.Config/会员管理.json");
+    expect(bridgeRead.json().content).toContain("重要信息/会员信息");
+
+    const bridgeList = await hosted.app.inject({
+      method: "POST",
+      url: "/preview/workspace-bridge/list-dir",
+      payload: {
+        path: "重要信息/会员信息",
+        options: {
+          includeHidden: true,
+          kind: "file"
+        }
+      },
+      query: {
+        token: preview.json().previewPath.split("/")[3]
+      }
+    });
+    expect(bridgeList.statusCode).toBe(200);
+    expect(bridgeList.json().path).toBe("Obsidian/Jackson-Obsi/重要信息/会员信息");
+    expect(bridgeList.json().items.map((item: { path: string }) => item.path)).toContain(
+      "Obsidian/Jackson-Obsi/重要信息/会员信息/示例会员.md"
+    );
+
+    const bridgeReadTexts = await hosted.app.inject({
+      method: "POST",
+      url: "/preview/workspace-bridge/read-texts",
+      payload: {
+        paths: ["重要信息/会员信息/示例会员.md"]
+      },
+      query: {
+        token: preview.json().previewPath.split("/")[3]
+      }
+    });
+    expect(bridgeReadTexts.statusCode).toBe(200);
+    expect(bridgeReadTexts.json().items[0].path).toBe("Obsidian/Jackson-Obsi/重要信息/会员信息/示例会员.md");
+    expect(bridgeReadTexts.json().items[0].content).toContain("示例会员");
+
+    const bridgeWatch = await hosted.app.inject({
+      method: "POST",
+      url: "/preview/workspace-bridge/watch-dir",
+      payload: {
+        path: "重要信息/会员信息",
+        options: {
+          includeHidden: true,
+          kind: "file"
+        }
+      },
+      query: {
+        token: preview.json().previewPath.split("/")[3]
+      }
+    });
+    expect(bridgeWatch.statusCode).toBe(200);
+    expect(bridgeWatch.json().watchId).toMatch(/^workspace-watch-/);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    writeFileSync(
+      path.join(affairsRootDir, "Obsidian", "Jackson-Obsi", "重要信息", "会员信息", "示例会员.md"),
+      "# 示例会员\n\n已更新\n",
+      "utf8"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    const bridgeWatchEvents = await hosted.app.inject({
+      method: "GET",
+      url: "/preview/workspace-bridge/watch-events",
+      query: {
+        watchId: bridgeWatch.json().watchId,
+        cursor: "0"
+      }
+    });
+    expect(bridgeWatchEvents.statusCode).toBe(200);
+    expect(bridgeWatchEvents.json().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "changed",
+          path: "Obsidian/Jackson-Obsi/重要信息/会员信息/示例会员.md",
+          kind: "file"
+        })
+      ])
+    );
+
+    const bridgeUnwatch = await hosted.app.inject({
+      method: "POST",
+      url: "/preview/workspace-bridge/unwatch",
+      payload: {
+        watchId: bridgeWatch.json().watchId
+      }
+    });
+    expect(bridgeUnwatch.statusCode).toBe(200);
+    expect(bridgeUnwatch.json()).toEqual({
+      ok: true,
+      watchId: bridgeWatch.json().watchId
+    });
   });
 
   it("事务文档库 Office 预览会自动带入当前登录用户，并关闭匿名初始化", async () => {
