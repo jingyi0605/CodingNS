@@ -204,6 +204,7 @@ const conversationApiMock = vi.hoisted(() => ({
   createWorkspaceDirectory: vi.fn(),
   deleteAffairsLightweightSession: vi.fn(),
   deleteAffairsTag: vi.fn(),
+  getAffairsAssistantSessionsSnapshot: vi.fn(),
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
@@ -269,6 +270,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsLightweightSession: conversationApiMock.deleteAffairsLightweightSession,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
+    getAffairsAssistantSessionsSnapshot: conversationApiMock.getAffairsAssistantSessionsSnapshot,
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
@@ -631,10 +633,7 @@ export const navigationGroups: WorkspaceSessionGroup[] = [
       repoRoot: "/tmp/workspace-1"
     },
     sessions: [],
-    affairsAssistantProjectId: "project-2",
-    affairsAssistantProjectWorkspaceId: "workspace-2",
-    affairsAssistantSessions: [],
-    affairsAssistantSessionsUpdatedAt: "2026-06-03T10:00:00.000Z"
+    childWorktrees: []
   }
 ];
 
@@ -672,7 +671,7 @@ export function createState(): AffairsViewState {
   };
 }
 
-export function createAgentSnapshotSession(overrides: Partial<NonNullable<WorkspaceSessionGroup["affairsAssistantSessions"]>[number]> = {}) {
+export function createAgentSnapshotSession(overrides: Partial<any> = {}) {
   return {
     sessionId: overrides.sessionId ?? "agent-session-1",
     workspaceId: overrides.workspaceId ?? "workspace-2",
@@ -709,17 +708,16 @@ export function createAgentSnapshotSession(overrides: Partial<NonNullable<Worksp
 export function createNavigationGroupsWithAgentSessions(
   sessions: ReturnType<typeof createAgentSnapshotSession>[]
 ): WorkspaceSessionGroup[] {
-  return navigationGroupsWithBoundLibraryWorkspace.map((group) => (
-    group.workspace.id === "workspace-1"
-      ? {
-          ...group,
-          affairsAssistantProjectId: "project-2",
-          affairsAssistantProjectWorkspaceId: "workspace-2",
-          affairsAssistantSessions: sessions,
-          affairsAssistantSessionsUpdatedAt: "2026-06-03T13:10:00.000Z"
-        }
-      : group
-  ));
+  conversationApiMock.getAffairsAssistantSessionsSnapshot.mockResolvedValue({
+    item: {
+      projectId: "project-2",
+      projectWorkspaceId: "workspace-2",
+      agentWorkspacePath: "/Users/jackson/SynologyDrive",
+      sessions,
+      updatedAt: "2026-06-03T13:10:00.000Z"
+    }
+  });
+  return navigationGroupsWithBoundLibraryWorkspace;
 }
 
 export function createConversationState(): AffairsViewState {
@@ -1111,6 +1109,7 @@ beforeEach(() => {
   clearSessionProviderPickerCapabilityCache();
 
   conversationApiMock.listAffairsLightweightSessions.mockReset();
+  conversationApiMock.getAffairsAssistantSessionsSnapshot.mockReset();
   conversationApiMock.getAffairsLightweightSession.mockReset();
   conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
   conversationApiMock.getGlobalAffairsDashboardState.mockReset();
@@ -1259,6 +1258,15 @@ beforeEach(() => {
   });
 
   conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
+  conversationApiMock.getAffairsAssistantSessionsSnapshot.mockResolvedValue({
+    item: {
+      projectId: "project-2",
+      projectWorkspaceId: "workspace-2",
+      agentWorkspacePath: "/Users/jackson/SynologyDrive",
+      sessions: [],
+      updatedAt: "2026-06-03T10:00:00.000Z"
+    }
+  });
   conversationApiMock.getAffairsLightweightSession.mockResolvedValue({
     sessionId: "light-1",
     workspaceId: "workspace-1",

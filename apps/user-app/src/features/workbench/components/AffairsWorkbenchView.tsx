@@ -99,6 +99,7 @@ import {
   deleteAffairsTag,
   getAffairsLightweightSessionMessages,
   getAffairsLightweightSession,
+  getAffairsAssistantSessionsSnapshot,
   getAffairsDocumentTagDetails,
   getAffairsDocumentTagTask,
   getAffairsTagRecoveryStatus,
@@ -743,6 +744,7 @@ interface AffairsWorkbenchContextValue {
   lightweightConversationSessionsLoading: boolean;
   reloadLightweightConversationSessions: () => Promise<void>;
   agentConversationSessions: SessionSummaryDto[];
+  agentConversationSessionsReady: boolean;
   agentConversationSessionsLoading: boolean;
   reloadAgentConversationSessions: () => Promise<void>;
   activateConversationSession: (input: {
@@ -1481,23 +1483,15 @@ export function AffairsWorkbenchProvider({
     () => readCachedAffairsLightweightConversationSessions(workspaceId) ?? [],
     [workspaceId]
   );
-  const snapshotAgentConversationSessions = useMemo(
-    () => Array.isArray(workspaceGroup?.affairsAssistantSessions) ? workspaceGroup.affairsAssistantSessions : [],
-    [workspaceGroup?.affairsAssistantSessions]
-  );
-  const agentProjectId = workspaceGroup?.affairsAssistantProjectId ?? null;
-  const initialAgentConversationSessions = useMemo(
-    () => snapshotAgentConversationSessions,
-    [snapshotAgentConversationSessions]
-  );
+  const [agentProjectId, setAgentProjectId] = useState<string | null>(null);
+  const [snapshotAgentProjectWorkspaceId, setSnapshotAgentProjectWorkspaceId] = useState<string | null>(null);
   const [lightweightConversationSessions, setLightweightConversationSessions] = useState<SessionSummaryDto[]>(
     initialLightweightConversationSessions
   );
   const [lightweightConversationSessionsLoading, setLightweightConversationSessionsLoading] = useState(false);
-  const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>(
-    initialAgentConversationSessions
-  );
-  const agentConversationSessionsLoading = false;
+  const [agentConversationSessions, setAgentConversationSessions] = useState<SessionSummaryDto[]>([]);
+  const [agentConversationSessionsReady, setAgentConversationSessionsReady] = useState(false);
+  const [agentConversationSessionsLoading, setAgentConversationSessionsLoading] = useState(false);
   const [lastObjectAssistantContext, setLastObjectAssistantContext] = useState<AffairsObjectContext | null>(null);
   const conversationExportRenderRootRef = useRef<HTMLDivElement | null>(null);
   const lightweightConversationSessionCacheScopeRef = useRef<string | null>(null);
@@ -1565,8 +1559,8 @@ export function AffairsWorkbenchProvider({
     [agentWorkspacePath, navigationGroups]
   );
   const agentWorkspaceId = useMemo(
-    () => matchedAgentWorkspaceId ?? workspaceGroup?.affairsAssistantProjectWorkspaceId ?? null,
-    [matchedAgentWorkspaceId, workspaceGroup?.affairsAssistantProjectWorkspaceId]
+    () => matchedAgentWorkspaceId ?? snapshotAgentProjectWorkspaceId,
+    [matchedAgentWorkspaceId, snapshotAgentProjectWorkspaceId]
   );
   const butlerStore = useMemo(
     () => new ButlerRuntimeStore(agentWorkspaceId),
@@ -1637,41 +1631,17 @@ export function AffairsWorkbenchProvider({
   useEffect(() => {
     lightweightConversationSessionCacheScopeRef.current = null;
     setLightweightConversationSessions(initialLightweightConversationSessions);
-    setAgentConversationSessions(initialAgentConversationSessions);
+    setAgentProjectId(null);
+    setSnapshotAgentProjectWorkspaceId(null);
+    setAgentConversationSessions([]);
+    setAgentConversationSessionsReady(false);
+    setAgentConversationSessionsLoading(false);
     setLightweightRuntimeBySessionId({});
-  }, [initialAgentConversationSessions, initialLightweightConversationSessions, workspaceId]);
-
-  useEffect(() => {
-    setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(current, snapshotAgentConversationSessions));
-  }, [snapshotAgentConversationSessions]);
+  }, [initialLightweightConversationSessions, workspaceId]);
 
   useEffect(() => {
     librarySnapshotRef.current = librarySnapshot;
   }, [librarySnapshot]);
-
-  useEffect(() => {
-    if (butlerInitLoading || butlerHostUnavailable || affairsSetupCompleted || activeSection === "conversation") {
-      return;
-    }
-
-    ensureAffairsRoute();
-    onStateChange({
-      ...state,
-      primarySection: "conversation",
-      selectedNodeId: null,
-      selectedObjectId: null,
-      selectedDocumentId: null,
-      auxiliaryTab: resolveAffairsAuxiliaryTabForSection("conversation", state.auxiliaryTab)
-    });
-  }, [
-    activeSection,
-    affairsSetupCompleted,
-    butlerHostUnavailable,
-    butlerInitLoading,
-    ensureAffairsRoute,
-    onStateChange,
-    state
-  ]);
 
   useEffect(() => {
     if (lightweightConversationSessionCacheScopeRef.current !== workspaceId) {
@@ -1768,13 +1738,19 @@ export function AffairsWorkbenchProvider({
       if (lightweightConversationSessions.some((item) => item.sessionId === selectedConversationSession.sessionId)) {
         return;
       }
-    } else if (agentConversationSessions.some((item) => item.sessionId === selectedConversationSession.sessionId)) {
-      return;
+    } else {
+      if (!agentConversationSessionsReady) {
+        return;
+      }
+      if (agentConversationSessions.some((item) => item.sessionId === selectedConversationSession.sessionId)) {
+        return;
+      }
     }
 
     clearSelectedConversationSession(selectedConversationSession);
   }, [
     agentConversationSessions,
+    agentConversationSessionsReady,
     clearSelectedConversationSession,
     conversationRuntimeSeed?.session.sessionId,
     lightweightConversationSessions,
@@ -1805,8 +1781,35 @@ export function AffairsWorkbenchProvider({
   }, [activeSection, reloadLightweightConversationSessions]);
 
   const reloadAgentConversationSessions = useCallback(async () => {
-    setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(current, snapshotAgentConversationSessions));
-  }, [snapshotAgentConversationSessions]);
+    setAgentConversationSessionsLoading(true);
+    try {
+      const response = await getAffairsAssistantSessionsSnapshot(workspaceId, {
+        refresh: true
+      });
+      setAgentProjectId(response.item.projectId);
+      setSnapshotAgentProjectWorkspaceId(response.item.projectWorkspaceId);
+      setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(
+        current,
+        response.item.sessions
+      ));
+      setAgentConversationSessionsReady(true);
+    } catch (error) {
+      showToast({
+        tone: "error",
+        title: t("shell.affairsConversationAgentLoadFailed"),
+        description: getErrorMessage(error, t("shell.affairsConversationAgentLoadFailed"))
+      });
+    } finally {
+      setAgentConversationSessionsLoading(false);
+    }
+  }, [showToast, workspaceId]);
+
+  useEffect(() => {
+    if (activeSection !== "conversation") {
+      return;
+    }
+    void reloadAgentConversationSessions();
+  }, [activeSection, reloadAgentConversationSessions]);
 
   const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
     setRecentTagTasks((previous) => {
@@ -4089,6 +4092,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     lightweightConversationSessionsLoading,
     reloadLightweightConversationSessions,
     agentConversationSessions,
+    agentConversationSessionsReady,
     agentConversationSessionsLoading,
     reloadAgentConversationSessions,
     activateConversationSession: (input) => {
@@ -4147,6 +4151,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     lightweightConversationSessionsLoading,
     reloadLightweightConversationSessions,
     agentConversationSessions,
+    agentConversationSessionsReady,
     agentConversationSessionsLoading,
     reloadAgentConversationSessions,
     clearSelectedConversationSession,
@@ -6931,6 +6936,7 @@ function AffairsAgentConversationState(input: {
     butlerStore,
     reloadAgentConversationSessions,
     agentProjectId,
+    agentConversationSessionsReady,
     agentConversationSessions
   } = useAffairsWorkbenchInternal();
   const initialized = useButlerRuntimeStore(butlerStore, (value) => value.initialized);
@@ -7006,6 +7012,10 @@ function AffairsAgentConversationState(input: {
       return;
     }
 
+    if (!agentConversationSessionsReady) {
+      return;
+    }
+
     if (!currentAgentConversationSession || currentAgentConversationSession.isArchived) {
       restoredHistorySessionIdRef.current = requestedSessionId;
       if (restoringSessionId === requestedSessionId) {
@@ -7063,6 +7073,7 @@ function AffairsAgentConversationState(input: {
   }, [
     activateConversationSession,
     agentProjectId,
+    agentConversationSessionsReady,
     butlerStore,
     currentAgentConversationSession?.isArchived,
     currentAgentConversationSession?.rawStoreRef,
@@ -9103,6 +9114,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
 export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: AffairsAuxiliaryPanelProps) {
   const {
     activeSection,
+    activateConversationSession,
     agentConversationSessions,
     agentConversationSessionsLoading,
     agentProjectId,
@@ -9120,9 +9132,12 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     initGuard,
     indexStatus,
     libraryConfig,
+    lightweightConversationSessions,
+    lightweightConversationSessionsLoading,
     markConversationSessionSeen,
     navigateLibraryFolder,
     openConversationCreateModal,
+    reloadLightweightConversationSessions,
     reloadAgentConversationSessions,
     rememberConversationSession,
     selectAuxiliaryTab,
@@ -9177,24 +9192,30 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     [agentWorkspaceId, butlerControlSession]
   );
   const assistantHistoryItems = useMemo(() => {
+    const lightweightItems = lightweightConversationSessions.map((session) => ({
+      id: buildAffairsConversationSessionNodeId("lightweight", session.sessionId),
+      kind: "lightweight" as const,
+      session
+    }));
     const agentItems =
       currentAgentSession
       && agentConversationSessions.every((session) => session.sessionId !== currentAgentSession.sessionId)
         ? [currentAgentSession, ...agentConversationSessions]
         : agentConversationSessions;
-    return agentItems.map((session) => ({
+    const normalizedAgentItems = agentItems.map((session) => ({
         id: buildAffairsConversationSessionNodeId("agent", session.sessionId),
         kind: "agent" as const,
         session
-      }))
+      }));
+    return [...lightweightItems, ...normalizedAgentItems]
       .sort((left, right) => {
       if (left.session.isFavorite !== right.session.isFavorite) {
         return left.session.isFavorite ? -1 : 1;
       }
       return resolveConversationSessionSortTime(right.session) - resolveConversationSessionSortTime(left.session);
     }).filter((item) => item.session.isArchived !== true);
-  }, [agentConversationSessions, currentAgentSession]);
-  const assistantHistoryLoading = agentConversationSessionsLoading;
+  }, [agentConversationSessions, currentAgentSession, lightweightConversationSessions]);
+  const assistantHistoryLoading = lightweightConversationSessionsLoading || agentConversationSessionsLoading;
   const { showToast } = useToast();
   const [documentSummaryExpanded, setDocumentSummaryExpanded] = useState(false);
 
@@ -9259,11 +9280,28 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
 
   const handleOpenAssistantHistory = useCallback(() => {
     setAssistantHistoryOpen((current) => !current);
+    void reloadLightweightConversationSessions().catch(() => undefined);
     void reloadAgentConversationSessions().catch(() => undefined);
-  }, [reloadAgentConversationSessions]);
+  }, [reloadAgentConversationSessions, reloadLightweightConversationSessions]);
 
   const handleOpenAssistantSession = useCallback(async (item: AffairsConversationListItem) => {
-    if (item.kind !== "agent") {
+    if (item.kind === "lightweight") {
+      markConversationSessionSeen(item.kind, item.session.sessionId);
+      setAssistantHistoryOpen(false);
+
+      try {
+        const response = await getAffairsLightweightSessionMessages(workspaceId, item.session.sessionId);
+        activateConversationSession({
+          kind: "lightweight",
+          session: item.session,
+          bootstrapMessages: response.messages
+        });
+      } catch (error) {
+        showToast({
+          title: getErrorMessage(error, t("shell.affairsConversationLoadFailed")),
+          tone: "error"
+        });
+      }
       return;
     }
 
@@ -9316,7 +9354,15 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
         tone: "error"
       });
     }
-  }, [agentProjectId, butlerStore, markConversationSessionSeen, rememberConversationSession, showToast]);
+  }, [
+    activateConversationSession,
+    agentProjectId,
+    butlerStore,
+    markConversationSessionSeen,
+    rememberConversationSession,
+    showToast,
+    workspaceId
+  ]);
 
   if (activeSection === "conversation" && initGuard.loading) {
     return (
@@ -9405,6 +9451,8 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                 <ButlerAnchoredPopover
                   open={assistantHistoryOpen && assistantHistoryButtonRef.current !== null}
                   className="affairs-assistant-history-popover"
+                  backdropClassName="affairs-assistant-history-backdrop"
+                  showBackdrop
                   anchorRef={assistantHistoryButtonRef}
                   popoverRef={assistantHistoryPopoverRef}
                   role="dialog"
@@ -12683,6 +12731,7 @@ function UniversalAssistantBridge({
 }) {
   const {
     butlerStore: store,
+    agentWorkspacePath,
     rememberConversationSession,
     reloadAgentConversationSessions
   } = useAffairsWorkbenchInternal();
@@ -12815,6 +12864,12 @@ function UniversalAssistantBridge({
               : fallbackProvider;
             if (targetProvider && store.getState().activeProvider !== targetProvider) {
               await store.switchProvider(targetProvider);
+            }
+            const normalizedAgentWorkspacePath = agentWorkspacePath?.trim() ?? "";
+            if (normalizedAgentWorkspacePath && store.getState().profile?.workspacePath !== normalizedAgentWorkspacePath) {
+              await store.updateProfile({
+                workspacePath: normalizedAgentWorkspacePath
+              });
             }
             await store.sendMessage(`${buildAffairsAssistantPrefix(context)}${content}`, {
               model: options?.model ?? null,

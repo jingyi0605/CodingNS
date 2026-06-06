@@ -1683,6 +1683,7 @@ describe("WorkbenchLayout", () => {
         || url.includes("/affairs/library-snapshot")
         || url.includes("/affairs/library-documents")
         || url.includes("/affairs/lightweight-sessions")
+        || url.includes("/affairs/assistant-sessions")
         || url.includes("/api/butler/inbox")
         || url.includes("/api/butler/follow-up-tasks")
       ) {
@@ -1875,13 +1876,6 @@ describe("WorkbenchLayout", () => {
           createSessionSummary({
             sessionId: "session-1",
             title: "代码会话",
-            workspaceId: "workspace-1"
-          })
-        ],
-        affairsAssistantSessions: [
-          createSessionSummary({
-            sessionId: "agent-session-1",
-            title: "事务 Agent 对话",
             workspaceId: "workspace-1"
           })
         ]
@@ -2293,6 +2287,24 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse({ items: [] });
       }
 
+      if (url.includes("/affairs/assistant-sessions")) {
+        return createJsonResponse({
+          item: {
+            projectId: "project-2",
+            projectWorkspaceId: "workspace-1",
+            agentWorkspacePath: "/tmp/workspace-1",
+            sessions: [
+              createSessionSummary({
+                sessionId: "agent-session-1",
+                title: "事务 Agent 对话",
+                workspaceId: "workspace-1"
+              })
+            ],
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          }
+        });
+      }
+
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
@@ -2443,6 +2455,18 @@ describe("WorkbenchLayout", () => {
 
       if (url.includes("/affairs/lightweight-sessions")) {
         return createJsonResponse({ items: [] });
+      }
+
+      if (url.includes("/affairs/assistant-sessions")) {
+        return createJsonResponse({
+          item: {
+            projectId: null,
+            projectWorkspaceId: null,
+            agentWorkspacePath: null,
+            sessions: [],
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          }
+        });
       }
 
       if (url.includes("/api/butler/inbox")) {
@@ -2602,6 +2626,18 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse({ items: [] });
       }
 
+      if (url.includes("/affairs/assistant-sessions")) {
+        return createJsonResponse({
+          item: {
+            projectId: null,
+            projectWorkspaceId: null,
+            agentWorkspacePath: null,
+            sessions: [],
+            updatedAt: "2026-06-05T08:00:00.000Z"
+          }
+        });
+      }
+
       if (url.includes("/api/butler/inbox")) {
         return createJsonResponse({ items: [] });
       }
@@ -2694,8 +2730,7 @@ describe("WorkbenchLayout", () => {
             title: "事务入口会话",
             workspaceId: "workspace-1"
           })
-        ],
-        affairsAssistantSessions: []
+        ]
       }
     ]);
     MockWebSocket.workbenchSnapshot = currentSnapshot;

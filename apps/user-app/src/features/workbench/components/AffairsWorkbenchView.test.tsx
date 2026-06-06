@@ -205,6 +205,7 @@ const conversationApiMock = vi.hoisted(() => ({
   createWorkspaceDirectory: vi.fn(),
   deleteAffairsLightweightSession: vi.fn(),
   deleteAffairsTag: vi.fn(),
+  getAffairsAssistantSessionsSnapshot: vi.fn(),
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
@@ -289,6 +290,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     createWorkspaceDirectory: conversationApiMock.createWorkspaceDirectory,
     deleteAffairsLightweightSession: conversationApiMock.deleteAffairsLightweightSession,
     deleteAffairsTag: conversationApiMock.deleteAffairsTag,
+    getAffairsAssistantSessionsSnapshot: conversationApiMock.getAffairsAssistantSessionsSnapshot,
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
@@ -667,10 +669,7 @@ const navigationGroups: WorkspaceSessionGroup[] = [
       repoRoot: "/tmp/workspace-1"
     },
     sessions: [],
-    affairsAssistantProjectId: "project-2",
-    affairsAssistantProjectWorkspaceId: "workspace-2",
-    affairsAssistantSessions: [],
-    affairsAssistantSessionsUpdatedAt: "2026-06-03T10:00:00.000Z"
+    childWorktrees: []
   }
 ];
 
@@ -709,7 +708,7 @@ function createState(): AffairsViewState {
   };
 }
 
-function createAgentSnapshotSession(overrides: Partial<NonNullable<WorkspaceSessionGroup["affairsAssistantSessions"]>[number]> = {}) {
+function createAgentSnapshotSession(overrides: Partial<any> = {}) {
   return {
     sessionId: overrides.sessionId ?? "agent-session-1",
     workspaceId: overrides.workspaceId ?? "workspace-2",
@@ -798,17 +797,16 @@ function createButlerControlSession(
 function createNavigationGroupsWithAgentSessions(
   sessions: ReturnType<typeof createAgentSnapshotSession>[]
 ): WorkspaceSessionGroup[] {
-  return navigationGroupsWithBoundLibraryWorkspace.map((group) => (
-    group.workspace.id === "workspace-1"
-      ? {
-          ...group,
-          affairsAssistantProjectId: "project-2",
-          affairsAssistantProjectWorkspaceId: "workspace-2",
-          affairsAssistantSessions: sessions,
-          affairsAssistantSessionsUpdatedAt: "2026-06-03T13:10:00.000Z"
-        }
-      : group
-  ));
+  conversationApiMock.getAffairsAssistantSessionsSnapshot.mockResolvedValue({
+    item: {
+      projectId: "project-2",
+      projectWorkspaceId: "workspace-2",
+      agentWorkspacePath: "/Users/jackson/SynologyDrive",
+      sessions,
+      updatedAt: "2026-06-03T13:10:00.000Z"
+    }
+  });
+  return navigationGroupsWithBoundLibraryWorkspace;
 }
 
 function createConversationState(): AffairsViewState {
@@ -1310,6 +1308,7 @@ describe("AffairsWorkbenchView", () => {
     });
     htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge.mockClear();
     conversationApiMock.listAffairsLightweightSessions.mockReset();
+    conversationApiMock.getAffairsAssistantSessionsSnapshot.mockReset();
     conversationApiMock.getAffairsLightweightSession.mockReset();
     conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
     conversationApiMock.getGlobalAffairsDashboardState.mockReset();
@@ -1464,6 +1463,15 @@ describe("AffairsWorkbenchView", () => {
     });
 
     conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [] });
+    conversationApiMock.getAffairsAssistantSessionsSnapshot.mockResolvedValue({
+      item: {
+        projectId: "project-2",
+        projectWorkspaceId: "workspace-2",
+        agentWorkspacePath: "/Users/jackson/SynologyDrive",
+        sessions: [],
+        updatedAt: "2026-06-03T10:00:00.000Z"
+      }
+    });
     conversationApiMock.getAffairsLightweightSession.mockResolvedValue({
       sessionId: "light-1",
       workspaceId: "workspace-1",
@@ -6439,6 +6447,17 @@ describe("AffairsWorkbenchView", () => {
     });
     await waitFor(() => {
       expect(screen.getByText("Obsidian/Tools/会员管理.html")).toBeInTheDocument();
+    });
+    const htmlFrame = document.querySelector(".affairs-dashboard-html-frame") as HTMLIFrameElement | null;
+    expect(htmlFrame).not.toBeNull();
+    expect(htmlFrame?.src).toContain("/preview/affairs-files/mock/Obsidian/Tools/%E4%BC%9A%E5%91%98%E7%AE%A1%E7%90%86.html");
+    expect(htmlFrame?.src).toContain("_preview=0");
+    expect(htmlFrame?.src).toContain("_cns_parent_origin=");
+    await waitFor(() => {
+      expect(htmlPreviewBridgeMock.createHtmlPreviewWorkspaceBridge).toHaveBeenCalledWith(expect.objectContaining({
+        iframe: htmlFrame,
+        workspaceId: "workspace-2"
+      }));
     });
     expect(fileContextApiMock.getFilePreview).not.toHaveBeenCalled();
     expect(conversationApiMock.listAffairsLibraryFiles).toHaveBeenCalledWith("workspace-2", expect.objectContaining({

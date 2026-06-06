@@ -65,11 +65,7 @@ export function mapWorkbenchSnapshotToNavigationGroups(
   return snapshot.items.map((item) => ({
     workspace: item.workspace,
     sessions: sortSessionSummaryList(item.sessions, sessionDisplaySortMode),
-    childWorktrees: mapWorkbenchWorktreeNodes(item.childWorktrees, sessionDisplaySortMode),
-    affairsAssistantSessions: sortSessionSummaryList(item.affairsAssistantSessions ?? [], sessionDisplaySortMode),
-    affairsAssistantProjectId: item.affairsAssistantProjectId ?? null,
-    affairsAssistantProjectWorkspaceId: item.affairsAssistantProjectWorkspaceId ?? null,
-    affairsAssistantSessionsUpdatedAt: item.affairsAssistantSessionsUpdatedAt ?? null
+    childWorktrees: mapWorkbenchWorktreeNodes(item.childWorktrees, sessionDisplaySortMode)
   }));
 }
 

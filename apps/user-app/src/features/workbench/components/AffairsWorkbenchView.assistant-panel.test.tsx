@@ -215,7 +215,9 @@ describe("AffairsWorkbenchView assistant panel", () => {
 
     await user.click(screen.getByRole("button", { name: t("shell.butlerHistoryAction") }));
 
-    expect(document.querySelector(".affairs-assistant-history-backdrop")).not.toBeNull();
+    await waitFor(() => {
+      expect(document.querySelector(".affairs-assistant-history-backdrop")).not.toBeNull();
+    });
     expect(await screen.findByText("事务 Agent 会话")).toBeInTheDocument();
     expect(await screen.findByText("事务轻量会话")).toBeInTheDocument();
     expect(screen.queryByText("已归档轻量会话")).toBeNull();

@@ -84,6 +84,7 @@ import {
   deleteSession,
   cleanupWorktree,
   createWorktree,
+  getAffairsAssistantSessionsSnapshot,
   getAffairsLibrarySnapshot,
   getProviderCapabilities,
   getWorktreeMergePreview,
@@ -1653,10 +1654,6 @@ export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
   childWorktrees: WorkbenchWorktreeNodeDto[];
-  affairsAssistantSessions?: SessionSummaryDto[];
-  affairsAssistantProjectId?: string | null;
-  affairsAssistantProjectWorkspaceId?: string | null;
-  affairsAssistantSessionsUpdatedAt?: string | null;
 }
 
 interface NavigationSessionEntry {
@@ -12097,23 +12094,22 @@ export function WorkbenchLayout({
     };
 
     const runAffairsSearch = async () => {
-      const workspaceSearches = availableSearchWorkspaces.map((workspace) => {
-        const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspace.id) ?? null;
-
-        return Promise.allSettled([
+      const workspaceSearches = availableSearchWorkspaces.map((workspace) =>
+        Promise.allSettled([
           withPromiseTimeout(getAffairsLibrarySnapshot(workspace.id)),
           listAllAffairsSearchDocumentsForKeywords(workspace.id, searchKeywords),
           withPromiseTimeout(listAffairsLightweightSessions(workspace.id)),
+          withPromiseTimeout(getAffairsAssistantSessionsSnapshot(workspace.id)),
           withPromiseTimeout(listButlerInboxItems({ workspaceId: workspace.id }))
-        ]).then(([snapshotResult, documentResult, lightweightResult, inboxResult]) => ({
+        ]).then(([snapshotResult, documentResult, lightweightResult, agentResult, inboxResult]) => ({
           workspace,
-          workspaceGroup,
           snapshotResult,
           documentResult,
           lightweightResult,
+          agentResult,
           inboxResult
-        }));
-      });
+        }))
+      );
 
       const results = await Promise.allSettled([
         withPromiseTimeout(listButlerFollowUpTasks()),
@@ -12130,10 +12126,10 @@ export function WorkbenchLayout({
           .slice(1)
           .filter((item): item is PromiseFulfilledResult<{
             workspace: WorkspaceDto;
-            workspaceGroup: WorkspaceSessionGroup | null;
             snapshotResult: PromiseSettledResult<Awaited<ReturnType<typeof getAffairsLibrarySnapshot>>>;
             documentResult: PromiseSettledResult<AffairsLibraryDocumentRecordDto[]>;
             lightweightResult: PromiseSettledResult<Awaited<ReturnType<typeof listAffairsLightweightSessions>>>;
+            agentResult: PromiseSettledResult<Awaited<ReturnType<typeof getAffairsAssistantSessionsSnapshot>>>;
             inboxResult: PromiseSettledResult<Awaited<ReturnType<typeof listButlerInboxItems>>>;
           }> => item.status === "fulfilled")
           .map((item) => item.value);
@@ -12258,7 +12254,9 @@ export function WorkbenchLayout({
             const lightweightItems = result.lightweightResult.status === "fulfilled" && Array.isArray(result.lightweightResult.value.items)
               ? result.lightweightResult.value.items
               : [];
-            const agentItems = result.workspaceGroup?.affairsAssistantSessions ?? [];
+            const agentItems = result.agentResult.status === "fulfilled" && Array.isArray(result.agentResult.value.item.sessions)
+              ? result.agentResult.value.item.sessions
+              : [];
 
             return [
               ...lightweightItems

@@ -1041,10 +1041,6 @@ export interface WorkbenchSnapshotItemDto {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
   childWorktrees?: WorkbenchWorktreeNodeDto[];
-  affairsAssistantSessions?: SessionSummaryDto[];
-  affairsAssistantProjectId?: string | null;
-  affairsAssistantProjectWorkspaceId?: string | null;
-  affairsAssistantSessionsUpdatedAt?: string | null;
   collapsed?: boolean;
 }
 
@@ -2316,6 +2312,30 @@ export function getSessionMessages(
 export function getSessionAttachmentBlob(sessionId: string, attachmentId: string) {
   return httpClient.requestBlob(
     `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}/content`
+  );
+}
+
+export interface AffairsAssistantSessionsSnapshotDto {
+  projectId: string | null;
+  projectWorkspaceId: string | null;
+  agentWorkspacePath: string | null;
+  sessions: SessionSummaryDto[];
+  updatedAt: string;
+}
+
+export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options?: {
+  refresh?: boolean;
+}) {
+  const headers = new Headers();
+  if (options?.refresh) {
+    headers.set("X-CodingNS-Affairs-Assistant-Refresh", "true");
+  }
+
+  return httpClient.request<{ item: AffairsAssistantSessionsSnapshotDto }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/assistant-sessions`,
+    {
+      headers
+    }
   );
 }
 

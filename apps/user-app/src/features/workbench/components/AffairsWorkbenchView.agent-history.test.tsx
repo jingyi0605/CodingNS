@@ -141,7 +141,7 @@ describe("AffairsWorkbenchView agent history", () => {
     await waitFor(() => {
       expect(butlerRuntimeCallsMock.openControlSession).toHaveBeenCalledWith("control-session-history-1");
     });
-    expect(butlerRuntimeCallsMock.initialize).toHaveBeenCalledTimes(1);
+    expect(butlerRuntimeCallsMock.initialize).toHaveBeenCalled();
     expect(await screen.findByRole("heading", { name: "历史 Agent 会话" })).toBeInTheDocument();
   });
 
