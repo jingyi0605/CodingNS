@@ -131,6 +131,7 @@
   - 怎么验证：定向组件测试 + 状态恢复测试
   - 本轮补充：HTML 块和快捷应用都已支持先选来源代码工作区，再选该工作区内的 HTML 文件；预览、iframe bridge 和权限都继承来源工作区，不再强绑当前事务工作区。
   - 继续补正：`当前文档库` 不再伪装成某个代码工作区名，而是直接读取全局文档库 `rootDir`；快捷应用和画布 HTML 块现在也复用同一套树形文件选择器。
+  - 2026-06-07 补充：快捷应用栏改成每行 4 个入口，同时把原来散在组件里的按名称生成图标逻辑收成 `affairs-shortcut-icon` 工具；后续别再在组件里复制一套图标算法。
 
 - [x] 3.3 接 HTML 统计插件块和 HTML 页面嵌入块
   - 状态：DONE
@@ -163,7 +164,6 @@
 
 ## 当前本轮最小必要验证
 
-- `pnpm -C apps/host exec tsc --noEmit --pretty false`
-- `pnpm -C apps/user-app exec tsc --noEmit --pretty false`
-- `pnpm -C apps/host exec vitest run tests/modules/workspace/affairs-library-service.test.ts tests/integration/affairs-library-global-routes.test.ts`
-- `pnpm -C apps/user-app exec vitest run src/features/workbench/components/AffairsWorkbenchView.test.tsx`
+- `pnpm --dir apps/user-app test src/features/workbench/utils/affairs-shortcut-icon.test.ts`
+- `NODE_ENV=test pnpm --dir apps/user-app test src/features/workbench/components/AffairsWorkbenchView.test.tsx -t "快捷应用会用名称生成图标"`
+- `pnpm --dir apps/user-app exec tsc --noEmit --pretty false`
