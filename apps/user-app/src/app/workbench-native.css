@@ -12618,6 +12618,21 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
 .teable-runtime-picker,
 .teable-runtime-form-view,
 .teable-runtime-block {
+  --teable-grid-bg: var(--panel-bg-strong);
+  --teable-grid-header-bg: color-mix(in srgb, var(--panel-bg-strong) 90%, var(--panel-hover));
+  --teable-grid-border: var(--affairs-muted-border);
+  --teable-grid-border-strong: var(--affairs-strong-border);
+  --teable-grid-hover: color-mix(in srgb, var(--accent) 7%, var(--panel-bg-strong));
+  --teable-grid-focus: color-mix(in srgb, var(--accent) 18%, transparent);
+  --teable-token-blue: var(--accent);
+  --teable-token-cyan: color-mix(in srgb, var(--accent) 62%, var(--success) 38%);
+  --teable-token-green: var(--success);
+  --teable-token-yellow: color-mix(in srgb, var(--warning) 76%, var(--panel-bg-strong) 24%);
+  --teable-token-orange: var(--warning);
+  --teable-token-red: var(--danger);
+  --teable-token-purple: color-mix(in srgb, var(--accent) 64%, var(--danger) 36%);
+  --teable-token-pink: color-mix(in srgb, var(--danger) 70%, var(--accent) 30%);
+  --teable-token-gray: var(--text-tertiary);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -12627,48 +12642,180 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
 .teable-runtime-grid-shell {
   min-height: 0;
   overflow: auto;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 12px;
+  border: 1px solid var(--teable-grid-border-strong);
+  border-radius: 10px;
+  background: var(--teable-grid-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
 }
 
 .teable-runtime-grid-table {
   width: 100%;
   border-collapse: collapse;
+  color: var(--text-primary);
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .teable-runtime-grid-table th,
 .teable-runtime-grid-table td {
   max-width: 220px;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  height: 38px;
+  padding: 7px 10px;
+  border-right: 1px solid var(--teable-grid-border);
+  border-bottom: 1px solid var(--teable-grid-border);
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.teable-runtime-grid-table th:last-child,
+.teable-runtime-grid-table td:last-child {
+  border-right: 0;
 }
 
 .teable-runtime-grid-table th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--surface-card-bg, rgba(255, 255, 255, 0.92));
-  color: var(--text-muted, #64748b);
+  background: var(--teable-grid-header-bg);
+  color: var(--text-secondary);
   font-weight: 600;
+}
+
+.teable-runtime-grid-heading {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 6px;
+  min-width: 0;
+}
+
+.teable-runtime-grid-heading > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teable-runtime-grid-heading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 30%, var(--teable-grid-border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel-hover) 58%, var(--panel-bg-strong));
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .teable-runtime-grid-table tbody tr {
   cursor: pointer;
 }
 
-.teable-runtime-grid-table tbody tr:hover {
-  background: rgba(59, 130, 246, 0.06);
+.teable-runtime-grid-table tbody tr:hover,
+.teable-runtime-grid-table tbody tr:focus-visible {
+  background: var(--teable-grid-hover);
+}
+
+.teable-runtime-grid-table tbody tr:focus-visible {
+  outline: 2px solid var(--teable-grid-focus);
+  outline-offset: -2px;
+}
+
+.teable-runtime-cell {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.teable-runtime-cell[data-kind="number"] {
+  width: 100%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.teable-runtime-cell[data-kind="empty"] {
+  color: var(--text-tertiary);
 }
 
 .teable-runtime-cell[data-readonly="true"],
 .teable-runtime-readonly-value {
-  color: var(--text-muted, #64748b);
+  color: var(--text-secondary);
+}
+
+.teable-runtime-token-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.teable-runtime-token {
+  --teable-token-tone: var(--teable-token-blue);
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--teable-token-tone) 30%, var(--panel-border));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--teable-token-tone) 13%, var(--panel-bg-strong));
+  color: color-mix(in srgb, var(--teable-token-tone) 72%, var(--text-primary));
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.teable-runtime-token > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teable-runtime-token-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--teable-token-tone) 68%, var(--panel-bg-strong));
+  color: var(--text-inverse);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.teable-runtime-token[data-tone="blue"] { --teable-token-tone: var(--teable-token-blue); }
+.teable-runtime-token[data-tone="cyan"] { --teable-token-tone: var(--teable-token-cyan); }
+.teable-runtime-token[data-tone="green"] { --teable-token-tone: var(--teable-token-green); }
+.teable-runtime-token[data-tone="yellow"] { --teable-token-tone: var(--teable-token-yellow); }
+.teable-runtime-token[data-tone="orange"] { --teable-token-tone: var(--teable-token-orange); }
+.teable-runtime-token[data-tone="red"] { --teable-token-tone: var(--teable-token-red); }
+.teable-runtime-token[data-tone="purple"] { --teable-token-tone: var(--teable-token-purple); }
+.teable-runtime-token[data-tone="pink"] { --teable-token-tone: var(--teable-token-pink); }
+.teable-runtime-token[data-tone="gray"] { --teable-token-tone: var(--teable-token-gray); }
+
+.teable-runtime-form-view .affairs-dashboard-inline-select,
+.teable-runtime-field-list .affairs-dashboard-inline-select {
+  border-color: var(--teable-grid-border-strong);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-bg-strong) 94%, var(--panel-hover)), var(--panel-bg-strong));
+}
+
+.teable-runtime-form-view .affairs-dashboard-inline-select:hover,
+.teable-runtime-field-list .affairs-dashboard-inline-select:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--teable-grid-border-strong));
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-bg-strong));
 }
 
 .teable-runtime-field-list {
@@ -12704,30 +12851,49 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
   gap: 8px;
   min-height: 120px;
   padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid var(--teable-grid-border-strong);
   border-radius: 12px;
+  background: var(--affairs-surface-subtle);
 }
 
 .teable-runtime-calendar-day > strong,
 .teable-runtime-kanban-column > strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-secondary);
+}
+
+.teable-runtime-kanban-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--panel-hover) 78%, var(--panel-bg-strong));
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .teable-runtime-calendar-day button,
 .teable-runtime-kanban-column button {
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid var(--teable-grid-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--panel-bg-strong);
   padding: 8px 10px;
   text-align: left;
-  color: inherit;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
 .teable-runtime-calendar-day button:hover,
 .teable-runtime-kanban-column button:hover {
-  border-color: rgba(59, 130, 246, 0.34);
-  background: rgba(59, 130, 246, 0.06);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--teable-grid-border));
+  background: var(--teable-grid-hover);
 }
