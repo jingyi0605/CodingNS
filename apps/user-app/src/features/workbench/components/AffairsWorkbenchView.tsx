@@ -27,6 +27,8 @@ import {
 import { DesktopModal } from "../../../components/DesktopModal";
 import { ModalActions, ModalEmptyState, ModalField, ModalList, ModalListItem, ModalSection, ModalTag } from "../../../components/ModalAtoms";
 import { MobileSheet } from "../../../components/MobileSheet";
+import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
+import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { t } from "../../../shared/i18n";
 import { SettingsSwitch } from "../../../settings/SettingsSwitch";
 import { ApiError } from "../../../shared/network/api-error";
@@ -1101,7 +1103,12 @@ function updateDashboardTabById(
   };
 }
 
-function buildDashboardPreviewUrl(previewUrl: string): string {
+function buildDashboardPreviewUrl(
+  preview: string | { previewPath?: string | null; previewUrl?: string | null },
+  isDesktop = false
+): string {
+  const previewUrl = resolveDashboardPreviewAccessUrl(preview, isDesktop);
+
   if (typeof window === "undefined" || !window.location?.origin) {
     return `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}_preview=0`;
   }
@@ -1109,9 +1116,52 @@ function buildDashboardPreviewUrl(previewUrl: string): string {
   try {
     const url = new URL(previewUrl, window.location.origin);
     url.searchParams.set("_preview", "0");
+    url.searchParams.set("_cns_parent_origin", window.location.origin);
     return url.toString();
   } catch {
     return `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}_preview=0`;
+  }
+}
+
+function resolveDashboardPreviewAccessUrl(
+  preview: string | { previewPath?: string | null; previewUrl?: string | null },
+  isDesktop: boolean
+): string {
+  if (typeof preview === "string") {
+    return preview;
+  }
+
+  const previewPath = preview.previewPath?.trim() ?? "";
+
+  if (previewPath) {
+    if (!isDesktop && typeof window !== "undefined" && window.location?.origin) {
+      return new URL(previewPath, window.location.origin).toString();
+    }
+
+    if (isDesktop) {
+      const desktopPreviewUrl = buildDashboardDesktopPreviewUrl(previewPath);
+
+      if (desktopPreviewUrl) {
+        return desktopPreviewUrl;
+      }
+    }
+  }
+
+  const previewUrl = preview.previewUrl?.trim() ?? "";
+
+  if (!previewUrl) {
+    throw new Error(t("shell.affairsWorkbenchHtmlSourceLoadFailed"));
+  }
+
+  return previewUrl;
+}
+
+function buildDashboardDesktopPreviewUrl(previewPath: string): string | null {
+  try {
+    const resolvedBaseUrl = resolveHostTransportTarget(getHostBaseUrl()).baseUrl;
+    return getHostRequestUrl(previewPath, resolvedBaseUrl);
+  } catch {
+    return null;
   }
 }
 
@@ -14088,6 +14138,7 @@ function AffairsDashboardHtmlWidget({
   workspaceId: string;
 }) {
   const { showToast } = useToast();
+  const platform = usePlatform();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -14108,6 +14159,7 @@ function AffairsDashboardHtmlWidget({
     setError(null);
     void (sourceKind === "affairs_library_html"
       ? getAffairsLibraryPreview(sourceWorkspaceId, sourcePath).then((preview) => preview.previewUrl ? {
+          previewPath: preview.previewPath,
           previewUrl: preview.previewUrl
         } : Promise.reject(new Error(t("shell.affairsWorkbenchHtmlSourceLoadFailed"))))
       : getFilePreviewLink(sourceWorkspaceId, sourcePath))
@@ -14115,7 +14167,7 @@ function AffairsDashboardHtmlWidget({
         if (cancelled) {
           return;
         }
-        setPreviewUrl(buildDashboardPreviewUrl(previewLink.previewUrl));
+        setPreviewUrl(buildDashboardPreviewUrl(previewLink, platform.isDesktop));
       })
       .catch((nextError) => {
         if (cancelled) {
@@ -14132,7 +14184,7 @@ function AffairsDashboardHtmlWidget({
     return () => {
       cancelled = true;
     };
-  }, [sourceKind, sourcePath, sourceWorkspaceId]);
+  }, [platform.isDesktop, sourceKind, sourcePath, sourceWorkspaceId]);
 
   const openInWindow = useCallback(() => {
     if (!previewUrl) {
