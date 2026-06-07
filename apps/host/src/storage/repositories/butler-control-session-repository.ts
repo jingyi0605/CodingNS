@@ -10,6 +10,7 @@ export class ButlerControlSessionRepository {
       .prepare(
         `INSERT INTO butler_control_sessions (
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -23,10 +24,11 @@ export class ButlerControlSessionRepository {
            last_summary,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
+        record.userId,
         record.providerId,
         record.sessionId,
         record.purpose,
@@ -50,6 +52,7 @@ export class ButlerControlSessionRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -72,10 +75,20 @@ export class ButlerControlSessionRepository {
   }
 
   findLatestByProvider(providerId: ButlerControlSession["providerId"]): ButlerControlSession | null {
+    return this.findLatestByProviderForUser(providerId, "");
+  }
+
+  findLatestByProviderForUser(
+    providerId: ButlerControlSession["providerId"],
+    userId: string
+  ): ButlerControlSession | null {
+    const userClause = userId.trim() ? "AND user_id = ?" : "";
+    const values = userId.trim() ? [providerId, userId] : [providerId];
     const row = this.db
       .prepare(
         `SELECT
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -91,19 +104,30 @@ export class ButlerControlSessionRepository {
            updated_at
          FROM butler_control_sessions
          WHERE provider_id = ?
+           ${userClause}
          ORDER BY updated_at DESC, created_at DESC
          LIMIT 1`
       )
-      .get(providerId) as ButlerControlSessionRow | undefined;
+      .get(...values) as ButlerControlSessionRow | undefined;
 
     return row ? mapButlerControlSessionRow(row) : null;
   }
 
   findLatestOpenByProvider(providerId: ButlerControlSession["providerId"]): ButlerControlSession | null {
+    return this.findLatestOpenByProviderForUser(providerId, "");
+  }
+
+  findLatestOpenByProviderForUser(
+    providerId: ButlerControlSession["providerId"],
+    userId: string
+  ): ButlerControlSession | null {
+    const userClause = userId.trim() ? "AND user_id = ?" : "";
+    const values = userId.trim() ? [providerId, userId] : [providerId];
     const row = this.db
       .prepare(
         `SELECT
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -120,19 +144,24 @@ export class ButlerControlSessionRepository {
          FROM butler_control_sessions
          WHERE provider_id = ?
            AND status != 'closed'
+           ${userClause}
          ORDER BY updated_at DESC, created_at DESC
          LIMIT 1`
       )
-      .get(providerId) as ButlerControlSessionRow | undefined;
+      .get(...values) as ButlerControlSessionRow | undefined;
 
     return row ? mapButlerControlSessionRow(row) : null;
   }
 
-  listByProvider(providerId: ButlerControlSession["providerId"]): ButlerControlSession[] {
+  listByProvider(providerId: ButlerControlSession["providerId"], userId?: string): ButlerControlSession[] {
+    const userClause = userId?.trim() ? "AND user_id = ?" : "";
+    const values = userId?.trim() ? [providerId, userId] : [providerId];
+
     return this.db
       .prepare(
         `SELECT
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -148,9 +177,10 @@ export class ButlerControlSessionRepository {
            updated_at
          FROM butler_control_sessions
          WHERE provider_id = ?
+           ${userClause}
          ORDER BY updated_at DESC, created_at DESC`
       )
-      .all(providerId)
+      .all(...values)
       .map((row) => mapButlerControlSessionRow(row as ButlerControlSessionRow));
   }
 
@@ -159,6 +189,7 @@ export class ButlerControlSessionRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            provider_id,
            session_id,
            purpose,
@@ -176,6 +207,34 @@ export class ButlerControlSessionRepository {
          WHERE session_id = ?`
       )
       .get(sessionId) as ButlerControlSessionRow | undefined;
+
+    return row ? mapButlerControlSessionRow(row) : null;
+  }
+
+  findByIdForUser(id: string, userId: string): ButlerControlSession | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           id,
+           user_id,
+           provider_id,
+           session_id,
+           purpose,
+           title,
+           source_item_id,
+           model,
+           reasoning_level,
+           permission_mode,
+           status,
+           last_context_version,
+           last_summary,
+           created_at,
+           updated_at
+         FROM butler_control_sessions
+         WHERE id = ?
+           AND user_id = ?`
+      )
+      .get(id, userId) as ButlerControlSessionRow | undefined;
 
     return row ? mapButlerControlSessionRow(row) : null;
   }
@@ -204,7 +263,8 @@ export class ButlerControlSessionRepository {
              last_context_version = ?,
              last_summary = ?,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?
+           AND user_id = ?`
       )
       .run(
         record.purpose,
@@ -217,7 +277,8 @@ export class ButlerControlSessionRepository {
         record.lastContextVersion,
         record.lastSummary,
         record.updatedAt,
-        record.id
+        record.id,
+        record.userId
       );
 
     return record;
@@ -226,6 +287,7 @@ export class ButlerControlSessionRepository {
 
 interface ButlerControlSessionRow {
   id: string;
+  user_id: string;
   provider_id: ButlerControlSession["providerId"];
   session_id: string;
   purpose: ButlerControlSession["purpose"];
@@ -244,6 +306,7 @@ interface ButlerControlSessionRow {
 function mapButlerControlSessionRow(row: ButlerControlSessionRow): ButlerControlSession {
   return {
     id: row.id,
+    userId: row.user_id,
     providerId: row.provider_id,
     sessionId: row.session_id,
     purpose: row.purpose,

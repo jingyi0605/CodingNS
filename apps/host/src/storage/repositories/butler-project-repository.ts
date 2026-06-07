@@ -10,6 +10,7 @@ export class ButlerProjectRepository {
       .prepare(
         `INSERT INTO butler_projects (
            id,
+           user_id,
            workspace_id,
            name,
            repo_root,
@@ -24,10 +25,11 @@ export class ButlerProjectRepository {
            created_at,
            updated_at,
            archived_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
+        record.userId,
         record.workspaceId,
         record.name,
         record.repoRoot,
@@ -48,12 +50,18 @@ export class ButlerProjectRepository {
   }
 
   list(filters?: {
+    userId?: string;
     workspaceId?: string;
     lifecycleStatus?: ButlerProject["lifecycleStatus"];
     riskLevel?: ButlerProject["riskLevel"];
   }): ButlerProject[] {
     const conditions: string[] = [];
     const values: unknown[] = [];
+
+    if (filters?.userId) {
+      conditions.push("user_id = ?");
+      values.push(filters.userId);
+    }
 
     if (filters?.workspaceId) {
       conditions.push("workspace_id = ?");
@@ -76,6 +84,7 @@ export class ButlerProjectRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            workspace_id,
            name,
            repo_root,
@@ -103,6 +112,7 @@ export class ButlerProjectRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            workspace_id,
            name,
            repo_root,
@@ -125,6 +135,35 @@ export class ButlerProjectRepository {
     return row ? mapButlerProjectRow(row) : null;
   }
 
+  findByIdForUser(id: string, userId: string): ButlerProject | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           id,
+           user_id,
+           workspace_id,
+           name,
+           repo_root,
+           default_provider,
+           instruction_profile_id,
+           approval_mode,
+           lifecycle_status,
+           risk_level,
+           config_json,
+           last_patrol_at,
+           last_verification_at,
+           created_at,
+           updated_at,
+           archived_at
+         FROM butler_projects
+         WHERE id = ?
+           AND user_id = ?`
+      )
+      .get(id, userId) as ButlerProjectRow | undefined;
+
+    return row ? mapButlerProjectRow(row) : null;
+  }
+
   update(record: ButlerProject): ButlerProject | null {
     this.db
       .prepare(
@@ -141,7 +180,8 @@ export class ButlerProjectRepository {
              last_verification_at = ?,
              archived_at = ?,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?
+           AND user_id = ?`
       )
       .run(
         record.name,
@@ -156,7 +196,8 @@ export class ButlerProjectRepository {
         record.lastVerificationAt,
         record.archivedAt,
         record.updatedAt,
-        record.id
+        record.id,
+        record.userId
       );
 
     return this.findById(record.id);
@@ -165,6 +206,7 @@ export class ButlerProjectRepository {
 
 interface ButlerProjectRow {
   id: string;
+  user_id: string;
   workspace_id: string;
   name: string;
   repo_root: string;
@@ -184,6 +226,7 @@ interface ButlerProjectRow {
 function mapButlerProjectRow(row: ButlerProjectRow): ButlerProject {
   return {
     id: row.id,
+    userId: row.user_id,
     workspaceId: row.workspace_id,
     name: row.name,
     repoRoot: row.repo_root,

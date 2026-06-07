@@ -117,6 +117,17 @@ export class AuthTokenRepository {
       .run(revokedAt, userId);
   }
 
+  revokeAllByUser(userId: string, revokedAt: string): void {
+    this.db
+      .prepare(
+        `UPDATE auth_tokens
+         SET revoked_at = ?
+         WHERE user_id = ?
+           AND revoked_at IS NULL`
+      )
+      .run(revokedAt, userId);
+  }
+
   listActiveLegacyRefreshTokensByUser(userId: string, now: string): AuthTokenRecord[] {
     return this.db
       .prepare(

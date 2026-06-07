@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role = 'admin'),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -108,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_updated_at
 
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
+  owner_user_id TEXT,
   name TEXT NOT NULL,
   path TEXT NOT NULL UNIQUE,
   repo_root TEXT,
@@ -115,8 +117,12 @@ CREATE TABLE IF NOT EXISTS workspaces (
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  removed_at TEXT
+  removed_at TEXT,
+  FOREIGN KEY (owner_user_id) REFERENCES auth_users(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner_user_id
+  ON workspaces(owner_user_id, removed_at, sort_order);
 
 CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   workspace_id TEXT NOT NULL,
@@ -630,6 +636,7 @@ CREATE TABLE IF NOT EXISTS commit_rule_profiles (
 
 CREATE TABLE IF NOT EXISTS session_bindings (
   session_id TEXT PRIMARY KEY,
+  user_id TEXT,
   workspace_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   provider_session_id TEXT NOT NULL,
@@ -641,11 +648,13 @@ CREATE TABLE IF NOT EXISTS session_bindings (
   runtime_home_dir TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   UNIQUE (provider, provider_session_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_bindings_workspace_id ON session_bindings(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_session_bindings_user_id ON session_bindings(user_id, workspace_id);
 
 CREATE TABLE IF NOT EXISTS session_indices (
   session_id TEXT PRIMARY KEY,
@@ -1473,7 +1482,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_fallback_edits_runtime_id
   ON ai_fallback_edits(runtime_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_profiles (
-  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
   provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
   workspace_path TEXT NOT NULL,
@@ -1484,11 +1494,16 @@ CREATE TABLE IF NOT EXISTS butler_profiles (
   focus_json TEXT NOT NULL,
   setup_completed INTEGER NOT NULL DEFAULT 1 CHECK (setup_completed IN (0, 1)),
   initialized_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_butler_profiles_user_id
+  ON butler_profiles(user_id);
 
 CREATE TABLE IF NOT EXISTS butler_control_sessions (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
   session_id TEXT NOT NULL UNIQUE,
   purpose TEXT NOT NULL DEFAULT 'chat' CHECK (purpose IN ('chat', 'todo_analysis')),
@@ -1502,11 +1517,12 @@ CREATE TABLE IF NOT EXISTS butler_control_sessions (
   last_summary TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_butler_control_sessions_provider
-  ON butler_control_sessions(provider_id, updated_at DESC, created_at DESC);
+  ON butler_control_sessions(user_id, provider_id, updated_at DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_control_timers (
   id TEXT PRIMARY KEY,
@@ -1637,6 +1653,7 @@ CREATE INDEX IF NOT EXISTS idx_butler_notification_archives_user_updated_at
 
 CREATE TABLE IF NOT EXISTS butler_projects (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
   name TEXT NOT NULL,
   repo_root TEXT NOT NULL,
@@ -1651,17 +1668,21 @@ CREATE TABLE IF NOT EXISTS butler_projects (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   archived_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-  UNIQUE (workspace_id, repo_root)
+  UNIQUE (user_id, workspace_id, repo_root)
 );
 
+CREATE INDEX IF NOT EXISTS idx_butler_projects_user_id
+  ON butler_projects(user_id, lifecycle_status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_butler_projects_workspace_id
-  ON butler_projects(workspace_id);
+  ON butler_projects(user_id, workspace_id);
 CREATE INDEX IF NOT EXISTS idx_butler_projects_status
-  ON butler_projects(lifecycle_status, updated_at DESC);
+  ON butler_projects(user_id, lifecycle_status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_sessions (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   session_id TEXT NOT NULL UNIQUE,
   role TEXT NOT NULL CHECK (role IN ('patrol', 'execution', 'verification', 'adhoc')),
@@ -1671,14 +1692,17 @@ CREATE TABLE IF NOT EXISTS butler_sessions (
   last_checkpoint_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
   FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_butler_sessions_user_id
+  ON butler_sessions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_butler_sessions_project_id
-  ON butler_sessions(project_id, updated_at DESC);
+  ON butler_sessions(user_id, project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_butler_sessions_status
-  ON butler_sessions(status, updated_at DESC);
+  ON butler_sessions(user_id, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
   id TEXT PRIMARY KEY,

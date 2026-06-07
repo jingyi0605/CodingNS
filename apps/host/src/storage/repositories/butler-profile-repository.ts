@@ -5,11 +5,16 @@ import type { ButlerProfile } from "../../types/domain.js";
 export class ButlerProfileRepository {
   constructor(private readonly db: Database.Database) {}
 
-  find(): ButlerProfile | null {
+  find(userId?: string): ButlerProfile | null {
+    if (userId?.trim()) {
+      return this.findByUserId(userId);
+    }
+
     const row = this.db
       .prepare(
         `SELECT
            id,
+           user_id,
            display_name,
            provider_id,
            workspace_path,
@@ -22,18 +27,20 @@ export class ButlerProfileRepository {
            initialized_at,
            updated_at
          FROM butler_profiles
-         WHERE id = 'default'`
+         ORDER BY updated_at DESC, initialized_at DESC
+         LIMIT 1`
       )
       .get() as ButlerProfileRow | undefined;
 
     return row ? mapButlerProfileRow(row) : null;
   }
 
-  create(record: ButlerProfile): ButlerProfile {
-    this.db
+  findByUserId(userId: string): ButlerProfile | null {
+    const row = this.db
       .prepare(
-        `INSERT INTO butler_profiles (
+        `SELECT
            id,
+           user_id,
            display_name,
            provider_id,
            workspace_path,
@@ -45,10 +52,36 @@ export class ButlerProfileRepository {
            setup_completed,
            initialized_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         FROM butler_profiles
+         WHERE user_id = ?`
+      )
+      .get(userId) as ButlerProfileRow | undefined;
+
+    return row ? mapButlerProfileRow(row) : null;
+  }
+
+  create(record: ButlerProfile): ButlerProfile {
+    this.db
+      .prepare(
+        `INSERT INTO butler_profiles (
+           id,
+           user_id,
+           display_name,
+           provider_id,
+           workspace_path,
+           agents_mode,
+           agents_file_path,
+           agents_content,
+           persona_json,
+           focus_json,
+           setup_completed,
+           initialized_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
+        record.userId,
         record.displayName,
         record.providerId,
         record.workspacePath,
@@ -79,7 +112,8 @@ export class ButlerProfileRepository {
              focus_json = ?,
              setup_completed = ?,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?
+           AND user_id = ?`
       )
       .run(
         record.providerId,
@@ -92,7 +126,8 @@ export class ButlerProfileRepository {
         JSON.stringify(record.focus),
         record.setupCompleted ? 1 : 0,
         record.updatedAt,
-        record.id
+        record.id,
+        record.userId
       );
 
     return record;
@@ -101,6 +136,7 @@ export class ButlerProfileRepository {
 
 interface ButlerProfileRow {
   id: ButlerProfile["id"];
+  user_id: string;
   display_name: string;
   provider_id: ButlerProfile["providerId"];
   workspace_path: string;
@@ -117,6 +153,7 @@ interface ButlerProfileRow {
 function mapButlerProfileRow(row: ButlerProfileRow): ButlerProfile {
   return {
     id: row.id,
+    userId: row.user_id,
     displayName: row.display_name,
     providerId: row.provider_id,
     workspacePath: row.workspace_path,

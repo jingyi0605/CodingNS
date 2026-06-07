@@ -14,11 +14,12 @@ export class WorkspaceRepository {
 
     this.db
       .prepare(
-        `INSERT INTO workspaces (id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO workspaces (id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
+        record.ownerUserId ?? null,
         record.name,
         record.path,
         record.repoRoot,
@@ -39,7 +40,7 @@ export class WorkspaceRepository {
   findById(id: string): Workspace | null {
     const row = this.db
       .prepare(
-        `SELECT id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
+        `SELECT id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
          FROM workspaces
          WHERE id = ?`
       )
@@ -51,7 +52,7 @@ export class WorkspaceRepository {
   findByPath(workspacePath: string): Workspace | null {
     const row = this.db
       .prepare(
-        `SELECT id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
+        `SELECT id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
          FROM workspaces
          WHERE path = ?`
       )
@@ -63,12 +64,25 @@ export class WorkspaceRepository {
   list(): Workspace[] {
     return this.db
       .prepare(
-        `SELECT id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
+        `SELECT id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
          FROM workspaces
          WHERE removed_at IS NULL
          ORDER BY sort_order ASC, updated_at DESC, created_at DESC`
       )
       .all()
+      .map((row) => mapWorkspaceRow(row as WorkspaceRow));
+  }
+
+  listByOwnerUserId(ownerUserId: string): Workspace[] {
+    return this.db
+      .prepare(
+        `SELECT id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
+         FROM workspaces
+         WHERE owner_user_id = ?
+           AND removed_at IS NULL
+         ORDER BY sort_order ASC, updated_at DESC, created_at DESC`
+      )
+      .all(ownerUserId)
       .map((row) => mapWorkspaceRow(row as WorkspaceRow));
   }
 
@@ -83,15 +97,17 @@ export class WorkspaceRepository {
     return (row?.max_sort_order ?? -1) + 1;
   }
 
-  reorderVisible(workspaceIds: readonly string[]): void {
+  reorderVisible(workspaceIds: readonly string[], ownerUserId?: string): void {
     const update = this.db.prepare(
       `UPDATE workspaces
        SET sort_order = ?
-       WHERE id = ? AND removed_at IS NULL`
+       WHERE id = ?
+         AND removed_at IS NULL
+         AND (? IS NULL OR owner_user_id = ?)`
     );
     const runInTransaction = this.db.transaction((orderedIds: readonly string[]) => {
       orderedIds.forEach((workspaceId, index) => {
-        update.run(index, workspaceId);
+        update.run(index, workspaceId, ownerUserId ?? null, ownerUserId ?? null);
       });
     });
 
@@ -102,6 +118,7 @@ export class WorkspaceRepository {
     id: string,
     input: {
       name?: string;
+      ownerUserId?: string | null;
       repoRoot?: string | null;
       updatedAt: string;
     }
@@ -110,12 +127,13 @@ export class WorkspaceRepository {
       .prepare(
         `UPDATE workspaces
          SET name = COALESCE(?, name),
+             owner_user_id = COALESCE(?, owner_user_id),
              repo_root = COALESCE(?, repo_root),
              updated_at = ?,
              removed_at = NULL
          WHERE id = ?`
       )
-      .run(input.name?.trim() || null, input.repoRoot ?? null, input.updatedAt, id);
+      .run(input.name?.trim() || null, input.ownerUserId ?? null, input.repoRoot ?? null, input.updatedAt, id);
 
     return this.findById(id);
   }
@@ -136,6 +154,7 @@ export class WorkspaceRepository {
 
 interface WorkspaceRow {
   id: string;
+  owner_user_id: string | null;
   name: string;
   path: string;
   repo_root: string | null;
@@ -149,6 +168,7 @@ interface WorkspaceRow {
 function mapWorkspaceRow(row: WorkspaceRow): Workspace {
   return {
     id: row.id,
+    ownerUserId: row.owner_user_id,
     name: row.name,
     path: row.path,
     repoRoot: row.repo_root,

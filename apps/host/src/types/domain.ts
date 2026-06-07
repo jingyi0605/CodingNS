@@ -39,6 +39,7 @@ export interface AuthUser {
   username: string;
   passwordHash: string;
   role: "admin";
+  status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
 }
@@ -117,6 +118,7 @@ export interface ProviderRuntimeStateRecord {
 
 export interface Workspace {
   id: string;
+  ownerUserId?: string | null;
   name: string;
   path: string;
   repoRoot: string | null;
@@ -663,6 +665,7 @@ export interface OpsTarget {
 
 export interface SessionBinding {
   sessionId: string;
+  userId: string | null;
   workspaceId: string;
   provider: ProviderId;
   providerSessionId: string;
@@ -1166,7 +1169,8 @@ export type VerificationType = "test" | "health" | "browser" | "visual" | "metri
 export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped" | "cancelled";
 
 export interface ButlerProfile {
-  id: "default";
+  id: string;
+  userId: string;
   displayName: string;
   providerId: ButlerProfileProviderId;
   workspacePath: string;
@@ -1255,6 +1259,7 @@ export interface ChannelDelivery {
 
 export interface ButlerControlSession {
   id: string;
+  userId: string;
   providerId: ButlerProfileProviderId;
   sessionId: string;
   purpose: ButlerControlSessionPurpose;
@@ -1348,6 +1353,7 @@ export interface ButlerControlEvent {
 
 export interface ButlerProject {
   id: string;
+  userId: string;
   workspaceId: string;
   name: string;
   repoRoot: string;
@@ -1366,6 +1372,7 @@ export interface ButlerProject {
 
 export interface ButlerSession {
   id: string;
+  userId: string;
   projectId: string;
   sessionId: string;
   role: ButlerSessionRole;

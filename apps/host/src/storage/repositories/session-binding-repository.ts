@@ -12,6 +12,7 @@ export class SessionBindingRepository {
     this.findBySessionIdStatement = this.db.prepare(
       `SELECT
          session_id,
+         user_id,
          workspace_id,
          provider,
          provider_session_id,
@@ -27,6 +28,7 @@ export class SessionBindingRepository {
     this.findByProviderSessionStatement = this.db.prepare(
       `SELECT
          session_id,
+         user_id,
          workspace_id,
          provider,
          provider_session_id,
@@ -43,6 +45,7 @@ export class SessionBindingRepository {
     this.findByRawStoreRefStatement = this.db.prepare(
       `SELECT
          session_id,
+         user_id,
          workspace_id,
          provider,
          provider_session_id,
@@ -59,6 +62,7 @@ export class SessionBindingRepository {
     this.upsertStatement = this.db.prepare(
       `INSERT INTO session_bindings (
          session_id,
+         user_id,
          workspace_id,
          provider,
          provider_session_id,
@@ -68,8 +72,9 @@ export class SessionBindingRepository {
          runtime_home_dir,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
+         user_id = COALESCE(excluded.user_id, session_bindings.user_id),
          workspace_id = excluded.workspace_id,
          provider = excluded.provider,
          provider_session_id = excluded.provider_session_id,
@@ -87,10 +92,63 @@ export class SessionBindingRepository {
     return row ? mapSessionBindingRow(row) : null;
   }
 
+  findBySessionIdForUser(sessionId: string, userId: string): SessionBinding | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           session_id,
+           user_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
+         FROM session_bindings
+         WHERE session_id = ?
+           AND user_id = ?`
+      )
+      .get(sessionId, userId) as SessionBindingRow | undefined;
+
+    return row ? mapSessionBindingRow(row) : null;
+  }
+
   findByProviderSession(provider: string, providerSessionId: string): SessionBinding | null {
     const row = this.findByProviderSessionStatement.get(provider, providerSessionId) as
       | SessionBindingRow
       | undefined;
+
+    return row ? mapSessionBindingRow(row) : null;
+  }
+
+  findByProviderSessionForUser(
+    provider: string,
+    providerSessionId: string,
+    userId: string
+  ): SessionBinding | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           session_id,
+           user_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
+         FROM session_bindings
+         WHERE provider = ?
+           AND provider_session_id = ?
+           AND user_id = ?`
+      )
+      .get(provider, providerSessionId, userId) as SessionBindingRow | undefined;
 
     return row ? mapSessionBindingRow(row) : null;
   }
@@ -101,10 +159,36 @@ export class SessionBindingRepository {
     return row ? mapSessionBindingRow(row) : null;
   }
 
+  findByRawStoreRefForUser(provider: string, rawStoreRef: string, userId: string): SessionBinding | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           session_id,
+           user_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           provider_config_mode,
+           provider_preset_id,
+           runtime_home_dir,
+           created_at,
+           updated_at
+         FROM session_bindings
+         WHERE provider = ?
+           AND raw_store_ref = ?
+           AND user_id = ?`
+      )
+      .get(provider, rawStoreRef, userId) as SessionBindingRow | undefined;
+
+    return row ? mapSessionBindingRow(row) : null;
+  }
+
   upsert(record: SessionBinding): void {
     this.upsertStatement
       .run(
         record.sessionId,
+        record.userId,
         record.workspaceId,
         record.provider,
         record.providerSessionId,
@@ -120,6 +204,7 @@ export class SessionBindingRepository {
 
 interface SessionBindingRow {
   session_id: string;
+  user_id: string | null;
   workspace_id: string;
   provider: SessionBinding["provider"];
   provider_session_id: string;
@@ -134,6 +219,7 @@ interface SessionBindingRow {
 function mapSessionBindingRow(row: SessionBindingRow): SessionBinding {
   return {
     sessionId: row.session_id,
+    userId: row.user_id,
     workspaceId: row.workspace_id,
     provider: row.provider,
     providerSessionId: row.provider_session_id,

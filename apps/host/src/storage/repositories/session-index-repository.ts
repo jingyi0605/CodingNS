@@ -90,8 +90,9 @@ export class SessionIndexRepository {
        LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
        LEFT JOIN session_states states
          ON states.session_id = indices.session_id
-        AND states.user_id = ?
+       AND states.user_id = ?
        WHERE indices.workspace_id = ?
+         AND bindings.user_id = ?
        ORDER BY COALESCE(indices.last_message_at, indices.updated_at) DESC, indices.updated_at DESC`
     );
     this.findBySessionIdStatement = this.db.prepare(
@@ -139,8 +140,9 @@ export class SessionIndexRepository {
        LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
        LEFT JOIN session_states states
          ON states.session_id = indices.session_id
-        AND states.user_id = ?
-       WHERE indices.session_id = ?`
+       AND states.user_id = ?
+       WHERE indices.session_id = ?
+         AND bindings.user_id = ?`
     );
     this.findIndexRecordBySessionIdStatement = this.db.prepare(
       `SELECT
@@ -193,12 +195,14 @@ export class SessionIndexRepository {
   }
 
   listByWorkspace(workspaceId: string, userId: string): SessionListItem[] {
-    return this.listByWorkspaceStatement.all(userId, workspaceId)
+    return this.listByWorkspaceStatement.all(userId, workspaceId, userId)
       .map((row) => mapSessionListItemRow(row as SessionListItemRow));
   }
 
   findBySessionId(sessionId: string, userId: string): SessionListItem | null {
-    const row = this.findBySessionIdStatement.get(userId, sessionId) as SessionListItemRow | undefined;
+    const row = this.findBySessionIdStatement.get(userId, sessionId, userId) as
+      | SessionListItemRow
+      | undefined;
 
     return row ? mapSessionListItemRow(row) : null;
   }

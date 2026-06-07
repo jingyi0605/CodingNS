@@ -20,9 +20,11 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 
   ensurePreSchemaCompatibility(db);
   db.exec(schema);
+  ensureAuthUserStatusSchema(db);
   ensureAuthTokenDeviceColumns(db);
   ensureAuthDeviceSchema(db);
   ensureAuthLoginAttemptSchema(db);
+  ensureWorkspaceOwnerSchema(db);
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
@@ -31,6 +33,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureOpenCliCatalogSchema(db);
   ensureOpenCliRuntimeProfileSchema(db);
   ensureSessionProviderSchema(db);
+  ensureSessionBindingUserSchema(db);
   ensureSessionBindingPresetSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionAttachmentSchema(db);
@@ -91,10 +94,32 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   // 旧库还没有这些列时，schema.sql 里的索引会先炸掉，所以必须先补齐。
   ensureAuthTokenDeviceColumns(db);
+  ensureWorkspaceRemovalColumn(db);
+  ensureWorkspaceSortOrderColumn(db);
+  ensureWorkspaceOwnerColumn(db);
+  ensureSessionBindingUserSchema(db);
+  ensureButlerOwnershipPreSchemaCompatibility(db);
   ensureUserTeableFormBindingsPreSchemaCompatibility(db);
   ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
   ensureAuthTokenCallerKindSchema(db);
+}
+
+function ensureAuthUserStatusSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "auth_users")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(auth_users)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("status")) {
+    db.exec("ALTER TABLE auth_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled'))");
+  }
+
+  db.exec("UPDATE auth_users SET status = 'active' WHERE status IS NULL OR TRIM(status) = ''");
 }
 
 function ensureAuthTokenDeviceColumns(db: BetterSqliteDatabase): void {
@@ -249,6 +274,16 @@ function tableExists(db: BetterSqliteDatabase, tableName: string): boolean {
   return row?.name === tableName;
 }
 
+function tableHasColumn(db: BetterSqliteDatabase, tableName: string, columnName: string): boolean {
+  if (!tableExists(db, tableName)) {
+    return false;
+  }
+
+  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).some(
+    (column) => column.name === columnName
+  );
+}
+
 function ensureAuthDeviceSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS auth_devices (
@@ -311,6 +346,280 @@ function ensureAuthDeviceSchema(db: BetterSqliteDatabase): void {
 
   if (!authDeviceColumns.some((column) => column.name === "user_agent")) {
     db.exec("ALTER TABLE auth_devices ADD COLUMN user_agent TEXT");
+  }
+}
+
+function readLegacyDefaultUserId(db: BetterSqliteDatabase): string | null {
+  if (!tableExists(db, "auth_users")) {
+    return null;
+  }
+
+  const orderBy = tableHasColumn(db, "auth_users", "created_at")
+    ? "created_at ASC, id ASC"
+    : "id ASC";
+  const row = db
+    .prepare(
+      `SELECT id
+       FROM auth_users
+       ORDER BY ${orderBy}
+       LIMIT 1`
+    )
+    .get() as { id?: string | null } | undefined;
+
+  return row?.id?.trim() || null;
+}
+
+function ensureButlerOwnershipPreSchemaCompatibility(db: BetterSqliteDatabase): void {
+  const legacyUserId = readLegacyDefaultUserId(db);
+
+  ensureButlerProfileOwnershipSchema(db, legacyUserId);
+  ensureButlerProjectOwnershipSchema(db, legacyUserId);
+  ensureButlerSessionOwnershipSchema(db, legacyUserId);
+  ensureButlerControlSessionOwnershipSchema(db, legacyUserId);
+}
+
+function ensureButlerProfileOwnershipSchema(
+  db: BetterSqliteDatabase,
+  legacyUserId: string | null
+): void {
+  if (!tableExists(db, "butler_profiles")) {
+    return;
+  }
+
+  if (!tableHasColumn(db, "butler_profiles", "user_id")) {
+    db.exec("ALTER TABLE butler_profiles ADD COLUMN user_id TEXT");
+  }
+
+  if (legacyUserId) {
+    db.prepare(`
+      UPDATE butler_profiles
+      SET user_id = ?
+      WHERE user_id IS NULL OR TRIM(user_id) = ''
+    `).run(legacyUserId);
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_butler_profiles_user_id ON butler_profiles(user_id)");
+
+  const requiredColumns = [
+    "display_name",
+    "provider_id",
+    "workspace_path",
+    "agents_mode",
+    "agents_content",
+    "persona_json",
+    "focus_json",
+    "setup_completed",
+    "initialized_at",
+    "updated_at"
+  ];
+
+  if (requiredColumns.some((columnName) => !tableHasColumn(db, "butler_profiles", columnName))) {
+    return;
+  }
+
+  const needsRebuild =
+    readTableSql(db, "butler_profiles").includes("CHECK (id = 'default')");
+
+  if (!needsRebuild) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    db.exec(`
+      CREATE TABLE butler_profiles_next (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+        workspace_path TEXT NOT NULL,
+        agents_mode TEXT NOT NULL CHECK (agents_mode IN ('inline', 'file')),
+        agents_file_path TEXT,
+        agents_content TEXT NOT NULL,
+        persona_json TEXT NOT NULL,
+        focus_json TEXT NOT NULL,
+        setup_completed INTEGER NOT NULL DEFAULT 1 CHECK (setup_completed IN (0, 1)),
+        initialized_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+      );
+    `);
+
+    if (legacyUserId) {
+      db.prepare(`
+        INSERT OR IGNORE INTO butler_profiles_next (
+          id,
+          user_id,
+          display_name,
+          provider_id,
+          workspace_path,
+          agents_mode,
+          agents_file_path,
+          agents_content,
+          persona_json,
+          focus_json,
+          setup_completed,
+          initialized_at,
+          updated_at
+        )
+        SELECT
+          CASE
+            WHEN id = 'default' THEN ?
+            ELSE id
+          END,
+          COALESCE(NULLIF(TRIM(user_id), ''), ?),
+          display_name,
+          provider_id,
+          workspace_path,
+          agents_mode,
+          agents_file_path,
+          agents_content,
+          persona_json,
+          focus_json,
+          setup_completed,
+          initialized_at,
+          updated_at
+        FROM butler_profiles
+      `).run(`default:${legacyUserId}`, legacyUserId);
+    }
+
+    db.exec("DROP TABLE butler_profiles");
+    db.exec("ALTER TABLE butler_profiles_next RENAME TO butler_profiles");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_butler_profiles_user_id ON butler_profiles(user_id)");
+}
+
+function ensureButlerProjectOwnershipSchema(
+  db: BetterSqliteDatabase,
+  legacyUserId: string | null
+): void {
+  if (!tableExists(db, "butler_projects")) {
+    return;
+  }
+
+  if (!tableHasColumn(db, "butler_projects", "user_id")) {
+    db.exec("ALTER TABLE butler_projects ADD COLUMN user_id TEXT");
+  }
+
+  if (legacyUserId) {
+    db.prepare(`
+      UPDATE butler_projects
+      SET user_id = ?
+      WHERE user_id IS NULL OR TRIM(user_id) = ''
+    `).run(legacyUserId);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_butler_projects_user_id
+      ON butler_projects(user_id, lifecycle_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_butler_projects_workspace_id
+      ON butler_projects(user_id, workspace_id);
+  `);
+}
+
+function ensureButlerSessionOwnershipSchema(
+  db: BetterSqliteDatabase,
+  legacyUserId: string | null
+): void {
+  if (!tableExists(db, "butler_sessions")) {
+    return;
+  }
+
+  if (!tableHasColumn(db, "butler_sessions", "user_id")) {
+    db.exec("ALTER TABLE butler_sessions ADD COLUMN user_id TEXT");
+  }
+
+  if (legacyUserId) {
+    db.prepare(`
+      UPDATE butler_sessions
+      SET user_id = COALESCE(
+        (
+          SELECT projects.user_id
+          FROM butler_projects AS projects
+          WHERE projects.id = butler_sessions.project_id
+        ),
+        ?
+      )
+      WHERE user_id IS NULL OR TRIM(user_id) = ''
+    `).run(legacyUserId);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_butler_sessions_user_id
+      ON butler_sessions(user_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_butler_sessions_project_id
+      ON butler_sessions(user_id, project_id, updated_at DESC);
+  `);
+}
+
+function ensureButlerControlSessionOwnershipSchema(
+  db: BetterSqliteDatabase,
+  legacyUserId: string | null
+): void {
+  if (!tableExists(db, "butler_control_sessions")) {
+    return;
+  }
+
+  if (!tableHasColumn(db, "butler_control_sessions", "user_id")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN user_id TEXT");
+  }
+
+  if (legacyUserId) {
+    db.prepare(`
+      UPDATE butler_control_sessions
+      SET user_id = COALESCE(
+        (
+          SELECT bindings.user_id
+          FROM session_bindings AS bindings
+          WHERE bindings.session_id = butler_control_sessions.session_id
+        ),
+        ?
+      )
+      WHERE user_id IS NULL OR TRIM(user_id) = ''
+    `).run(legacyUserId);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_butler_control_sessions_user_provider
+      ON butler_control_sessions(user_id, provider_id, updated_at DESC, created_at DESC);
+  `);
+}
+
+function ensureWorkspaceOwnerSchema(db: BetterSqliteDatabase): void {
+  ensureWorkspaceOwnerColumn(db);
+
+  const legacyOwnerUserId = readLegacyDefaultUserId(db);
+  if (legacyOwnerUserId) {
+    db.prepare(
+      `UPDATE workspaces
+       SET owner_user_id = ?
+       WHERE owner_user_id IS NULL OR TRIM(owner_user_id) = ''`
+    ).run(legacyOwnerUserId);
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_workspaces_owner_user_id ON workspaces(owner_user_id, removed_at, sort_order)");
+}
+
+function ensureWorkspaceOwnerColumn(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "workspaces")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(workspaces)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("owner_user_id")) {
+    db.exec("ALTER TABLE workspaces ADD COLUMN owner_user_id TEXT");
   }
 }
 
@@ -623,6 +932,10 @@ function ensureAuthLoginAttemptSchema(db: BetterSqliteDatabase): void {
 }
 
 function ensureWorkspaceRemovalColumn(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "workspaces")) {
+    return;
+  }
+
   const columns = db
     .prepare("PRAGMA table_info(workspaces)")
     .all() as Array<{ name: string }>;
@@ -635,6 +948,10 @@ function ensureWorkspaceRemovalColumn(db: BetterSqliteDatabase): void {
 }
 
 function ensureWorkspaceSortOrderColumn(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "workspaces")) {
+    return;
+  }
+
   const columns = db
     .prepare("PRAGMA table_info(workspaces)")
     .all() as Array<{ name: string }>;
@@ -778,6 +1095,8 @@ function ensureButlerProfileSchema(db: BetterSqliteDatabase): void {
   if (!columnNames.has("setup_completed")) {
     db.exec("ALTER TABLE butler_profiles ADD COLUMN setup_completed INTEGER NOT NULL DEFAULT 0 CHECK (setup_completed IN (0, 1))");
   }
+
+  ensureButlerOwnershipPreSchemaCompatibility(db);
 }
 
 function ensureUserPreferenceProfileSchema(db: BetterSqliteDatabase): void {
@@ -2065,6 +2384,44 @@ function ensureSessionBindingPresetSchema(db: BetterSqliteDatabase): void {
   if (!columnNames.has("runtime_home_dir")) {
     db.exec("ALTER TABLE session_bindings ADD COLUMN runtime_home_dir TEXT");
   }
+}
+
+function ensureSessionBindingUserSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "session_bindings")) {
+    return;
+  }
+
+  const columns = db
+    .prepare("PRAGMA table_info(session_bindings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("user_id")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN user_id TEXT");
+  }
+
+  if (tableHasColumn(db, "workspaces", "owner_user_id")) {
+    db.exec(`
+      UPDATE session_bindings
+      SET user_id = (
+        SELECT owner_user_id
+        FROM workspaces
+        WHERE workspaces.id = session_bindings.workspace_id
+      )
+      WHERE user_id IS NULL OR TRIM(user_id) = ''
+    `);
+  }
+
+  const legacyOwnerUserId = readLegacyDefaultUserId(db);
+  if (legacyOwnerUserId) {
+    db.prepare(
+      `UPDATE session_bindings
+       SET user_id = ?
+       WHERE user_id IS NULL OR TRIM(user_id) = ''`
+    ).run(legacyOwnerUserId);
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_session_bindings_user_id ON session_bindings(user_id, workspace_id)");
 }
 
 function ensureSessionStateSchema(db: BetterSqliteDatabase): void {

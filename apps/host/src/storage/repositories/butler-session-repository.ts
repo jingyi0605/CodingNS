@@ -10,6 +10,7 @@ export class ButlerSessionRepository {
       .prepare(
         `INSERT INTO butler_sessions (
            id,
+           user_id,
            project_id,
            session_id,
            role,
@@ -19,10 +20,11 @@ export class ButlerSessionRepository {
            last_checkpoint_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
+        record.userId,
         record.projectId,
         record.sessionId,
         record.role,
@@ -37,11 +39,15 @@ export class ButlerSessionRepository {
     return record;
   }
 
-  listByProject(projectId: string): ButlerSession[] {
+  listByProject(projectId: string, userId?: string): ButlerSession[] {
+    const userClause = userId?.trim() ? "AND user_id = ?" : "";
+    const values = userId?.trim() ? [projectId, userId] : [projectId];
+
     return this.db
       .prepare(
         `SELECT
            id,
+           user_id,
            project_id,
            session_id,
            role,
@@ -53,9 +59,10 @@ export class ButlerSessionRepository {
            updated_at
          FROM butler_sessions
          WHERE project_id = ?
+           ${userClause}
          ORDER BY updated_at DESC, created_at DESC`
       )
-      .all(projectId)
+      .all(...values)
       .map((row) => mapButlerSessionRow(row as ButlerSessionRow));
   }
 
@@ -64,6 +71,7 @@ export class ButlerSessionRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            project_id,
            session_id,
            role,
@@ -86,6 +94,7 @@ export class ButlerSessionRepository {
       .prepare(
         `SELECT
            id,
+           user_id,
            project_id,
            session_id,
            role,
@@ -103,6 +112,30 @@ export class ButlerSessionRepository {
     return row ? mapButlerSessionRow(row) : null;
   }
 
+  findBySessionIdForUser(sessionId: string, userId: string): ButlerSession | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           id,
+           user_id,
+           project_id,
+           session_id,
+           role,
+           ownership_mode,
+           status,
+           last_summary,
+           last_checkpoint_at,
+           created_at,
+           updated_at
+         FROM butler_sessions
+         WHERE session_id = ?
+           AND user_id = ?`
+      )
+      .get(sessionId, userId) as ButlerSessionRow | undefined;
+
+    return row ? mapButlerSessionRow(row) : null;
+  }
+
   update(record: ButlerSession): ButlerSession | null {
     this.db
       .prepare(
@@ -113,7 +146,8 @@ export class ButlerSessionRepository {
              last_summary = ?,
              last_checkpoint_at = ?,
              updated_at = ?
-         WHERE id = ?`
+         WHERE id = ?
+           AND user_id = ?`
       )
       .run(
         record.role,
@@ -122,7 +156,8 @@ export class ButlerSessionRepository {
         record.lastSummary,
         record.lastCheckpointAt,
         record.updatedAt,
-        record.id
+        record.id,
+        record.userId
       );
 
     return this.findById(record.id);
@@ -131,6 +166,7 @@ export class ButlerSessionRepository {
 
 interface ButlerSessionRow {
   id: string;
+  user_id: string;
   project_id: string;
   session_id: string;
   role: ButlerSession["role"];
@@ -145,6 +181,7 @@ interface ButlerSessionRow {
 function mapButlerSessionRow(row: ButlerSessionRow): ButlerSession {
   return {
     id: row.id,
+    userId: row.user_id,
     projectId: row.project_id,
     sessionId: row.session_id,
     role: row.role,
