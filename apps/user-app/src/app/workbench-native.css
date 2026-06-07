@@ -3962,6 +3962,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   --workbench-sidebar-icon-inset: 18px;
   --workbench-sidebar-item-padding-end: 12px;
   --workbench-sidebar-icon-slot-size: 16px;
+  --workbench-sidebar-icon-center-x: calc(
+    var(--workbench-sidebar-icon-inset) + (var(--workbench-sidebar-icon-slot-size) / 2)
+  );
   padding: 0px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.12)),
@@ -4148,7 +4151,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 }
 
 .workbench-nav-segment-button {
-  gap: 7px;
+  display: grid;
+  grid-template-columns: var(--workbench-sidebar-icon-slot-size) minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  text-align: left;
+  column-gap: 7px;
   min-height: 34px;
   padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 11px;
@@ -4159,13 +4167,22 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 }
 
 .workbench-nav-segment-button[data-layout="paired"] {
+  display: flex;
   padding: 0 10px;
 }
 
 .workbench-nav-segment-button svg {
   width: 16px;
   height: 16px;
+  justify-self: center;
   stroke-width: 1.85;
+}
+
+.workbench-nav-code-entries > .workbench-nav-segment-button > span {
+  justify-self: start;
+  width: auto;
+  min-width: 0;
+  text-align: left;
 }
 
 .workbench-nav-segment-button.active,
@@ -4845,7 +4862,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 }
 
 .workbench-nav-footer.minimal {
-  padding: 6px 0 10px;
+  padding: 6px 6px 10px;
   border-top: none;
   background: transparent;
 }
@@ -4862,13 +4879,23 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 }
 
 .workbench-nav-settings-button {
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: var(--workbench-sidebar-icon-slot-size) minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  justify-content: stretch;
+  column-gap: 8px;
   min-height: 32px;
   padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 9px;
   border: none;
   background: transparent;
   color: rgba(60, 60, 67, 0.86);
+}
+
+.workbench-nav-settings-button > svg {
+  width: var(--workbench-sidebar-icon-slot-size);
+  height: var(--workbench-sidebar-icon-slot-size);
+  justify-self: center;
 }
 
 .workbench-nav-settings-host-badge {
@@ -7885,7 +7912,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  padding: 8px 8px 10px;
+  padding: 8px 6px 10px;
   gap: 8px;
   box-sizing: border-box;
 }
@@ -11723,6 +11750,69 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   gap: 8px;
 }
 
+.affairs-favorites-panel .affairs-sidebar-item {
+  cursor: grab;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item-actions {
+  padding-right: 8px;
+  margin-left: auto;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item:active {
+  cursor: grabbing;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item[data-dragging="true"] {
+  opacity: 0.55;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item[data-drop-target="true"] {
+  position: relative;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item[data-drop-target="true"]::before,
+.affairs-favorites-panel .affairs-sidebar-item[data-drop-target="true"]::after {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  content: "";
+}
+
+.affairs-favorites-panel .affairs-sidebar-item[data-drop-target="true"][data-drop-edge="before"]::before {
+  top: -2px;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item[data-drop-target="true"][data-drop-edge="after"]::after {
+  bottom: -2px;
+}
+
+.affairs-favorite-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--text-tertiary);
+}
+
+.affairs-favorite-type-icon[data-kind="folder"] {
+  color: color-mix(in srgb, var(--warning, #f59e0b) 72%, var(--text-secondary) 28%);
+}
+
+.affairs-favorite-type-icon[data-kind="tag"] {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-secondary) 28%);
+}
+
+.affairs-favorite-type-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
 .affairs-favorite-toggle {
   border: 0;
   background: transparent;
@@ -11771,9 +11861,14 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   letter-spacing: 0.01em;
 }
 
+.affairs-favorites-panel > .affairs-sidebar-group-header,
+.affairs-tag-tree-panel > .affairs-sidebar-group-header {
+  padding-left: calc(var(--workbench-sidebar-icon-inset) - 6px);
+  padding-right: 8px;
+}
+
 .affairs-tag-tree-panel .affairs-sidebar-group-header {
   align-items: center;
-  padding-right: 0;
   line-height: 18px;
 }
 
@@ -11806,16 +11901,9 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-tag-tree-panel .affairs-sidebar-group-header-actions {
   align-items: center;
   gap: 6px;
-}
-
-.affairs-tag-tree-panel .affairs-sidebar-group-header-actions > span:first-child {
-  display: inline-flex;
-  align-items: center;
   justify-content: flex-end;
-  height: 18px;
-  line-height: 18px;
   min-width: 22px;
-  text-align: right;
+  margin-left: auto;
 }
 
 .affairs-tag-tree-search {
@@ -11943,14 +12031,41 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   border-radius: 10px;
 }
 
+.affairs-favorites-panel .affairs-sidebar-item-button {
+  padding-left: calc(var(--workbench-sidebar-icon-inset) - 6px);
+  padding-right: 8px;
+}
+
+.affairs-tag-tree-row .affairs-sidebar-item-button {
+  padding-left: 0;
+  padding-right: 8px;
+}
+
 .affairs-sidebar-group-plain .affairs-sidebar-item-row {
   gap: 6px;
+}
+
+.affairs-favorites-panel .affairs-sidebar-item-row {
+  display: grid;
+  grid-template-columns: var(--workbench-sidebar-icon-slot-size) minmax(0, 1fr);
+  align-items: center;
+  justify-content: stretch;
+  column-gap: 6px;
+  width: 100%;
 }
 
 .affairs-sidebar-group-plain .affairs-sidebar-item-title {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.affairs-tag-tree-list > .affairs-tag-tree-node > .affairs-sidebar-item .affairs-sidebar-item-title {
+  font-weight: 900;
+}
+
+.affairs-tag-tree-children .affairs-sidebar-item-title {
+  font-weight: 400;
 }
 
 .affairs-sidebar-group-plain .affairs-sidebar-item-badge {
@@ -12070,9 +12185,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-tree-row {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: var(--workbench-sidebar-icon-slot-size) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 2px;
+  padding-left: calc(var(--workbench-sidebar-icon-inset) - 6px);
 }
 
 .affairs-tag-tree-row > .affairs-favorite-toggle {
@@ -12080,9 +12197,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-tree-toggle {
-  width: 16px;
-  min-width: 16px;
+  width: var(--workbench-sidebar-icon-slot-size);
+  min-width: var(--workbench-sidebar-icon-slot-size);
+  height: 24px;
   border: 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-tertiary);
   display: inline-flex;
@@ -12090,6 +12209,19 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   justify-content: center;
   cursor: pointer;
   padding: 0;
+  line-height: 1;
+}
+
+.affairs-tag-tree-toggle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: 0 0 14px;
+}
+
+.affairs-tag-tree-toggle:hover {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-secondary) 28%);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .affairs-tag-tree-toggle.placeholder {
@@ -12097,7 +12229,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-tree-children {
-  padding-left: 12px;
+  padding-left: 0;
 }
 
 [data-theme="dark"] .affairs-sidebar-group-plain .affairs-sidebar-item.active,
