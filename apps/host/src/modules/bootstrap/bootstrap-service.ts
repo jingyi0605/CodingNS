@@ -49,6 +49,7 @@ export class BootstrapService {
         username: normalizedInput.username,
         passwordHash: hashPassword(normalizedInput.password),
         role: "admin",
+        status: "active",
         createdAt: timestamp,
         updatedAt: timestamp
       });

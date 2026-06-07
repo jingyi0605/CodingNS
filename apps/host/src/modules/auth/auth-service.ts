@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
-import { hashToken, verifyPassword } from "../../shared/utils/hash.js";
+import { hashPassword, hashToken, verifyPassword } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
 import { addSeconds, nowIso } from "../../shared/utils/time.js";
 import { createOpaqueToken, isButlerRuntimeAccessToken } from "../../shared/utils/tokens.js";
@@ -12,7 +12,8 @@ import type {
   AuthDeviceRecord,
   AuthDeviceSessionRecord,
   AuthLoginAttemptRecord,
-  AuthLoginEventRecord
+  AuthLoginEventRecord,
+  AuthUser
 } from "../../types/domain.js";
 import type { AuthDeviceRepository } from "../../storage/repositories/auth-device-repository.js";
 import type { AuthDeviceSessionRepository } from "../../storage/repositories/auth-device-session-repository.js";
@@ -73,6 +74,15 @@ export interface UpdateCurrentDevicePrimaryInput {
   primary: boolean;
 }
 
+export interface CreateUserInput {
+  username: string;
+  password: string;
+}
+
+export interface UpdateUserStatusInput {
+  status: "active" | "disabled";
+}
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
@@ -125,6 +135,15 @@ export interface LogoutOtherDevicesResult {
 export interface LogoutDeviceResult {
   success: true;
   revokedSessionCount: number;
+}
+
+export interface AuthUserView {
+  userId: string;
+  username: string;
+  role: "admin";
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface CaptchaChallengePayload {
@@ -194,7 +213,7 @@ export class AuthService {
 
     const user = this.authUserRepository.findByUsername(username);
 
-    if (!user || !verifyPassword(input.password, user.passwordHash)) {
+    if (!user || user.status !== "active" || !verifyPassword(input.password, user.passwordHash)) {
       const nextAttempt = this.recordFailedLogin(username, attempt, now);
 
       if (nextAttempt.challenge) {
@@ -267,6 +286,14 @@ export class AuthService {
         statusCode: 401,
         errorCode: "UNAUTHORIZED",
         detail: "当前用户不存在"
+      });
+    }
+
+    if (user.status !== "active") {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "USER_DISABLED",
+        detail: "当前用户已停用"
       });
     }
 
@@ -480,6 +507,92 @@ export class AuthService {
     };
   }
 
+  listUsers(auth: AuthContext): AuthUserView[] {
+    this.ensureAdmin(auth);
+    return this.authUserRepository.list().map(toAuthUserView);
+  }
+
+  createUser(auth: AuthContext, input: CreateUserInput): AuthUserView {
+    this.ensureAdmin(auth);
+    const normalized = validateCreateUserInput(input);
+
+    if (this.authUserRepository.findByUsername(normalized.username)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "USERNAME_EXISTS",
+        detail: "用户名已经存在",
+        field: "username"
+      });
+    }
+
+    const timestamp = nowIso();
+    const record: AuthUser = {
+      id: createId(),
+      username: normalized.username,
+      passwordHash: hashPassword(normalized.password),
+      role: "admin",
+      status: "active",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.authUserRepository.create(record);
+    return toAuthUserView(record);
+  }
+
+  updateUserStatus(auth: AuthContext, userId: string, input: UpdateUserStatusInput): AuthUserView {
+    this.ensureAdmin(auth);
+    const normalizedUserId = userId.trim();
+
+    if (!normalizedUserId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "userId 不能为空",
+        field: "userId"
+      });
+    }
+
+    if (input.status !== "active" && input.status !== "disabled") {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "用户状态非法",
+        field: "status"
+      });
+    }
+
+    const current = this.authUserRepository.findById(normalizedUserId);
+    if (!current) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "USER_NOT_FOUND",
+        detail: "用户不存在",
+        field: "userId"
+      });
+    }
+
+    const activeUsers = this.authUserRepository.list().filter((user) => user.status === "active");
+    if (current.status === "active" && input.status === "disabled" && activeUsers.length <= 1) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "LAST_ACTIVE_USER_NOT_ALLOWED",
+        detail: "不能停用最后一个可用管理员"
+      });
+    }
+
+    const updatedAt = nowIso();
+    const updated = this.authUserRepository.updateStatus(current.id, input.status, updatedAt) ?? current;
+
+    if (input.status === "disabled") {
+      this.authTokenRepository.revokeAllByUser(current.id, updatedAt);
+      const activeSessions = this.authDeviceSessionRepository.listActiveByUser(current.id);
+      this.authDeviceSessionRepository.revokeByIds(activeSessions.map((session) => session.id), updatedAt);
+    }
+
+    return toAuthUserView(updated);
+  }
+
   authenticateAccessToken(accessToken: string): AuthContext {
     const accessRecord = this.authTokenRepository.findByHash(hashToken(accessToken), "access");
 
@@ -506,6 +619,14 @@ export class AuthService {
         statusCode: 401,
         errorCode: "UNAUTHORIZED",
         detail: "当前用户不存在"
+      });
+    }
+
+    if (user.status !== "active") {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "USER_DISABLED",
+        detail: "当前用户已停用"
       });
     }
 
@@ -551,6 +672,16 @@ export class AuthService {
     }
 
     return currentDevice;
+  }
+
+  private ensureAdmin(auth: AuthContext): void {
+    if (auth.user.role !== "admin") {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "ADMIN_REQUIRED",
+        detail: "当前操作需要管理员权限"
+      });
+    }
   }
 
   ensureInitialized(): void {
@@ -995,6 +1126,44 @@ function normalizeAuthCapabilityProfile(value: string | null): AuthCapabilityPro
   }
 
   return null;
+}
+
+function validateCreateUserInput(input: CreateUserInput): CreateUserInput {
+  const normalized = {
+    username: input.username?.trim() ?? "",
+    password: input.password ?? ""
+  };
+
+  if (normalized.username.length < 3 || normalized.username.length > 64) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "用户名长度必须在 3 到 64 个字符之间",
+      field: "username"
+    });
+  }
+
+  if (normalized.password.length < 8) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "密码长度至少为 8 位",
+      field: "password"
+    });
+  }
+
+  return normalized;
+}
+
+function toAuthUserView(user: AuthUser): AuthUserView {
+  return {
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    status: user.status,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
 }
 
 function toAuthDeviceView(device: AuthDeviceRecord, isCurrent: boolean): AuthDeviceView {

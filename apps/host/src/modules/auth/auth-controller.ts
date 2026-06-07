@@ -4,9 +4,11 @@ import type { AuthClientType } from "../../types/domain.js";
 import type {
   AuthContext,
   AuthService,
+  CreateUserInput,
   LoginInput,
   LogoutInput,
   RefreshInput,
+  UpdateUserStatusInput,
   UpdateCurrentDevicePrimaryInput
 } from "./auth-service.js";
 import { resolveAuthDeviceDisplayName } from "./auth-device-display-name.js";
@@ -67,6 +69,32 @@ export class AuthController {
   ): Promise<void> => {
     reply.send(
       this.authService.logoutDevice(requireAuthContext(request), request.params.deviceId)
+    );
+  };
+
+  readonly listUsers = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    reply.send({
+      items: this.authService.listUsers(requireAuthContext(request))
+    });
+  };
+
+  readonly createUser = async (
+    request: FastifyRequest<{ Body: CreateUserInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send(this.authService.createUser(requireAuthContext(request), request.body));
+  };
+
+  readonly updateUserStatus = async (
+    request: FastifyRequest<{ Params: { userId: string }; Body: UpdateUserStatusInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.authService.updateUserStatus(
+        requireAuthContext(request),
+        request.params.userId,
+        request.body
+      )
     );
   };
 }
