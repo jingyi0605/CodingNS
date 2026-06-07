@@ -402,6 +402,11 @@ export function LoginPage() {
   function handleUsernameChange(value: string): void {
     setUsername(value);
 
+    if (rememberedLogin?.username && value.trim() !== rememberedLogin.username) {
+      setPassword("");
+      setRememberPassword(false);
+    }
+
     if (!captchaChallenge) {
       return;
     }
