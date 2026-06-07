@@ -212,6 +212,286 @@ describe("sqlite 启动引导", () => {
     expect(deviceSessionIndex?.name).toBe("idx_auth_tokens_device_session_id");
   });
 
+  it("可以给旧工作区表补 owner_user_id 并完成启动", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-workspace-owner-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        repo_root TEXT,
+        favorite INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE session_bindings (
+        session_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        title TEXT,
+        cwd TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO auth_users (id) VALUES ('user-1');
+      INSERT INTO workspaces (
+        id,
+        name,
+        path,
+        repo_root,
+        favorite,
+        created_at,
+        updated_at
+      ) VALUES (
+        'workspace-1',
+        'Legacy Workspace',
+        '/tmp/legacy-workspace',
+        '/tmp/legacy-workspace',
+        0,
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO session_bindings (
+        session_id,
+        workspace_id,
+        provider,
+        provider_session_id,
+        created_at,
+        updated_at
+      ) VALUES (
+        'session-1',
+        'workspace-1',
+        'codex',
+        'provider-session-1',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const workspaceColumns = client.db
+      .prepare("PRAGMA table_info(workspaces)")
+      .all() as Array<{ name: string }>;
+    const sessionBindingColumns = client.db
+      .prepare("PRAGMA table_info(session_bindings)")
+      .all() as Array<{ name: string }>;
+    const workspaceRow = client.db
+      .prepare("SELECT owner_user_id, removed_at, sort_order FROM workspaces WHERE id = ?")
+      .get("workspace-1") as { owner_user_id: string; removed_at: string | null; sort_order: number };
+    const sessionBindingRow = client.db
+      .prepare("SELECT user_id FROM session_bindings WHERE session_id = ?")
+      .get("session-1") as { user_id: string };
+    const workspaceOwnerIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_workspaces_owner_user_id'"
+      )
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(workspaceColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["owner_user_id", "removed_at", "sort_order"])
+    );
+    expect(sessionBindingColumns.map((column) => column.name)).toContain("user_id");
+    expect(workspaceRow).toEqual({
+      owner_user_id: "user-1",
+      removed_at: null,
+      sort_order: 0
+    });
+    expect(sessionBindingRow.user_id).toBe("user-1");
+    expect(workspaceOwnerIndex?.name).toBe("idx_workspaces_owner_user_id");
+  });
+
+  it("可以把旧 Butler 全局表挂到历史默认用户并完成启动", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-owner-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY,
+        created_at TEXT
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        repo_root TEXT,
+        favorite INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        removed_at TEXT
+      );
+
+      CREATE TABLE session_bindings (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        raw_store_ref TEXT NOT NULL,
+        provider_config_mode TEXT NOT NULL DEFAULT 'global-default',
+        provider_preset_id TEXT,
+        runtime_home_dir TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE butler_profiles (
+        id TEXT PRIMARY KEY CHECK (id = 'default'),
+        display_name TEXT NOT NULL,
+        provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+        workspace_path TEXT NOT NULL,
+        agents_mode TEXT NOT NULL CHECK (agents_mode IN ('inline', 'file')),
+        agents_file_path TEXT,
+        agents_content TEXT NOT NULL,
+        persona_json TEXT NOT NULL,
+        focus_json TEXT NOT NULL,
+        setup_completed INTEGER NOT NULL DEFAULT 1 CHECK (setup_completed IN (0, 1)),
+        initialized_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE butler_projects (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        default_provider TEXT,
+        instruction_profile_id TEXT,
+        approval_mode TEXT NOT NULL CHECK (approval_mode IN ('readonly', 'controlled', 'auto')),
+        lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'paused', 'archived')),
+        risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+        config_json TEXT NOT NULL,
+        last_patrol_at TEXT,
+        last_verification_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+      );
+
+      CREATE TABLE butler_sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        session_id TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL CHECK (role IN ('patrol', 'execution', 'verification', 'adhoc')),
+        ownership_mode TEXT NOT NULL CHECK (ownership_mode IN ('managed', 'observed')),
+        status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'blocked', 'failed', 'closed')),
+        last_summary TEXT,
+        last_checkpoint_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE butler_control_sessions (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+        session_id TEXT NOT NULL UNIQUE,
+        purpose TEXT NOT NULL DEFAULT 'chat' CHECK (purpose IN ('chat', 'todo_analysis')),
+        title TEXT,
+        source_item_id TEXT,
+        model TEXT,
+        reasoning_level TEXT,
+        permission_mode TEXT,
+        status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'failed', 'closed')),
+        last_context_version TEXT,
+        last_summary TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO auth_users (id, created_at) VALUES ('user-1', '2026-01-01T00:00:00.000Z');
+      INSERT INTO workspaces (
+        id, owner_user_id, name, path, repo_root, favorite, sort_order, created_at, updated_at, removed_at
+      ) VALUES (
+        'workspace-1', 'user-1', 'Legacy Workspace', '/tmp/legacy-butler-workspace', '/tmp/legacy-butler-workspace',
+        0, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
+      );
+      INSERT INTO session_bindings (
+        session_id, user_id, workspace_id, provider, provider_session_id, raw_store_ref,
+        provider_config_mode, provider_preset_id, runtime_home_dir, created_at, updated_at
+      ) VALUES (
+        'session-1', 'user-1', 'workspace-1', 'codex', 'provider-session-1', 'codex://session-1',
+        'global-default', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO butler_profiles (
+        id, display_name, provider_id, workspace_path, agents_mode, agents_file_path, agents_content,
+        persona_json, focus_json, setup_completed, initialized_at, updated_at
+      ) VALUES (
+        'default', '代码助手', 'codex', '/tmp/butler-workspace', 'inline', NULL, '',
+        '{}', '{"projectIds":[],"riskPreference":"balanced","reportPriority":[],"summaryDebounceSeconds":300}',
+        1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO butler_projects (
+        id, workspace_id, name, repo_root, default_provider, instruction_profile_id, approval_mode,
+        lifecycle_status, risk_level, config_json, last_patrol_at, last_verification_at, created_at, updated_at, archived_at
+      ) VALUES (
+        'project-1', 'workspace-1', 'Legacy Project', '/tmp/legacy-butler-workspace', NULL, NULL, 'controlled',
+        'active', 'low', '{}', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
+      );
+      INSERT INTO butler_sessions (
+        id, project_id, session_id, role, ownership_mode, status, last_summary, last_checkpoint_at, created_at, updated_at
+      ) VALUES (
+        'butler-session-1', 'project-1', 'session-1', 'adhoc', 'managed', 'running', NULL, NULL,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO butler_control_sessions (
+        id, provider_id, session_id, purpose, title, source_item_id, model, reasoning_level, permission_mode,
+        status, last_context_version, last_summary, created_at, updated_at
+      ) VALUES (
+        'control-1', 'codex', 'session-1', 'chat', NULL, NULL, NULL, NULL, NULL,
+        'running', NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const profile = client.db
+      .prepare("SELECT id, user_id FROM butler_profiles")
+      .get() as { id: string; user_id: string };
+    const project = client.db
+      .prepare("SELECT user_id FROM butler_projects WHERE id = ?")
+      .get("project-1") as { user_id: string };
+    const session = client.db
+      .prepare("SELECT user_id FROM butler_sessions WHERE id = ?")
+      .get("butler-session-1") as { user_id: string };
+    const controlSession = client.db
+      .prepare("SELECT user_id FROM butler_control_sessions WHERE id = ?")
+      .get("control-1") as { user_id: string };
+    const profileIndex = client.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_butler_profiles_user_id'")
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(profile).toEqual({
+      id: "default:user-1",
+      user_id: "user-1"
+    });
+    expect(project.user_id).toBe("user-1");
+    expect(session.user_id).toBe("user-1");
+    expect(controlSession.user_id).toBe("user-1");
+    expect(profileIndex?.name).toBe("idx_butler_profiles_user_id");
+  });
+
   it("可以在旧版 user_teable_form_bindings 缺少 enabled 列时完成启动", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-teable-form-binding-enabled-bootstrap-"));
     tempDirs.push(tempDir);

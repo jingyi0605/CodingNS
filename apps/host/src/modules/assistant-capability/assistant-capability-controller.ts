@@ -421,6 +421,7 @@ export class AssistantCapabilityController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.assistantCapabilityService.listProjects({
+      userId: requireUserId(request),
       workspaceId: request.query.workspaceId,
       lifecycleStatus: request.query.status,
       riskLevel: request.query.riskLevel
@@ -1309,10 +1310,10 @@ export class AssistantCapabilityController {
   };
 
   readonly listWorkspaces = async (
-    _request: FastifyRequest,
+    request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.listWorkspaces());
+    reply.send(this.assistantCapabilityService.listWorkspaces(requireUserId(request)));
   };
 
   readonly browseWorkspaces = async (
@@ -1342,45 +1343,55 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Body: AssistantImportWorkspaceBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.importWorkspace({
-      path: requireNonEmptyText(request.body.path, "path", "导入工作区必须提供 path"),
-      name: normalizeNullableText(request.body.name)
-    }));
+    reply.send(
+      this.assistantCapabilityService.importWorkspace(requireUserId(request), {
+        path: requireNonEmptyText(request.body.path, "path", "导入工作区必须提供 path"),
+        name: normalizeNullableText(request.body.name)
+      })
+    );
   };
 
   readonly cloneWorkspace = async (
     request: FastifyRequest<{ Body: AssistantCloneWorkspaceBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.assistantCapabilityService.cloneWorkspace({
-      repositoryUrl: requireNonEmptyText(
-        request.body.repositoryUrl,
-        "repositoryUrl",
-        "克隆工作区必须提供 repositoryUrl"
-      ),
-      parentPath: requireNonEmptyText(request.body.parentPath, "parentPath", "克隆工作区必须提供 parentPath"),
-      directoryName: normalizeNullableText(request.body.directoryName),
-      name: normalizeNullableText(request.body.name),
-      auth: request.body.auth
-    }));
+    reply.send(
+      await this.assistantCapabilityService.cloneWorkspace(requireUserId(request), {
+        repositoryUrl: requireNonEmptyText(
+          request.body.repositoryUrl,
+          "repositoryUrl",
+          "克隆工作区必须提供 repositoryUrl"
+        ),
+        parentPath: requireNonEmptyText(request.body.parentPath, "parentPath", "克隆工作区必须提供 parentPath"),
+        directoryName: normalizeNullableText(request.body.directoryName),
+        name: normalizeNullableText(request.body.name),
+        auth: request.body.auth
+      })
+    );
   };
 
   readonly reorderWorkspaces = async (
     request: FastifyRequest<{ Body: AssistantReorderWorkspacesBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.reorderWorkspaces(
-      Array.isArray(request.body.workspaceIds) ? request.body.workspaceIds : []
-    ));
+    reply.send(
+      this.assistantCapabilityService.reorderWorkspaces(
+        requireUserId(request),
+        Array.isArray(request.body.workspaceIds) ? request.body.workspaceIds : []
+      )
+    );
   };
 
   readonly getWorkspaceManagementSummary = async (
     request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.assistantCapabilityService.getWorkspaceManagementSummary(
-      request.params.workspaceId
-    ));
+    reply.send(
+      await this.assistantCapabilityService.getWorkspaceManagementSummary(
+        requireUserId(request),
+        request.params.workspaceId
+      )
+    );
   };
 
   readonly updateWorkspaceNavigationState = async (
@@ -1419,7 +1430,12 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantWorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.removeWorkspace(request.params.workspaceId));
+    reply.send(
+      this.assistantCapabilityService.removeWorkspace(
+        requireUserId(request),
+        request.params.workspaceId
+      )
+    );
   };
 
   readonly getWorktreeTree = async (

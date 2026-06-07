@@ -406,7 +406,13 @@ export class SessionLiveRuntimeService {
         providerPresetId: providerBinding.providerPresetId,
         runtimeHomeDir: providerBinding.runtimeHomeDir
       });
-      this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider, providerBinding);
+      this.ensurePendingSessionBinding(
+        sessionId,
+        workspace.id,
+        input.userId,
+        input.provider,
+        providerBinding
+      );
       const persistedAttachments = this.persistMessageAttachments(
         sessionId,
         input.clientRequestId,
@@ -676,7 +682,7 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
+    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
 
     if (capabilities.inRunInputMode === "none") {
       throw new AppError({
@@ -884,6 +890,7 @@ export class SessionLiveRuntimeService {
       providerSessionId,
       workspaceId: workspace.id,
       workspacePath: workspace.path,
+      userId: workspace.ownerUserId ?? null,
       transcriptPath: normalizeOptionalText(resolvedPayload.transcript_path)
     });
 
@@ -945,7 +952,7 @@ export class SessionLiveRuntimeService {
       ? this.sessionHistoryService.getSession(sessionId, userId)
       : await this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId);
     this.maybeDispatchQueuedMessages(session);
-    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
+    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
     const resolution = runtimeSnapshot
       ? this.sessionActivityAuthorityService.observe(
@@ -1517,6 +1524,7 @@ export class SessionLiveRuntimeService {
     providerSessionId: string;
     workspaceId: string;
     workspacePath: string;
+    userId: string | null;
     transcriptPath: string | null;
   }): Promise<{
     sessionId: string;
@@ -1541,11 +1549,8 @@ export class SessionLiveRuntimeService {
       this.sessionBindingRepository.findByRawStoreRef(input.provider, rawStoreRef);
 
     if (!binding) {
-      const userIds = this.authUserRepository.listIds();
-      const bootstrapUserId = userIds[0] ?? null;
-
-      if (bootstrapUserId) {
-        await this.sessionHistoryService.discoverWorkspaceSessions(input.workspaceId, bootstrapUserId, {
+      if (input.userId) {
+        await this.sessionHistoryService.discoverWorkspaceSessions(input.workspaceId, input.userId, {
           force: true,
           refreshStateMode: "deferred"
         }).catch(() => {
@@ -1571,7 +1576,8 @@ export class SessionLiveRuntimeService {
     this.sessionHistoryService.persistSessionBinding(sessionId, input.workspaceId, {
       provider: input.provider,
       providerSessionId: input.providerSessionId,
-      rawStoreRef
+      rawStoreRef,
+      userId: input.userId
     });
     this.sessionIndexRepository.upsert({
       sessionId,
@@ -1753,7 +1759,10 @@ export class SessionLiveRuntimeService {
     const currentState = this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId);
 
     this.attachRuntimePersistence(handle, request.sessionId, request.workspaceId, userId);
-    this.sessionHistoryService.persistSessionBinding(request.sessionId, request.workspaceId, snapshot);
+    this.sessionHistoryService.persistSessionBinding(request.sessionId, request.workspaceId, {
+      ...snapshot,
+      userId
+    });
     this.sessionStateRepository.upsert({
       sessionId: request.sessionId,
       userId,
@@ -1785,7 +1794,10 @@ export class SessionLiveRuntimeService {
     });
 
     try {
-      const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
+      const capabilities = await this.sessionHistoryService.getSessionCapabilities(
+        input.sessionId,
+        input.userId
+      );
       const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
       const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
       const existingBinding = this.getSessionBindingOrThrow(session.sessionId);
@@ -2389,12 +2401,15 @@ export class SessionLiveRuntimeService {
     this.sessionHistoryService.persistSessionBinding(
       input.sessionId,
       input.workspaceId,
-      this.buildBindingSnapshot(
-        input.sessionId,
-        input.snapshot.provider,
-        input.snapshot.providerSessionId,
-        input.snapshot.rawStoreRef
-      )
+      {
+        ...this.buildBindingSnapshot(
+          input.sessionId,
+          input.snapshot.provider,
+          input.snapshot.providerSessionId,
+          input.snapshot.rawStoreRef
+        ),
+        userId: input.userId
+      }
     );
     this.sessionIndexRepository.upsert({
       sessionId: input.sessionId,
@@ -2443,6 +2458,7 @@ export class SessionLiveRuntimeService {
   private ensurePendingSessionBinding(
     sessionId: string,
     workspaceId: string,
+    userId: string,
     provider: string,
     providerBinding?: {
       providerConfigMode: SessionProviderConfigMode;
@@ -2456,6 +2472,7 @@ export class SessionLiveRuntimeService {
 
     this.sessionBindingRepository.upsert({
       sessionId,
+      userId: existingBinding?.userId ?? userId,
       workspaceId,
       provider: snapshot.provider as SessionListItem["provider"],
       providerSessionId: snapshot.providerSessionId,
@@ -2649,7 +2666,8 @@ export class SessionLiveRuntimeService {
     this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
       provider: event.provider,
       providerSessionId: event.providerSessionId,
-      rawStoreRef: event.rawStoreRef
+      rawStoreRef: event.rawStoreRef,
+      userId
     });
     const currentState = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
     const currentRunningState = currentState?.runningState ?? null;
@@ -3180,7 +3198,8 @@ export class SessionLiveRuntimeService {
         this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
           provider: snapshot.provider,
           providerSessionId: snapshot.providerSessionId,
-          rawStoreRef: snapshot.rawStoreRef
+          rawStoreRef: snapshot.rawStoreRef,
+          userId: this.sessionBindingRepository.findBySessionId(sessionId)?.userId ?? null
         });
         return;
       }
@@ -3453,7 +3472,8 @@ export class SessionLiveRuntimeService {
     this.sessionHistoryService.persistSessionBinding(activeSnapshot.sessionId, input.workspaceId, {
       provider: input.provider,
       providerSessionId: input.providerSessionId,
-      rawStoreRef
+      rawStoreRef,
+      userId: this.sessionBindingRepository.findBySessionId(activeSnapshot.sessionId)?.userId ?? null
     });
 
     return {

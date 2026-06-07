@@ -359,7 +359,10 @@ export class SessionController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(await this.resolveMissingSessionRead(
-      () => this.sessionHistoryService.getSessionCapabilities(request.params.sessionId),
+      () => this.sessionHistoryService.getSessionCapabilities(
+        request.params.sessionId,
+        requireUserId(request)
+      ),
       () => createMissingSessionCapabilitiesSnapshot()
     ));
   };
@@ -398,7 +401,12 @@ export class SessionController {
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.sessionHistoryService.resumeSession(request.params.sessionId));
+    reply.send(
+      await this.sessionHistoryService.resumeSession(
+        request.params.sessionId,
+        requireUserId(request)
+      )
+    );
   };
 
   readonly markSeen = async (
@@ -609,6 +617,7 @@ export class SessionController {
     reply.status(201).send(
       await this.sessionHistoryService.sendMessage(
         request.params.sessionId,
+        requireUserId(request),
         content,
         request.body.clientRequestId?.trim() ?? null,
         runtimeOptions?.permissionMode ?? null

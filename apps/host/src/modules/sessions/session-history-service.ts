@@ -976,8 +976,8 @@ export class SessionHistoryService {
     }
   }
 
-  async getSessionCapabilities(sessionId: string): Promise<ProviderCapabilities> {
-    const binding = this.getBindingOrThrow(sessionId);
+  async getSessionCapabilities(sessionId: string, userId: string): Promise<ProviderCapabilities> {
+    const binding = this.getBindingForUserOrThrow(sessionId, userId);
     const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
     const workspacePath = workspace.path;
 
@@ -1191,13 +1191,13 @@ export class SessionHistoryService {
     }
   }
 
-  async resumeSession(sessionId: string): Promise<{
+  async resumeSession(sessionId: string, userId: string): Promise<{
     sessionId: string;
     provider: string;
     providerSessionId: string;
     resumedAt: string;
   }> {
-    const binding = this.getBindingOrThrow(sessionId);
+    const binding = this.getBindingForUserOrThrow(sessionId, userId);
     this.assertProviderCapabilityEnabled(
       binding.provider,
       "canResumeSession",
@@ -1253,7 +1253,7 @@ export class SessionHistoryService {
   }
 
   private async startSessionDirect(input: StartSessionInput): Promise<SessionListItem> {
-    const workspace = this.getWorkspaceOrThrow(input.workspaceId);
+    const workspace = this.getWorkspaceForUserOrThrow(input.workspaceId, input.userId);
     this.assertProviderCapabilityEnabled(
       input.provider,
       "canStartSession",
@@ -1281,6 +1281,7 @@ export class SessionHistoryService {
       const persist = this.db.transaction(() => {
         this.sessionBindingRepository.upsert({
           sessionId,
+          userId: input.userId,
           workspaceId: workspace.id,
           provider: result.session.provider,
           providerSessionId: result.session.providerSessionId,
@@ -1340,9 +1341,9 @@ export class SessionHistoryService {
   }
 
   async forkSession(input: ForkSessionInput): Promise<SessionListItem> {
-    const binding = this.getBindingOrThrow(input.sessionId);
+    const binding = this.getBindingForUserOrThrow(input.sessionId, input.userId);
     const targetWorkspaceId = input.targetWorkspaceId?.trim() || binding.workspaceId;
-    const workspace = this.getWorkspaceOrThrow(targetWorkspaceId);
+    const workspace = this.getWorkspaceForUserOrThrow(targetWorkspaceId, input.userId);
     const targetProvider = input.targetProvider?.trim() || binding.provider;
     this.assertProviderCapabilityEnabled(
       targetProvider,
@@ -1402,6 +1403,7 @@ export class SessionHistoryService {
       this.db.transaction(() => {
         this.sessionBindingRepository.upsert({
           sessionId,
+          userId: input.userId,
           workspaceId: workspace.id,
           provider: result.session.provider,
           providerSessionId: result.session.providerSessionId,
@@ -1742,11 +1744,12 @@ export class SessionHistoryService {
 
   async sendMessage(
     sessionId: string,
+    userId: string,
     content: string,
     clientRequestId: string | null,
     permissionMode: string | null = null
   ): Promise<SendMessageResult & { sessionId: string }> {
-    const binding = this.getBindingOrThrow(sessionId);
+    const binding = this.getBindingForUserOrThrow(sessionId, userId);
     this.assertProviderSendEnabled(
       binding.provider,
       "sessionId",
@@ -2054,6 +2057,7 @@ export class SessionHistoryService {
 
       this.sessionBindingRepository.upsert({
         ...binding,
+        userId: input.userId,
         rawStoreRef: result.rawStoreRef,
         updatedAt: timestamp
       });
@@ -2183,7 +2187,12 @@ export class SessionHistoryService {
   persistSessionBinding(
     sessionId: string,
     workspaceId: string,
-    snapshot: { provider: string; providerSessionId: string | null; rawStoreRef: string | null }
+    snapshot: {
+      provider: string;
+      providerSessionId: string | null;
+      rawStoreRef: string | null;
+      userId?: string | null;
+    }
   ): void {
     if (!snapshot.providerSessionId || !snapshot.rawStoreRef) {
       return;
@@ -2223,6 +2232,11 @@ export class SessionHistoryService {
 
           this.sessionBindingRepository.upsert({
             sessionId,
+            userId:
+              snapshot.userId
+              ?? currentBinding?.userId
+              ?? duplicateBinding?.userId
+              ?? this.resolveWorkspaceOwnerUserId(workspaceId),
             workspaceId,
             provider: resolvedSnapshot.provider,
             providerSessionId: resolvedSnapshot.providerSessionId,
@@ -2271,7 +2285,7 @@ export class SessionHistoryService {
   ): Promise<SessionListItem[]> {
     const startedAt = Date.now();
     const debugStartedAtMs = terminalDebugNowMs();
-    const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const workspace = this.getWorkspaceForUserOrThrow(workspaceId, userId);
     let discoverDurationMs = 0;
     let persistDurationMs = 0;
     let persistPass1DurationMs = 0;
@@ -2369,6 +2383,7 @@ export class SessionHistoryService {
             : null;
           const nextBinding: SessionBinding = {
             sessionId,
+            userId,
             workspaceId: workspace.id,
             provider: session.provider,
             providerSessionId: session.providerSessionId,
@@ -3539,6 +3554,38 @@ export class SessionHistoryService {
     return workspace;
   }
 
+  private getWorkspaceForUserOrThrow(workspaceId: string, userId: string) {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+
+    if (workspace.ownerUserId !== userId) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "工作区不存在"
+      });
+    }
+
+    return workspace;
+  }
+
+  private getBindingForUserOrThrow(sessionId: string, userId: string): SessionBinding {
+    const binding = this.sessionBindingRepository.findBySessionIdForUser(sessionId, userId);
+
+    if (!binding) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "SESSION_NOT_FOUND",
+        detail: "session 不存在"
+      });
+    }
+
+    return this.resolvePendingSessionAliasBinding(binding) ?? binding;
+  }
+
+  private resolveWorkspaceOwnerUserId(workspaceId: string): string | null {
+    return this.workspaceRepository.findById(workspaceId)?.ownerUserId ?? null;
+  }
+
   private getSessionListItemOrThrow(sessionId: string, userId: string): SessionListItem {
     const canonicalSessionId = this.resolveCanonicalSessionId(sessionId, userId);
     const item =
@@ -4103,6 +4150,7 @@ export class SessionHistoryService {
     if (!targetBinding) {
       this.sessionBindingRepository.upsert({
         sessionId: input.targetSessionId,
+        userId: sourceBinding.userId ?? this.resolveWorkspaceOwnerUserId(input.workspaceId),
         workspaceId: input.workspaceId,
         provider: input.provider as SessionBinding["provider"],
         providerSessionId: buildPendingBindingValue(input.provider, input.targetSessionId),
@@ -4210,6 +4258,7 @@ export class SessionHistoryService {
     // 保留旧 session_id 作为 alias，避免前端或 Butler 还拿着旧 id 时直接炸成 SESSION_NOT_FOUND。
     this.sessionBindingRepository.upsert({
       sessionId: input.sourceSessionId,
+      userId: sourceBinding.userId ?? this.resolveWorkspaceOwnerUserId(sourceBinding.workspaceId),
       workspaceId: sourceBinding.workspaceId,
       provider: sourceBinding.provider,
       providerSessionId: buildAliasBindingValue(

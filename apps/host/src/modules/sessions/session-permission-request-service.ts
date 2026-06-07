@@ -380,14 +380,16 @@ export class SessionPermissionRequestService {
         providerSessionId,
         workspace.id,
         workspace.path,
-        transcriptPath
+        transcriptPath,
+        workspace.ownerUserId ?? null
       ).catch(() => null)
       ?? this.resolveClaudeWorkspaceSessionFallback({
         provider,
         providerSessionId,
         workspaceId: workspace.id,
         workspacePath: workspace.path,
-        transcriptPath
+        transcriptPath,
+        userId: workspace.ownerUserId ?? null
       })
       ?? (this.resolveActiveClaudeSession
         ? await this.resolveActiveClaudeSession({
@@ -576,14 +578,16 @@ export class SessionPermissionRequestService {
         providerSessionId,
         workspace.id,
         workspace.path,
-        transcriptPath
+        transcriptPath,
+        workspace.ownerUserId ?? null
       ).catch(() => null)
       ?? this.resolveClaudeWorkspaceSessionFallback({
         provider,
         providerSessionId,
         workspaceId: workspace.id,
         workspacePath: workspace.path,
-        transcriptPath
+        transcriptPath,
+        userId: workspace.ownerUserId ?? null
       })
       ?? (this.resolveActiveClaudeSession
         ? await this.resolveActiveClaudeSession({
@@ -1146,7 +1150,9 @@ export class SessionPermissionRequestService {
     const binding = this.sessionBindingRepository.findByProviderSession("opencode", providerSessionId);
 
     if (binding) {
-      const userId = this.authUserRepository.listIds()[0] ?? null;
+      const userId =
+        binding.userId
+        ?? this.workspaceService.getWorkspaceOrThrow(binding.workspaceId).ownerUserId;
 
       if (!userId) {
         return null;
@@ -1163,7 +1169,7 @@ export class SessionPermissionRequestService {
     }
 
     const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
-    const userId = this.authUserRepository.listIds()[0] ?? null;
+    const userId = workspace?.ownerUserId ?? null;
 
     if (!workspace || !userId) {
       return null;
@@ -1192,8 +1198,9 @@ export class SessionPermissionRequestService {
     workspaceId: string;
     workspacePath: string;
     transcriptPath: string | null;
+    userId: string | null;
   }): { sessionId: string; rawStoreRef: string } | null {
-    const userId = this.authUserRepository.listIds()[0] ?? null;
+    const userId = input.userId;
 
     if (!userId) {
       return null;
@@ -1234,7 +1241,8 @@ export class SessionPermissionRequestService {
     this.sessionHistoryService.persistSessionBinding(preferredSession.sessionId, input.workspaceId, {
       provider: input.provider,
       providerSessionId: input.providerSessionId,
-      rawStoreRef
+      rawStoreRef,
+      userId
     });
 
     return {
@@ -1248,15 +1256,22 @@ export class SessionPermissionRequestService {
     providerSessionId: string,
     workspaceId: string,
     workspacePath: string,
-    transcriptPath: string | null
+    transcriptPath: string | null,
+    userId: string | null
   ): Promise<{ sessionId: string; rawStoreRef: string }> {
     const rawStoreRef =
       transcriptPath ??
-      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId)?.rawStoreRef ??
+      (userId
+        ? this.sessionBindingRepository.findByProviderSessionForUser(provider, providerSessionId, userId)?.rawStoreRef
+        : this.sessionBindingRepository.findByProviderSession(provider, providerSessionId)?.rawStoreRef) ??
       buildClaudeCompatibleRawStoreRef(this.config, provider, workspacePath, providerSessionId);
     const existing =
-      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId) ??
-      this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef);
+      (userId
+        ? this.sessionBindingRepository.findByProviderSessionForUser(provider, providerSessionId, userId)
+        : this.sessionBindingRepository.findByProviderSession(provider, providerSessionId)) ??
+      (userId
+        ? this.sessionBindingRepository.findByRawStoreRefForUser(provider, rawStoreRef, userId)
+        : this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef));
 
     if (existing) {
       return {
@@ -1264,8 +1279,6 @@ export class SessionPermissionRequestService {
         rawStoreRef: existing.rawStoreRef
       };
     }
-
-    const userId = this.authUserRepository.listIds()[0] ?? null;
 
     if (userId) {
       await this.sessionHistoryService.discoverWorkspaceSessions(workspaceId, userId, {
@@ -1277,8 +1290,12 @@ export class SessionPermissionRequestService {
     }
 
     const refreshed =
-      this.sessionBindingRepository.findByProviderSession(provider, providerSessionId) ??
-      this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef);
+      (userId
+        ? this.sessionBindingRepository.findByProviderSessionForUser(provider, providerSessionId, userId)
+        : this.sessionBindingRepository.findByProviderSession(provider, providerSessionId)) ??
+      (userId
+        ? this.sessionBindingRepository.findByRawStoreRefForUser(provider, rawStoreRef, userId)
+        : this.sessionBindingRepository.findByRawStoreRef(provider, rawStoreRef));
 
     if (!refreshed) {
       throw new AppError({

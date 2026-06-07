@@ -183,6 +183,7 @@ export interface AssistantCapabilityReceipt<TPayload> {
 }
 
 interface ListProjectsInput {
+  userId: string;
   workspaceId?: string;
   lifecycleStatus?: "active" | "paused" | "archived";
   riskLevel?: "low" | "medium" | "high";
@@ -1010,13 +1011,19 @@ export class AssistantCapabilityService {
     private readonly workspaceService: Pick<
       WorkspaceService,
       | "list"
+      | "listForUser"
       | "browseDirectories"
       | "createDirectory"
       | "importWorkspace"
+      | "importWorkspaceForUser"
       | "cloneWorkspace"
+      | "cloneWorkspaceForUser"
       | "reorderWorkspaces"
+      | "reorderWorkspacesForUser"
       | "getManagementSummary"
+      | "getManagementSummaryForUser"
       | "removeWorkspace"
+      | "removeWorkspaceForUser"
       | "updateNavigationState"
     >,
     private readonly workspaceWorktreeRepository: Pick<WorkspaceWorktreeRepository, "findByWorkspaceId">,
@@ -1092,6 +1099,7 @@ export class AssistantCapabilityService {
     items: ReturnType<ButlerProjectService["list"]>;
   }> {
     const items = this.butlerProjectService.list({
+      userId: input.userId,
       workspaceId: input.workspaceId?.trim() || undefined,
       lifecycleStatus: input.lifecycleStatus,
       riskLevel: input.riskLevel
@@ -1114,8 +1122,8 @@ export class AssistantCapabilityService {
     sessions: ReturnType<ButlerSessionService["listByProject"]>;
   }>> {
     await this.butlerSessionService.ensureProjectSessionsSynced(projectId, userId);
-    const project = this.butlerProjectService.getById(projectId);
-    const overview = this.butlerProjectService.getOverview(projectId);
+    const project = this.butlerProjectService.getById(projectId, userId);
+    const overview = this.butlerProjectService.getOverview(projectId, userId);
     const sessions = this.butlerSessionService.listByProject(projectId, userId);
 
     return this.createReceipt("projects.get", {
@@ -1622,7 +1630,7 @@ export class AssistantCapabilityService {
       });
     }
 
-    const target = this.resolveAssistantSessionTarget(input.target);
+    const target = this.resolveAssistantSessionTarget(input.target, input.userId);
 
     if (target.kind === "project") {
       const session = await this.butlerSessionService.startSession(
@@ -2204,7 +2212,7 @@ export class AssistantCapabilityService {
     };
   }>> {
     const workspaceId = input.projectId?.trim()
-      ? this.butlerProjectService.getById(input.projectId).workspaceId
+      ? this.butlerProjectService.getById(input.projectId, input.userId).workspaceId
       : input.workspaceId?.trim() || "";
 
     if (!workspaceId) {
@@ -2247,7 +2255,7 @@ export class AssistantCapabilityService {
     items: Awaited<ReturnType<TerminalService["listTerminals"]>>;
   }>> {
     const workspaceId = input.projectId?.trim()
-      ? this.butlerProjectService.getById(input.projectId).workspaceId
+      ? this.butlerProjectService.getById(input.projectId, input.userId).workspaceId
       : input.workspaceId?.trim() || "";
 
     const items = await this.terminalService.listTerminals(workspaceId);
@@ -2451,14 +2459,14 @@ export class AssistantCapabilityService {
     });
   }
 
-  listWorkspaces(): AssistantCapabilityReceipt<{
-    items: ReturnType<WorkspaceService["list"]>;
+  listWorkspaces(userId: string): AssistantCapabilityReceipt<{
+    items: ReturnType<WorkspaceService["listForUser"]>;
   }> {
     return this.createReceipt("workspaces.list", {
       kind: "none",
       id: null
     }, {
-      items: this.workspaceService.list()
+      items: this.workspaceService.listForUser(userId)
     });
   }
 
@@ -2491,11 +2499,16 @@ export class AssistantCapabilityService {
   }
 
   importWorkspace(
+    userId: string,
     input: ImportAssistantWorkspaceInput
   ): AssistantCapabilityReceipt<{
-    workspace: ReturnType<WorkspaceService["importWorkspace"]>;
+    workspace: ReturnType<WorkspaceService["importWorkspaceForUser"]>;
   }> {
-    const workspace = this.workspaceService.importWorkspace(input.path, input.name ?? undefined);
+    const workspace = this.workspaceService.importWorkspaceForUser(
+      userId,
+      input.path,
+      input.name ?? undefined
+    );
 
     return this.createReceipt("workspaces.import", {
       kind: "workspace",
@@ -2506,11 +2519,12 @@ export class AssistantCapabilityService {
   }
 
   async cloneWorkspace(
+    userId: string,
     input: CloneAssistantWorkspaceInput
   ): Promise<AssistantCapabilityReceipt<{
-    workspace: Awaited<ReturnType<WorkspaceService["cloneWorkspace"]>>;
+    workspace: Awaited<ReturnType<WorkspaceService["cloneWorkspaceForUser"]>>;
   }>> {
-    const workspace = await this.workspaceService.cloneWorkspace({
+    const workspace = await this.workspaceService.cloneWorkspaceForUser(userId, {
       repositoryUrl: input.repositoryUrl,
       parentPath: input.parentPath,
       directoryName: input.directoryName ?? undefined,
@@ -2527,11 +2541,12 @@ export class AssistantCapabilityService {
   }
 
   reorderWorkspaces(
+    userId: string,
     workspaceIds: string[]
   ): AssistantCapabilityReceipt<{
-    items: ReturnType<WorkspaceService["reorderWorkspaces"]>;
+    items: ReturnType<WorkspaceService["reorderWorkspacesForUser"]>;
   }> {
-    const items = this.workspaceService.reorderWorkspaces(workspaceIds);
+    const items = this.workspaceService.reorderWorkspacesForUser(userId, workspaceIds);
 
     return this.createReceipt("workspaces.reorder", {
       kind: "none",
@@ -2542,11 +2557,12 @@ export class AssistantCapabilityService {
   }
 
   async getWorkspaceManagementSummary(
+    userId: string,
     workspaceId: string
   ): Promise<AssistantCapabilityReceipt<{
-    summary: Awaited<ReturnType<WorkspaceService["getManagementSummary"]>>;
+    summary: Awaited<ReturnType<WorkspaceService["getManagementSummaryForUser"]>>;
   }>> {
-    const summary = await this.workspaceService.getManagementSummary(workspaceId);
+    const summary = await this.workspaceService.getManagementSummaryForUser(userId, workspaceId);
 
     return this.createReceipt("workspaces.management.get", {
       kind: "workspace",
@@ -2575,11 +2591,12 @@ export class AssistantCapabilityService {
   }
 
   removeWorkspace(
+    userId: string,
     workspaceId: string
   ): AssistantCapabilityReceipt<{
-    workspace: ReturnType<WorkspaceService["removeWorkspace"]>;
+    workspace: ReturnType<WorkspaceService["removeWorkspaceForUser"]>;
   }> {
-    const workspace = this.workspaceService.removeWorkspace(workspaceId);
+    const workspace = this.workspaceService.removeWorkspaceForUser(userId, workspaceId);
 
     return this.createReceipt("workspaces.remove", {
       kind: "workspace",
@@ -2744,7 +2761,7 @@ export class AssistantCapabilityService {
     if (definition.scopeKind === "workspace") {
       const userId = this.requireExecutionUserId(context, capability);
       const targetWorkspaceId = target?.workspaceId
-        ?? (target?.projectId ? this.butlerProjectService.getById(target.projectId).workspaceId : null)
+        ?? (target?.projectId ? this.butlerProjectService.getById(target.projectId, userId).workspaceId : null)
         ?? (target?.sessionId ? this.sessionHistoryService.getSession(target.sessionId, userId).workspaceId : null)
         ?? (target?.terminalId ? this.terminalService.getTerminalOrThrow(target.terminalId).workspaceId : null);
       const documentWorkspaceId = target?.documentId
@@ -2795,7 +2812,8 @@ export class AssistantCapabilityService {
         ?? (target?.worktreeWorkspaceId
           ? (() => {
             const rootWorkspaceId = this.resolveRootWorkspaceId(target.worktreeWorkspaceId);
-            return rootWorkspaceId ? this.resolveWorkspaceProject(rootWorkspaceId).id : null;
+            const userId = this.requireExecutionUserId(context, capability);
+            return rootWorkspaceId ? this.resolveWorkspaceProject(rootWorkspaceId, userId).id : null;
           })()
           : null)
         ?? context.projectId;
@@ -2807,7 +2825,8 @@ export class AssistantCapabilityService {
         });
       }
 
-      const project = this.butlerProjectService.getById(projectId);
+      const userId = this.requireExecutionUserId(context, capability);
+      const project = this.butlerProjectService.getById(projectId, userId);
       this.assertWorkspaceScopedTarget(context.workspaceId, project.workspaceId, capability);
 
       if (context.projectId && context.projectId !== projectId) {
@@ -2908,8 +2927,8 @@ export class AssistantCapabilityService {
     return userId;
   }
 
-  private resolveWorkspaceProject(workspaceId: string) {
-    const candidates = this.butlerProjectService.list({ workspaceId });
+  private resolveWorkspaceProject(workspaceId: string, userId?: string) {
+    const candidates = this.butlerProjectService.list({ userId, workspaceId });
     const project = candidates.find((item) => item.lifecycleStatus === "active") ?? candidates[0] ?? null;
 
     if (!project) {
@@ -3062,14 +3081,15 @@ export class AssistantCapabilityService {
   }
 
   private resolveAssistantSessionTarget(
-    target: AssistantSessionTarget
+    target: AssistantSessionTarget,
+    userId: string
   ): {
     kind: AssistantSessionTarget["kind"];
     id: string;
     workspaceId: string;
   } {
     if (target.kind === "project") {
-      const project = this.butlerProjectService.getById(target.projectId);
+      const project = this.butlerProjectService.getById(target.projectId, userId);
       return {
         kind: "project",
         id: project.id,

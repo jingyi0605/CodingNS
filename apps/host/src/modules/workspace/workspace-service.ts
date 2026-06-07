@@ -171,6 +171,12 @@ export class WorkspaceService {
     return createWorkspaceRecord(this.workspaceRepository, resolvedPath, name);
   }
 
+  importWorkspaceForUser(userId: string, workspacePath: string, name?: string): Workspace {
+    const resolvedPath = path.resolve(workspacePath);
+    ensureExistingDirectory(resolvedPath, "path");
+    return createWorkspaceRecord(this.workspaceRepository, resolvedPath, name, userId);
+  }
+
   async cloneWorkspace(input: CloneWorkspaceInput): Promise<Workspace> {
     const repositoryUrl = input.repositoryUrl.trim();
 
@@ -220,8 +226,61 @@ export class WorkspaceService {
     }
   }
 
+  async cloneWorkspaceForUser(userId: string, input: CloneWorkspaceInput): Promise<Workspace> {
+    const repositoryUrl = input.repositoryUrl.trim();
+
+    if (!repositoryUrl) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "Git 仓库地址不能为空",
+        field: "repositoryUrl"
+      });
+    }
+
+    const parentPath = path.resolve(input.parentPath);
+    ensureExistingDirectory(parentPath, "parentPath");
+
+    const directoryName = normalizeCloneDirectoryName(input.directoryName, repositoryUrl);
+    const targetPath = path.join(parentPath, directoryName);
+
+    if (fs.existsSync(targetPath)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "WORKSPACE_TARGET_EXISTS",
+        detail: "目标路径已经存在，不能直接覆盖克隆",
+        field: "directoryName"
+      });
+    }
+
+    const authContext = createGitAuthContext(input.auth);
+
+    try {
+      await this.gitCommandRunner.run(parentPath, ["clone", repositoryUrl, directoryName], {
+        timeoutMs: GIT_CLONE_TIMEOUT_MS,
+        env: authContext?.env,
+        operation: "workspace.cloneWorkspace"
+      });
+
+      return this.importWorkspaceForUser(userId, targetPath, input.name?.trim());
+    } catch (error) {
+      if (fs.existsSync(targetPath)) {
+        // clone 失败会留下半成品目录，直接清掉，避免下一次重试被脏状态卡死。
+        fs.rmSync(targetPath, { recursive: true, force: true });
+      }
+
+      throw mapCloneError(error);
+    } finally {
+      authContext?.cleanup();
+    }
+  }
+
   list(): Workspace[] {
     return this.listVisibleWorkspaces();
+  }
+
+  listForUser(userId: string): Workspace[] {
+    return this.listVisibleWorkspaces(userId);
   }
 
   reorderWorkspaces(workspaceIds: string[]): Workspace[] {
@@ -262,8 +321,59 @@ export class WorkspaceService {
     return this.listVisibleWorkspaces();
   }
 
+  reorderWorkspacesForUser(userId: string, workspaceIds: string[]): Workspace[] {
+    const normalizedWorkspaceIds = normalizeWorkspaceIds(workspaceIds);
+    const visibleWorkspaces = this.listVisibleWorkspaces(userId);
+
+    if (normalizedWorkspaceIds.length !== visibleWorkspaces.length) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "工作区重排必须提交当前全部可见工作区",
+        field: "workspaceIds"
+      });
+    }
+
+    const visibleWorkspaceIdSet = new Set(visibleWorkspaces.map((workspace) => workspace.id));
+    if (visibleWorkspaceIdSet.size !== normalizedWorkspaceIds.length) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "工作区列表包含重复项或数量异常",
+        field: "workspaceIds"
+      });
+    }
+
+    for (const workspaceId of normalizedWorkspaceIds) {
+      if (!visibleWorkspaceIdSet.has(workspaceId)) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "工作区重排列表包含未知项目",
+          field: "workspaceIds"
+        });
+      }
+    }
+
+    this.workspaceRepository.reorderVisible(normalizedWorkspaceIds, userId);
+    return this.listVisibleWorkspaces(userId);
+  }
+
   removeWorkspace(workspaceId: string): Workspace {
     const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const timestamp = nowIso();
+
+    return (
+      this.workspaceRepository.markRemoved(workspace.id, timestamp, timestamp) ?? {
+        ...workspace,
+        updatedAt: timestamp,
+        removedAt: timestamp
+      }
+    );
+  }
+
+  removeWorkspaceForUser(userId: string, workspaceId: string): Workspace {
+    const workspace = this.getWorkspaceForUserOrThrow(workspaceId, userId);
     const timestamp = nowIso();
 
     return (
@@ -287,10 +397,43 @@ export class WorkspaceService {
     }).promise;
   }
 
+  async getManagementSummaryForUser(
+    userId: string,
+    workspaceId: string
+  ): Promise<WorkspaceManagementSummary> {
+    this.getWorkspaceForUserOrThrow(workspaceId, userId);
+
+    return await this.taskManager.enqueue<{
+      workspaceId: string;
+      ownerUserId?: string;
+    }, WorkspaceManagementSummary>(HOST_TASK_TYPES.workspaceManagementSummary, {
+      key: `${userId}:${workspaceId}`,
+      source: "workspace.get_management_summary",
+      input: {
+        workspaceId,
+        ownerUserId: userId
+      }
+    }).promise;
+  }
+
   getWorkspaceOrThrow(workspaceId: string): Workspace {
     const workspace = this.workspaceRepository.findById(workspaceId);
 
     if (!workspace) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "指定工作区不存在"
+      });
+    }
+
+    return workspace;
+  }
+
+  getWorkspaceForUserOrThrow(workspaceId: string, userId: string): Workspace {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+
+    if (workspace.ownerUserId !== userId) {
       throw new AppError({
         statusCode: 404,
         errorCode: "WORKSPACE_NOT_FOUND",
@@ -310,7 +453,7 @@ export class WorkspaceService {
     userId: string,
     input: UpdateWorkspaceNavigationStateInput
   ): WorkspaceNavigationStateRecord {
-    this.getWorkspaceOrThrow(workspaceId);
+    this.getWorkspaceForUserOrThrow(workspaceId, userId);
     if (input.collapsed === undefined && input.backgroundColor === undefined) {
       throw new AppError({
         statusCode: 400,
@@ -376,7 +519,7 @@ export class WorkspaceService {
     }
   }
 
-  private listVisibleWorkspaces(): Workspace[] {
+  private listVisibleWorkspaces(ownerUserId?: string): Workspace[] {
     const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
     const hiddenTemporaryWorkspaceIdSet = new Set(
       this.sessionIsolatedWorkspaceRepository
@@ -386,15 +529,17 @@ export class WorkspaceService {
     );
     const butlerWorkspacePath = this.butlerProfileService?.getProfile()?.workspacePath ?? null;
 
+    const workspaces = ownerUserId
+      ? this.workspaceRepository.listByOwnerUserId(ownerUserId)
+      : this.workspaceRepository.list();
+
     if (!butlerWorkspacePath) {
-      return this.workspaceRepository
-        .list()
+      return workspaces
         .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
         .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id));
     }
 
-    return this.workspaceRepository
-      .list()
+    return workspaces
       .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
@@ -510,20 +655,24 @@ export class WorkspaceService {
     if (!this.taskManager.has(HOST_TASK_TYPES.workspaceManagementSummary)) {
       this.taskManager.register<{
         workspaceId: string;
+        ownerUserId?: string;
       }, WorkspaceManagementSummary>({
         taskType: HOST_TASK_TYPES.workspaceManagementSummary,
         executionLane: "host_background",
-        run: async ({ workspaceId }, context) =>
-          this.loadManagementSummary(workspaceId, context.signal)
+        run: async ({ workspaceId, ownerUserId }, context) =>
+          this.loadManagementSummary(workspaceId, ownerUserId, context.signal)
       });
     }
   }
 
   private async loadManagementSummary(
     workspaceId: string,
+    ownerUserId?: string,
     signal?: AbortSignal
   ): Promise<WorkspaceManagementSummary> {
-    const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const workspace = ownerUserId
+      ? this.getWorkspaceForUserOrThrow(workspaceId, ownerUserId)
+      : this.getWorkspaceOrThrow(workspaceId);
     const codeCompositionHandle = this.taskManager.enqueue<{
       workspacePath: string;
     }, WorkspaceCodeCompositionSummary>(HOST_TASK_TYPES.workspaceCodeCompositionScan, {
@@ -602,12 +751,39 @@ function toWorkspaceNavigationBindingLog(
 function createWorkspaceRecord(
   workspaceRepository: WorkspaceRepository,
   workspacePath: string,
-  name?: string
+  name?: string,
+  ownerUserId?: string | null
 ): Workspace {
   const existing = workspaceRepository.findByPath(workspacePath);
 
   if (existing) {
+    if (ownerUserId && existing.ownerUserId && existing.ownerUserId !== ownerUserId) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "WORKSPACE_PATH_EXISTS",
+        detail: "这个路径已经被其他用户导入，不能重复使用",
+        field: "path"
+      });
+    }
+
     if (!existing.removedAt) {
+      if (ownerUserId && !existing.ownerUserId) {
+        const timestamp = nowIso();
+
+        return (
+          workspaceRepository.restore(existing.id, {
+            ownerUserId,
+            repoRoot: workspacePath,
+            updatedAt: timestamp
+          }) ?? {
+            ...existing,
+            ownerUserId,
+            repoRoot: workspacePath,
+            updatedAt: timestamp
+          }
+        );
+      }
+
       return existing;
     }
 
@@ -616,10 +792,12 @@ function createWorkspaceRecord(
     return (
       workspaceRepository.restore(existing.id, {
         name: name?.trim() || undefined,
+        ownerUserId: ownerUserId ?? undefined,
         repoRoot: workspacePath,
         updatedAt: timestamp
       }) ?? {
         ...existing,
+        ownerUserId: ownerUserId ?? existing.ownerUserId ?? null,
         name: name?.trim() || existing.name,
         repoRoot: workspacePath,
         updatedAt: timestamp,
@@ -632,6 +810,7 @@ function createWorkspaceRecord(
 
   return workspaceRepository.create({
     id: createId(),
+    ownerUserId: ownerUserId ?? null,
     name: name?.trim() || path.basename(workspacePath),
     path: workspacePath,
     repoRoot: workspacePath,

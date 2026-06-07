@@ -32,6 +32,118 @@ afterEach(async () => {
 });
 
 describe("workspace management", () => {
+  it("按当前用户隔离工作区列表和管理入口", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const adminWorkspacePath = path.join(fixture.rootDir, "admin-workspace");
+    const memberWorkspacePath = path.join(fixture.rootDir, "member-workspace");
+    mkdirSync(adminWorkspacePath, { recursive: true });
+    mkdirSync(memberWorkspacePath, { recursive: true });
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const adminToken = await bootstrapAndLogin(hosted);
+    const createMemberResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        username: "member",
+        password: "password456"
+      }
+    });
+    expect(createMemberResponse.statusCode).toBe(201);
+
+    const memberLoginResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "member",
+        password: "password456"
+      }
+    });
+    expect(memberLoginResponse.statusCode).toBe(200);
+    const memberToken = memberLoginResponse.json().accessToken as string;
+
+    const adminImportResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        path: adminWorkspacePath,
+        name: "Admin Workspace"
+      }
+    });
+    expect(adminImportResponse.statusCode).toBe(201);
+    const adminWorkspace = adminImportResponse.json() as { id: string; ownerUserId: string };
+    expect(adminWorkspace.ownerUserId).toBeTruthy();
+
+    const memberImportResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${memberToken}`
+      },
+      payload: {
+        path: memberWorkspacePath,
+        name: "Member Workspace"
+      }
+    });
+    expect(memberImportResponse.statusCode).toBe(201);
+    const memberWorkspace = memberImportResponse.json() as { id: string; ownerUserId: string };
+    expect(memberWorkspace.ownerUserId).toBeTruthy();
+    expect(memberWorkspace.ownerUserId).not.toBe(adminWorkspace.ownerUserId);
+
+    const adminListResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/workspaces",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+    expect(adminListResponse.statusCode).toBe(200);
+    expect((adminListResponse.json().items as Array<{ id: string }>).map((item) => item.id)).toEqual([
+      adminWorkspace.id
+    ]);
+
+    const memberListResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/workspaces",
+      headers: {
+        authorization: `Bearer ${memberToken}`
+      }
+    });
+    expect(memberListResponse.statusCode).toBe(200);
+    expect((memberListResponse.json().items as Array<{ id: string }>).map((item) => item.id)).toEqual([
+      memberWorkspace.id
+    ]);
+
+    const memberReadsAdminManagement = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/${adminWorkspace.id}/management`,
+      headers: {
+        authorization: `Bearer ${memberToken}`
+      }
+    });
+    expect(memberReadsAdminManagement.statusCode).toBe(404);
+
+    const memberDeletesAdminWorkspace = await hosted.app.inject({
+      method: "DELETE",
+      url: `/api/workspaces/${adminWorkspace.id}`,
+      headers: {
+        authorization: `Bearer ${memberToken}`
+      }
+    });
+    expect(memberDeletesAdminWorkspace.statusCode).toBe(404);
+  });
+
   it("支持读取工作区管理详情，并在软移除后用同一路径恢复旧记录", async () => {
     const fixture = createGitWorkspaceFixture({ withRemote: true });
     activeFixtures.push(fixture);

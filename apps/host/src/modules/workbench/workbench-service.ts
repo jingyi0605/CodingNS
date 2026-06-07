@@ -67,7 +67,7 @@ export class WorkbenchService {
   }
 
   getSnapshot(userId: string): WorkbenchSnapshot {
-    const allWorkspaces = this.listWorkbenchWorkspaces();
+    const allWorkspaces = this.listWorkbenchWorkspaces(userId);
     const workspaces = this.listVisibleWorkspaces(allWorkspaces);
     const workspaceById = new Map(allWorkspaces.map((workspace) => [workspace.id, workspace] as const));
     const navigationStates = this.workspaceNavigationStateRepository.listByUserId(userId);
@@ -136,7 +136,7 @@ export class WorkbenchService {
   }
 
   shouldRefreshSnapshot(userId: string): boolean {
-    return this.listWorkbenchWorkspaces()
+    return this.listWorkbenchWorkspaces(userId)
       .some((workspace) => {
         return this.sessionHistoryService.needsWorkspaceDiscovery(
           workspace.id,
@@ -194,7 +194,7 @@ export class WorkbenchService {
       force?: boolean;
     }
   ): void {
-    this.scheduleWorkspaceRefreshes(this.listWorkbenchWorkspaces(), userId, options);
+    this.scheduleWorkspaceRefreshes(this.listWorkbenchWorkspaces(userId), userId, options);
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
@@ -229,7 +229,7 @@ export class WorkbenchService {
     userId: string,
     signal?: AbortSignal
   ): Promise<WorkbenchSnapshot> {
-    const workspaces = this.listWorkbenchWorkspaces();
+    const workspaces = this.listWorkbenchWorkspaces(userId);
 
     await Promise.all(
       workspaces.map((workspace) =>
@@ -245,15 +245,15 @@ export class WorkbenchService {
     return this.getSnapshot(userId);
   }
 
-  private listWorkbenchWorkspaces(): Workspace[] {
-    const butlerWorkspacePath = this.butlerProfileService.getProfile()?.workspacePath ?? null;
+  private listWorkbenchWorkspaces(userId: string): Workspace[] {
+    const butlerWorkspacePath = this.butlerProfileService.getProfile(userId)?.workspacePath ?? null;
 
     if (!butlerWorkspacePath) {
-      return this.workspaceRepository.list();
+      return this.workspaceRepository.listByOwnerUserId(userId);
     }
 
     return this.workspaceRepository
-      .list()
+      .listByOwnerUserId(userId)
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
@@ -296,7 +296,7 @@ export class WorkbenchService {
       refreshStateMode?: "inline" | "deferred";
     }
   ): Promise<void> {
-    const workspaces = this.listWorkbenchWorkspaces();
+    const workspaces = this.listWorkbenchWorkspaces(userId);
 
     await Promise.allSettled(
       workspaces.map((workspace) =>

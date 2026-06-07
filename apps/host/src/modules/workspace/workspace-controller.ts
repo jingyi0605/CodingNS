@@ -58,9 +58,9 @@ export class WorkspaceController {
     private readonly onWorkspaceChanged?: (workspaceId: string) => void
   ) {}
 
-  readonly list = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  readonly list = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     reply.send({
-      items: this.workspaceService.list()
+      items: this.workspaceService.listForUser(requireUserId(request))
     });
   };
 
@@ -87,7 +87,8 @@ export class WorkspaceController {
     request: FastifyRequest<{ Body: ImportWorkspaceBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const workspace = this.workspaceService.importWorkspace(
+    const workspace = this.workspaceService.importWorkspaceForUser(
+      requireUserId(request),
       request.body.path?.trim() || "",
       request.body.name?.trim()
     );
@@ -100,7 +101,7 @@ export class WorkspaceController {
     request: FastifyRequest<{ Body: CloneWorkspaceBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const workspace = await this.workspaceService.cloneWorkspace({
+    const workspace = await this.workspaceService.cloneWorkspaceForUser(requireUserId(request), {
       repositoryUrl: request.body.repositoryUrl?.trim() || "",
       parentPath: request.body.parentPath?.trim() || "",
       directoryName: request.body.directoryName?.trim() || undefined,
@@ -116,14 +117,22 @@ export class WorkspaceController {
     request: FastifyRequest<{ Params: WorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(await this.workspaceService.getManagementSummary(request.params.workspaceId));
+    reply.send(
+      await this.workspaceService.getManagementSummaryForUser(
+        requireUserId(request),
+        request.params.workspaceId
+      )
+    );
   };
 
   readonly remove = async (
     request: FastifyRequest<{ Params: WorkspaceParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const workspace = this.workspaceService.removeWorkspace(request.params.workspaceId);
+    const workspace = this.workspaceService.removeWorkspaceForUser(
+      requireUserId(request),
+      request.params.workspaceId
+    );
     this.onWorkspaceChanged?.(workspace.id);
     reply.send(workspace);
   };
@@ -133,7 +142,10 @@ export class WorkspaceController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      items: this.workspaceService.reorderWorkspaces(request.body.workspaceIds ?? [])
+      items: this.workspaceService.reorderWorkspacesForUser(
+        requireUserId(request),
+        request.body.workspaceIds ?? []
+      )
     });
   };
 

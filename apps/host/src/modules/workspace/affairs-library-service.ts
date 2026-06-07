@@ -76,12 +76,13 @@ const LIVE_DIRECTORY_SYNC_SCAN_MAX_DOCUMENTS = 200;
 export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "queue_timeout" | "fresh" | "failed";
 export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed" | "stale_fallback";
 
-export type AffairsLibraryFavoriteKind = "folder" | "tag";
+export type AffairsLibraryFavoriteKind = "folder" | "tag" | "document" | "tag_filter";
 
 export interface AffairsLibraryFavoriteRecord {
   kind: AffairsLibraryFavoriteKind;
   path: string;
   label: string;
+  tagPaths?: string[];
 }
 
 export interface AffairsLibraryBindingDto {
@@ -897,13 +898,15 @@ export class AffairsLibraryService {
       };
     }
 
-    const filtered = exportData.documents.filter((document) => {
+      const filtered = exportData.documents.filter((document) => {
       if (!matchesDocumentKeyword(document, normalizedKeyword)) {
         return false;
       }
 
       if (browseMode === "tag") {
-        const tagPaths = selectedFavorite?.kind === "tag"
+        const tagPaths = selectedFavorite?.kind === "tag_filter"
+          ? normalizeSelectedTagPaths(selectedFavorite.tagPaths ?? [])
+          : selectedFavorite?.kind === "tag"
           ? [selectedFavorite.path]
           : normalizedSelectedTagPaths.length > 0
             ? normalizedSelectedTagPaths
@@ -2787,12 +2790,15 @@ export class AffairsLibraryService {
         return [];
       }
       return parsed
-        .filter((item): item is { kind?: string; path?: string; label?: string } => Boolean(item) && typeof item === "object")
-        .filter((item) => (item.kind === "folder" || item.kind === "tag") && typeof item.path === "string" && item.path.trim())
+        .filter((item): item is { kind?: string; path?: string; label?: string; tagPaths?: unknown } => Boolean(item) && typeof item === "object")
+        .filter((item) => isAffairsLibraryFavoriteKind(item.kind) && typeof item.path === "string" && item.path.trim())
         .map((item) => ({
           kind: item.kind as AffairsLibraryFavoriteKind,
           path: item.path!.trim(),
-          label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : item.path!.trim()
+          label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : item.path!.trim(),
+          ...(item.kind === "tag_filter"
+            ? { tagPaths: normalizeSelectedTagPaths(Array.isArray(item.tagPaths) ? item.tagPaths : item.path!.split("|")) }
+            : {})
         }));
     } catch {
       return [];
@@ -4102,11 +4108,14 @@ export class AffairsLibraryService {
 
   private normalizeFavorites(favorites: AffairsLibraryFavoriteRecord[]): AffairsLibraryFavoriteRecord[] {
     return favorites
-      .filter((item) => item && (item.kind === "folder" || item.kind === "tag") && item.path.trim())
+      .filter((item) => item && isAffairsLibraryFavoriteKind(item.kind) && item.path.trim())
       .map((item) => ({
         kind: item.kind,
         path: item.path.trim(),
-        label: item.label.trim() || item.path.trim()
+        label: item.label.trim() || item.path.trim(),
+        ...(item.kind === "tag_filter"
+          ? { tagPaths: normalizeSelectedTagPaths(item.tagPaths ?? item.path.split("|")) }
+          : {})
       }));
   }
 
@@ -4522,11 +4531,26 @@ function matchesFavorite(
     return !normalizedPath || documentPath === normalizedPath || documentPath.startsWith(`${normalizedPath}/`);
   }
 
+  if (favorite.kind === "document") {
+    return favorite.path === documentPath;
+  }
+
+  if (favorite.kind === "tag_filter") {
+    const tagPaths = normalizeSelectedTagPaths(favorite.tagPaths ?? favorite.path.split("|"));
+    return tagPaths.length > 0 && tagPaths.every((tagPath) => (
+      [...directTags, ...derivedTags].some((tag) => tag === tagPath || tag.startsWith(`${tagPath}/`))
+    ));
+  }
+
   return [...directTags, ...derivedTags].some((tag) => tag === favorite.path || tag.startsWith(`${favorite.path}/`));
 }
 
 function buildFavoriteNodeId(kind: AffairsLibraryFavoriteKind, pathValue: string): string {
   return `library:favorite:${kind}:${pathValue}`;
+}
+
+function isAffairsLibraryFavoriteKind(kind: unknown): kind is AffairsLibraryFavoriteKind {
+  return kind === "folder" || kind === "tag" || kind === "document" || kind === "tag_filter";
 }
 
 function matchesTagPath(document: AffairsLibraryDocumentRecordDto, tagPath: string): boolean {
