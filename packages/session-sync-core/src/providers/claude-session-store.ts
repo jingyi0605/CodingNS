@@ -17,13 +17,24 @@ export interface LegnaSessionStoreProfileOptions {
 
 export const CLAUDE_CODE_SESSION_STORE_PROFILE: ClaudeSessionStoreProfile = {
   resolveWorkspaceFiles(homeDir, workspacePath) {
-    const exactProjectDir = join(homeDir, "projects", workspaceSlug(workspacePath));
+    const projectsRoot = join(homeDir, "projects");
+    const exactProjectDir = join(projectsRoot, workspaceSlug(workspacePath));
+    const files = new Set<string>();
 
     if (existsSync(exactProjectDir)) {
-      return walkJsonlFiles(exactProjectDir);
+      for (const filePath of walkJsonlFiles(exactProjectDir)) {
+        files.add(filePath);
+      }
     }
 
-    return walkJsonlFiles(join(homeDir, "projects"));
+    // Claude CLI 对非 ASCII 工作区路径会使用自己的目录命名规则。
+    // 如果我们只扫自己算出的 exact 目录，中文路径下会被一个空的占位目录挡住，
+    // 真实 transcript 反而永远发现不到。
+    for (const filePath of walkJsonlFiles(projectsRoot)) {
+      files.add(filePath);
+    }
+
+    return Array.from(files);
   },
   resolveSessionFilePath(homeDir, workspacePath, sessionId) {
     return join(homeDir, "projects", workspaceSlug(workspacePath), `${sessionId}.jsonl`);
@@ -38,12 +49,17 @@ export const CLAUDE_CODE_SESSION_STORE_PROFILE: ClaudeSessionStoreProfile = {
       workspaceSlug(workspacePath),
       `${sessionId}.jsonl`
     );
+    const candidates = new Set<string>();
 
     if (existsSync(exactCandidate)) {
-      return exactCandidate;
+      candidates.add(exactCandidate);
     }
 
-    return findSessionFileInProjectsRoots([join(homeDir, "projects")], sessionId);
+    for (const filePath of collectSessionFileCandidates([join(homeDir, "projects")], sessionId)) {
+      candidates.add(filePath);
+    }
+
+    return selectBestSessionFile(Array.from(candidates));
   }
 };
 
@@ -117,6 +133,13 @@ function findSessionFileInProjectsRoots(
   projectRoots: readonly string[],
   sessionId: string
 ): string | null {
+  return selectBestSessionFile(collectSessionFileCandidates(projectRoots, sessionId));
+}
+
+function collectSessionFileCandidates(
+  projectRoots: readonly string[],
+  sessionId: string
+): string[] {
   const candidates = new Set<string>();
 
   for (const projectRoot of projectRoots) {
@@ -134,11 +157,24 @@ function findSessionFileInProjectsRoots(
     }
   }
 
-  if (candidates.size === 0) {
+  return Array.from(candidates);
+}
+
+function selectBestSessionFile(candidates: readonly string[]): string | null {
+  if (candidates.length === 0) {
     return null;
   }
 
-  const sortedCandidates = Array.from(candidates).sort((left, right) =>
+  const existingCandidates = Array.from(new Set(candidates))
+    .filter((filePath) => existsSync(filePath));
+  const nonEmptyCandidates = existingCandidates.filter((filePath) => statSync(filePath).size > 0);
+  const sortableCandidates = nonEmptyCandidates.length > 0 ? nonEmptyCandidates : existingCandidates;
+
+  if (sortableCandidates.length === 0) {
+    return null;
+  }
+
+  const sortedCandidates = sortableCandidates.sort((left, right) =>
     compareSessionFiles(right, left)
   );
 

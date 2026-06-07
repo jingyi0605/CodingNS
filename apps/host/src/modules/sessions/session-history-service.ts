@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import {
   CapabilityService,
@@ -677,6 +678,8 @@ export class SessionHistoryService {
       );
       repairBindingMs = Date.now() - repairStartedAt;
     }
+
+    binding = this.repairClaudeEmptyBindingBeforeHistoryRead(resolvedSessionId, binding);
 
     const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
     const safeLimit = clampLimit(limit);
@@ -4757,6 +4760,29 @@ export class SessionHistoryService {
     });
   }
 
+  private repairClaudeEmptyBindingBeforeHistoryRead(
+    sessionId: string,
+    binding: SessionBinding
+  ): SessionBinding {
+    if (!shouldRepairClaudeEmptyHistoryBinding(binding)) {
+      return binding;
+    }
+
+    const repairedRawStoreRef = findBestClaudeHistoryFileNearBinding(binding);
+
+    if (!repairedRawStoreRef || repairedRawStoreRef === binding.rawStoreRef) {
+      return binding;
+    }
+
+    this.persistSessionBinding(sessionId, binding.workspaceId, {
+      provider: binding.provider,
+      providerSessionId: binding.providerSessionId,
+      rawStoreRef: repairedRawStoreRef
+    });
+
+    return this.getBindingOrThrow(sessionId);
+  }
+
   private resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
     for (const resolver of this.liveActivityObservationResolvers) {
       const observation = resolver(sessionId);
@@ -5457,6 +5483,93 @@ function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider"
 
 function isPendingBindingValue(value: string): boolean {
   return value.trim().toLowerCase().startsWith("pending://");
+}
+
+function shouldRepairClaudeEmptyHistoryBinding(
+  binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef" | "runtimeHomeDir">
+): boolean {
+  if (binding.provider !== "claude-code") {
+    return false;
+  }
+
+  if (isPendingBindingValue(binding.providerSessionId) || isPendingBindingValue(binding.rawStoreRef)) {
+    return false;
+  }
+
+  const currentStats = safeStat(binding.rawStoreRef);
+  return !currentStats || currentStats.size === 0;
+}
+
+function findBestClaudeHistoryFileNearBinding(
+  binding: Pick<SessionBinding, "providerSessionId" | "rawStoreRef" | "runtimeHomeDir">
+): string | null {
+  const providerSessionId = binding.providerSessionId.trim();
+
+  if (!providerSessionId || isPendingBindingValue(providerSessionId)) {
+    return null;
+  }
+
+  const candidates = new Set<string>();
+
+  for (const projectsRoot of collectClaudeProjectsRootsNearBinding(binding)) {
+    for (const candidate of listClaudeSessionCandidates(projectsRoot, providerSessionId)) {
+      candidates.add(candidate);
+    }
+  }
+
+  const nonEmptyCandidates = Array.from(candidates)
+    .map((filePath) => ({
+      filePath,
+      stats: safeStat(filePath)
+    }))
+    .filter((candidate): candidate is { filePath: string; stats: { mtimeMs: number; size: number } } =>
+      Boolean(candidate.stats && candidate.stats.size > 0)
+    )
+    .sort((left, right) => {
+      if (right.stats.size !== left.stats.size) {
+        return right.stats.size - left.stats.size;
+      }
+
+      return right.stats.mtimeMs - left.stats.mtimeMs;
+    });
+
+  return nonEmptyCandidates[0]?.filePath ?? null;
+}
+
+function collectClaudeProjectsRootsNearBinding(
+  binding: Pick<SessionBinding, "rawStoreRef" | "runtimeHomeDir">
+): string[] {
+  const roots = new Set<string>();
+  const rawStoreRef = binding.rawStoreRef.trim();
+
+  if (rawStoreRef && !isPendingBindingValue(rawStoreRef)) {
+    // rawStoreRef 通常是 <home>/projects/<workspace-slug>/<session>.jsonl。
+    // 即使 <workspace-slug> 算错了，向上两级仍然能拿到正确的 projects 根。
+    roots.add(dirname(dirname(rawStoreRef)));
+  }
+
+  const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
+
+  if (runtimeHomeDir) {
+    roots.add(join(runtimeHomeDir, "projects"));
+  }
+
+  return Array.from(roots);
+}
+
+function listClaudeSessionCandidates(projectsRoot: string, providerSessionId: string): string[] {
+  if (!projectsRoot || !existsSync(projectsRoot)) {
+    return [];
+  }
+
+  try {
+    return readdirSync(projectsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(projectsRoot, entry.name, `${providerSessionId}.jsonl`))
+      .filter((filePath) => existsSync(filePath));
+  } catch {
+    return [];
+  }
 }
 
 function isSessionBindingProviderUniqueConflict(error: unknown): boolean {

@@ -151,11 +151,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         providerSessionId
       ) ??
       request.rawStoreRef ??
-      buildClaudeRawStoreRef(
+      buildClaudePendingRawStoreRef(
         this.getSessionStoreProfile(),
         homeDir,
         request.workspacePath,
-        providerSessionId
+        request.sessionId
       );
 
     sink.updateSessionBinding({
@@ -274,23 +274,16 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       }
 
       if (!isPendingClaudeSessionId(activeProviderSessionId)) {
-        const nextRawStoreRef =
-          findClaudeSessionFile(
-            this.getSessionStoreProfile(),
-            homeDir,
-            request.workspacePath,
-            activeProviderSessionId
-          ) ??
-          buildClaudeRawStoreRef(
-            this.getSessionStoreProfile(),
-            homeDir,
-            request.workspacePath,
-            activeProviderSessionId
-          );
+        const discoveredRawStoreRef = findClaudeSessionFile(
+          this.getSessionStoreProfile(),
+          homeDir,
+          request.workspacePath,
+          activeProviderSessionId
+        );
+        const nextRawStoreRef = discoveredRawStoreRef ?? activeRawStoreRef;
 
         if (nextRawStoreRef !== activeRawStoreRef) {
           activeRawStoreRef = nextRawStoreRef;
-          this.ensureRuntimeStoreReady(activeRawStoreRef);
           changed = true;
         }
       }
@@ -1011,15 +1004,6 @@ function buildPendingClaudeSessionId(providerId: string, sessionId: string): str
 
 function isPendingClaudeSessionId(sessionId: string): boolean {
   return sessionId.startsWith("pending://");
-}
-
-function buildClaudeRawStoreRef(
-  profile: ClaudeSessionStoreProfile,
-  homeDir: string,
-  workspacePath: string,
-  sessionId: string
-): string {
-  return profile.resolveSessionFilePath(homeDir, workspacePath, sessionId);
 }
 
 function buildClaudePendingRawStoreRef(

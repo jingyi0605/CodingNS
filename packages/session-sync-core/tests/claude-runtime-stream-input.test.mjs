@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -177,6 +177,87 @@ rl.on("line", (line) => {
     assert.equal(finalBinding?.providerSessionId, "claude-session-1");
     assert.equal(completedEvents.length, 1);
     assert.equal(errorEvents.length, 0);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntimeAdapter continueSession 找不到真实 transcript 时不会创建预测 final 空文件", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-no-final-shadow-"));
+  const scriptPath = join(rootDir, "fake-claude-no-final-shadow.mjs");
+  const homeDir = join(rootDir, ".claude");
+  const providerSessionId = "claude-session-no-final-shadow";
+  const localSessionId = "local-session-no-final-shadow";
+  const bindings = [];
+
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import readline from "node:readline";
+
+const rl = readline.createInterface({ input: process.stdin });
+
+rl.on("line", () => {
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    session_id: "${providerSessionId}"
+  }) + "\\n");
+  setTimeout(() => {
+    process.exit(0);
+  }, 5);
+});
+`,
+    "utf8"
+  );
+  chmodSync(scriptPath, 0o755);
+
+  const predictedFinalRef = join(
+    homeDir,
+    "projects",
+    workspaceSlug(rootDir),
+    `${providerSessionId}.jsonl`
+  );
+  const pendingRef = join(
+    homeDir,
+    "projects",
+    workspaceSlug(rootDir),
+    `.pending-${localSessionId}.jsonl`
+  );
+  const adapter = new ClaudeRuntimeAdapter({
+    homeDir,
+    commandPath: createCommandPath(rootDir, scriptPath)
+  });
+
+  try {
+    const launch = await adapter.continueSession(
+      createRuntimeRequest(rootDir, {
+        sessionId: localSessionId,
+        providerSessionId,
+        rawStoreRef: null,
+        options: {
+          content: "继续",
+          clientRequestId: "client-continue",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: "继续",
+          attachments: []
+        }
+      }),
+      {
+        emit: async () => {},
+        updateSessionBinding: (binding) => {
+          bindings.push(binding);
+        }
+      }
+    );
+
+    await launch.completed;
+
+    assert.equal(existsSync(predictedFinalRef), false);
+    assert.equal(existsSync(pendingRef), true);
+    assert.equal(bindings[0]?.rawStoreRef, pendingRef);
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }

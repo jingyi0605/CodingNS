@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -112,6 +113,85 @@ afterEach(async () => {
 });
 
 describe("SessionHistoryService 恢复缺失索引", () => {
+  it("读取 Claude 历史时会修复被 0 字节占位文件挡住的真实 transcript", async () => {
+    const {
+      fixture,
+      service,
+      sessionBindingRepository,
+      sessionIndexRepository
+    } = createHarness();
+    const sessionId = "session-claude-empty-shadow";
+    const providerSessionId = "21f1a267-0bd5-42d8-9f29-5120e68d193a";
+    const predictedProjectDir = join(fixture.claudeHomeDir, "projects", "-Users-jackson-Code-头脑风暴");
+    const actualProjectDir = join(fixture.claudeHomeDir, "projects", "-Users-jackson-Code-----");
+    const predictedRawStoreRef = join(predictedProjectDir, `${providerSessionId}.jsonl`);
+    const actualRawStoreRef = join(actualProjectDir, `${providerSessionId}.jsonl`);
+
+    mkdirSync(predictedProjectDir, { recursive: true });
+    mkdirSync(actualProjectDir, { recursive: true });
+    writeFileSync(predictedRawStoreRef, "", "utf8");
+    writeFileSync(
+      actualRawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          uuid: "message-1",
+          timestamp: "2026-06-07T02:20:00.000Z",
+          cwd: "/Users/jackson/Code/头脑风暴",
+          sessionId: providerSessionId,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "分析当前仓库文件" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "message-2",
+          timestamp: "2026-06-07T02:21:00.000Z",
+          cwd: "/Users/jackson/Code/头脑风暴",
+          sessionId: providerSessionId,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "真实历史内容" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    sessionBindingRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId,
+      rawStoreRef: predictedRawStoreRef,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
+      createdAt: "2026-06-07T02:19:00.000Z",
+      updatedAt: "2026-06-07T02:19:00.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "分析当前仓库文件",
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-06-07T02:21:00.000Z",
+      createdAt: "2026-06-07T02:19:00.000Z",
+      updatedAt: "2026-06-07T02:21:00.000Z"
+    });
+
+    const page = await service.readSessionHistory(sessionId, null, 20, "backward", "user-1");
+
+    expect(page.messages.map((message) => message.content)).toEqual([
+      "分析当前仓库文件",
+      "真实历史内容"
+    ]);
+    expect(sessionBindingRepository.findBySessionId(sessionId)?.rawStoreRef).toBe(actualRawStoreRef);
+  });
+
   it("binding 仍在时，getSession 会补建缺失的 index、snapshot 和 state", () => {
     const {
       service,
@@ -127,6 +207,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "pending://codex/session-missing-index",
       rawStoreRef: "pending://codex/session-missing-index",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-16T08:01:00.000Z",
       updatedAt: "2026-04-16T08:01:00.000Z"
     });
@@ -172,6 +255,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "provider-session-1",
       rawStoreRef: "pending://codex/session-1",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-16T08:00:30.000Z",
       updatedAt: "2026-04-16T08:00:30.000Z"
     });
@@ -224,6 +310,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "provider-session-1",
       rawStoreRef: "pending://codex/session-1",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: "2026-04-16T08:00:30.000Z",
       updatedAt: "2026-04-16T08:00:30.000Z"
     });
@@ -283,6 +372,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "provider-session-recent",
       rawStoreRef: syntheticRawStoreRef,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: recentTimestamp,
       updatedAt: recentTimestamp
     });
@@ -330,6 +422,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "provider-session-stale",
       rawStoreRef: syntheticRawStoreRef,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: staleTimestamp,
       updatedAt: staleTimestamp
     });
@@ -400,6 +495,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       provider: "codex",
       providerSessionId: "rollout-2026-04-11T09-11-20.543Z-test",
       rawStoreRef: rolloutFilePath,
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
       createdAt: staleTimestamp,
       updatedAt: staleTimestamp
     });

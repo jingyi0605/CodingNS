@@ -72,6 +72,65 @@ test("ClaudeCodeAdapter 会优先读取真实 Claude 项目目录下的会话", 
   }
 });
 
+test("ClaudeCodeAdapter 不会让中文路径下的空占位文件挡住真实 Claude transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-cjk-shadow-"));
+  const workspacePath = "/Users/jackson/Code/头脑风暴";
+  const predictedProjectDir = join(tempDir, "projects", "-Users-jackson-Code-头脑风暴");
+  const actualProjectDir = join(tempDir, "projects", "-Users-jackson-Code-----");
+  const sessionId = "21f1a267-0bd5-42d8-9f29-5120e68d193a";
+  const predictedRawStoreRef = join(predictedProjectDir, `${sessionId}.jsonl`);
+  const actualRawStoreRef = join(actualProjectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(predictedProjectDir, { recursive: true });
+    mkdirSync(actualProjectDir, { recursive: true });
+    writeFileSync(predictedRawStoreRef, "", "utf8");
+    writeFileSync(
+      actualRawStoreRef,
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          promptId: "prompt-1",
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "分析当前仓库文件" }]
+          },
+          uuid: "message-1",
+          timestamp: "2026-06-07T02:20:00.000Z",
+          cwd: workspacePath,
+          sessionId
+        }),
+        JSON.stringify({
+          parentUuid: "message-1",
+          isSidechain: false,
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "真实历史内容" }]
+          },
+          uuid: "message-2",
+          timestamp: "2026-06-07T02:21:00.000Z",
+          cwd: workspacePath,
+          sessionId
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, sessionId);
+    assert.equal(sessions[0]?.rawStoreRef, actualRawStoreRef);
+    assert.equal(sessions[0]?.messageCount, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 能在 macOS 工作区里重新发现刚创建的会话", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-macos-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
