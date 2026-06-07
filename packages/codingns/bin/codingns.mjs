@@ -19,6 +19,7 @@ const PROVIDER_SESSION_DELETE_PROVIDERS = new Set([
 ]);
 
 const [command, ...argv] = process.argv.slice(2);
+installCliFatalProbe(command, argv);
 
 if (!command || command === "help" || command === "--help" || command === "-h") {
   printHelp(0);
@@ -101,6 +102,80 @@ async function runStartCommand(argv) {
     serverUpdatePackageName: "@jingyi0605/codingns",
     demoMode
   });
+}
+
+function installCliFatalProbe(command, argv) {
+  let logged = false;
+
+  process.once("uncaughtExceptionMonitor", (error, origin) => {
+    if (logged) {
+      return;
+    }
+    logged = true;
+    console.error("[codingns-fatal]", {
+      reason: `uncaughtExceptionMonitor:${origin}`,
+      error: serializeCliFatalError(error),
+      process: {
+        pid: process.pid,
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        uptimeSeconds: Math.round(process.uptime()),
+        memoryUsage: process.memoryUsage()
+      },
+      command: command || null,
+      argv: redactCliArgs(argv),
+      env: {
+        HOST: process.env.HOST ?? null,
+        PORT: process.env.PORT ?? null,
+        CODINGNS_HOST: process.env.CODINGNS_HOST ?? null,
+        CODINGNS_PORT: process.env.CODINGNS_PORT ?? null,
+        CODINGNS_DATA_DIR: process.env.CODINGNS_DATA_DIR ?? null
+      }
+    });
+  });
+}
+
+function serializeCliFatalError(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    };
+  }
+
+  return {
+    message: String(error)
+  };
+}
+
+function redactCliArgs(args) {
+  const redacted = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const item = String(args[index] ?? "");
+    const [name, inlineValue] = item.split("=", 2);
+    if (isSensitiveCliOption(name)) {
+      redacted.push(inlineValue === undefined ? item : `${name}=[redacted]`);
+      if (inlineValue === undefined && index + 1 < args.length) {
+        index += 1;
+        redacted.push("[redacted]");
+      }
+      continue;
+    }
+
+    redacted.push(item);
+  }
+  return redacted;
+}
+
+function isSensitiveCliOption(name) {
+  return name === "--token"
+    || name === "--access-token"
+    || name === "--refresh-token"
+    || name === "--authorization"
+    || name === "--auth";
 }
 
 async function runAssistantCommand(argv) {

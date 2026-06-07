@@ -1800,6 +1800,7 @@ export function createServer(config: HostConfig) {
 
   app.addHook("onRequest", async (request, reply) => {
     const requestDiagnosticsId = requestDiagnosticsTracker.begin(request);
+    requestDiagnosticsTracker.watchReply(requestDiagnosticsId, reply);
     request.raw.once("aborted", () => {
       requestDiagnosticsTracker.markAborted(requestDiagnosticsId);
     });

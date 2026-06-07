@@ -13,6 +13,7 @@ describe("HttpRequestDiagnosticsTracker", () => {
 
     app.addHook("onRequest", async (request, reply) => {
       const requestId = tracker.begin(request);
+      tracker.watchReply(requestId, reply);
       request.requestDiagnosticsId = requestId;
       reply.raw.once("finish", () => {
         tracker.finish(requestId, reply, request);
@@ -59,6 +60,7 @@ describe("HttpRequestDiagnosticsTracker", () => {
 
     app.addHook("onRequest", async (request, reply) => {
       const requestId = tracker.begin(request);
+      tracker.watchReply(requestId, reply);
       request.requestDiagnosticsId = requestId;
       reply.raw.once("finish", () => {
         tracker.finish(requestId, reply, request);
@@ -106,5 +108,89 @@ describe("HttpRequestDiagnosticsTracker", () => {
     );
 
     await app.close();
+  });
+
+  it("fatal 快照会刷新活跃请求的 reply 状态", async () => {
+    const tracker = new HttpRequestDiagnosticsTracker();
+    const app = Fastify({ logger: false });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let releaseResponse: (() => void) | null = null;
+
+    app.addHook("onRequest", async (request, reply) => {
+      const requestId = tracker.begin(request);
+      tracker.watchReply(requestId, reply);
+      request.requestDiagnosticsId = requestId;
+    });
+    app.get("/hanging", async (_request, reply) => {
+      reply.raw.writeHead(200, { "content-type": "text/plain" });
+      reply.raw.write("partial");
+      await new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+      });
+      reply.raw.end("done");
+    });
+
+    const pendingResponse = app.inject({ method: "GET", url: "/hanging" });
+    await vi.waitFor(() => {
+      expect(tracker.snapshot("wait").activeRequests[0]?.headersSent).toBe(true);
+    });
+
+    logHostFatalDiagnostics(
+      tracker,
+      "uncaughtExceptionMonitor:uncaughtException",
+      Object.assign(new Error("Cannot write headers after they are sent to the client"), {
+        code: "ERR_HTTP_HEADERS_SENT"
+      })
+    );
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[host-fatal]",
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          activeRequests: expect.arrayContaining([
+            expect.objectContaining({
+              method: "GET",
+              url: "/hanging",
+              statusCode: 200,
+              headersSent: true,
+              rawWritableEnded: false,
+              rawDestroyed: false
+            })
+          ])
+        })
+      })
+    );
+
+    releaseResponse?.();
+    await pendingResponse;
+    await app.close();
+  });
+
+  it("fatal 诊断采集失败时不会继续抛错", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const brokenTracker = {
+      snapshot() {
+        throw new Error("snapshot failed");
+      }
+    } as unknown as HttpRequestDiagnosticsTracker;
+
+    expect(() => {
+      logHostFatalDiagnostics(
+        brokenTracker,
+        "uncaughtExceptionMonitor:uncaughtException",
+        Object.assign(new Error("Cannot write headers after they are sent to the client"), {
+          code: "ERR_HTTP_HEADERS_SENT"
+        })
+      );
+    }).not.toThrow();
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[host-fatal] failed to collect diagnostics",
+      expect.objectContaining({
+        diagnosticsError: expect.objectContaining({
+          message: "snapshot failed"
+        })
+      })
+    );
   });
 });

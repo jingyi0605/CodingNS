@@ -16,6 +16,9 @@ export interface RequestDiagnosticsRecord {
   readonly statusCode: number | null;
   readonly replySent: boolean | null;
   readonly headersSent: boolean | null;
+  readonly rawWritableEnded: boolean | null;
+  readonly rawWritableFinished: boolean | null;
+  readonly rawDestroyed: boolean | null;
   readonly aborted: boolean;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
@@ -28,6 +31,9 @@ export interface HostFatalDiagnosticsSnapshot {
   readonly capturedAt: string;
   readonly process: {
     readonly pid: number;
+    readonly nodeVersion: string;
+    readonly platform: NodeJS.Platform;
+    readonly arch: string;
     readonly uptimeSeconds: number;
     readonly memoryUsage: NodeJS.MemoryUsage;
   };
@@ -48,6 +54,9 @@ interface MutableRequestDiagnosticsRecord {
   statusCode: number | null;
   replySent: boolean | null;
   headersSent: boolean | null;
+  rawWritableEnded: boolean | null;
+  rawWritableFinished: boolean | null;
+  rawDestroyed: boolean | null;
   aborted: boolean;
   remoteAddress: string | null;
   userAgent: string | null;
@@ -55,9 +64,19 @@ interface MutableRequestDiagnosticsRecord {
   contentLength: string | null;
 }
 
+interface ReplyState {
+  statusCode: number | null;
+  replySent: boolean | null;
+  headersSent: boolean | null;
+  rawWritableEnded: boolean | null;
+  rawWritableFinished: boolean | null;
+  rawDestroyed: boolean | null;
+}
+
 export class HttpRequestDiagnosticsTracker {
   private nextRequestId = 1;
   private readonly activeRequests = new Map<number, MutableRequestDiagnosticsRecord>();
+  private readonly activeReplyReaders = new Map<number, () => ReplyState>();
   private readonly recentRequests: MutableRequestDiagnosticsRecord[] = [];
 
   constructor(
@@ -80,6 +99,9 @@ export class HttpRequestDiagnosticsTracker {
       statusCode: null,
       replySent: null,
       headersSent: null,
+      rawWritableEnded: null,
+      rawWritableFinished: null,
+      rawDestroyed: null,
       aborted: false,
       remoteAddress: request.ip || null,
       userAgent: readHeader(request, "user-agent"),
@@ -92,9 +114,15 @@ export class HttpRequestDiagnosticsTracker {
     return requestId;
   }
 
+  watchReply(requestId: number, reply: FastifyReply): void {
+    this.activeReplyReaders.set(requestId, () => readReplyState(reply));
+    this.refreshReplyState(requestId);
+  }
+
   finish(requestId: number, reply: FastifyReply, request?: FastifyRequest): void {
     const record = this.activeRequests.get(requestId);
     if (!record) {
+      this.activeReplyReaders.delete(requestId);
       return;
     }
 
@@ -102,11 +130,10 @@ export class HttpRequestDiagnosticsTracker {
     record.finishedAt = new Date(finishedAtMs).toISOString();
     record.durationMs = finishedAtMs - record.startedAtMs;
     record.routePath = request ? readRoutePath(request) : record.routePath;
-    record.statusCode = reply.statusCode;
-    record.replySent = reply.sent;
-    record.headersSent = reply.raw.headersSent;
+    applyReplyState(record, readReplyState(reply));
 
     this.activeRequests.delete(requestId);
+    this.activeReplyReaders.delete(requestId);
     this.pushRecent(record);
   }
 
@@ -119,12 +146,16 @@ export class HttpRequestDiagnosticsTracker {
 
   snapshot(reason: string): HostFatalDiagnosticsSnapshot {
     const now = Date.now();
+    this.refreshActiveReplyStates();
     const activeRequests = Array.from(this.activeRequests.values()).map((record) => cloneRecord(record, now));
     return {
       reason,
       capturedAt: new Date(now).toISOString(),
       process: {
         pid: process.pid,
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
         uptimeSeconds: Math.round(process.uptime()),
         memoryUsage: process.memoryUsage()
       },
@@ -156,11 +187,31 @@ export class HttpRequestDiagnosticsTracker {
         record.statusCode = null;
         record.replySent = null;
         record.headersSent = null;
+        record.rawWritableEnded = null;
+        record.rawWritableFinished = null;
+        record.rawDestroyed = null;
         this.pushRecent(record);
       }
 
       this.activeRequests.delete(firstKey);
+      this.activeReplyReaders.delete(firstKey);
     }
+  }
+
+  private refreshActiveReplyStates(): void {
+    for (const requestId of this.activeRequests.keys()) {
+      this.refreshReplyState(requestId);
+    }
+  }
+
+  private refreshReplyState(requestId: number): void {
+    const record = this.activeRequests.get(requestId);
+    const reader = this.activeReplyReaders.get(requestId);
+    if (!record || !reader) {
+      return;
+    }
+
+    applyReplyState(record, safeReadReplyState(reader));
   }
 }
 
@@ -169,11 +220,19 @@ export function logHostFatalDiagnostics(
   reason: string,
   error: unknown
 ): void {
-  console.error("[host-fatal]", {
-    reason,
-    error: serializeFatalError(error),
-    diagnostics: tracker.snapshot(reason)
-  });
+  try {
+    console.error("[host-fatal]", {
+      reason,
+      error: serializeFatalError(error),
+      diagnostics: tracker.snapshot(reason)
+    });
+  } catch (diagnosticsError) {
+    console.error("[host-fatal] failed to collect diagnostics", {
+      reason,
+      error: serializeFatalError(error),
+      diagnosticsError: serializeFatalError(diagnosticsError)
+    });
+  }
 }
 
 function cloneRecord(record: MutableRequestDiagnosticsRecord, nowMs?: number): RequestDiagnosticsRecord {
@@ -200,6 +259,41 @@ function readHeader(request: FastifyRequest, name: string): string | null {
   }
 
   return typeof value === "string" ? value : null;
+}
+
+function readReplyState(reply: FastifyReply): ReplyState {
+  return {
+    statusCode: reply.statusCode,
+    replySent: reply.sent,
+    headersSent: reply.raw.headersSent,
+    rawWritableEnded: reply.raw.writableEnded,
+    rawWritableFinished: reply.raw.writableFinished,
+    rawDestroyed: reply.raw.destroyed
+  };
+}
+
+function safeReadReplyState(reader: () => ReplyState): ReplyState {
+  try {
+    return reader();
+  } catch {
+    return {
+      statusCode: null,
+      replySent: null,
+      headersSent: null,
+      rawWritableEnded: null,
+      rawWritableFinished: null,
+      rawDestroyed: null
+    };
+  }
+}
+
+function applyReplyState(record: MutableRequestDiagnosticsRecord, state: ReplyState): void {
+  record.statusCode = state.statusCode;
+  record.replySent = state.replySent;
+  record.headersSent = state.headersSent;
+  record.rawWritableEnded = state.rawWritableEnded;
+  record.rawWritableFinished = state.rawWritableFinished;
+  record.rawDestroyed = state.rawDestroyed;
 }
 
 function sanitizeRequestUrl(url: string): string {

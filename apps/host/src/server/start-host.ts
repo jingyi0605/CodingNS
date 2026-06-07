@@ -15,20 +15,14 @@ export async function startHost(overrides: Partial<HostConfig> = {}): Promise<St
   const config = resolveHostConfig(overrides);
   const hosted = createServer(config);
   let shuttingDown = false;
-  let fatalHandling = false;
+  let fatalDiagnosticsLogged = false;
 
-  function handleFatal(reason: string, error: unknown): void {
-    if (fatalHandling) {
-      console.error("[host-fatal] fatal handler already running", {
-        reason,
-        error: error instanceof Error
-          ? { name: error.name, message: error.message, code: (error as NodeJS.ErrnoException).code, stack: error.stack }
-          : { message: String(error) }
-      });
+  function logFatalDiagnosticsOnce(reason: string, error: unknown): void {
+    if (fatalDiagnosticsLogged) {
       return;
     }
 
-    fatalHandling = true;
+    fatalDiagnosticsLogged = true;
     logHostFatalDiagnostics(hosted.diagnostics.requestDiagnosticsTracker, reason, error);
   }
 
@@ -62,12 +56,15 @@ export async function startHost(overrides: Partial<HostConfig> = {}): Promise<St
       () => process.exit(1)
     );
   });
+  process.once("uncaughtExceptionMonitor", (error, origin) => {
+    logFatalDiagnosticsOnce(`uncaughtExceptionMonitor:${origin}`, error);
+  });
   process.once("uncaughtException", (error) => {
-    handleFatal("uncaughtException", error);
+    logFatalDiagnosticsOnce("uncaughtException", error);
     process.exit(1);
   });
   process.once("unhandledRejection", (reason) => {
-    handleFatal("unhandledRejection", reason);
+    logFatalDiagnosticsOnce("unhandledRejection", reason);
     process.exit(1);
   });
 
