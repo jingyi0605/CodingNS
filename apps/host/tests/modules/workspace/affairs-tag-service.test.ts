@@ -144,6 +144,49 @@ describe("AffairsTagService", () => {
     ]));
   });
 
+  it("标签推荐不会重复推荐已经通过文件夹继承生效的标签", async () => {
+    const document = addIndexedDocument("目录继承/目录继承实施方案.md", "目录继承实施方案");
+    const service = createService();
+    const inheritedTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "目录继承",
+    });
+    service.saveFolderTagBindings("workspace-1", "user-1", "目录继承", [inheritedTag.id]);
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toContain("目录继承:folder_binding");
+    expect(details.recommendedTags.map(item => item.path)).not.toContain("目录继承");
+  });
+
+  it("标签推荐会在后端先排除已生效标签，再补足最多 8 个推荐", async () => {
+    const document = addIndexedDocument("项目推荐/项目推荐实施方案.md", "项目推荐实施方案");
+    const service = createService();
+    const inheritedTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "项目推荐",
+    });
+    service.saveFolderTagBindings("workspace-1", "user-1", "项目推荐", [inheritedTag.id]);
+    Array.from({ length: 8 }, (_, index) => index + 1).forEach((index) => {
+      service.saveTagDefinition("workspace-1", "user-1", {
+        name: `项目推荐候选${index}`,
+      });
+    });
+    await new TagRecomputeService(createAffairsIndexerRuntimeConfig(rootDir)).run({
+      scope: { kind: "document", documentId: document.documentId },
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.resolvedTags.map(item => `${item.path}:${item.sourceType}`)).toContain("项目推荐:folder_binding");
+    expect(details.recommendedTags.map(item => item.path)).not.toContain("项目推荐");
+    expect(details.recommendedTags).toHaveLength(8);
+    expect(details.recommendedTags.map(item => item.path)).toEqual(expect.arrayContaining(
+      Array.from({ length: 8 }, (_, index) => `项目推荐候选${index + 1}`),
+    ));
+  });
+
   it("标签详情会返回当前命中的文档数量", async () => {
     const document = addIndexedDocument("客户A/合同.md", "客户A 合同");
     const service = createService();
@@ -591,6 +634,120 @@ describe("AffairsTagService", () => {
       mustExist: false,
       kind: "directory",
     });
+  });
+
+  it("标签推荐不会因为泛词或弱相似度乱推无关标签", () => {
+    const document = addIndexedDocument("售前文档/系统集成售前方案.md", "系统集成售前方案");
+    const service = createService();
+    const root = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "系统集成",
+    });
+    const matched = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "售前",
+      parentId: root.id,
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "文档",
+      parentId: root.id,
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "售后",
+      parentId: root.id,
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "摄影",
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.recommendedTags.map(item => item.path)).toContain(matched.path);
+    expect(details.recommendedTags.map(item => item.path)).not.toEqual(expect.arrayContaining([
+      "系统集成/文档",
+      "系统集成/售后",
+      "摄影",
+    ]));
+  });
+
+  it("标签推荐不会把根目录标签或无关同级文件夹标签当作推荐", () => {
+    const document = addIndexedDocument("售前文档/方案.md", "售前方案");
+    const service = createService();
+    const rootTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "根目录业务",
+    });
+    const unrelatedTag = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "摄影",
+    });
+    service.saveFolderTagBindings("workspace-1", "user-1", ".", [rootTag.id]);
+    service.saveFolderTagBindings("workspace-1", "user-1", "摄影", [unrelatedTag.id]);
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.recommendedTags.map(item => item.path)).not.toEqual(expect.arrayContaining([
+      "根目录业务",
+      "摄影",
+    ]));
+  });
+
+  it("标签推荐能用 3 个字以上的有效文字重合匹配完整公司客户名", () => {
+    const document = addIndexedDocument("GIXM0718-麦迪格眼科医院网络安全设备采购.md", "GIXM0718-麦迪格眼科医院网络安全设备采购");
+    const service = createService();
+    const customerRoot = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "客户",
+    });
+    const matchedCustomer = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "麦迪格眼科医院集团有限公司",
+      parentId: customerRoot.id,
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "有限公司",
+      parentId: customerRoot.id,
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.recommendedTags.map(item => item.path)).toContain(matchedCustomer.path);
+    expect(details.recommendedTags.map(item => item.path)).not.toEqual(expect.arrayContaining([
+      "客户/有限公司",
+    ]));
+  });
+
+  it("标签推荐不会只因为公司后缀或项目动作词重合就推荐", () => {
+    const document = addIndexedDocument("GIXM0718-麦迪格眼科医院网络安全设备采购.md", "GIXM0718-麦迪格眼科医院网络安全设备采购");
+    const service = createService();
+    const customerRoot = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "客户",
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "恒远科技有限公司",
+      parentId: customerRoot.id,
+    });
+    service.saveTagDefinition("workspace-1", "user-1", {
+      name: "采购服务有限公司",
+      parentId: customerRoot.id,
+    });
+
+    const details = service.getDocumentTagDetails("workspace-1", "user-1", document.documentId);
+
+    expect(details.recommendedTags.map(item => item.path)).not.toEqual(expect.arrayContaining([
+      "客户/恒远科技有限公司",
+      "客户/采购服务有限公司",
+    ]));
+  });
+
+  it("文件夹标签推荐也能用客户简称匹配完整公司客户名", () => {
+    fs.mkdirSync(path.join(rootDir, "GIXM0718-麦迪格眼科医院网络安全设备采购"), { recursive: true });
+    const service = createService();
+    const customerRoot = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "客户",
+    });
+    const matchedCustomer = service.saveTagDefinition("workspace-1", "user-1", {
+      name: "麦迪格眼科医院集团有限公司",
+      parentId: customerRoot.id,
+    });
+
+    const details = service.getFolderTagDetails("workspace-1", "user-1", "GIXM0718-麦迪格眼科医院网络安全设备采购");
+
+    expect(details.recommendedTags.map(item => item.path)).toContain(matchedCustomer.path);
   });
 
   it("删除父标签时会级联删除子标签和相关绑定", async () => {

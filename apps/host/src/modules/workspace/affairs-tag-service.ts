@@ -68,6 +68,21 @@ export interface AffairsResolvedTagSourceDto {
   priority: number;
 }
 
+export type AffairsTagRecommendationReason =
+  | "name_match"
+  | "folder_context"
+  | "smart_rule"
+  | "time_pattern";
+
+export interface AffairsTagRecommendationDto {
+  tagId: string;
+  path: string;
+  name: string;
+  score: number;
+  reason: AffairsTagRecommendationReason;
+  evidence: string;
+}
+
 export interface AffairsDocumentTagDetailsDto {
   documentId: string;
   path: string;
@@ -80,6 +95,7 @@ export interface AffairsDocumentTagDetailsDto {
     tagPath: string;
   }>;
   resolvedTags: AffairsResolvedTagSourceDto[];
+  recommendedTags: AffairsTagRecommendationDto[];
 }
 
 export interface AffairsFolderTagDetailsDto {
@@ -92,6 +108,7 @@ export interface AffairsFolderTagDetailsDto {
     tagPath: string;
     applyMode: string;
   }>;
+  recommendedTags: AffairsTagRecommendationDto[];
 }
 
 export interface AffairsTagRecomputeRequestResultDto {
@@ -475,11 +492,22 @@ export class AffairsTagService {
     const manualBindings = repository.listManualDocumentTagBindingsByDocumentIds([documentId]);
     const folderBindings = repository.listEffectiveFolderTagBindingsForDocumentPaths([context.path]);
     const resolved = repository.listResolvedDocumentTagsByDocumentIds([documentId]);
+    const manualTagIds = new Set(manualBindings.map(item => item.tagId));
+    const excludedTagIds = new Set([
+      ...manualBindings.map(item => item.tagId),
+      ...folderBindings.map(item => item.tagId),
+      ...resolved.map(item => item.tagId),
+    ]);
+    const excludedTagPaths = new Set([
+      ...manualBindings.map(item => item.tagPath),
+      ...folderBindings.map(item => item.tagPath),
+      ...resolved.map(item => item.path),
+    ]);
     return {
       documentId,
       path: context.path,
       title: context.title,
-      manualTagIds: manualBindings.map(item => item.tagId),
+      manualTagIds: [...manualTagIds],
       effectiveFolderBindings: folderBindings.map(item => ({
         id: item.id,
         folderPath: item.folderPath,
@@ -494,6 +522,15 @@ export class AffairsTagService {
         confidence: item.confidence,
         priority: resolvePriority(item.sourceType),
       })),
+      recommendedTags: this.recommendTagsForTarget(repository, {
+        kind: "document",
+        path: context.path,
+        title: context.title,
+        extension: context.extension,
+        modifiedAt: context.modifiedAt,
+        excludedTagIds,
+        excludedTagPaths,
+      }),
     };
   }
 
@@ -555,16 +592,23 @@ export class AffairsTagService {
       }).exists;
     const repository = new CatalogRepository(dbPath);
     const bindings = repository.listFolderTagBindingsByPaths([normalizedFolderPath]);
+    const assignedTagIds = new Set(bindings.map(item => item.tagId));
     return {
       folderPath: normalizedFolderPath,
       exists,
-      bindingTagIds: bindings.map(item => item.tagId),
+      bindingTagIds: [...assignedTagIds],
       bindings: bindings.map(item => ({
         id: item.id,
         tagId: item.tagId,
         tagPath: item.tagPath,
         applyMode: item.applyMode,
       })),
+      recommendedTags: this.recommendTagsForTarget(repository, {
+        kind: "folder",
+        path: normalizedFolderPath,
+        title: normalizedFolderPath === "." ? path.basename(rootDir) : path.posix.basename(normalizedFolderPath),
+        excludedTagIds: assignedTagIds,
+      }),
     };
   }
 
@@ -793,6 +837,109 @@ export class AffairsTagService {
     return countByPath;
   }
 
+  private recommendTagsForTarget(
+    repository: CatalogRepository,
+    target: {
+      kind: "document" | "folder";
+      path: string;
+      title: string;
+      extension?: string;
+      modifiedAt?: string;
+      excludedTagIds: Set<string>;
+      excludedTagPaths?: Set<string>;
+    },
+  ): AffairsTagRecommendationDto[] {
+    const definitions = repository.listTagDefinitions(false)
+      .filter((tag) =>
+        isBusinessTagDefinition(tag)
+        && !target.excludedTagIds.has(tag.id)
+        && !target.excludedTagPaths?.has(tag.path));
+    if (definitions.length === 0) {
+      return [];
+    }
+
+    const candidates = new Map<string, AffairsTagRecommendationDto>();
+    const tagById = new Map(definitions.map(tag => [tag.id, tag]));
+    const countByPath = this.buildTagDocumentCountMap(repository);
+    const targetText = buildRecommendationTargetText(target.path, target.title);
+
+    for (const tag of definitions) {
+      const score = scoreTagNameMatch(tag, targetText);
+      if (score <= 0) {
+        continue;
+      }
+      setTagRecommendation(candidates, tag, {
+        score,
+        reason: "name_match",
+        evidence: "文件夹或文件名称里出现了这个标签的关键词",
+      });
+    }
+
+    for (const binding of repository.listAllFolderTagBindings()) {
+      const tag = tagById.get(binding.tagId);
+      if (!tag) {
+        continue;
+      }
+      const relationScore = scoreFolderContext(target.kind, target.path, binding.folderPath);
+      if (relationScore <= 0) {
+        continue;
+      }
+      setTagRecommendation(candidates, tag, {
+        score: relationScore,
+        reason: "folder_context",
+        evidence: binding.folderPath === "."
+          ? "根目录已经配置过这个标签"
+          : `相关文件夹“${binding.folderPath}”已经配置过这个标签`,
+      });
+    }
+
+    const rulesByTagId = new Map<string, TagRuleRow[]>();
+    for (const rule of repository.listAllEnabledTagRules()) {
+      const rules = rulesByTagId.get(rule.tagId) ?? [];
+      rules.push(rule);
+      rulesByTagId.set(rule.tagId, rules);
+    }
+    for (const [tagId, rules] of rulesByTagId) {
+      const tag = tagById.get(tagId);
+      const matchedRule = tag ? resolveMatchedRecommendationRule(target, rules) : null;
+      if (!tag || !matchedRule) {
+        continue;
+      }
+      setTagRecommendation(candidates, tag, {
+        score: 82,
+        reason: "smart_rule",
+        evidence: resolveRecommendationRuleEvidence(matchedRule),
+      });
+    }
+
+    if (target.kind === "document" && target.modifiedAt) {
+      const timeScore = scoreRecentModifiedAt(target.modifiedAt);
+      if (timeScore > 0) {
+        for (const tag of definitions) {
+          if (!isTimeLikeBusinessTag(tag)) {
+            continue;
+          }
+          setTagRecommendation(candidates, tag, {
+            score: timeScore,
+            reason: "time_pattern",
+            evidence: "最近修改时间和这个标签有关",
+          });
+        }
+      }
+    }
+
+    return [...candidates.values()]
+      .map(item => ({
+        ...item,
+        score: Math.min(100, item.score + Math.min(8, Math.log2((countByPath.get(item.path) ?? 0) + 1) * 1.5)),
+      }))
+      .sort((left, right) =>
+        right.score - left.score
+        || left.path.localeCompare(right.path, "zh-Hans-CN"))
+      .slice(0, 8)
+      .map(item => ({ ...item, score: Number(item.score.toFixed(2)) }));
+  }
+
 }
 
 function isDescendantTag(definitions: TagDefinitionRow[], candidateId: string, ancestorId: string): boolean {
@@ -905,4 +1052,485 @@ function normalizeTagRulesInput(rules: AffairsTagRuleDto[]): SaveTagRuleInput[] 
       priority: Number.isFinite(rule.priority) ? rule.priority : index,
     }))
     .sort((left, right) => left.priority - right.priority);
+}
+
+function isBusinessTagDefinition(tag: TagDefinitionRow): boolean {
+  if (tag.status === "disabled") {
+    return false;
+  }
+  const rootType = tag.rootType.trim().toLowerCase();
+  return rootType !== "类型" && rootType !== "type" && rootType !== "时间" && rootType !== "time";
+}
+
+function buildRecommendationTargetText(targetPath: string, title: string): string {
+  return buildSearchableRecommendationText([
+    targetPath,
+    path.posix.basename(targetPath),
+    title,
+    targetPath.split(/[\/._\-\s]+/g).join(" "),
+  ]);
+}
+
+function normalizeRecommendationText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\\/_\-–—.()[\]{}【】（）]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function buildSearchableRecommendationText(parts: string[]): string {
+  const values = new Set<string>();
+  for (const part of parts) {
+    const normalized = normalizeRecommendationText(part);
+    const compact = compactRecommendationText(part);
+    const stripped = stripMeaninglessRecommendationWords(compact);
+    if (normalized) {
+      values.add(normalized);
+    }
+    if (compact) {
+      values.add(compact);
+    }
+    if (stripped) {
+      values.add(stripped);
+    }
+  }
+  return [...values].join(" ");
+}
+
+function scoreTagNameMatch(tag: TagDefinitionRow, targetText: string): number {
+  const tokens = splitRecommendationTokens(targetText);
+  const tokenSet = new Set(tokens);
+  const segments = tag.path.split("/").map(normalizeRecommendationText).filter((segment) => isUsefulRecommendationToken(segment));
+  const tagName = normalizeRecommendationText(tag.name);
+  const tagPath = normalizeRecommendationText(tag.path);
+  const tagNameTokens = splitRecommendationTokens(tagName).filter(isUsefulRecommendationToken);
+  const tagMatchTexts = buildTagMatchTexts(tag);
+  let score = 0;
+
+  if (tagName && isUsefulRecommendationToken(tagName) && tokenSet.has(tagName)) {
+    score = Math.max(score, 90);
+  }
+  if (tagName && isUsefulRecommendationToken(tagName) && tokens.some(token => token.length > tagName.length && token.includes(tagName))) {
+    score = Math.max(score, 86);
+  }
+  if (tagPath && targetText.includes(tagPath)) {
+    score = Math.max(score, 94);
+  }
+
+  for (const tagText of tagMatchTexts) {
+    const overlapLength = findLongestCommonChineseTextLength(tagText, targetText);
+    if (overlapLength >= MIN_RECOMMENDATION_OVERLAP_LENGTH) {
+      score = Math.max(score, scoreTextOverlap(overlapLength, tagText.length));
+      continue;
+    }
+    const bestSimilarity = Math.max(0, ...tokens.map(token => similarityRatio(tagText, stripMeaninglessRecommendationWords(token))));
+    if (tagText.length >= 4 && bestSimilarity >= 0.88) {
+      score = Math.max(score, 76 + Math.round((bestSimilarity - 0.88) * 70));
+    }
+  }
+
+  const matchedSegments = segments.filter(segment => tokenSet.has(segment));
+  if (matchedSegments.length >= 2) {
+    score = Math.max(score, 84 + matchedSegments.length * 3);
+  }
+
+  const matchedNameTokens = tagNameTokens.filter(token => tokenSet.has(token));
+  if (tagNameTokens.length >= 2 && matchedNameTokens.length === tagNameTokens.length) {
+    score = Math.max(score, 88);
+  }
+
+  if (score === 0 && tagName.length >= 3) {
+    const bestSimilarity = Math.max(0, ...tokens.map(token => similarityRatio(tagName, token)));
+    if (bestSimilarity >= 0.86) {
+      score = Math.max(score, 78 + Math.round((bestSimilarity - 0.86) * 60));
+    }
+  }
+  return Math.min(score, 94);
+}
+
+function buildTagMatchTexts(tag: TagDefinitionRow): string[] {
+  const rawNames = [
+    tag.name,
+    path.posix.basename(tag.path),
+  ];
+  const candidates = new Set<string>();
+  for (const rawName of rawNames) {
+    const compact = compactRecommendationText(rawName);
+    const stripped = stripMeaninglessRecommendationWords(compact);
+    for (const candidate of [compact, stripped]) {
+      if (isUsefulTagMatchText(candidate)) {
+        candidates.add(candidate);
+      }
+    }
+  }
+  return [...candidates].sort((left, right) => right.length - left.length);
+}
+
+function compactRecommendationText(value: string): string {
+  return normalizeRecommendationText(value).replace(/\s+/g, "");
+}
+
+function stripMeaninglessRecommendationWords(value: string): string {
+  let result = value;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const word of MEANINGLESS_RECOMMENDATION_WORDS) {
+      if (word && result.includes(word)) {
+        result = result.replaceAll(word, "");
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
+function isUsefulTagMatchText(value: string): boolean {
+  if (value.length < MIN_RECOMMENDATION_OVERLAP_LENGTH) {
+    return false;
+  }
+  if (GENERIC_RECOMMENDATION_TOKENS.has(value)) {
+    return false;
+  }
+  return !MEANINGLESS_RECOMMENDATION_WORDS.includes(value);
+}
+
+function findLongestCommonChineseTextLength(left: string, right: string): number {
+  const leftText = compactRecommendationText(left);
+  const rightText = compactRecommendationText(right);
+  const maxLength = Math.min(leftText.length, rightText.length);
+  for (let length = maxLength; length >= MIN_RECOMMENDATION_OVERLAP_LENGTH; length -= 1) {
+    for (let index = 0; index + length <= leftText.length; index += 1) {
+      const fragment = leftText.slice(index, index + length);
+      if (isUsefulTagMatchText(fragment) && rightText.includes(fragment)) {
+        return length;
+      }
+    }
+  }
+  return 0;
+}
+
+function scoreTextOverlap(overlapLength: number, tagTextLength: number): number {
+  const coverage = tagTextLength > 0 ? overlapLength / tagTextLength : 0;
+  if (overlapLength >= 6 || coverage >= 0.72) {
+    return 92;
+  }
+  if (overlapLength >= 4 || coverage >= 0.56) {
+    return 86;
+  }
+  return 80;
+}
+
+function splitRecommendationTokens(value: string): string[] {
+  return value
+    .split(/\s+/g)
+    .map(token => token.trim())
+    .filter(Boolean);
+}
+
+function isUsefulRecommendationToken(value: string): boolean {
+  const token = value.trim().toLowerCase();
+  if (token.length < 2) {
+    return false;
+  }
+  return !GENERIC_RECOMMENDATION_TOKENS.has(token);
+}
+
+const GENERIC_RECOMMENDATION_TOKENS = new Set([
+  "文档",
+  "文件",
+  "资料",
+  "附件",
+  "其他",
+  "相关",
+  "临时",
+  "新建",
+  "默认",
+  "document",
+  "documents",
+  "file",
+  "files",
+  "other",
+  "misc",
+  "temp",
+  "有限公司",
+  "有限责任公司",
+  "股份有限公司",
+  "集团有限公司",
+  "公司",
+  "集团",
+]);
+
+const MEANINGLESS_RECOMMENDATION_WORDS = [
+  "集团有限公司",
+  "股份有限公司",
+  "有限责任公司",
+  "有限公司",
+  "集团公司",
+  "总公司",
+  "分公司",
+  "公司",
+  "集团",
+  "co.,ltd",
+  "coltd",
+  "ltd",
+  "inc",
+  "llc",
+  "corp",
+  "corporation",
+  "company",
+  "采购",
+  "服务",
+  "管理",
+  "建设",
+];
+
+const MIN_RECOMMENDATION_OVERLAP_LENGTH = 3;
+
+function similarityRatio(left: string, right: string): number {
+  if (!left || !right) {
+    return 0;
+  }
+  if (left === right) {
+    return 1;
+  }
+  const maxLength = Math.max(left.length, right.length);
+  if (maxLength === 0) {
+    return 1;
+  }
+  const distance = levenshteinDistance(left, right);
+  return (maxLength - distance) / maxLength;
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitutionCost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1]! + 1,
+        previous[j]! + 1,
+        previous[j - 1]! + substitutionCost,
+      );
+    }
+    for (let j = 0; j < previous.length; j += 1) {
+      previous[j] = current[j]!;
+    }
+  }
+
+  return previous[right.length] ?? 0;
+}
+
+function setTagRecommendation(
+  target: Map<string, AffairsTagRecommendationDto>,
+  tag: TagDefinitionRow,
+  input: {
+    score: number;
+    reason: AffairsTagRecommendationReason;
+    evidence: string;
+  },
+): void {
+  const current = target.get(tag.id);
+  if (current && current.score > input.score) {
+    return;
+  }
+  target.set(tag.id, {
+    tagId: tag.id,
+    path: tag.path,
+    name: tag.name,
+      score: input.score,
+      reason: input.reason,
+      evidence: input.evidence,
+  });
+}
+
+function scoreFolderContext(targetKind: "document" | "folder", targetPath: string, bindingFolderPath: string): number {
+  const targetFolderPath = targetKind === "document"
+    ? normalizeFolderPath(targetPath.includes("/") ? path.posix.dirname(targetPath) : ".")
+    : normalizeFolderPath(targetPath);
+  const bindingPath = normalizeFolderPath(bindingFolderPath);
+  if (bindingPath === ".") {
+    return 0;
+  }
+  if (bindingPath === targetFolderPath) {
+    return 86;
+  }
+  if (targetFolderPath.startsWith(`${bindingPath}/`)) {
+    return 80;
+  }
+  const parentPath = normalizeFolderPath(path.posix.dirname(targetFolderPath));
+  if (bindingPath === parentPath) {
+    return 76;
+  }
+  if (parentPath !== "." && path.posix.dirname(bindingPath) === parentPath && areSiblingFolderNamesRelated(targetFolderPath, bindingPath)) {
+    return 72;
+  }
+  return 0;
+}
+
+function areSiblingFolderNamesRelated(leftPath: string, rightPath: string): boolean {
+  const leftName = normalizeRecommendationText(path.posix.basename(leftPath));
+  const rightName = normalizeRecommendationText(path.posix.basename(rightPath));
+  if (!leftName || !rightName) {
+    return false;
+  }
+  const leftTokens = splitRecommendationTokens(leftName).filter(isUsefulRecommendationToken);
+  const rightTokens = splitRecommendationTokens(rightName).filter(isUsefulRecommendationToken);
+  if (leftTokens.some(token => rightTokens.includes(token))) {
+    return true;
+  }
+  return similarityRatio(leftName, rightName) >= 0.82;
+}
+
+function matchesRecommendationRule(
+  target: {
+    kind: "document" | "folder";
+    path: string;
+    title: string;
+    extension?: string;
+    modifiedAt?: string;
+  },
+  rule: TagRuleRow,
+): boolean {
+  switch (rule.ruleType) {
+    case "file_name_contains": {
+      const keyword = String((rule.matcher as { keyword?: string }).keyword ?? "").trim().toLowerCase();
+      return keyword.length > 0 && path.posix.basename(target.path).toLowerCase().includes(keyword);
+    }
+    case "file_content_contains": {
+      const keyword = String((rule.matcher as { keyword?: string }).keyword ?? "").trim().toLowerCase();
+      const text = `${target.title}\n${target.path}`.toLowerCase();
+      return keyword.length > 0 && text.includes(keyword);
+    }
+    case "file_extension_in": {
+      if (target.kind !== "document") {
+        return false;
+      }
+      const rawExtensions = Array.isArray((rule.matcher as { extensions?: string[] }).extensions)
+        ? (rule.matcher as { extensions?: string[] }).extensions ?? []
+        : [];
+      const extensions = rawExtensions
+        .map(item => item.trim().toLowerCase())
+        .filter(Boolean)
+        .map(item => item.startsWith(".") ? item : `.${item}`);
+      return Boolean(target.extension) && extensions.includes(String(target.extension).toLowerCase());
+    }
+    case "modified_time_between": {
+      if (target.kind !== "document" || !target.modifiedAt) {
+        return false;
+      }
+      const matcher = rule.matcher as { start?: string | null; end?: string | null };
+      const modifiedAt = new Date(target.modifiedAt).getTime();
+      if (Number.isNaN(modifiedAt)) {
+        return false;
+      }
+      const startTime = matcher.start ? new Date(matcher.start).getTime() : null;
+      const endTime = matcher.end ? new Date(matcher.end).getTime() : null;
+      if (startTime !== null && (Number.isNaN(startTime) || modifiedAt < startTime)) {
+        return false;
+      }
+      if (endTime !== null && (Number.isNaN(endTime) || modifiedAt > endTime)) {
+        return false;
+      }
+      return startTime !== null || endTime !== null;
+    }
+    case "document_path_in_folder": {
+      const folderPath = normalizeFolderPath((rule.matcher as { folderPath?: string | null }).folderPath ?? "");
+      return matchesPathInFolderScope(target.path, folderPath);
+    }
+  }
+}
+
+function resolveMatchedRecommendationRule(
+  target: {
+    kind: "document" | "folder";
+    path: string;
+    title: string;
+    extension?: string;
+    modifiedAt?: string;
+  },
+  rules: TagRuleRow[],
+): TagRuleRow | null {
+  const sortedRules = [...rules].sort((left, right) => left.priority - right.priority);
+  const matchedAnd: TagRuleRow[] = [];
+  const matchedOr: TagRuleRow[] = [];
+  let hasOrRule = false;
+
+  for (const rule of sortedRules) {
+    const matched = matchesRecommendationRule(target, rule);
+    if (rule.relation === "not") {
+      if (matched) {
+        return null;
+      }
+      continue;
+    }
+    if (rule.relation === "or") {
+      hasOrRule = true;
+      if (matched) {
+        matchedOr.push(rule);
+      }
+      continue;
+    }
+    if (!matched) {
+      return null;
+    }
+    matchedAnd.push(rule);
+  }
+
+  if (hasOrRule && matchedOr.length === 0) {
+    return null;
+  }
+  return matchedAnd[0] ?? matchedOr[0] ?? null;
+}
+
+function resolveRecommendationRuleEvidence(rule: TagRuleRow): string {
+  switch (rule.ruleType) {
+    case "file_name_contains":
+      return `智能规则：文件名包含“${String((rule.matcher as { keyword?: string }).keyword ?? "").trim()}”`;
+    case "file_content_contains":
+      return `智能规则：标题、路径或内容包含“${String((rule.matcher as { keyword?: string }).keyword ?? "").trim()}”`;
+    case "file_extension_in": {
+      const extensions = Array.isArray((rule.matcher as { extensions?: string[] }).extensions)
+        ? (rule.matcher as { extensions?: string[] }).extensions ?? []
+        : [];
+      return `智能规则：文件类型命中 ${extensions.join("、")}`;
+    }
+    case "modified_time_between":
+      return "智能规则：修改时间命中";
+    case "document_path_in_folder": {
+      const folderPath = normalizeFolderPath((rule.matcher as { folderPath?: string | null }).folderPath ?? "");
+      return folderPath === "." ? "智能规则：位于根目录下" : `智能规则：位于“${folderPath}”下`;
+    }
+  }
+}
+
+function matchesPathInFolderScope(targetPath: string, folderPath: string): boolean {
+  if (folderPath === ".") {
+    return true;
+  }
+  return targetPath === folderPath || targetPath.startsWith(`${folderPath}/`);
+}
+
+function scoreRecentModifiedAt(modifiedAt: string): number {
+  const time = new Date(modifiedAt).getTime();
+  if (Number.isNaN(time)) {
+    return 0;
+  }
+  const dayDistance = Math.floor((Date.now() - time) / 86400000);
+  if (dayDistance <= 7) {
+    return 54;
+  }
+  if (dayDistance <= 30) {
+    return 44;
+  }
+  return 0;
+}
+
+function isTimeLikeBusinessTag(tag: TagDefinitionRow): boolean {
+  const text = `${tag.path}/${tag.name}`.toLowerCase();
+  return /最近|近期|本周|本月|待处理|跟进|urgent|recent|week|month|todo|follow/.test(text);
 }

@@ -792,6 +792,38 @@ export class CatalogRepository {
     }
   }
 
+  listAllFolderTagBindings(): FolderTagBindingRow[] {
+    const db = openDatabase(this.dbPath, this.dbOptions);
+    try {
+      const rows = db.prepare(`
+        SELECT
+          b.id,
+          b.folder_path,
+          b.tag_id,
+          t.path AS tag_path,
+          b.apply_mode,
+          b.created_at,
+          b.updated_at
+        FROM folder_tag_bindings b
+        JOIN tags t ON t.id = b.tag_id
+        WHERE t.status = 'active'
+        ORDER BY b.folder_path, t.path
+      `).all() as Array<Record<string, unknown>>;
+
+      return rows.map(row => ({
+        id: String(row.id),
+        folderPath: String(row.folder_path),
+        tagId: String(row.tag_id),
+        tagPath: String(row.tag_path),
+        applyMode: String(row.apply_mode),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
   listEffectiveFolderTagBindingsForDocumentPaths(paths: string[]): EffectiveFolderTagBindingRow[] {
     const normalizedPaths = [...new Set(paths.map(item => item.trim().replace(/^\.\/+/, "")).filter(Boolean))];
     if (normalizedPaths.length === 0) {
