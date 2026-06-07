@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { StringDecoder } from "node:string_decoder";
 import type { RuntimeConfig } from "../../../../contracts/src/index.js";
 import type { DirtyScope } from "../dirty/dirty-scope-resolver.js";
 import {
@@ -50,6 +51,17 @@ interface SearchDocumentEntry {
   tags: string[];
 }
 
+interface SearchTermEntry {
+  term: string;
+  document_count: number;
+  document_ids: string[];
+}
+
+interface IncrementalSearchPlan {
+  previousManifest: SearchManifest;
+  targetBuckets: Set<string>;
+}
+
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -68,6 +80,13 @@ function safeUnlink(filePath: string): void {
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
   }
+}
+
+function readJson<T>(filePath: string): T | null {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
 function normalizeText(value: string): string {
@@ -118,6 +137,26 @@ function buildDocumentEntry(document: ExportDocumentRecord): SearchDocumentEntry
     mtime: document.mtime,
     tags: [...document.tags, ...document.derivedTags],
   };
+}
+
+function collectDocumentBucketTerms(document: ExportDocumentRecord): Map<string, string[]> {
+  const sourceText = [
+    document.path,
+    document.title,
+    document.summary,
+    ...document.tags,
+    ...document.derivedTags,
+  ].join("\n");
+  const bucketTerms = new Map<string, string[]>();
+
+  for (const term of tokenize(sourceText)) {
+    const bucket = buildBucketName(term);
+    const current = bucketTerms.get(bucket) ?? [];
+    current.push(term);
+    bucketTerms.set(bucket, current);
+  }
+
+  return bucketTerms;
 }
 
 function mergePosting(
@@ -172,6 +211,96 @@ function writeSearchBucketFile(
   fs.appendFileSync(filePath, `${isFirst ? "" : "\n"}  ]\n}\n`, "utf-8");
 }
 
+function makeSearchPathNeedle(documentPath: string): string {
+  return `"path": ${JSON.stringify(documentPath)}`;
+}
+
+function fileContainsAnyNeedle(filePath: string, needles: string[]): boolean {
+  if (needles.length === 0 || !fs.existsSync(filePath)) {
+    return false;
+  }
+
+  const maxNeedleLength = Math.max(...needles.map(item => item.length));
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const decoder = new StringDecoder("utf8");
+  const fd = fs.openSync(filePath, "r");
+  let carry = "";
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead <= 0) {
+        break;
+      }
+      const text = carry + decoder.write(buffer.subarray(0, bytesRead));
+      if (needles.some(needle => text.includes(needle))) {
+        return true;
+      }
+      carry = text.slice(Math.max(0, text.length - maxNeedleLength + 1));
+    }
+    const tail = carry + decoder.end();
+    return needles.some(needle => tail.includes(needle));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function resolveBucketFilePath(exportDir: string, bucket: SearchManifest["buckets"][number]): string {
+  return path.join(exportDir, bucket.path);
+}
+
+function buildIncrementalSearchPlan(input: {
+  config: RuntimeConfig;
+  repository: CatalogRepository;
+  dirtyScope?: DirtyScope;
+}): IncrementalSearchPlan | null {
+  const dirtyScope = input.dirtyScope;
+  if (!dirtyScope || dirtyScope.trigger === "full") {
+    return null;
+  }
+
+  const changedPaths = [...new Set(dirtyScope.changedPaths.map(item => item.trim()).filter(Boolean))];
+  if (changedPaths.length === 0) {
+    return null;
+  }
+
+  const manifestPath = path.join(input.config.exportDir, "search", "manifest.json");
+  const previousManifest = readJson<SearchManifest>(manifestPath);
+  if (!previousManifest?.buckets?.length) {
+    return null;
+  }
+
+  const targetBuckets = new Set<string>();
+  const currentChangedDocuments = input.repository.listExportDocumentsByPaths(changedPaths);
+  for (const document of currentChangedDocuments) {
+    for (const bucket of collectDocumentBucketTerms(document).keys()) {
+      targetBuckets.add(bucket);
+    }
+  }
+
+  const pathNeedles = changedPaths.map(makeSearchPathNeedle);
+  for (const bucket of previousManifest.buckets) {
+    if (targetBuckets.has(bucket.bucket)) {
+      continue;
+    }
+    const bucketFilePath = resolveBucketFilePath(input.config.exportDir, bucket);
+    if (fileContainsAnyNeedle(bucketFilePath, pathNeedles)) {
+      targetBuckets.add(bucket.bucket);
+    }
+  }
+
+  if (targetBuckets.size === 0) {
+    return {
+      previousManifest,
+      targetBuckets,
+    };
+  }
+
+  return {
+    previousManifest,
+    targetBuckets,
+  };
+}
+
 /**
  * 离线关键词倒排构建器。
  * 改成两阶段流式：第一阶段按 bucket 写临时 NDJSON，第二阶段逐 bucket 汇总为静态 JSON，
@@ -189,6 +318,11 @@ export class SearchIndexBuilder {
     ensureDir(outputDir);
     fs.rmSync(tempDir, { recursive: true, force: true });
     ensureDir(tempDir);
+    const incrementalPlan = buildIncrementalSearchPlan({
+      config: this.config,
+      repository,
+      dirtyScope: options.dirtyScope,
+    });
 
     const filesWritten: string[] = [];
     const manifestBuckets: SearchManifest["buckets"] = [];
@@ -204,7 +338,9 @@ export class SearchIndexBuilder {
       status: "running",
       details: {
         outputDir,
-        tempDir
+        tempDir,
+        incremental: incrementalPlan !== null,
+        targetBuckets: incrementalPlan ? [...incrementalPlan.targetBuckets].sort((a, b) => a.localeCompare(b, "zh-Hans-CN")) : null
       }
     });
 
@@ -213,23 +349,12 @@ export class SearchIndexBuilder {
       for (const document of batch) {
         throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
         const entry = buildDocumentEntry(document);
-        const sourceText = [
-          document.path,
-          document.title,
-          document.summary,
-          ...document.tags,
-          ...document.derivedTags,
-        ].join("\n");
-        const bucketTerms = new Map<string, string[]>();
-
-        for (const term of tokenize(sourceText)) {
-          const bucket = buildBucketName(term);
-          const current = bucketTerms.get(bucket) ?? [];
-          current.push(term);
-          bucketTerms.set(bucket, current);
-        }
+        const bucketTerms = collectDocumentBucketTerms(document);
 
         for (const [bucket, terms] of bucketTerms.entries()) {
+          if (incrementalPlan && !incrementalPlan.targetBuckets.has(bucket)) {
+            continue;
+          }
           const documentTempPath = documentTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.documents.ndjson`);
           const termTempPath = termTempPaths.get(bucket) ?? path.join(tempDir, `${bucket}.terms.ndjson`);
           if (!documentTempPaths.has(bucket)) {
@@ -262,6 +387,7 @@ export class SearchIndexBuilder {
       await yieldToEventLoop(options.signal, "事务文档库搜索索引构建已取消");
     }
 
+    const rebuiltBucketNames = new Set<string>();
     for (const bucket of [...documentTempPaths.keys()].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))) {
       throwIfAborted(options.signal, "事务文档库搜索索引构建已取消");
       const documentTempPath = documentTempPaths.get(bucket)!;
@@ -312,6 +438,7 @@ export class SearchIndexBuilder {
         path: `search/${bucket}.json`,
         term_count: termMap.size,
       });
+      rebuiltBucketNames.add(bucket);
       writeAffairsLibraryDebugLog({
         event: "search_bucket_build_finished",
         processRole: "helper",
@@ -346,6 +473,37 @@ export class SearchIndexBuilder {
         }
       });
       await yieldToEventLoop(options.signal, "事务文档库搜索索引构建已取消");
+    }
+
+    if (incrementalPlan) {
+      const rebuiltByBucket = new Map(manifestBuckets.map(bucket => [bucket.bucket, bucket]));
+      const mergedBuckets: SearchManifest["buckets"] = [];
+      for (const bucket of incrementalPlan.previousManifest.buckets) {
+        if (!incrementalPlan.targetBuckets.has(bucket.bucket)) {
+          mergedBuckets.push(bucket);
+          continue;
+        }
+
+        const rebuilt = rebuiltByBucket.get(bucket.bucket);
+        if (rebuilt) {
+          mergedBuckets.push(rebuilt);
+          continue;
+        }
+
+        safeUnlink(resolveBucketFilePath(this.config.exportDir, bucket));
+      }
+
+      for (const bucket of manifestBuckets) {
+        if (!incrementalPlan.previousManifest.buckets.some(item => item.bucket === bucket.bucket)) {
+          mergedBuckets.push(bucket);
+        }
+      }
+
+      manifestBuckets.splice(
+        0,
+        manifestBuckets.length,
+        ...mergedBuckets.sort((a, b) => a.bucket.localeCompare(b.bucket, "zh-Hans-CN")),
+      );
     }
 
     if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
@@ -389,7 +547,9 @@ export class SearchIndexBuilder {
       details: {
         bucketCount: manifestBuckets.length,
         fileCount: filesWritten.length,
-        manifestPath
+        manifestPath,
+        incremental: incrementalPlan !== null,
+        rebuiltBucketCount: rebuiltBucketNames.size
       }
     });
 

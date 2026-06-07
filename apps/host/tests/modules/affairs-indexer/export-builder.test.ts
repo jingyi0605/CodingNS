@@ -69,28 +69,47 @@ function addIndexedDocument(config: RuntimeConfig, relativePath: string, title: 
   );
 }
 
+function deleteIndexedDocument(config: RuntimeConfig, relativePath: string): string[] {
+  const deleted = new CatalogWriteRepository(config.dbPath).reconcileScope(
+    { kind: "exact", value: relativePath },
+    new Date(Date.now() + 1000).toISOString(),
+    { seenPaths: new Set() },
+  );
+  return deleted.deletedPaths;
+}
+
+function readSearchManifest(config: RuntimeConfig): { buckets: Array<{ bucket: string; path: string }> } {
+  return JSON.parse(fs.readFileSync(path.join(config.exportDir, "search", "manifest.json"), "utf8")) as {
+    buckets: Array<{ bucket: string; path: string }>;
+  };
+}
+
 describe("ExportBuilder 搜索索引导出", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("小范围增量变更会复用旧搜索索引，避免删除单文件触发全量搜索重建", async () => {
+  it("小范围增量删除只重写受影响的搜索 bucket", async () => {
     const config = createConfig();
     try {
-      addIndexedDocument(config, "notes/a.md", "第一份文档");
-      addIndexedDocument(config, "notes/b.md", "第二份文档");
+      addIndexedDocument(config, "zulu/c.md", "zuluunique");
+      addIndexedDocument(config, "han/b.md", "第二份文档");
 
-      const firstResult = await new ExportBuilder(config).build();
-      const previousSearchManifestPath = path.join(config.exportDir, "search", "manifest.json");
-      const previousSearchManifest = fs.readFileSync(previousSearchManifestPath, "utf8");
+      await new ExportBuilder(config).build();
+      const previousManifest = readSearchManifest(config);
+      const zuluBucket = previousManifest.buckets.find(bucket => bucket.bucket === "z");
+      expect(zuluBucket).toBeTruthy();
+      const zuluBucketPath = path.join(config.exportDir, zuluBucket!.path);
+      const previousZuluBucketContent = fs.readFileSync(zuluBucketPath, "utf8");
+      const deletedPaths = deleteIndexedDocument(config, "han/b.md");
       const searchSpy = vi.spyOn(SearchIndexBuilder.prototype, "build");
 
       const secondResult = await new ExportBuilder(config).build({
         dirtyScope: {
           trigger: "incremental",
-          changedPaths: ["notes/b.md"],
-          deletedPaths: ["notes/b.md"],
-          dirtyDirectories: ["notes"],
+          changedPaths: ["han/b.md"],
+          deletedPaths: ["han/b.md"],
+          dirtyDirectories: ["han"],
           dirtyTagPaths: [],
           dirtyMetaShards: [],
           dirtyDetailShards: [],
@@ -98,13 +117,20 @@ describe("ExportBuilder 搜索索引导出", () => {
           dirtyRelations: [],
         },
         reason: "test_deleted_file_incremental",
-        targetPath: "notes/b.md",
+        targetPath: "han/b.md",
       });
 
-      expect(searchSpy).not.toHaveBeenCalled();
-      expect(secondResult.searchBucketCount).toBe(firstResult.searchBucketCount);
-      expect(fs.readFileSync(previousSearchManifestPath, "utf8")).toBe(previousSearchManifest);
-      expect(secondResult.filesWritten.some(filePath => filePath.includes(`${path.sep}search${path.sep}`))).toBe(false);
+      expect(deletedPaths).toEqual(["han/b.md"]);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+      expect(secondResult.filesWritten.some(filePath => filePath.endsWith(`${path.sep}search${path.sep}z.json`))).toBe(false);
+      expect(fs.readFileSync(zuluBucketPath, "utf8")).toBe(previousZuluBucketContent);
+
+      const nextManifest = readSearchManifest(config);
+      expect(nextManifest.buckets.some(bucket => bucket.bucket === "z")).toBe(true);
+      for (const bucket of nextManifest.buckets) {
+        const bucketContent = fs.readFileSync(path.join(config.exportDir, bucket.path), "utf8");
+        expect(bucketContent).not.toContain("\"path\": \"han/b.md\"");
+      }
     } finally {
       fs.rmSync(config.rootDir, { recursive: true, force: true });
     }
