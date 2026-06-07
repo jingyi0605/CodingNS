@@ -8,6 +8,7 @@ import type {
   LoginInput,
   LogoutInput,
   RefreshInput,
+  UpdateUserInput,
   UpdateUserStatusInput,
   UpdateCurrentDevicePrimaryInput
 } from "./auth-service.js";
@@ -83,6 +84,33 @@ export class AuthController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.status(201).send(this.authService.createUser(requireAuthContext(request), request.body));
+  };
+
+  readonly updateUser = async (
+    request: FastifyRequest<{ Params: { userId: string }; Body: UpdateUserInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.authService.updateUser(
+        requireAuthContext(request),
+        request.params.userId,
+        request.body
+      )
+    );
+  };
+
+  readonly deleteUser = async (
+    request: FastifyRequest<{ Params: { userId: string } }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.authService.deleteUser(requireAuthContext(request), request.params.userId));
+  };
+
+  readonly getUserUsage = async (
+    request: FastifyRequest<{ Querystring: { period?: string } }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.authService.getUserUsage(requireAuthContext(request), request.query.period));
   };
 
   readonly updateUserStatus = async (

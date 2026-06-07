@@ -20,7 +20,11 @@ import type { AuthDeviceSessionRepository } from "../../storage/repositories/aut
 import type { AuthLoginAttemptRepository } from "../../storage/repositories/auth-login-attempt-repository.js";
 import type { AuthLoginEventRepository } from "../../storage/repositories/auth-login-event-repository.js";
 import type { AuthTokenRepository } from "../../storage/repositories/auth-token-repository.js";
-import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
+import type {
+  AuthUserRepository,
+  AuthUserUsagePeriod,
+  AuthUserUsageSnapshot
+} from "../../storage/repositories/auth-user-repository.js";
 import type { BootstrapStateRepository } from "../../storage/repositories/bootstrap-state-repository.js";
 import type { DemoCleanupService, DemoOnlineTracker } from "../demo/demo-cleanup-service.js";
 
@@ -81,6 +85,11 @@ export interface CreateUserInput {
 
 export interface UpdateUserStatusInput {
   status: "active" | "disabled";
+}
+
+export interface UpdateUserInput {
+  username?: string;
+  password?: string;
 }
 
 export interface AuthResponse {
@@ -144,6 +153,11 @@ export interface AuthUserView {
   status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeleteUserResult {
+  success: true;
+  deletedUserId: string;
 }
 
 interface CaptchaChallengePayload {
@@ -540,18 +554,75 @@ export class AuthService {
     return toAuthUserView(record);
   }
 
-  updateUserStatus(auth: AuthContext, userId: string, input: UpdateUserStatusInput): AuthUserView {
+  updateUser(auth: AuthContext, userId: string, input: UpdateUserInput): AuthUserView {
     this.ensureAdmin(auth);
-    const normalizedUserId = userId.trim();
+    const current = this.findManagedUserOrThrow(userId);
+    const normalized = validateUpdateUserInput(input, current.username);
 
-    if (!normalizedUserId) {
+    const sameUsernameUser = this.authUserRepository.findByUsername(normalized.username);
+    if (sameUsernameUser && sameUsernameUser.id !== current.id) {
       throw new AppError({
-        statusCode: 400,
-        errorCode: "INVALID_INPUT",
-        detail: "userId 不能为空",
-        field: "userId"
+        statusCode: 409,
+        errorCode: "USERNAME_EXISTS",
+        detail: "用户名已经存在",
+        field: "username"
       });
     }
+
+    const updated = this.authUserRepository.updateProfile({
+      id: current.id,
+      username: normalized.username,
+      passwordHash: normalized.password ? hashPassword(normalized.password) : null,
+      updatedAt: nowIso()
+    }) ?? current;
+
+    return toAuthUserView(updated);
+  }
+
+  deleteUser(auth: AuthContext, userId: string): DeleteUserResult {
+    this.ensureAdmin(auth);
+    const current = this.findManagedUserOrThrow(userId);
+
+    if (current.id === auth.user.userId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "CURRENT_USER_DELETE_NOT_ALLOWED",
+        detail: "不能删除当前登录用户"
+      });
+    }
+
+    const activeUsers = this.authUserRepository.list().filter((user) => user.status === "active");
+    if (current.status === "active" && activeUsers.length <= 1) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "LAST_ACTIVE_USER_NOT_ALLOWED",
+        detail: "不能删除最后一个可用管理员"
+      });
+    }
+
+    if (this.authUserRepository.hasBlockingDataForDelete(current.id)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "USER_HAS_DATA",
+        detail: "该用户已经产生工作区、会话或登录记录。为避免误删数据，请先停用用户。"
+      });
+    }
+
+    this.authUserRepository.deleteById(current.id);
+
+    return {
+      success: true,
+      deletedUserId: current.id
+    };
+  }
+
+  getUserUsage(auth: AuthContext, period: unknown): AuthUserUsageSnapshot {
+    this.ensureAdmin(auth);
+    return this.authUserRepository.getUsageSnapshot(normalizeUsagePeriod(period));
+  }
+
+  updateUserStatus(auth: AuthContext, userId: string, input: UpdateUserStatusInput): AuthUserView {
+    this.ensureAdmin(auth);
 
     if (input.status !== "active" && input.status !== "disabled") {
       throw new AppError({
@@ -562,15 +633,7 @@ export class AuthService {
       });
     }
 
-    const current = this.authUserRepository.findById(normalizedUserId);
-    if (!current) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "USER_NOT_FOUND",
-        detail: "用户不存在",
-        field: "userId"
-      });
-    }
+    const current = this.findManagedUserOrThrow(userId);
 
     const activeUsers = this.authUserRepository.list().filter((user) => user.status === "active");
     if (current.status === "active" && input.status === "disabled" && activeUsers.length <= 1) {
@@ -682,6 +745,31 @@ export class AuthService {
         detail: "当前操作需要管理员权限"
       });
     }
+  }
+
+  private findManagedUserOrThrow(userId: string): AuthUser {
+    const normalizedUserId = userId.trim();
+
+    if (!normalizedUserId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "userId 不能为空",
+        field: "userId"
+      });
+    }
+
+    const current = this.authUserRepository.findById(normalizedUserId);
+    if (!current) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "USER_NOT_FOUND",
+        detail: "用户不存在",
+        field: "userId"
+      });
+    }
+
+    return current;
   }
 
   ensureInitialized(): void {
@@ -1153,6 +1241,37 @@ function validateCreateUserInput(input: CreateUserInput): CreateUserInput {
   }
 
   return normalized;
+}
+
+function validateUpdateUserInput(input: UpdateUserInput, fallbackUsername: string): Required<UpdateUserInput> {
+  const normalized = {
+    username: input.username?.trim() || fallbackUsername,
+    password: input.password ?? ""
+  };
+
+  if (normalized.username.length < 3 || normalized.username.length > 64) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "用户名长度必须在 3 到 64 个字符之间",
+      field: "username"
+    });
+  }
+
+  if (normalized.password.length > 0 && normalized.password.length < 8) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "密码长度至少为 8 位",
+      field: "password"
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeUsagePeriod(value: unknown): AuthUserUsagePeriod {
+  return value === "week" || value === "month" ? value : "day";
 }
 
 function toAuthUserView(user: AuthUser): AuthUserView {
