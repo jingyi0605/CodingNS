@@ -28,6 +28,7 @@ import { OnlyOfficeSettingsButton } from "../../../settings/OnlyOfficeSettingsBu
 import { ProviderManagementPanel } from "../../../settings/ProviderManagementPanel";
 import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
+import { UserManagementPanel } from "../../../settings/UserManagementPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { PluginManagementModal } from "../../../settings/PluginManagementModal";
@@ -715,6 +716,18 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
 
             <div className="settings-row">
               <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.userManagementEntryTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.userManagementEntryDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control settings-row-control-stretch">
+                <UserManagementPanel />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.notifyOnPermissionRequest")}</span>
                 <span className="settings-row-description">
                   {t("settings.notifyOnPermissionRequestDescription")}
@@ -1200,6 +1213,14 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
         <p className="settings-mobile-group-note">{t("settings.authDeviceManagementDescription")}</p>
         <div className="settings-mobile-panel-shell">
           <AuthDeviceManagementPanel compact />
+        </div>
+      </section>
+
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.userManagementEntryTitle")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.userManagementEntryDescription")}</p>
+        <div className="settings-mobile-panel-shell">
+          <UserManagementPanel compact mobile />
         </div>
       </section>
 
