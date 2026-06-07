@@ -338,6 +338,7 @@ import { WorkspaceRepository } from "../storage/repositories/workspace-repositor
 import { WorkspaceWorktreeRepository } from "../storage/repositories/workspace-worktree-repository.js";
 import { WorkspaceNavigationStateRepository } from "../storage/repositories/workspace-navigation-state-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
+import { HttpRequestDiagnosticsTracker } from "../shared/http/request-diagnostics.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
 import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
@@ -373,6 +374,7 @@ export function createServer(config: HostConfig) {
       maxParamLength: 512
     }
   });
+  const requestDiagnosticsTracker = new HttpRequestDiagnosticsTracker();
   let shuttingDown = false;
   const stopTerminalDebugEventLoopLagMonitor = startTerminalDebugEventLoopLagMonitor();
 
@@ -1797,6 +1799,26 @@ export function createServer(config: HostConfig) {
   });
 
   app.addHook("onRequest", async (request, reply) => {
+    const requestDiagnosticsId = requestDiagnosticsTracker.begin(request);
+    request.raw.once("aborted", () => {
+      requestDiagnosticsTracker.markAborted(requestDiagnosticsId);
+    });
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableEnded) {
+        requestDiagnosticsTracker.markAborted(requestDiagnosticsId);
+      }
+    });
+    reply.raw.once("finish", () => {
+      requestDiagnosticsTracker.finish(requestDiagnosticsId, reply, request);
+    });
+    request.requestDiagnosticsId = requestDiagnosticsId;
+  });
+  app.addHook("onResponse", async (request, reply) => {
+    if (typeof request.requestDiagnosticsId === "number") {
+      requestDiagnosticsTracker.finish(request.requestDiagnosticsId, reply, request);
+    }
+  });
+  app.addHook("onRequest", async (request, reply) => {
     applyCorsHeaders(request.headers.origin, reply, config.demoMode, config.allowedCorsOrigins);
 
     if (request.method === "OPTIONS") {
@@ -1951,6 +1973,9 @@ export function createServer(config: HostConfig) {
 
   return {
     app,
+    diagnostics: {
+      requestDiagnosticsTracker
+    },
     services: {
       config,
       database,

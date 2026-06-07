@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { resolveHostConfig, type HostConfig } from "../config/env.js";
+import { logHostFatalDiagnostics } from "../shared/http/request-diagnostics.js";
 import { syncReleaseManifests } from "./release-manifest-sync.js";
 import { createServer } from "./create-server.js";
 
@@ -14,6 +15,22 @@ export async function startHost(overrides: Partial<HostConfig> = {}): Promise<St
   const config = resolveHostConfig(overrides);
   const hosted = createServer(config);
   let shuttingDown = false;
+  let fatalHandling = false;
+
+  function handleFatal(reason: string, error: unknown): void {
+    if (fatalHandling) {
+      console.error("[host-fatal] fatal handler already running", {
+        reason,
+        error: error instanceof Error
+          ? { name: error.name, message: error.message, code: (error as NodeJS.ErrnoException).code, stack: error.stack }
+          : { message: String(error) }
+      });
+      return;
+    }
+
+    fatalHandling = true;
+    logHostFatalDiagnostics(hosted.diagnostics.requestDiagnosticsTracker, reason, error);
+  }
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) {
@@ -44,6 +61,14 @@ export async function startHost(overrides: Partial<HostConfig> = {}): Promise<St
       () => process.exit(0),
       () => process.exit(1)
     );
+  });
+  process.once("uncaughtException", (error) => {
+    handleFatal("uncaughtException", error);
+    process.exit(1);
+  });
+  process.once("unhandledRejection", (reason) => {
+    handleFatal("unhandledRejection", reason);
+    process.exit(1);
   });
 
   await hosted.app.listen({
