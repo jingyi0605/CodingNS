@@ -1571,12 +1571,23 @@ export class AffairsLibraryService {
     }
 
     if (opType === "delete") {
+      const refreshTargetPath = source.stats?.isDirectory()
+        ? source.relativePath
+        : getParentFolderPath(source.relativePath);
+      const deletedPath = source.relativePath;
       if (source.stats?.isDirectory()) {
         fs.rmSync(source.absolutePath, { recursive: true, force: false });
       } else {
         fs.rmSync(source.absolutePath, { force: false });
       }
-      this.afterFileMutation(workspaceId, source.rootDir, `library_delete:${source.relativePath}`, source.relativePath);
+      this.removePathFromHotDirectoryCache(workspaceId, source.rootDir, deletedPath);
+      this.afterFileMutation(
+        workspaceId,
+        source.rootDir,
+        `library_delete:${source.relativePath}`,
+        source.relativePath,
+        { refreshTargetPath }
+      );
       return {
         success: true,
         opType,
@@ -1747,12 +1758,20 @@ export class AffairsLibraryService {
     }
   }
 
-  private afterFileMutation(workspaceId: string, rootDir: string, reason: string, targetPath: string): void {
+  private afterFileMutation(
+    workspaceId: string,
+    rootDir: string,
+    reason: string,
+    targetPath: string,
+    options: {
+      refreshTargetPath?: string | null;
+    } = {}
+  ): void {
     this.invalidateExportCache(rootDir);
     this.scheduleAutoRefresh(
       workspaceId,
       reason,
-      normalizeMutationRefreshTarget(targetPath) ?? undefined
+      normalizeMutationRefreshTarget(options.refreshTargetPath ?? targetPath) ?? undefined
     );
   }
 
@@ -1898,7 +1917,11 @@ export class AffairsLibraryService {
       return;
     }
 
-    const targetPath = normalizeMutationRefreshTarget(relativePath);
+    const targetPath = normalizeMutationRefreshTarget(
+      input.kind === "delete"
+        ? getParentFolderPath(relativePath)
+        : relativePath
+    );
     if (!targetPath) {
       return;
     }
@@ -2572,6 +2595,44 @@ export class AffairsLibraryService {
     entry.lastHintAt = nowIso();
     entry.staleReason = null;
     this.ensureDirectoryWindow(workspaceId, rootDir, directoryPath);
+  }
+
+  private removePathFromHotDirectoryCache(workspaceId: string, rootDir: string, targetPath: string): void {
+    const normalizedTargetPath = normalizeMutationRefreshTarget(targetPath);
+    if (!normalizedTargetPath) {
+      return;
+    }
+
+    const deletedDirectoryPath = normalizeFolderPath(normalizedTargetPath);
+    const parentDirectoryPath = normalizeFolderPath(getParentFolderPath(normalizedTargetPath));
+    for (const entry of this.hotDirectoryCache.values()) {
+      if (entry.workspaceId !== workspaceId || entry.rootDir !== rootDir) {
+        continue;
+      }
+
+      const normalizedEntryDirectoryPath = normalizeFolderPath(entry.directoryPath);
+      const beforeCount = entry.items.length;
+      entry.items = entry.items.filter((item) => {
+        const itemPath = normalizeMutationRefreshTarget(item.path);
+        if (!itemPath) {
+          return false;
+        }
+        return itemPath !== normalizedTargetPath && !itemPath.startsWith(`${normalizedTargetPath}/`);
+      });
+
+      if (
+        beforeCount !== entry.items.length
+        || normalizedEntryDirectoryPath === parentDirectoryPath
+        || normalizedEntryDirectoryPath === deletedDirectoryPath
+        || normalizedEntryDirectoryPath.startsWith(`${deletedDirectoryPath}/`)
+      ) {
+        entry.dirty = true;
+        entry.status = entry.status === "running" ? "running" : "idle";
+        entry.pendingHintReasons.add(`library_delete:${normalizedTargetPath}`);
+        entry.lastHintAt = nowIso();
+        entry.staleReason = null;
+      }
+    }
   }
 
   private ensureDirectoryWindow(workspaceId: string, rootDir: string, directoryPath: string): void {
@@ -4749,6 +4810,15 @@ function buildAffairsFolderDocumentsFromFilesystem(
   const documentMap = new Map<string, AffairsLibraryDocumentRecordDto>();
   let hasSnapshotData = false;
   let hasLiveData = false;
+  let targetStats: fs.Stats | null = null;
+  if (fs.existsSync(targetDir)) {
+    try {
+      targetStats = fs.statSync(targetDir);
+    } catch {
+      targetStats = null;
+    }
+  }
+  const canVerifyLiveFiles = targetStats?.isDirectory() === true;
 
   for (const document of exportData?.documents ?? []) {
     if (!matchesDirectFolder(document.path, normalizedFolderPath)) {
@@ -4762,6 +4832,9 @@ function buildAffairsFolderDocumentsFromFilesystem(
       continue;
     }
     const stat = readAffairsLibraryStatsSafe(rootDir, document.path);
+    if (canVerifyLiveFiles && !stat?.isFile()) {
+      continue;
+    }
     documentMap.set(document.path, {
       ...document,
       createdAt: document.createdAt ?? toIsoOrNull(stat?.birthtime),
@@ -4772,50 +4845,41 @@ function buildAffairsFolderDocumentsFromFilesystem(
     hasSnapshotData = true;
   }
 
-  if (fs.existsSync(targetDir)) {
-    let targetStats: fs.Stats | null = null;
-    try {
-      targetStats = fs.statSync(targetDir);
-    } catch {
-      targetStats = null;
-    }
-
-    if (targetStats?.isDirectory()) {
-      for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
-        const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
-        if (
-          (entry.name.startsWith(".") || hasHiddenPathSegment(relativePath))
-          && !isIncludedHiddenPath(relativePath, config.includedHiddenPaths)
-        ) {
-          continue;
-        }
-        if (!entry.isFile()) {
-          continue;
-        }
-        const extension = path.extname(entry.name).toLowerCase();
-        if (!supportedExtensions.has(extension)) {
-          continue;
-        }
-        if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
-          continue;
-        }
-
-        const stat = readAffairsLibraryStatsSafe(rootDir, relativePath);
-        const exported = documentMap.get(relativePath);
-        documentMap.set(relativePath, {
-          documentId: exported?.documentId ?? relativePath,
-          path: relativePath,
-          title: exported?.title?.trim() || path.basename(entry.name, extension) || entry.name,
-          summary: exported?.summary ?? "",
-          updatedAt: stat?.mtime.toISOString() ?? exported?.updatedAt ?? "",
-          createdAt: toIsoOrNull(stat?.birthtime) ?? exported?.createdAt ?? null,
-          sizeBytes: stat?.size ?? exported?.sizeBytes ?? null,
-          tags: exported?.tags ?? [],
-          derivedTags: exported?.derivedTags ?? [],
-          isFavorite: false
-        });
-        hasLiveData = true;
+  if (targetStats?.isDirectory()) {
+    for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
+      const relativePath = normalizedFolderPath ? `${normalizedFolderPath}/${entry.name}` : entry.name;
+      if (
+        (entry.name.startsWith(".") || hasHiddenPathSegment(relativePath))
+        && !isIncludedHiddenPath(relativePath, config.includedHiddenPaths)
+      ) {
+        continue;
       }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!supportedExtensions.has(extension)) {
+        continue;
+      }
+      if (configuredExtensions.size > 0 && !configuredExtensions.has(extension)) {
+        continue;
+      }
+
+      const stat = readAffairsLibraryStatsSafe(rootDir, relativePath);
+      const exported = documentMap.get(relativePath);
+      documentMap.set(relativePath, {
+        documentId: exported?.documentId ?? relativePath,
+        path: relativePath,
+        title: exported?.title?.trim() || path.basename(entry.name, extension) || entry.name,
+        summary: exported?.summary ?? "",
+        updatedAt: stat?.mtime.toISOString() ?? exported?.updatedAt ?? "",
+        createdAt: toIsoOrNull(stat?.birthtime) ?? exported?.createdAt ?? null,
+        sizeBytes: stat?.size ?? exported?.sizeBytes ?? null,
+        tags: exported?.tags ?? [],
+        derivedTags: exported?.derivedTags ?? [],
+        isFavorite: false
+      });
+      hasLiveData = true;
     }
   }
 

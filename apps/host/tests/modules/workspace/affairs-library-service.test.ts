@@ -912,6 +912,54 @@ describe("AffairsLibraryService auto tasks", () => {
     fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it("应用内删除文件会刷新父目录，避免当前目录继续显示旧文件", async () => {
+    vi.useFakeTimers();
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-delete-touch-"));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    seedExistingArtifacts(rootDir);
+    const enqueue = vi.fn((taskType: string) => ({
+      taskId: `task-${taskType}`,
+      taskType,
+      key: taskType === HOST_TASK_TYPES.affairsLibraryDirectoryHint ? "workspace-1::notes" : "workspace-1",
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(createIndexerResult("index")),
+      cancel: vi.fn()
+    }));
+
+    const service = createService({ rootDir, enqueue });
+    service.notifyWorkspaceFileMutation("workspace-1", {
+      absolutePath: path.join(rootDir, "notes", "demo.md"),
+      kind: "delete"
+    });
+
+    await vi.advanceTimersByTimeAsync(810);
+
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryIndex,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootDir,
+          reason: "app_delete:notes",
+          targetPath: "notes"
+        })
+      })
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          directoryPath: "notes",
+          reason: "watch_hint:notes"
+        })
+      })
+    );
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("应用内改到配置文件时会改走 apply-config，而不是普通索引刷新", async () => {
     vi.useFakeTimers();
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-config-touch-"));
@@ -1087,6 +1135,80 @@ describe("AffairsLibraryService auto tasks", () => {
 
     expect(documentList.items[0]?.sizeBytes).toBe(Buffer.byteLength("hello affairs"));
     expect(documentList.items[0]?.createdAt).toMatch(/^20/);
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("folder 模式不会把快照里已经被删除的文件继续显示出来", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-lib-deleted-snapshot-"));
+    const exportDir = path.join(rootDir, ".ai-index", "exports");
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.mkdirSync(exportDir, { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "notes", "alive.md"), "# alive");
+    fs.writeFileSync(
+      path.join(exportDir, "manifest.json"),
+      JSON.stringify({
+        generated_at: "2026-05-31T06:00:00.000Z",
+        entries: {
+          taxonomy: "taxonomy.json",
+          bootstrap: "bootstrap.json"
+        },
+        meta_shards: [{ path: "documents-0.json" }]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "taxonomy.json"),
+      JSON.stringify({ tags: [] })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "bootstrap.json"),
+      JSON.stringify({
+        folders: [
+          {
+            path: "notes",
+            name: "notes",
+            parent_path: null,
+            direct_document_count: 2,
+            document_count: 2
+          }
+        ]
+      })
+    );
+    fs.writeFileSync(
+      path.join(exportDir, "documents-0.json"),
+      JSON.stringify({
+        documents: [
+          {
+            document_id: "doc-alive",
+            path: "notes/alive.md",
+            title: "alive",
+            summary: "alive",
+            mtime: "2026-05-31T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          },
+          {
+            document_id: "doc-deleted",
+            path: "notes/deleted.md",
+            title: "deleted",
+            summary: "deleted",
+            mtime: "2026-05-31T08:00:00.000Z",
+            direct_tags: [],
+            derived_tags: []
+          }
+        ]
+      })
+    );
+
+    const service = createService({ rootDir });
+    const documentList = service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    });
+
+    expect(documentList.items.map((item) => item.path)).toEqual(["notes/alive.md"]);
+    expect(documentList.total).toBe(1);
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
@@ -1374,24 +1496,46 @@ describe("AffairsLibraryService auto tasks", () => {
         })
       );
     };
+    const syncLiveFiles = (files: Array<{ path: string; title: string; mtime: string }>) => {
+      for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+        if (entry.name === ".ai-index") {
+          continue;
+        }
+        const targetPath = path.join(rootDir, entry.name);
+        if (entry.isDirectory()) {
+          fs.rmSync(targetPath, { recursive: true, force: true });
+        } else {
+          fs.rmSync(targetPath, { force: true });
+        }
+      }
+      for (const file of files) {
+        fs.mkdirSync(path.dirname(path.join(rootDir, file.path)), { recursive: true });
+        const liveFilePath = path.join(rootDir, file.path);
+        fs.writeFileSync(liveFilePath, file.title, "utf8");
+        const mtime = new Date(file.mtime);
+        fs.utimesSync(liveFilePath, mtime, mtime);
+      }
+    };
 
+    const firstFiles = [
+      {
+        id: "doc-agents",
+        path: "AGENTS.md",
+        title: "AGENTS",
+        mtime: "2026-05-31T10:00:00.000Z"
+      },
+      {
+        id: "doc-test",
+        path: "TEST.MD",
+        title: "TEST.MD",
+        mtime: "2026-05-31T10:00:01.000Z"
+      }
+    ];
     writeExport({
       exportedAt: "2026-05-31T10:00:00.000Z",
-      files: [
-        {
-          id: "doc-agents",
-          path: "AGENTS.md",
-          title: "AGENTS",
-          mtime: "2026-05-31T10:00:00.000Z"
-        },
-        {
-          id: "doc-test",
-          path: "TEST.MD",
-          title: "TEST.MD",
-          mtime: "2026-05-31T10:00:01.000Z"
-        }
-      ]
+      files: firstFiles
     });
+    syncLiveFiles(firstFiles);
 
     const enqueue = vi.fn(() => ({
       taskId: "task-1",
@@ -1411,35 +1555,37 @@ describe("AffairsLibraryService auto tasks", () => {
     expect(firstList.total).toBe(2);
     expect(firstList.items.map((item) => item.path)).toEqual(["TEST.MD", "AGENTS.md"]);
 
+    const secondFiles = [
+      {
+        id: "doc-agents-copy",
+        path: "AGENTS_副本.md",
+        title: "AGENTS_副本",
+        mtime: "2026-05-31T10:05:03.000Z"
+      },
+      {
+        id: "doc-index",
+        path: "index.html",
+        title: "index",
+        mtime: "2026-05-31T10:05:02.000Z"
+      },
+      {
+        id: "doc-test",
+        path: "TEST.MD",
+        title: "TEST.MD",
+        mtime: "2026-05-31T10:05:01.000Z"
+      },
+      {
+        id: "doc-agents",
+        path: "AGENTS.md",
+        title: "AGENTS",
+        mtime: "2026-05-31T10:05:00.000Z"
+      }
+    ];
     writeExport({
       exportedAt: "2026-05-31T10:05:00.000Z",
-      files: [
-        {
-          id: "doc-agents-copy",
-          path: "AGENTS_副本.md",
-          title: "AGENTS_副本",
-          mtime: "2026-05-31T10:05:03.000Z"
-        },
-        {
-          id: "doc-index",
-          path: "index.html",
-          title: "index",
-          mtime: "2026-05-31T10:05:02.000Z"
-        },
-        {
-          id: "doc-test",
-          path: "TEST.MD",
-          title: "TEST.MD",
-          mtime: "2026-05-31T10:05:01.000Z"
-        },
-        {
-          id: "doc-agents",
-          path: "AGENTS.md",
-          title: "AGENTS",
-          mtime: "2026-05-31T10:05:00.000Z"
-        }
-      ]
+      files: secondFiles
     });
+    syncLiveFiles(secondFiles);
 
     const refresh = service.requestRefresh("workspace-1", "user-1", "manual_refresh");
     await enqueue.mock.results[0]?.value.promise;
@@ -2896,6 +3042,66 @@ describe("AffairsLibraryService write editing", () => {
       targetPath: "note.md"
     });
     expect(fs.readFileSync(path.join(rootDir, "note.md"), "utf8")).toContain("更新后内容");
+
+    service.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("删除文件后会从当前目录缓存移除，并按父目录刷新列表", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "affairs-delete-refresh-"));
+    const enqueue = vi.fn((taskType: string, payload: any) => ({
+      taskId: taskType === HOST_TASK_TYPES.affairsLibraryDirectoryHint ? "task-dir-1" : "task-index-1",
+      taskType,
+      key: payload.key,
+      executionLane: "helper_process",
+      deduped: false,
+      promise: Promise.resolve(
+        taskType === HOST_TASK_TYPES.affairsLibraryDirectoryHint
+          ? {
+              directoryPath: payload.input.directoryPath,
+              refreshedAt: "2026-06-07T09:00:00.000Z",
+              source: "live",
+              itemCount: 0,
+              childDirectoryCount: 0,
+              changedPaths: [],
+              items: [],
+              generatedAt: null,
+              filesystemObservedAt: "2026-06-07T09:00:00.000Z"
+            }
+          : createIndexerResult("index")
+      ),
+      cancel: vi.fn()
+    }));
+    fs.mkdirSync(path.join(rootDir, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "notes", "delete-me.md"), "# delete me");
+    const service = createService({ rootDir, enqueue });
+
+    expect(service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    }).items.map((item) => item.path)).toEqual(["notes/delete-me.md"]);
+
+    const result = service.operateFile("workspace-1", "user-1", {
+      opType: "delete",
+      srcPath: "notes/delete-me.md"
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      opType: "delete",
+      sourcePath: "notes/delete-me.md",
+      targetPath: null
+    });
+    expect(service.listDocuments("workspace-1", "user-1", {
+      browseMode: "folder",
+      selectedFolderPath: "notes"
+    }).items).toEqual([]);
+
+    const directoryHintCall = enqueue.mock.calls.find((call) => call[0] === HOST_TASK_TYPES.affairsLibraryDirectoryHint);
+    expect(directoryHintCall?.[1]?.input).toMatchObject({
+      directoryPath: "notes",
+      reason: "watch_hint:notes"
+    });
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
