@@ -75,6 +75,20 @@ describe("auth user management", () => {
     expect(created.statusCode).toBe(201);
     const aliceId = created.json().userId as string;
 
+    const aliceLoginAfterCreate = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "alice",
+        password: "alice1234"
+      }
+    });
+    expect(aliceLoginAfterCreate.statusCode).toBe(200);
+    expect(aliceLoginAfterCreate.json().user).toMatchObject({
+      userId: aliceId,
+      username: "alice"
+    });
+
     const updated = await hosted.app.inject({
       method: "PATCH",
       url: `/api/admin/users/${aliceId}`,
@@ -89,6 +103,21 @@ describe("auth user management", () => {
       userId: aliceId,
       username: "alice-renamed",
       status: "active"
+    });
+
+
+    const aliceLoginAfterUpdate = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "alice-renamed",
+        password: "alice5678"
+      }
+    });
+    expect(aliceLoginAfterUpdate.statusCode).toBe(200);
+    expect(aliceLoginAfterUpdate.json().user).toMatchObject({
+      userId: aliceId,
+      username: "alice-renamed"
     });
 
     const temp = await hosted.app.inject({
