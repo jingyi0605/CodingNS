@@ -296,6 +296,21 @@ export interface AffairsResolvedTagSourceDto {
   priority: number;
 }
 
+export type AffairsTagRecommendationReasonDto =
+  | "name_match"
+  | "folder_context"
+  | "smart_rule"
+  | "time_pattern";
+
+export interface AffairsTagRecommendationDto {
+  tagId: string;
+  path: string;
+  name: string;
+  score: number;
+  reason: AffairsTagRecommendationReasonDto;
+  evidence: string;
+}
+
 export interface AffairsDocumentTagDetailsDto {
   documentId: string;
   path: string;
@@ -308,6 +323,7 @@ export interface AffairsDocumentTagDetailsDto {
     tagPath: string;
   }>;
   resolvedTags: AffairsResolvedTagSourceDto[];
+  recommendedTags?: AffairsTagRecommendationDto[];
 }
 
 export interface AffairsFolderTagDetailsDto {
@@ -320,6 +336,7 @@ export interface AffairsFolderTagDetailsDto {
     tagPath: string;
     applyMode: string;
   }>;
+  recommendedTags?: AffairsTagRecommendationDto[];
 }
 
 export interface AffairsLibraryFolderNodeDto {

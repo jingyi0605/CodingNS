@@ -1651,14 +1651,16 @@ describe("AffairsWorkbenchView", () => {
         { path: "时间/最近30天", sourceType: "system_derived", sourceRef: null, evidence: "最近30天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近3天", sourceType: "system_derived", sourceRef: null, evidence: "最近3天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近7天", sourceType: "system_derived", sourceRef: null, evidence: "最近7天有修改", confidence: 1, priority: 10 }
-      ]
+      ],
+      recommendedTags: []
     });
     conversationApiMock.getAffairsDocumentTagTask.mockResolvedValue(null);
     conversationApiMock.getAffairsFolderTagDetails.mockResolvedValue({
       folderPath: "AGENTS",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
     conversationApiMock.getAffairsTagRecomputeTask.mockResolvedValue(null);
     conversationApiMock.getAffairsTagRecoveryStatus.mockResolvedValue({
@@ -2430,6 +2432,102 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextTags") }));
 
     expect(await screen.findByRole("dialog", { name: t("shell.affairsTagQuickAssignModalTitle") })).toBeInTheDocument();
+  });
+
+  it("右键分配标签面板会显示最多 8 个推荐标签，并可一键分配", async () => {
+    platformBridgeMock.supported = false;
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: Array.from({ length: 9 }, (_, index) => ({
+        id: `tag-${index + 1}`,
+        path: `客户/推荐${index + 1}`,
+        name: `推荐${index + 1}`,
+        rootType: "客户",
+        parentId: null,
+        parentPath: null,
+        description: null,
+        status: "active",
+        documentCount: 0,
+        createdAt: "2026-06-01T08:00:00.000Z",
+        updatedAt: "2026-06-01T08:00:00.000Z",
+        disabledAt: null
+      }))
+    });
+    const initialDocumentTagDetails = {
+      documentId: "doc-1",
+      path: "Exchange 分层通讯簿.txt",
+      title: "Exchange 分层通讯簿",
+      manualTagIds: [],
+      effectiveFolderBindings: [],
+      resolvedTags: [],
+      recommendedTags: Array.from({ length: 9 }, (_, index) => ({
+        tagId: `tag-${index + 1}`,
+        path: `客户/推荐${index + 1}`,
+        name: `推荐${index + 1}`,
+        score: 100 - index,
+        reason: "name_match" as const,
+        evidence: "文件名命中"
+      }))
+    };
+    const updatedDocumentTagDetails = {
+      ...initialDocumentTagDetails,
+      manualTagIds: ["tag-1"],
+      resolvedTags: [{
+        path: "客户/推荐1",
+        sourceType: "manual_document",
+        sourceRef: null,
+        evidence: "手动分配",
+        confidence: 1,
+        priority: 1
+      }],
+      recommendedTags: Array.from({ length: 8 }, (_, index) => ({
+        tagId: `tag-${index + 2}`,
+        path: `客户/推荐${index + 2}`,
+        name: `推荐${index + 2}`,
+        score: 99 - index,
+        reason: "name_match" as const,
+        evidence: "文件名命中"
+      }))
+    };
+    conversationApiMock.getAffairsDocumentTagDetails
+      .mockResolvedValueOnce(initialDocumentTagDetails)
+      .mockResolvedValue(updatedDocumentTagDetails);
+    let resolveSaveDocumentTags: ((value: {
+      target: { type: "document"; documentId: string };
+      items: [];
+      refreshTask: null;
+    }) => void) | null = null;
+    conversationApiMock.saveAffairsDocumentTags.mockImplementation(() => new Promise((resolve) => {
+      resolveSaveDocumentTags = resolve;
+    }));
+
+    renderWorkbench();
+
+    const card = await screen.findByRole("button", { name: /Exchange 分层通讯簿/i });
+    fireEvent.contextMenu(card, { clientX: 240, clientY: 180 });
+    const menu = await screen.findByRole("menu", { name: t("shell.affairsLibraryContextMenuLabel") });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: t("shell.affairsLibraryContextTags") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.affairsTagQuickAssignModalTitle") });
+    expect(within(dialog).getByText(t("shell.affairsTagRecommendationsLabel"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/推荐1" }) })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/推荐9" }) })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/推荐1" }) }));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(t("shell.affairsTagQuickAssignSubmitting"));
+    resolveSaveDocumentTags?.({
+      target: { type: "document", documentId: "doc-1" },
+      items: [],
+      refreshTask: null
+    });
+    await waitFor(() => {
+      expect(conversationApiMock.saveAffairsDocumentTags).toHaveBeenCalledWith("workspace-1", "doc-1", {
+        tagIds: ["tag-1"]
+      });
+    });
+    expect(screen.getByRole("dialog", { name: t("shell.affairsTagQuickAssignModalTitle") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.affairsDocumentTagRemoveAction", { tag: "客户/推荐1" }) })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/推荐1" }) })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/推荐9" }) })).toBeInTheDocument();
   });
 
   it("H5 环境下右键下载仍然可用", async () => {
@@ -6429,13 +6527,15 @@ describe("AffairsWorkbenchView", () => {
         { path: "时间/最近30天", sourceType: "system_derived", sourceRef: null, evidence: "最近30天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近3天", sourceType: "system_derived", sourceRef: null, evidence: "最近3天有修改", confidence: 1, priority: 10 },
         { path: "时间/最近7天", sourceType: "system_derived", sourceRef: null, evidence: "最近7天有修改", confidence: 1, priority: 10 }
-      ]
+      ],
+      recommendedTags: []
     });
     conversationApiMock.getAffairsFolderTagDetails.mockResolvedValue({
       folderPath: ".",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
 
     renderWorkbench();
@@ -6466,6 +6566,86 @@ describe("AffairsWorkbenchView", () => {
         tagIds: ["tag-1"]
       });
     });
+  });
+
+  it("文档详情推荐标签收进标签推荐悬浮层，并排除已分配标签", async () => {
+    conversationApiMock.listAffairsTags.mockResolvedValue({
+      items: [
+        {
+          id: "tag-inherited",
+          path: "客户/合同",
+          name: "合同",
+          rootType: "客户",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 0,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        },
+        {
+          id: "tag-recommended",
+          path: "项目/报价",
+          name: "报价",
+          rootType: "项目",
+          parentId: null,
+          parentPath: null,
+          description: null,
+          status: "active",
+          documentCount: 0,
+          createdAt: "2026-06-01T08:00:00.000Z",
+          updatedAt: "2026-06-01T08:00:00.000Z",
+          disabledAt: null
+        }
+      ]
+    });
+    conversationApiMock.getAffairsDocumentTagDetails.mockResolvedValue({
+      documentId: "doc-1",
+      path: "Exchange 分层通讯簿.txt",
+      title: "Exchange 分层通讯簿",
+      manualTagIds: [],
+      effectiveFolderBindings: [{
+        id: "folder-binding-1",
+        folderPath: "客户资料",
+        tagId: "tag-inherited",
+        tagPath: "客户/合同"
+      }],
+      resolvedTags: [{ path: "客户/合同", sourceType: "folder_binding", sourceRef: null, evidence: "文件夹继承", confidence: 1, priority: 1 }],
+      recommendedTags: [
+        {
+          tagId: "tag-inherited",
+          path: "客户/合同",
+          name: "合同",
+          score: 99,
+          reason: "name_match",
+          evidence: "已分配标签不应该展示到推荐区"
+        },
+        {
+          tagId: "tag-recommended",
+          path: "项目/报价",
+          name: "报价",
+          score: 91,
+          reason: "folder_context",
+          evidence: "同级文件夹已经配置过这个标签"
+        }
+      ]
+    });
+
+    renderWorkbench();
+
+    await userEvent.click(await screen.findByText("Exchange 分层通讯簿.txt"));
+    expect(await screen.findByText("客户/合同")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "项目/报价" }) })).not.toBeInTheDocument();
+
+    const recommendationTrigger = await screen.findByRole("button", { name: t("shell.affairsTagRecommendationsAction") });
+    expect(recommendationTrigger).toHaveClass("has-recommendations");
+    await userEvent.click(recommendationTrigger);
+
+    const recommendedButton = await screen.findByRole("button", { name: /项目\/报价/ });
+    expect(recommendedButton.querySelector(".affairs-color-tag.recommended")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: t("shell.affairsTagRecommendationAssignAction", { tag: "客户/合同" }) })).not.toBeInTheDocument();
   });
 
   it("文档标签请求提交后会立刻显示右上角进度入口", async () => {
@@ -6567,7 +6747,8 @@ describe("AffairsWorkbenchView", () => {
       folderPath: ".",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
     conversationApiMock.saveAffairsFolderTags.mockResolvedValue({
       target: { type: "folder", folderPath: "." },
@@ -6651,7 +6832,8 @@ describe("AffairsWorkbenchView", () => {
       folderPath: ".",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
     let resolveSave: ((value: {
       target: { type: "folder"; folderPath: string };
@@ -6744,7 +6926,8 @@ describe("AffairsWorkbenchView", () => {
       folderPath: ".",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
     conversationApiMock.saveAffairsFolderTags.mockResolvedValue({
       target: { type: "folder", folderPath: "." },
@@ -6814,7 +6997,8 @@ describe("AffairsWorkbenchView", () => {
       folderPath: ".",
       exists: true,
       bindingTagIds: [],
-      bindings: []
+      bindings: [],
+      recommendedTags: []
     });
 
     renderWorkbench();

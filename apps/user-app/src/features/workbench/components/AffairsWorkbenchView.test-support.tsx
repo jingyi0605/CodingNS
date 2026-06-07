@@ -1344,14 +1344,16 @@ beforeEach(() => {
       { path: "时间/最近30天", sourceType: "system_derived", sourceRef: null, evidence: "最近30天有修改", confidence: 1, priority: 10 },
       { path: "时间/最近3天", sourceType: "system_derived", sourceRef: null, evidence: "最近3天有修改", confidence: 1, priority: 10 },
       { path: "时间/最近7天", sourceType: "system_derived", sourceRef: null, evidence: "最近7天有修改", confidence: 1, priority: 10 }
-    ]
+    ],
+    recommendedTags: []
   });
   conversationApiMock.getAffairsDocumentTagTask.mockResolvedValue(null);
   conversationApiMock.getAffairsFolderTagDetails.mockResolvedValue({
     folderPath: "AGENTS",
     exists: true,
     bindingTagIds: [],
-    bindings: []
+    bindings: [],
+    recommendedTags: []
   });
   conversationApiMock.getAffairsTagRecomputeTask.mockResolvedValue(null);
   conversationApiMock.getAffairsTagRecoveryStatus.mockResolvedValue({

@@ -90,6 +90,7 @@ import type {
   AffairsTagRecoveryStatusDto,
   AffairsTagDetailWithRulesDto,
   AffairsTagNodeDto,
+  AffairsTagRecommendationDto,
   AffairsTagRuleDto,
   ProviderCapabilitiesDto,
   ProviderId,
@@ -497,12 +498,14 @@ type PendingTagAssignmentTarget =
       documentId: string;
       existingTagIds: string[];
       resolvedTagPaths: string[];
+      recommendedTags: AffairsTagRecommendationDto[];
     }
   | {
       kind: "folder";
       title: string;
       folderPath: string;
       existingTagIds: string[];
+      recommendedTags: AffairsTagRecommendationDto[];
     };
 
 type LibraryClipboardState = {
@@ -8795,7 +8798,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   async function openTagAssignmentTarget(target: Extract<LibraryContextMenuTarget, { kind: "document" | "folder" }>) {
     setContextMenu(null);
     if (target.kind === "document") {
-      const details = target.record.id === documentTagDetails?.documentId
+      const details = target.record.id === documentTagDetails?.documentId && Array.isArray(documentTagDetails.recommendedTags)
         ? documentTagDetails
         : await getAffairsDocumentTagDetails(workspaceId, target.record.id);
       setPendingTagAssignmentTarget({
@@ -8804,12 +8807,13 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
         documentId: target.record.id,
         existingTagIds: details.manualTagIds,
         resolvedTagPaths: compactDocumentTagPaths((details.resolvedTags ?? []).map((item) => item.path)),
+        recommendedTags: details.recommendedTags ?? [],
       });
       return;
     }
 
     const folderPath = target.entry.path || ".";
-    const details = folderTagDetails?.folderPath === folderPath
+    const details = folderTagDetails?.folderPath === folderPath && Array.isArray(folderTagDetails.recommendedTags)
       ? folderTagDetails
       : await getAffairsFolderTagDetails(workspaceId, folderPath);
     setPendingTagAssignmentTarget({
@@ -8817,6 +8821,36 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       title: target.entry.title,
       folderPath,
       existingTagIds: details.bindingTagIds,
+      recommendedTags: details.recommendedTags ?? [],
+    });
+  }
+
+  async function refreshPendingDocumentTagAssignmentTarget(target: Extract<PendingTagAssignmentTarget, { kind: "document" }>) {
+    const details = await getAffairsDocumentTagDetails(workspaceId, target.documentId);
+    setPendingTagAssignmentTarget((current) => {
+      if (!current || current.kind !== "document" || current.documentId !== target.documentId) {
+        return current;
+      }
+      return {
+        ...current,
+        existingTagIds: details.manualTagIds,
+        resolvedTagPaths: compactDocumentTagPaths((details.resolvedTags ?? []).map((item) => item.path)),
+        recommendedTags: details.recommendedTags ?? [],
+      };
+    });
+  }
+
+  async function refreshPendingFolderTagAssignmentTarget(target: Extract<PendingTagAssignmentTarget, { kind: "folder" }>) {
+    const details = await getAffairsFolderTagDetails(workspaceId, target.folderPath);
+    setPendingTagAssignmentTarget((current) => {
+      if (!current || current.kind !== "folder" || current.folderPath !== target.folderPath) {
+        return current;
+      }
+      return {
+        ...current,
+        existingTagIds: details.bindingTagIds,
+        recommendedTags: details.recommendedTags ?? [],
+      };
     });
   }
 
@@ -9407,31 +9441,39 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
               <AffairsQuickTagAssignmentEditor
                 assignedTagIds={pendingTagAssignmentTarget.existingTagIds}
                 resolvedTagPaths={pendingTagAssignmentTarget.resolvedTagPaths}
+                recommendedTags={pendingTagAssignmentTarget.recommendedTags}
                 emptyText={t("shell.affairsDocumentTagsEmpty")}
                 inputLabel={t("shell.affairsDocumentTagAddLabel")}
                 suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
-                  pendingTagAssignmentTarget.documentId,
-                  nextTagIds,
-                  createTagPaths,
-                  pendingTagAssignmentTarget.existingTagIds,
-                  pendingTagAssignmentTarget.title,
-                )}
-                onSaved={() => setPendingTagAssignmentTarget(null)}
+                onSave={async (nextTagIds, createTagPaths) => {
+                  const target = pendingTagAssignmentTarget;
+                  await saveDocumentTagSelection(
+                    target.documentId,
+                    nextTagIds,
+                    createTagPaths,
+                    target.existingTagIds,
+                    target.title,
+                  );
+                  await refreshPendingDocumentTagAssignmentTarget(target);
+                }}
               />
             ) : (
               <AffairsQuickTagAssignmentEditor
                 assignedTagIds={pendingTagAssignmentTarget.existingTagIds}
+                recommendedTags={pendingTagAssignmentTarget.recommendedTags}
                 emptyText={t("shell.affairsFolderTagsEmpty")}
                 inputLabel={t("shell.affairsFolderTagAddLabel")}
                 suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(
-                  pendingTagAssignmentTarget.folderPath,
-                  nextTagIds,
-                  createTagPaths,
-                  pendingTagAssignmentTarget.existingTagIds,
-                )}
-                onSaved={() => setPendingTagAssignmentTarget(null)}
+                onSave={async (nextTagIds, createTagPaths) => {
+                  const target = pendingTagAssignmentTarget;
+                  await saveFolderTagSelection(
+                    target.folderPath,
+                    nextTagIds,
+                    createTagPaths,
+                    target.existingTagIds,
+                  );
+                  await refreshPendingFolderTagAssignmentTarget(target);
+                }}
               />
             )}
           </MobileSheet>
@@ -9458,31 +9500,39 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
               <AffairsQuickTagAssignmentEditor
                 assignedTagIds={pendingTagAssignmentTarget.existingTagIds}
                 resolvedTagPaths={pendingTagAssignmentTarget.resolvedTagPaths}
+                recommendedTags={pendingTagAssignmentTarget.recommendedTags}
                 emptyText={t("shell.affairsDocumentTagsEmpty")}
                 inputLabel={t("shell.affairsDocumentTagAddLabel")}
                 suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
-                  pendingTagAssignmentTarget.documentId,
-                  nextTagIds,
-                  createTagPaths,
-                  pendingTagAssignmentTarget.existingTagIds,
-                  pendingTagAssignmentTarget.title,
-                )}
-                onSaved={() => setPendingTagAssignmentTarget(null)}
+                onSave={async (nextTagIds, createTagPaths) => {
+                  const target = pendingTagAssignmentTarget;
+                  await saveDocumentTagSelection(
+                    target.documentId,
+                    nextTagIds,
+                    createTagPaths,
+                    target.existingTagIds,
+                    target.title,
+                  );
+                  await refreshPendingDocumentTagAssignmentTarget(target);
+                }}
               />
             ) : (
               <AffairsQuickTagAssignmentEditor
                 assignedTagIds={pendingTagAssignmentTarget.existingTagIds}
+                recommendedTags={pendingTagAssignmentTarget.recommendedTags}
                 emptyText={t("shell.affairsFolderTagsEmpty")}
                 inputLabel={t("shell.affairsFolderTagAddLabel")}
                 suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
-                onSave={(nextTagIds, createTagPaths) => saveFolderTagSelection(
-                  pendingTagAssignmentTarget.folderPath,
-                  nextTagIds,
-                  createTagPaths,
-                  pendingTagAssignmentTarget.existingTagIds,
-                )}
-                onSaved={() => setPendingTagAssignmentTarget(null)}
+                onSave={async (nextTagIds, createTagPaths) => {
+                  const target = pendingTagAssignmentTarget;
+                  await saveFolderTagSelection(
+                    target.folderPath,
+                    nextTagIds,
+                    createTagPaths,
+                    target.existingTagIds,
+                  );
+                  await refreshPendingFolderTagAssignmentTarget(target);
+                }}
               />
             )}
           </DesktopModal>
@@ -9968,7 +10018,6 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
                     </div>
                   </dl>
                   <div className="affairs-detail-tag-editor">
-                    <strong>{t("shell.affairsDocumentTagsSectionTitle")}</strong>
                     <AffairsDocumentTagSelectionPanel
                       documentId={documentRecord.id}
                       details={documentTagDetails}
@@ -10291,9 +10340,23 @@ function AffairsFolderDetailPanel({ detail }: { detail: FolderDetailState }) {
         </div>
       </dl>
       <div className="affairs-detail-tag-editor">
-        <strong>{t("shell.affairsFolderTagsSectionTitle")}</strong>
+        <div className="affairs-detail-tag-editor-header">
+          <strong>{t("shell.affairsFolderTagsSectionTitle")}</strong>
+          <AffairsTagRecommendationButton
+            assignedTagIds={folderTagDetails?.bindingTagIds ?? []}
+            recommendedTags={folderTagDetails?.recommendedTags ?? []}
+            onSave={(nextTagIds) => saveFolderTagSelection(
+              folderTagDetails?.folderPath ?? detail.folderPath ?? ".",
+              nextTagIds,
+              [],
+              folderTagDetails?.bindingTagIds ?? [],
+            )}
+          />
+        </div>
         <AffairsQuickTagAssignmentEditor
           assignedTagIds={folderTagDetails?.bindingTagIds ?? []}
+          recommendedTags={folderTagDetails?.recommendedTags ?? []}
+          showInlineRecommendations={false}
           emptyText={t("shell.affairsFolderTagsEmpty")}
           inputLabel={t("shell.affairsFolderTagAddLabel")}
           suggestionsLabel={t("shell.affairsFolderTagSuggestionsLabel")}
@@ -10323,26 +10386,174 @@ function AffairsDocumentTagSelectionPanel({
   }
 
   return (
-    <AffairsQuickTagAssignmentEditor
-      assignedTagIds={details.manualTagIds}
-      resolvedTagPaths={compactDocumentTagPaths((details.resolvedTags ?? []).map((tag) => tag.path))}
-      emptyText={t("shell.affairsDocumentTagsEmpty")}
-      inputLabel={t("shell.affairsDocumentTagAddLabel")}
-      suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
-      onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
-        documentId,
-        nextTagIds,
-        createTagPaths,
-        details.manualTagIds,
-        details.title,
-      )}
-    />
+    <>
+      <div className="affairs-detail-tag-editor-header">
+        <strong>{t("shell.affairsDocumentTagsSectionTitle")}</strong>
+        <AffairsTagRecommendationButton
+          assignedTagIds={details.manualTagIds}
+          recommendedTags={details.recommendedTags ?? []}
+          onSave={(nextTagIds) => saveDocumentTagSelection(
+            documentId,
+            nextTagIds,
+            [],
+            details.manualTagIds,
+            details.title,
+          )}
+        />
+      </div>
+      <AffairsQuickTagAssignmentEditor
+        assignedTagIds={details.manualTagIds}
+        resolvedTagPaths={compactDocumentTagPaths((details.resolvedTags ?? []).map((tag) => tag.path))}
+        recommendedTags={details.recommendedTags ?? []}
+        showInlineRecommendations={false}
+        emptyText={t("shell.affairsDocumentTagsEmpty")}
+        inputLabel={t("shell.affairsDocumentTagAddLabel")}
+        suggestionsLabel={t("shell.affairsDocumentTagSuggestionsLabel")}
+        onSave={(nextTagIds, createTagPaths) => saveDocumentTagSelection(
+          documentId,
+          nextTagIds,
+          createTagPaths,
+          details.manualTagIds,
+          details.title,
+        )}
+      />
+    </>
+  );
+}
+
+function AffairsTagRecommendationButton({
+  assignedTagIds,
+  recommendedTags,
+  onSave,
+}: {
+  assignedTagIds: string[];
+  recommendedTags: AffairsTagRecommendationDto[];
+  onSave: (nextTagIds: string[]) => Promise<void>;
+}) {
+  const { managedTags } = useAffairsWorkbenchInternal();
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [submittingTagId, setSubmittingTagId] = useState<string | null>(null);
+  const selectedTagIds = useMemo(() => new Set(assignedTagIds), [assignedTagIds]);
+  const visibleTags = useMemo(() => {
+    const assignableTagIdSet = new Set((Array.isArray(managedTags) ? managedTags : [])
+      .filter(isAssignableManagedTag)
+      .map((tag) => tag.id));
+    return recommendedTags
+      .filter((tag) => assignableTagIdSet.has(tag.tagId) && !selectedTagIds.has(tag.tagId))
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path, "zh-Hans-CN"))
+      .slice(0, 8);
+  }, [managedTags, recommendedTags, selectedTagIds]);
+  const hasRecommendations = visibleTags.length > 0;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (triggerRef.current?.contains(event.target) || popoverRef.current?.contains(event.target)) {
+        return;
+      }
+      setOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!hasRecommendations) {
+      setOpen(false);
+    }
+  }, [hasRecommendations]);
+
+  const handleAssign = async (tag: AffairsTagRecommendationDto) => {
+    setSubmittingTagId(tag.tagId);
+    try {
+      await onSave(uniqueStringList([...assignedTagIds, tag.tagId]));
+      setOpen(false);
+    } finally {
+      setSubmittingTagId(null);
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={hasRecommendations ? "affairs-tag-recommendation-trigger has-recommendations" : "affairs-tag-recommendation-trigger"}
+        disabled={!hasRecommendations}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={t("shell.affairsTagRecommendationsAction")}
+        title={hasRecommendations
+          ? t("shell.affairsTagRecommendationsCount", { count: visibleTags.length })
+          : t("shell.affairsTagRecommendationsEmpty")}
+        onClick={() => {
+          if (hasRecommendations) {
+            setOpen((current) => !current);
+          }
+        }}
+      >
+        {t("shell.affairsTagRecommendationsAction")}
+      </button>
+      <ButlerAnchoredPopover
+        open={open && triggerRef.current !== null && hasRecommendations}
+        className="affairs-tag-recommendation-popover"
+        anchorRef={triggerRef}
+        popoverRef={popoverRef}
+        role="dialog"
+        labelledBy="affairs-tag-recommendation-popover-title"
+        maxWidth={420}
+        gap={8}
+      >
+        <div className="affairs-tag-recommendation-popover-card">
+          <div className="affairs-tag-recommendation-popover-header">
+            <strong id="affairs-tag-recommendation-popover-title">{t("shell.affairsTagRecommendationsLabel")}</strong>
+            <span>{visibleTags.length}</span>
+          </div>
+          <div className="affairs-tag-recommendation-popover-list" role="list">
+            {visibleTags.map((tag) => (
+              <button
+                key={tag.tagId}
+                type="button"
+                className="affairs-tag-recommendation-popover-item"
+                disabled={submittingTagId !== null}
+                onClick={() => {
+                  void handleAssign(tag);
+                }}
+              >
+                <AffairsColorTag label={tag.path} path={tag.path} variant="recommended" />
+                <span className="affairs-tag-recommendation-popover-item-meta">
+                  {resolveTagRecommendationReasonLabel(tag.reason)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </ButlerAnchoredPopover>
+    </>
   );
 }
 
 function AffairsQuickTagAssignmentEditor({
   assignedTagIds,
   resolvedTagPaths = [],
+  recommendedTags = [],
+  showInlineRecommendations = true,
   emptyText,
   inputLabel,
   suggestionsLabel,
@@ -10351,6 +10562,8 @@ function AffairsQuickTagAssignmentEditor({
 }: {
   assignedTagIds: string[];
   resolvedTagPaths?: string[];
+  recommendedTags?: AffairsTagRecommendationDto[];
+  showInlineRecommendations?: boolean;
   emptyText: string;
   inputLabel: string;
   suggestionsLabel: string;
@@ -10360,6 +10573,7 @@ function AffairsQuickTagAssignmentEditor({
   const { managedTags } = useAffairsWorkbenchInternal();
   const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"assign" | "create" | "remove" | null>(null);
   const selectedTagIds = useMemo(() => new Set(assignedTagIds), [assignedTagIds]);
   const assignableTags = useMemo(
     () => (Array.isArray(managedTags) ? managedTags : []).filter(isAssignableManagedTag),
@@ -10369,11 +10583,6 @@ function AffairsQuickTagAssignmentEditor({
     () => assignableTags.filter((tag) => selectedTagIds.has(tag.id)),
     [assignableTags, selectedTagIds]
   );
-  const selectedTagByPath = useMemo(() => {
-    const map = new Map<string, AffairsTagNodeDto>();
-    selectedTags.forEach((tag) => map.set(tag.path, tag));
-    return map;
-  }, [selectedTags]);
   const visibleTagPaths = useMemo(
     () => compactDocumentTagPaths([
       ...resolvedTagPaths,
@@ -10381,6 +10590,18 @@ function AffairsQuickTagAssignmentEditor({
     ]),
     [resolvedTagPaths, selectedTags]
   );
+  const recommendedVisibleTags = useMemo(() => {
+    const assignableTagIdSet = new Set(assignableTags.map((tag) => tag.id));
+    return recommendedTags
+      .filter((tag) => assignableTagIdSet.has(tag.tagId) && !selectedTagIds.has(tag.tagId))
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path, "zh-Hans-CN"))
+      .slice(0, 8);
+  }, [assignableTags, recommendedTags, selectedTagIds]);
+  const selectedTagByPath = useMemo(() => {
+    const map = new Map<string, AffairsTagNodeDto>();
+    selectedTags.forEach((tag) => map.set(tag.path, tag));
+    return map;
+  }, [selectedTags]);
   const normalizedQuery = normalizeTagPathInput(query);
   const normalizedQueryLower = normalizedQuery.toLowerCase();
   const matchedTags = useMemo(() => {
@@ -10401,14 +10622,20 @@ function AffairsQuickTagAssignmentEditor({
   );
   const canCreateTag = normalizedQuery.length > 0 && !exactMatchedTag;
 
-  const commitSelection = async (nextTagIds: string[], createTagPaths: string[] = []) => {
+  const commitSelection = async (
+    nextTagIds: string[],
+    createTagPaths: string[] = [],
+    action: "assign" | "create" | "remove" = createTagPaths.length > 0 ? "create" : "assign"
+  ) => {
     setSubmitting(true);
+    setPendingAction(action);
     try {
       await onSave(uniqueStringList(nextTagIds), createTagPaths);
       setQuery("");
       onSaved?.();
     } finally {
       setSubmitting(false);
+      setPendingAction(null);
     }
   };
 
@@ -10421,14 +10648,27 @@ function AffairsQuickTagAssignmentEditor({
         setQuery("");
         return;
       }
-      await commitSelection([...assignedTagIds, exactMatchedTag.id]);
+      await commitSelection([...assignedTagIds, exactMatchedTag.id], [], "assign");
       return;
     }
-    await commitSelection([...assignedTagIds], [normalizedQuery]);
+    await commitSelection([...assignedTagIds], [normalizedQuery], "create");
   };
+  const pendingStatusText = pendingAction === "create"
+    ? t("shell.affairsTagQuickCreateSubmitting")
+    : pendingAction === "remove"
+      ? t("shell.affairsTagQuickRemoveSubmitting")
+      : pendingAction === "assign"
+        ? t("shell.affairsTagQuickAssignSubmitting")
+        : null;
 
   return (
     <>
+      {pendingStatusText ? (
+        <div className="affairs-document-tag-submit-status" role="status" aria-live="polite">
+          <span className="affairs-document-tag-submit-spinner" aria-hidden="true" />
+          <span>{pendingStatusText}</span>
+        </div>
+      ) : null}
       <div className="affairs-document-tag-list">
         {visibleTagPaths.length === 0 ? (
           <span className="affairs-binding-hint">{emptyText}</span>
@@ -10445,7 +10685,7 @@ function AffairsQuickTagAssignmentEditor({
               aria-label={t("shell.affairsDocumentTagRemoveAction", { tag: manualTag.path })}
               disabled={submitting}
               onClick={() => {
-                void commitSelection(assignedTagIds.filter((item) => item !== manualTag.id));
+                void commitSelection(assignedTagIds.filter((item) => item !== manualTag.id), [], "remove");
               }}
             >
               <AffairsColorTag label={manualTag.path} path={manualTag.path} />
@@ -10454,6 +10694,31 @@ function AffairsQuickTagAssignmentEditor({
           );
         })}
       </div>
+      {showInlineRecommendations && recommendedVisibleTags.length > 0 ? (
+        <div className="affairs-document-tag-recommendations" aria-label={t("shell.affairsTagRecommendationsLabel")}>
+          <span className="affairs-document-tag-recommendations-title">{t("shell.affairsTagRecommendationsLabel")}</span>
+          <div className="affairs-document-tag-recommendation-list">
+            {recommendedVisibleTags.map((tag) => (
+              <button
+                key={tag.tagId}
+                type="button"
+                className="affairs-document-tag-recommendation"
+                disabled={submitting}
+                aria-label={t("shell.affairsTagRecommendationAssignAction", { tag: tag.path })}
+                title={tag.evidence}
+                onClick={() => {
+                  void commitSelection([...assignedTagIds, tag.tagId], [], "assign");
+                }}
+              >
+                <AffairsColorTag label={tag.path} path={tag.path} variant="recommended" />
+                <span className="affairs-document-tag-recommendation-reason">
+                  {resolveTagRecommendationReasonLabel(tag.reason)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="affairs-document-tag-picker">
         <label className="affairs-document-tag-input-label">
           <span>{inputLabel}</span>
@@ -10479,7 +10744,7 @@ function AffairsQuickTagAssignmentEditor({
                 className="affairs-document-tag-suggestion"
                 disabled={submitting}
                 onClick={() => {
-                  void commitSelection([...assignedTagIds, tag.id]);
+                  void commitSelection([...assignedTagIds, tag.id], [], "assign");
                 }}
               >
                 <AffairsColorTag label={tag.path} path={tag.path} />
@@ -10491,7 +10756,7 @@ function AffairsQuickTagAssignmentEditor({
                 className="affairs-document-tag-suggestion affairs-document-tag-create-suggestion"
                 disabled={submitting}
                 onClick={() => {
-                  void commitSelection([...assignedTagIds], [normalizedQuery]);
+                  void commitSelection([...assignedTagIds], [normalizedQuery], "create");
                 }}
               >
                 <span className="affairs-document-tag-create-label">{t("shell.affairsTagQuickCreateAction", { tag: normalizedQuery })}</span>
@@ -10508,12 +10773,25 @@ function AffairsQuickTagAssignmentEditor({
   );
 }
 
-function AffairsColorTag({ label, path }: { label: string; path: string }) {
+function AffairsColorTag({ label, path, variant = "assigned" }: { label: string; path: string; variant?: "assigned" | "recommended" }) {
   return (
-    <span className="affairs-color-tag" style={buildTagColorStyle(path)}>
+    <span className={`affairs-color-tag ${variant === "recommended" ? "recommended" : "assigned"}`} style={buildTagColorStyle(path)}>
       {label}
     </span>
   );
+}
+
+function resolveTagRecommendationReasonLabel(reason: AffairsTagRecommendationDto["reason"]): string {
+  switch (reason) {
+    case "name_match":
+      return t("shell.affairsTagRecommendationReasonName");
+    case "folder_context":
+      return t("shell.affairsTagRecommendationReasonFolder");
+    case "smart_rule":
+      return t("shell.affairsTagRecommendationReasonRule");
+    case "time_pattern":
+      return t("shell.affairsTagRecommendationReasonTime");
+  }
 }
 
 function buildManagedTagTree(tags: AffairsTagNodeDto[]): ManagedTagTreeNode[] {
