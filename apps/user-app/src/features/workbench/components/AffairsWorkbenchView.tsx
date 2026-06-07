@@ -213,6 +213,8 @@ import {
   type AffairsDocumentKind
 } from "../utils/affairs-document-visual";
 import type {
+  AffairsLibrarySortMode,
+  AffairsLibrarySortState,
   AffairsWorkbenchDashboardState,
   AffairsAuxiliaryTab,
   DashboardHtmlWidgetVariant,
@@ -338,14 +340,10 @@ const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".csv"
 ] as const;
 
-type LibrarySortMode = "recent" | "name" | "type" | "size" | "createdAt";
-type LibrarySortDirection = "asc" | "desc";
+type LibrarySortMode = AffairsLibrarySortMode;
 type FinderColumnKey = "name" | "size" | "updatedAt" | "type" | "createdAt";
 
-type LibrarySortState = {
-  mode: LibrarySortMode;
-  direction: LibrarySortDirection;
-};
+type LibrarySortState = AffairsLibrarySortState;
 
 const FINDER_COLUMN_MIN_WIDTHS: Record<FinderColumnKey, number> = {
   name: 240,
@@ -682,6 +680,7 @@ interface AffairsWorkbenchContextValue {
   selectAuxiliaryTab: (tab: AffairsAuxiliaryTab) => void;
   setLibraryBrowseMode: (mode: "folder" | "tag") => void;
   setLibraryViewMode: (mode: "grid" | "list") => void;
+  setLibrarySortState: (sortState: LibrarySortState) => void;
   selectLibraryFolderEntry: (folderPath: string | null) => void;
   navigateLibraryFolder: (folderPath: string | null) => void;
   navigateLibraryTag: (tagPath: string | null) => void;
@@ -3606,6 +3605,12 @@ export function AffairsWorkbenchProvider({
       onStateChange({
         ...state,
         viewMode: mode
+      });
+    },
+    setLibrarySortState: (sortState) => {
+      onStateChange({
+        ...state,
+        librarySort: sortState
       });
     },
     selectLibraryFolderEntry: (folderPath) => {
@@ -7983,6 +7988,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     loadMoreLibraryDocuments,
     refreshLibrary,
     selectLibraryFolderEntry,
+    setLibrarySortState,
     setLibraryViewMode,
     selectSidebarNode,
     navigationGroups
@@ -8002,10 +8008,6 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const [measuredGridColumns, setMeasuredGridColumns] = useState<number | null>(null);
   const [measuredGridItemHeight, setMeasuredGridItemHeight] = useState(AFFAIRS_GRID_ITEM_HEIGHT);
   const [measuredGridRowGap, setMeasuredGridRowGap] = useState(AFFAIRS_GRID_ROW_GAP);
-  const [sortState, setSortState] = useState<LibrarySortState>({
-    mode: "recent",
-    direction: "desc"
-  });
   const [finderColumnWidths, setFinderColumnWidths] = useState<Record<FinderColumnKey, number>>(DEFAULT_FINDER_COLUMN_WIDTHS);
   const [contextMenu, setContextMenu] = useState<LibraryContextMenuState | null>(null);
   const [libraryClipboard, setLibraryClipboard] = useState<LibraryClipboardState | null>(null);
@@ -8054,8 +8056,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     [activeSection, childFolders, favoriteFolderPathSet, filteredDocuments, folderDocuments, state.browseMode]
   );
   const sortedLibraryEntries = useMemo(
-    () => sortLibraryEntries(libraryEntries, sortState),
-    [libraryEntries, sortState]
+    () => sortLibraryEntries(libraryEntries, state.librarySort),
+    [libraryEntries, state.librarySort]
   );
   const estimatedLibraryEntryCount = useMemo(() => {
     if (activeSection !== "library") {
@@ -9018,14 +9020,14 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   directoryStatus={state.browseMode === "folder" ? currentDirectoryStatus : null}
                   selectedTagPath={state.selectedTagPath}
                   selectedTagPaths={selectedTagPaths}
-                  sortState={sortState}
+                  sortState={state.librarySort}
                   viewMode={state.viewMode}
                   onNavigateFolder={navigateLibraryFolder}
                   onNavigateTag={navigateLibraryTag}
                   onResetTags={() => selectSidebarNode("library:tag-root")}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onRefresh={refreshLibrary}
-                  onSetSortState={setSortState}
+                  onSetSortState={setLibrarySortState}
                   onSetViewMode={setLibraryViewMode}
                   refreshPending={libraryRefreshPending}
                 />
@@ -9154,12 +9156,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                       <button
                         type="button"
                         className="affairs-finder-header-sort-button"
-                        onClick={() => setSortState((previous) => getNextSortState(previous, column.key))}
-                        aria-label={buildFinderSortButtonLabel(column.label, sortState, column.key)}
+                        onClick={() => setLibrarySortState(getNextSortState(state.librarySort, column.key))}
+                        aria-label={buildFinderSortButtonLabel(column.label, state.librarySort, column.key)}
                       >
                         <span className="affairs-finder-header-label">{column.label}</span>
                         <span className="affairs-finder-header-sort-indicator" aria-hidden="true">
-                          {renderFinderSortIndicator(sortState, column.key)}
+                          {renderFinderSortIndicator(state.librarySort, column.key)}
                         </span>
                       </button>
                       {column.resizable ? (

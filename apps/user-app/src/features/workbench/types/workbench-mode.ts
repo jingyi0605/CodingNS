@@ -4,6 +4,15 @@ export type AffairsPrimarySection = "library" | "conversation" | "workbench";
 
 export type AffairsAuxiliaryTab = "detail" | "assistant";
 
+export type AffairsLibrarySortMode = "recent" | "name" | "type" | "size" | "createdAt";
+
+export type AffairsLibrarySortDirection = "asc" | "desc";
+
+export interface AffairsLibrarySortState {
+  mode: AffairsLibrarySortMode;
+  direction: AffairsLibrarySortDirection;
+}
+
 export type DashboardWidgetType =
   | "todo"
   | "automation"
@@ -90,6 +99,7 @@ export interface AffairsViewState {
   auxiliaryTab: AffairsAuxiliaryTab;
   browseMode: "folder" | "tag";
   viewMode: "grid" | "list";
+  librarySort: AffairsLibrarySortState;
   selectedFolderPath: string | null;
   selectedFolderEntryPath: string | null;
   selectedTagPath: string | null;

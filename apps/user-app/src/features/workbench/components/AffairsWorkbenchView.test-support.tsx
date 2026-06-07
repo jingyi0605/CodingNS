@@ -665,6 +665,10 @@ export function createState(): AffairsViewState {
     auxiliaryTab: "detail",
     browseMode: "folder",
     viewMode: "grid",
+    librarySort: {
+      mode: "recent",
+      direction: "desc"
+    },
     selectedFolderPath: null,
     selectedTagPath: null,
     selectedTagPaths: [],

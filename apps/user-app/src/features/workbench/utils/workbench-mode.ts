@@ -2,6 +2,7 @@ import { matchPath } from "react-router-dom";
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import type {
+  AffairsLibrarySortState,
   AffairsViewState,
   WorkbenchMode,
   WorkbenchModeSnapshot
@@ -13,6 +14,11 @@ const WORKBENCH_AFFAIRS_PATH_KEY_PREFIX = "workbench.mode.affairs.last-path.";
 const WORKBENCH_AFFAIRS_STATE_KEY_PREFIX = "workbench.affairs.state.";
 const WORKBENCH_MODE_CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
+const DEFAULT_AFFAIRS_LIBRARY_SORT: AffairsLibrarySortState = {
+  mode: "recent",
+  direction: "desc"
+};
+
 const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   primarySection: "library",
   selectedNodeId: "library",
@@ -22,6 +28,7 @@ const DEFAULT_AFFAIRS_STATE: Omit<AffairsViewState, "workspaceId"> = {
   auxiliaryTab: "detail",
   browseMode: "folder",
   viewMode: "grid",
+  librarySort: DEFAULT_AFFAIRS_LIBRARY_SORT,
   selectedFolderPath: null,
   selectedFolderEntryPath: null,
   selectedTagPath: null,
@@ -96,6 +103,22 @@ function normalizeLegacyAffairsSelectedNodeId(
   }
 
   return normalizedNodeId;
+}
+
+function normalizeAffairsLibrarySortState(
+  sortState: Partial<AffairsLibrarySortState> | null | undefined
+): AffairsLibrarySortState {
+  const mode = sortState?.mode;
+  const direction = sortState?.direction;
+
+  return {
+    mode: mode === "recent" || mode === "name" || mode === "type" || mode === "size" || mode === "createdAt"
+      ? mode
+      : DEFAULT_AFFAIRS_LIBRARY_SORT.mode,
+    direction: direction === "asc" || direction === "desc"
+      ? direction
+      : DEFAULT_AFFAIRS_LIBRARY_SORT.direction
+  };
 }
 
 export function resolveWorkbenchModeFromPath(pathname: string): WorkbenchMode | null {
@@ -199,6 +222,7 @@ export function readAffairsViewState(workspaceId: string | null | undefined): Af
     auxiliaryTab: snapshot.auxiliaryTab ?? DEFAULT_AFFAIRS_STATE.auxiliaryTab,
     browseMode: snapshot.browseMode ?? DEFAULT_AFFAIRS_STATE.browseMode,
     viewMode: snapshot.viewMode ?? DEFAULT_AFFAIRS_STATE.viewMode,
+    librarySort: normalizeAffairsLibrarySortState(snapshot.librarySort),
     selectedFolderPath: snapshot.selectedFolderPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderPath,
     selectedFolderEntryPath: snapshot.selectedFolderEntryPath ?? DEFAULT_AFFAIRS_STATE.selectedFolderEntryPath,
     selectedTagPath: snapshot.selectedTagPath ?? DEFAULT_AFFAIRS_STATE.selectedTagPath,
@@ -232,6 +256,7 @@ export function createDefaultAffairsViewState(workspaceId: string): AffairsViewS
     auxiliaryTab: DEFAULT_AFFAIRS_STATE.auxiliaryTab,
     browseMode: DEFAULT_AFFAIRS_STATE.browseMode,
     viewMode: DEFAULT_AFFAIRS_STATE.viewMode,
+    librarySort: DEFAULT_AFFAIRS_STATE.librarySort,
     selectedFolderPath: DEFAULT_AFFAIRS_STATE.selectedFolderPath,
     selectedFolderEntryPath: DEFAULT_AFFAIRS_STATE.selectedFolderEntryPath,
     selectedTagPath: DEFAULT_AFFAIRS_STATE.selectedTagPath,
