@@ -9313,6 +9313,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+.affairs-tag-tree-icon-button.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .affairs-stage-breadcrumb-reset {
   margin-left: 8px;
 }
@@ -11528,16 +11533,146 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .affairs-tag-tree-panel .affairs-sidebar-group-header {
+  align-items: center;
   padding-right: 0;
+  line-height: 18px;
+}
+
+.affairs-tag-tree-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  line-height: 18px;
+}
+
+.affairs-tag-tree-title > span {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  line-height: 18px;
+}
+
+.affairs-tag-tree-title .affairs-tag-tree-icon-button {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+}
+
+.affairs-tag-tree-title .affairs-tag-tree-icon-button svg {
+  width: 12px;
+  height: 12px;
 }
 
 .affairs-tag-tree-panel .affairs-sidebar-group-header-actions {
+  align-items: center;
   gap: 6px;
 }
 
 .affairs-tag-tree-panel .affairs-sidebar-group-header-actions > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 18px;
+  line-height: 18px;
   min-width: 22px;
   text-align: right;
+}
+
+.affairs-tag-tree-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 6px 8px;
+}
+
+.affairs-tag-tree-search-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  color: var(--text-tertiary);
+}
+
+.affairs-tag-tree-search-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  color: var(--text-secondary);
+  background: var(--panel-bg);
+}
+
+.affairs-tag-tree-search-field svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.affairs-tag-tree-search-field input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.affairs-tag-tree-search-field input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.affairs-tag-tree-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 238px;
+  overflow: auto;
+}
+
+.affairs-tag-tree-search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.affairs-tag-tree-search-result:hover,
+.affairs-tag-tree-search-result[aria-selected="true"] {
+  background: rgba(120, 120, 128, 0.08);
+}
+
+.affairs-tag-tree-search-result-name {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.affairs-tag-tree-search-result-path {
+  max-width: 100%;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.affairs-tag-tree-search-empty {
+  padding: 6px 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .affairs-sidebar-group-plain .affairs-sidebar-item,
@@ -11583,6 +11718,8 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-height: 18px;
   min-width: 18px;
   padding: 0 7px;
+  border-color: transparent;
+  background: transparent;
   font-size: 10px;
 }
 

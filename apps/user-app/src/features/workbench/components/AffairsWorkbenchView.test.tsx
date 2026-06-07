@@ -5137,6 +5137,49 @@ describe("AffairsWorkbenchView", () => {
     expect(within(timeNode!).getByRole("button", { name: /最近7天/ })).toBeInTheDocument();
   });
 
+  it("标签树可以用拼音快速查找并定位标签", async () => {
+    conversationApiMock.getAffairsLibrarySnapshot.mockReset();
+    conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot({
+      tags: [
+        { path: "项目文档", name: "项目文档", parentPath: null, depth: 0, rootType: "项目文档", documentCount: 3 },
+        { path: "项目文档/售前文档", name: "售前文档", parentPath: "项目文档", depth: 1, rootType: "项目文档", documentCount: 2 },
+        { path: "项目文档/售前文档/合同", name: "合同", parentPath: "项目文档/售前文档", depth: 2, rootType: "项目文档", documentCount: 1 }
+      ],
+      folders: []
+    }));
+    conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
+
+    renderWorkbench();
+    const user = userEvent.setup();
+
+    await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+    expect(findTagTreeNode("售前文档")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: t("shell.affairsLibraryTagSearchAction") }));
+    const searchInput = screen.getByRole("textbox", { name: t("shell.affairsLibraryTagSearchInputLabel") });
+    await user.type(searchInput, "shouqian");
+
+    const resultList = await screen.findByRole("listbox", { name: t("shell.affairsLibraryTagSearchResultsLabel") });
+    const firstResult = within(resultList).getAllByRole("option")[0];
+    expect(firstResult).toHaveTextContent("项目文档/售前文档");
+    await user.click(firstResult);
+
+    await waitFor(() => {
+      expect(findTagTreeNode("项目文档")).toHaveAttribute("aria-expanded", "true");
+      expect(findTagTreeNode("售前文档")).not.toBeNull();
+    });
+    expect(conversationApiMock.listAffairsLibraryDocuments).toHaveBeenLastCalledWith("workspace-1", {
+      browseMode: "tag",
+      selectedFolderPath: null,
+      selectedTagPath: "项目文档/售前文档",
+      selectedTagPaths: ["项目文档/售前文档"],
+      selectedFavoriteId: null,
+      offset: 0,
+      limit: 120
+    });
+    expect(screen.queryByRole("textbox", { name: t("shell.affairsLibraryTagSearchInputLabel") })).not.toBeInTheDocument();
+  });
+
   it("进入事务视图时，不会仅因为快照较旧就自动发起刷新", async () => {
     const oldCompletedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();

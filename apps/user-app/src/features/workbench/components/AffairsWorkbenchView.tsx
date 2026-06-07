@@ -17,6 +17,7 @@ import {
   type ReactNode
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { pinyin } from "pinyin-pro";
 import {
   UNSAFE_LocationContext,
   UNSAFE_NavigationContext,
@@ -311,6 +312,7 @@ const FILE_REPEAT_ACTIVATION_MS = 450;
 const TAG_TREE_CHILDREN_VISIBLE_LIMIT = 5;
 const TAG_TREE_ROOT_OVERFLOW_KEY = "__root__";
 const AFFAIRS_TAG_TREE_STATE_STORAGE_KEY_PREFIX = "codingns.affairs.tag-tree.state.";
+const AFFAIRS_TAG_SEARCH_RESULT_LIMIT = 8;
 const LIST_ITEM_HEIGHT = 40;
 const LIST_VIRTUAL_OVERSCAN_ROWS = 2;
 const AFFAIRS_LIBRARY_STATUS_POLL_ACTIVE_MS = 3_000;
@@ -5568,6 +5570,7 @@ function AffairsLibrarySidebarContent() {
     libraryTagFacetCounts,
     loading,
     error,
+    navigateLibraryTag,
     openTagManagement,
     selectSidebarNode,
     selectedTagPaths,
@@ -5578,6 +5581,9 @@ function AffairsLibrarySidebarContent() {
   const favoriteFolderItems = favoriteEntries.filter((item) => item.kind === "folder");
   const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag" && isVisibleTagPath(item.path));
   const [tagTreeState, setTagTreeState] = useState<StoredAffairsTagTreeState>(() => readStoredAffairsTagTreeState(state.workspaceId));
+  const [tagSearchOpen, setTagSearchOpen] = useState(false);
+  const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const tagSearchInputRef = useRef<HTMLInputElement | null>(null);
   const expandedTagPaths = tagTreeState.expandedPaths ?? [];
   const expandedOverflowPaths = tagTreeState.expandedOverflowPaths ?? [];
   const tagAccessCounts = tagTreeState.accessCounts ?? {};
@@ -5661,6 +5667,19 @@ function AffairsLibrarySidebarContent() {
     () => resolveVisibleTagChildren(visibleTagTree, TAG_TREE_ROOT_OVERFLOW_KEY, expandedOverflowPaths),
     [expandedOverflowPaths, visibleTagTree]
   );
+  const tagSearchResults = useMemo(
+    () => searchTagRecordsForSidebar(tagRecords, tagSearchQuery).slice(0, AFFAIRS_TAG_SEARCH_RESULT_LIMIT),
+    [tagRecords, tagSearchQuery]
+  );
+  const normalizedTagSearchQuery = normalizeTagSearchText(tagSearchQuery);
+
+  useEffect(() => {
+    if (!tagSearchOpen) {
+      return;
+    }
+    tagSearchInputRef.current?.focus();
+    tagSearchInputRef.current?.select();
+  }, [tagSearchOpen]);
 
   const toggleExpandedTagPath = (path: string) => {
     setTagTreeState((previous) => {
@@ -5684,6 +5703,23 @@ function AffairsLibrarySidebarContent() {
           : [...current, path]
       };
     });
+  };
+
+  const locateTagPath = (tagPath: string) => {
+    const ancestorPaths = buildAncestorPaths(tagPath);
+    const overflowPaths = collectOverflowPathsForSelection(tagTreeWithCounts, tagPath);
+    setTagTreeState((previous) => {
+      const nextExpandedPaths = Array.from(new Set([...(previous.expandedPaths ?? []), ...ancestorPaths]));
+      const nextOverflowPaths = Array.from(new Set([...(previous.expandedOverflowPaths ?? []), ...overflowPaths]));
+      return {
+        ...previous,
+        expandedPaths: nextExpandedPaths,
+        expandedOverflowPaths: nextOverflowPaths
+      };
+    });
+    navigateLibraryTag(tagPath);
+    setTagSearchOpen(false);
+    setTagSearchQuery("");
   };
 
   return (
@@ -5751,7 +5787,18 @@ function AffairsLibrarySidebarContent() {
 
           <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-tag-tree-panel">
             <header className="affairs-sidebar-group-header">
-              <span>{t("shell.affairsLibraryTagTreeTitle")}</span>
+              <span className="affairs-tag-tree-title">
+                <span>{t("shell.affairsLibraryTagTreeTitle")}</span>
+                <button
+                  type="button"
+                  className={tagSearchOpen ? "affairs-tag-tree-icon-button active" : "affairs-tag-tree-icon-button"}
+                  aria-label={t("shell.affairsLibraryTagSearchAction")}
+                  title={t("shell.affairsLibraryTagSearchAction")}
+                  onClick={() => setTagSearchOpen((current) => !current)}
+                >
+                  <AffairsTagSearchIcon />
+                </button>
+              </span>
               <div className="affairs-sidebar-group-header-actions">
                 <span>{tagRecords.length}</span>
                 {hasTagSelection ? (
@@ -5776,6 +5823,50 @@ function AffairsLibrarySidebarContent() {
                 </button>
               </div>
             </header>
+            {tagSearchOpen ? (
+              <div className="affairs-tag-tree-search">
+                <div className="affairs-tag-tree-search-field">
+                  <AffairsTagSearchIcon />
+                  <input
+                    ref={tagSearchInputRef}
+                    value={tagSearchQuery}
+                    aria-label={t("shell.affairsLibraryTagSearchInputLabel")}
+                    placeholder={t("shell.affairsLibraryTagSearchPlaceholder")}
+                    onChange={(event) => setTagSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setTagSearchOpen(false);
+                        setTagSearchQuery("");
+                        return;
+                      }
+                      if (event.key === "Enter" && tagSearchResults[0]) {
+                        event.preventDefault();
+                        locateTagPath(tagSearchResults[0].path);
+                      }
+                    }}
+                  />
+                </div>
+                {normalizedTagSearchQuery ? (
+                  <div className="affairs-tag-tree-search-results" role="listbox" aria-label={t("shell.affairsLibraryTagSearchResultsLabel")}>
+                    {tagSearchResults.length > 0 ? tagSearchResults.map((tag) => (
+                      <button
+                        key={tag.path}
+                        type="button"
+                        className="affairs-tag-tree-search-result"
+                        role="option"
+                        aria-selected={selectedTagPaths.includes(tag.path)}
+                        onClick={() => locateTagPath(tag.path)}
+                      >
+                        <span className="affairs-tag-tree-search-result-name">{tag.label}</span>
+                        <span className="affairs-tag-tree-search-result-path">{tag.path}</span>
+                      </button>
+                    )) : (
+                      <div className="affairs-tag-tree-search-empty">{t("shell.affairsLibraryTagSearchEmpty")}</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {visibleTagTree.length === 0 ? (
               <div className="affairs-sidebar-empty affairs-sidebar-empty-plain compact">{resolveLibraryEmptyText(indexStatus)}</div>
             ) : (
@@ -15209,6 +15300,15 @@ function AffairsTagManagerIcon() {
   );
 }
 
+function AffairsTagSearchIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6" />
+      <path d="M16 16l4 4" />
+    </svg>
+  );
+}
+
 function resolveAffairsTaskStatusLabel(status: AffairsTaskSnapshotDto["status"] | "queued"): string {
   switch (status) {
     case "running":
@@ -15444,6 +15544,78 @@ function buildTagRecordsFromSnapshot(tags: AffairsLibraryTagNodeDto[]): TagRecor
       depth: item.depth,
       count: item.documentCount
     }));
+}
+
+function searchTagRecordsForSidebar(tags: TagRecord[], query: string): TagRecord[] {
+  const normalizedQuery = normalizeTagSearchText(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return tags
+    .map((tag) => ({
+      tag,
+      rank: resolveTagSearchRank(tag, normalizedQuery)
+    }))
+    .filter((item) => item.rank !== null)
+    .sort((left, right) => {
+      const rankComparison = (left.rank ?? 0) - (right.rank ?? 0);
+      if (rankComparison !== 0) {
+        return rankComparison;
+      }
+      const countComparison = right.tag.count - left.tag.count;
+      if (countComparison !== 0) {
+        return countComparison;
+      }
+      return left.tag.path.localeCompare(right.tag.path, "zh-CN");
+    })
+    .map((item) => item.tag);
+}
+
+function resolveTagSearchRank(tag: TagRecord, normalizedQuery: string): number | null {
+  const normalizedLabel = normalizeTagSearchText(tag.label);
+  const normalizedPath = normalizeTagSearchText(tag.path);
+  const pinyinLabel = normalizeTagSearchText(toTagSearchPinyin(tag.label, false));
+  const pinyinPath = normalizeTagSearchText(toTagSearchPinyin(tag.path, false));
+  const initialLabel = normalizeTagSearchText(toTagSearchPinyin(tag.label, true));
+  const initialPath = normalizeTagSearchText(toTagSearchPinyin(tag.path, true));
+
+  if (normalizedLabel === normalizedQuery || normalizedPath === normalizedQuery) {
+    return 0;
+  }
+  if (normalizedLabel.includes(normalizedQuery) || normalizedPath.includes(normalizedQuery)) {
+    return 1;
+  }
+  if (pinyinLabel === normalizedQuery || pinyinPath === normalizedQuery) {
+    return 2;
+  }
+  if (pinyinLabel.includes(normalizedQuery) || pinyinPath.includes(normalizedQuery)) {
+    return 3;
+  }
+  if (initialLabel === normalizedQuery || initialPath === normalizedQuery) {
+    return 4;
+  }
+  if (initialLabel.includes(normalizedQuery) || initialPath.includes(normalizedQuery)) {
+    return 5;
+  }
+  return null;
+}
+
+function normalizeTagSearchText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_\-\\/]+/g, "");
+}
+
+function toTagSearchPinyin(value: string, firstLetterOnly: boolean): string {
+  return pinyin(value, {
+    pattern: firstLetterOnly ? "first" : "pinyin",
+    toneType: "none",
+    separator: ""
+  });
 }
 
 const HIDDEN_TAG_ROOTS = new Set(["来源", "主题", "状态"]);
