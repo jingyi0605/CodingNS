@@ -76,7 +76,7 @@ const LIVE_DIRECTORY_SYNC_SCAN_MAX_DOCUMENTS = 200;
 export type AffairsLibraryDirectoryStateDto = "idle" | "queued" | "running" | "queue_timeout" | "fresh" | "failed";
 export type AffairsLibraryDirectorySourceDto = "live" | "snapshot" | "mixed" | "stale_fallback";
 
-export type AffairsLibraryFavoriteKind = "folder" | "tag" | "document" | "tag_filter";
+export type AffairsLibraryFavoriteKind = "folder" | "tag" | "tag_filter";
 
 export interface AffairsLibraryFavoriteRecord {
   kind: AffairsLibraryFavoriteKind;
@@ -898,14 +898,14 @@ export class AffairsLibraryService {
       };
     }
 
-      const filtered = exportData.documents.filter((document) => {
+    const filtered = exportData.documents.filter((document) => {
       if (!matchesDocumentKeyword(document, normalizedKeyword)) {
         return false;
       }
 
       if (browseMode === "tag") {
         const tagPaths = selectedFavorite?.kind === "tag_filter"
-          ? normalizeSelectedTagPaths(selectedFavorite.tagPaths ?? [])
+          ? normalizeSelectedTagPaths(selectedFavorite.tagPaths ?? selectedFavorite.path.split("|"))
           : selectedFavorite?.kind === "tag"
           ? [selectedFavorite.path]
           : normalizedSelectedTagPaths.length > 0
@@ -4592,10 +4592,6 @@ function matchesFavorite(
     return !normalizedPath || documentPath === normalizedPath || documentPath.startsWith(`${normalizedPath}/`);
   }
 
-  if (favorite.kind === "document") {
-    return favorite.path === documentPath;
-  }
-
   if (favorite.kind === "tag_filter") {
     const tagPaths = normalizeSelectedTagPaths(favorite.tagPaths ?? favorite.path.split("|"));
     return tagPaths.length > 0 && tagPaths.every((tagPath) => (
@@ -4611,7 +4607,7 @@ function buildFavoriteNodeId(kind: AffairsLibraryFavoriteKind, pathValue: string
 }
 
 function isAffairsLibraryFavoriteKind(kind: unknown): kind is AffairsLibraryFavoriteKind {
-  return kind === "folder" || kind === "tag" || kind === "document" || kind === "tag_filter";
+  return kind === "folder" || kind === "tag" || kind === "tag_filter";
 }
 
 function matchesTagPath(document: AffairsLibraryDocumentRecordDto, tagPath: string): boolean {

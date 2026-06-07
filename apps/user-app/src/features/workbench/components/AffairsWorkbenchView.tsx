@@ -483,6 +483,18 @@ type LibraryContextMenuState = {
 
 type LibrarySubmenuKey = "copy" | "new";
 
+type FavoriteContextMenuState = {
+  left: number;
+  top: number;
+  favorite: AffairsLibraryFavoriteRecordDto;
+};
+
+type PendingTagFilterFavoriteState = {
+  tagPaths: string[];
+  name: string;
+  error: string | null;
+} | null;
+
 type PendingLibraryCreateState = {
   folderPath: string | null;
   kind: "directory" | "markdown" | "text" | "custom";
@@ -699,6 +711,7 @@ interface AffairsWorkbenchContextValue {
   }) => Promise<AffairsLibraryConfigDto>;
   refreshLibrary: () => Promise<void>;
   toggleFavorite: (favorite: AffairsLibraryFavoriteRecordDto) => Promise<void>;
+  saveFavorites: (favorites: AffairsLibraryFavoriteRecordDto[], toastTitle?: string) => Promise<void>;
   loadMoreLibraryDocuments: () => Promise<void>;
   tagManagementOpen: boolean;
   openTagManagement: () => void;
@@ -3437,6 +3450,25 @@ export function AffairsWorkbenchProvider({
     removeShortcutApp
   };
 
+  const saveFavorites = useCallback(async (favorites: AffairsLibraryFavoriteRecordDto[], toastTitle?: string) => {
+    const response = await updateGlobalAffairsLibraryFavorites({
+      favorites
+    });
+    setLibrarySnapshot((previous) => {
+      const nextSnapshot = previous ? { ...previous, favorites: response.items } : previous;
+      if (nextSnapshot) {
+        writeCachedLibrarySnapshot(workspaceId, nextSnapshot);
+      }
+      return nextSnapshot;
+    });
+    if (toastTitle) {
+      showToast({
+        title: toastTitle,
+        tone: "success"
+      });
+    }
+  }, [showToast, workspaceId]);
+
   const contextValue = useMemo<AffairsWorkbenchContextValue>(() => ({
     workspaceId,
     workspaceName,
@@ -3543,14 +3575,15 @@ export function AffairsWorkbenchProvider({
         if (nodeId.startsWith("library:favorite:")) {
           const favoriteId = nodeId;
           const favorite = favoriteEntries.find((item) => buildFavoriteNodeId(item) === favoriteId);
+          const favoriteTagPaths = resolveFavoriteTagPaths(favorite);
           onStateChange({
             ...state,
-            browseMode: favorite?.kind === "tag" ? "tag" : "folder",
+            browseMode: favorite?.kind === "tag" || favorite?.kind === "tag_filter" ? "tag" : "folder",
             selectedNodeId: nodeId,
             selectedFavoriteId: favoriteId,
             selectedFolderPath: favorite?.kind === "folder" ? favorite.path : null,
-            selectedTagPath: favorite?.kind === "tag" ? favorite.path : null,
-            selectedTagPaths: favorite?.kind === "tag" ? [favorite.path] : [],
+            selectedTagPath: favoriteTagPaths[favoriteTagPaths.length - 1] ?? null,
+            selectedTagPaths: favoriteTagPaths,
             selectedObjectId: null,
             selectedDocumentId: null
           });
@@ -3721,22 +3754,14 @@ export function AffairsWorkbenchProvider({
       return config;
     },
     refreshLibrary: refreshLibraryNow,
+    saveFavorites,
     toggleFavorite: async (favorite) => {
       const currentFavorites = librarySnapshot?.favorites ?? [];
       const exists = currentFavorites.some((item) => item.kind === favorite.kind && item.path === favorite.path);
       const nextFavorites = exists
         ? currentFavorites.filter((item) => !(item.kind === favorite.kind && item.path === favorite.path))
         : [...currentFavorites, favorite];
-      const response = await updateGlobalAffairsLibraryFavorites({
-        favorites: nextFavorites
-      });
-      setLibrarySnapshot((previous) => {
-        const nextSnapshot = previous ? { ...previous, favorites: response.items } : previous;
-        if (nextSnapshot) {
-          writeCachedLibrarySnapshot(workspaceId, nextSnapshot);
-        }
-        return nextSnapshot;
-      });
+      await saveFavorites(nextFavorites);
       showToast({
         title: exists ? t("shell.affairsFavoriteRemoved") : t("shell.affairsFavoriteAdded"),
         description: favorite.label,
@@ -4163,6 +4188,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     onStateChange,
     onRefreshNavigation,
     selectedManagedTag,
+    saveFavorites,
     selectedConversationDraft,
     selectedConversationSession,
     conversationRuntimeSeed,
@@ -5580,18 +5606,28 @@ function AffairsLibrarySidebarContent() {
     error,
     navigateLibraryTag,
     openTagManagement,
+    saveFavorites,
     selectSidebarNode,
     selectedTagPaths,
     state,
     tagRecords,
     toggleFavorite
   } = useAffairsWorkbenchInternal();
-  const favoriteFolderItems = favoriteEntries.filter((item) => item.kind === "folder");
-  const favoriteTagItems = favoriteEntries.filter((item) => item.kind === "tag" && isVisibleTagPath(item.path));
+  const favoriteItems = favoriteEntries.filter((item) => (
+    item.kind === "folder" || item.kind === "tag_filter" || (item.kind === "tag" && isVisibleTagPath(item.path))
+  ));
   const [tagTreeState, setTagTreeState] = useState<StoredAffairsTagTreeState>(() => readStoredAffairsTagTreeState(state.workspaceId));
   const [tagSearchOpen, setTagSearchOpen] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const [favoriteContextMenu, setFavoriteContextMenu] = useState<FavoriteContextMenuState | null>(null);
+  const [draggingFavoriteId, setDraggingFavoriteId] = useState<string | null>(null);
+  const [dragOverFavoriteId, setDragOverFavoriteId] = useState<string | null>(null);
+  const [dragOverFavoriteEdge, setDragOverFavoriteEdge] = useState<"before" | "after">("before");
+  const [pendingTagFilterFavorite, setPendingTagFilterFavorite] = useState<PendingTagFilterFavoriteState>(null);
+  const [tagFilterFavoriteSubmitting, setTagFilterFavoriteSubmitting] = useState(false);
   const tagSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const favoriteMenuRef = useRef<HTMLDivElement | null>(null);
+  const platform = usePlatform();
   const expandedTagPaths = tagTreeState.expandedPaths ?? [];
   const expandedOverflowPaths = tagTreeState.expandedOverflowPaths ?? [];
   const tagAccessCounts = tagTreeState.accessCounts ?? {};
@@ -5682,6 +5718,32 @@ function AffairsLibrarySidebarContent() {
   const normalizedTagSearchQuery = normalizeTagSearchText(tagSearchQuery);
 
   useEffect(() => {
+    if (!favoriteContextMenu) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (favoriteMenuRef.current?.contains(event.target)) {
+        return;
+      }
+      setFavoriteContextMenu(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setFavoriteContextMenu(null);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [favoriteContextMenu]);
+
+  useEffect(() => {
     if (!tagSearchOpen) {
       return;
     }
@@ -5730,65 +5792,187 @@ function AffairsLibrarySidebarContent() {
     setTagSearchQuery("");
   };
 
+  const openTagFilterFavoriteModal = () => {
+    if (selectedTagPaths.length === 0) {
+      return;
+    }
+    const defaultName = selectedTagPaths.length === 1
+      ? (tagRecords.find((item) => item.path === selectedTagPaths[0])?.label ?? selectedTagPaths[0])
+      : "";
+    setPendingTagFilterFavorite({
+      tagPaths: selectedTagPaths,
+      name: defaultName,
+      error: null
+    });
+  };
+
+  const submitTagFilterFavorite = async () => {
+    if (!pendingTagFilterFavorite) {
+      return;
+    }
+    const name = pendingTagFilterFavorite.name.trim();
+    if (!name) {
+      setPendingTagFilterFavorite((current) => current ? { ...current, error: t("shell.affairsTagFilterFavoriteNameRequired") } : current);
+      return;
+    }
+    const tagPaths = normalizeFavoriteTagPaths(pendingTagFilterFavorite.tagPaths);
+    if (tagPaths.length === 0) {
+      setPendingTagFilterFavorite(null);
+      return;
+    }
+    const favorite: AffairsLibraryFavoriteRecordDto = {
+      kind: tagPaths.length === 1 ? "tag" : "tag_filter",
+      path: buildTagFilterFavoritePath(tagPaths),
+      label: name,
+      ...(tagPaths.length > 1 ? { tagPaths } : {})
+    };
+    setTagFilterFavoriteSubmitting(true);
+    try {
+      await saveFavorites(upsertFavoriteRecord(favoriteEntries, favorite), t("shell.affairsFavoriteAdded"));
+      setPendingTagFilterFavorite(null);
+    } finally {
+      setTagFilterFavoriteSubmitting(false);
+    }
+  };
+
+  const updateFavoriteOrder = async (favorite: AffairsLibraryFavoriteRecordDto, direction: -1 | 1) => {
+    const currentIndex = favoriteEntries.findIndex((item) => areSameFavoriteRecord(item, favorite));
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= favoriteEntries.length) {
+      setFavoriteContextMenu(null);
+      return;
+    }
+    const nextFavorites = [...favoriteEntries];
+    [nextFavorites[currentIndex], nextFavorites[nextIndex]] = [nextFavorites[nextIndex], nextFavorites[currentIndex]];
+    setFavoriteContextMenu(null);
+    await saveFavorites(nextFavorites);
+  };
+
+  const removeFavorite = async (favorite: AffairsLibraryFavoriteRecordDto) => {
+    setFavoriteContextMenu(null);
+    await saveFavorites(
+      favoriteEntries.filter((item) => !areSameFavoriteRecord(item, favorite)),
+      t("shell.affairsFavoriteRemoved")
+    );
+  };
+
+  const reorderFavoriteByDrop = async (
+    source: AffairsLibraryFavoriteRecordDto,
+    target: AffairsLibraryFavoriteRecordDto,
+    edge: "before" | "after"
+  ) => {
+    const sourceIndex = favoriteEntries.findIndex((item) => areSameFavoriteRecord(item, source));
+    const targetIndex = favoriteEntries.findIndex((item) => areSameFavoriteRecord(item, target));
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+      return;
+    }
+    const nextFavorites = [...favoriteEntries];
+    const [movedFavorite] = nextFavorites.splice(sourceIndex, 1);
+    const rawInsertIndex = edge === "after" ? targetIndex + 1 : targetIndex;
+    const insertIndex = sourceIndex < rawInsertIndex ? rawInsertIndex - 1 : rawInsertIndex;
+    nextFavorites.splice(insertIndex, 0, movedFavorite);
+    await saveFavorites(nextFavorites);
+  };
+
+  const renderFavoriteItem = (favorite: AffairsLibraryFavoriteRecordDto) => {
+    const nodeId = buildFavoriteNodeId(favorite);
+    const isDragging = draggingFavoriteId === nodeId;
+    const isDropTarget = dragOverFavoriteId === nodeId && draggingFavoriteId !== nodeId;
+    return (
+      <div
+        key={nodeId}
+        className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
+        data-tone="favorite"
+        data-dragging={isDragging ? "true" : undefined}
+        data-drop-target={isDropTarget ? "true" : undefined}
+        data-drop-edge={isDropTarget ? dragOverFavoriteEdge : undefined}
+        draggable
+        role="listitem"
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", nodeId);
+          setDraggingFavoriteId(nodeId);
+          setDragOverFavoriteId(null);
+          setDragOverFavoriteEdge("before");
+        }}
+        onDragEnter={() => {
+          setDragOverFavoriteId(nodeId);
+          setDragOverFavoriteEdge("before");
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          const rect = event.currentTarget.getBoundingClientRect();
+          const edge = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+          if (dragOverFavoriteId !== nodeId) {
+            setDragOverFavoriteId(nodeId);
+          }
+          if (dragOverFavoriteEdge !== edge) {
+            setDragOverFavoriteEdge(edge);
+          }
+        }}
+        onDragEnd={() => {
+          setDraggingFavoriteId(null);
+          setDragOverFavoriteId(null);
+          setDragOverFavoriteEdge("before");
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const sourceId = event.dataTransfer.getData("text/plain") || draggingFavoriteId;
+          const sourceFavorite = favoriteEntries.find((item) => buildFavoriteNodeId(item) === sourceId);
+          const edge = dragOverFavoriteId === nodeId ? dragOverFavoriteEdge : "before";
+          setDraggingFavoriteId(null);
+          setDragOverFavoriteId(null);
+          setDragOverFavoriteEdge("before");
+          if (!sourceFavorite) {
+            return;
+          }
+          void reorderFavoriteByDrop(sourceFavorite, favorite, edge);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setFavoriteContextMenu({
+            left: event.clientX,
+            top: event.clientY,
+            favorite
+          });
+        }}
+      >
+        <div className="affairs-sidebar-item-button-shell">
+          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => selectSidebarNode(nodeId)}>
+            <div className="affairs-sidebar-item-row">
+              <span
+                className="affairs-favorite-type-icon"
+                data-kind={favorite.kind === "folder" ? "folder" : "tag"}
+                aria-hidden="true"
+              >
+                {favorite.kind === "folder" ? <AffairsFavoriteFolderIcon /> : <AffairsFavoriteTagIcon />}
+              </span>
+              <span className="affairs-sidebar-item-title">{favorite.label}</span>
+            </div>
+          </button>
+          <div className="affairs-sidebar-item-actions">
+            {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <section className="workbench-section-block affairs-sidebar-block">
       {loading ? <div className="affairs-sidebar-empty compact">{t("common.loading")}</div> : null}
       {error ? <div className="affairs-sidebar-empty">{error}</div> : null}
       {!loading && !error ? (
         <div className="affairs-sidebar-groups affairs-library-sidebar-groups">
-          {favoriteEntries.length > 0 ? (
+          {favoriteItems.length > 0 ? (
             <section className="affairs-sidebar-group affairs-sidebar-group-plain affairs-favorites-panel">
               <header className="affairs-sidebar-group-header">
                 <span>{t("shell.affairsSectionGroupFavorites")}</span>
-                <span>{favoriteEntries.length}</span>
               </header>
               <div className="affairs-sidebar-list affairs-sidebar-list-plain" role="list">
-                <>
-                  {favoriteFolderItems.length > 0 ? <div className="affairs-sidebar-subtitle">{t("shell.affairsLibraryBrowseModeFolder")}</div> : null}
-                  {favoriteFolderItems.map((favorite) => {
-                    const nodeId = buildFavoriteNodeId(favorite);
-                    return (
-                      <div
-                        key={nodeId}
-                        className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
-                        data-tone="favorite"
-                      >
-                        <div className="affairs-sidebar-item-button-shell">
-                          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => selectSidebarNode(nodeId)}>
-                            <div className="affairs-sidebar-item-row">
-                              <span className="affairs-sidebar-item-title">{favorite.label}</span>
-                            </div>
-                          </button>
-                          <div className="affairs-sidebar-item-actions">
-                            {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {favoriteTagItems.length > 0 ? <div className="affairs-sidebar-subtitle">{t("shell.affairsLibraryBrowseModeTag")}</div> : null}
-                  {favoriteTagItems.map((favorite) => {
-                    const nodeId = buildFavoriteNodeId(favorite);
-                    return (
-                      <div
-                        key={nodeId}
-                        className={nodeId === state.selectedNodeId ? "affairs-sidebar-item active" : "affairs-sidebar-item"}
-                        data-tone="favorite"
-                      >
-                        <div className="affairs-sidebar-item-button-shell">
-                          <button type="button" className="affairs-sidebar-item-button affairs-sidebar-item-button-content" onClick={() => selectSidebarNode(nodeId)}>
-                            <div className="affairs-sidebar-item-row">
-                              <span className="affairs-sidebar-item-title">{favorite.label}</span>
-                            </div>
-                          </button>
-                          <div className="affairs-sidebar-item-actions">
-                            {renderFavoriteToggle(nodeId, favorite.label, toggleFavorite)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
+                {favoriteItems.map(renderFavoriteItem)}
               </div>
             </section>
           ) : null}
@@ -5808,7 +5992,6 @@ function AffairsLibrarySidebarContent() {
                 </button>
               </span>
               <div className="affairs-sidebar-group-header-actions">
-                <span>{tagRecords.length}</span>
                 {hasTagSelection ? (
                   <button
                     type="button"
@@ -5818,6 +6001,17 @@ function AffairsLibrarySidebarContent() {
                     onClick={() => selectSidebarNode("library:tag-root")}
                   >
                     <ResetFilterIcon />
+                  </button>
+                ) : null}
+                {hasTagSelection ? (
+                  <button
+                    type="button"
+                    className="affairs-tag-tree-icon-button"
+                    aria-label={t("shell.affairsTagFilterFavoriteAction")}
+                    title={t("shell.affairsTagFilterFavoriteAction")}
+                    onClick={openTagFilterFavoriteModal}
+                  >
+                    <AffairsFavoriteIcon />
                   </button>
                 ) : null}
                 <button
@@ -5890,7 +6084,6 @@ function AffairsLibrarySidebarContent() {
                     onSelect={selectSidebarNode}
                     onToggleExpand={toggleExpandedTagPath}
                     onToggleOverflow={toggleOverflowPath}
-                    onToggleFavorite={toggleFavorite}
                   />
                 ))}
                 {visibleTagTree.length > TAG_TREE_CHILDREN_VISIBLE_LIMIT ? (
@@ -5917,6 +6110,65 @@ function AffairsLibrarySidebarContent() {
           ) : null}
         </div>
       ) : null}
+      {favoriteContextMenu ? createPortal(
+        <div
+          ref={favoriteMenuRef}
+          className="affairs-library-context-menu"
+          role="menu"
+          aria-label={t("shell.affairsFavoriteContextMenuLabel")}
+          style={resolveContextMenuPosition(
+            { x: favoriteContextMenu.left, y: favoriteContextMenu.top },
+            { width: 180, height: 132 },
+            { width: window.innerWidth, height: window.innerHeight }
+          )}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button type="button" role="menuitem" onClick={() => void updateFavoriteOrder(favoriteContextMenu.favorite, -1)}>
+            {t("shell.affairsFavoriteMoveUpAction")}
+          </button>
+          <button type="button" role="menuitem" onClick={() => void updateFavoriteOrder(favoriteContextMenu.favorite, 1)}>
+            {t("shell.affairsFavoriteMoveDownAction")}
+          </button>
+          <button type="button" role="menuitem" className="danger" onClick={() => void removeFavorite(favoriteContextMenu.favorite)}>
+            {t("shell.affairsFavoriteRemoveAction")}
+          </button>
+        </div>,
+        document.body
+      ) : null}
+      {platform.isMobile ? (
+        <MobileSheet
+          open={pendingTagFilterFavorite !== null}
+          onClose={() => setPendingTagFilterFavorite(null)}
+          title={t("shell.affairsTagFilterFavoriteModalTitle")}
+          description={pendingTagFilterFavorite ? t("shell.affairsTagFilterFavoriteModalDescription", { count: pendingTagFilterFavorite.tagPaths.length }) : undefined}
+          height="auto"
+        >
+          <AffairsTagFilterFavoriteForm
+            pending={pendingTagFilterFavorite}
+            submitting={tagFilterFavoriteSubmitting}
+            onChangeName={(name) => setPendingTagFilterFavorite((current) => current ? { ...current, name, error: null } : current)}
+            onCancel={() => setPendingTagFilterFavorite(null)}
+            onSubmit={submitTagFilterFavorite}
+          />
+        </MobileSheet>
+      ) : (
+        <DesktopModal
+          open={pendingTagFilterFavorite !== null}
+          onClose={() => setPendingTagFilterFavorite(null)}
+          title={t("shell.affairsTagFilterFavoriteModalTitle")}
+          description={pendingTagFilterFavorite ? t("shell.affairsTagFilterFavoriteModalDescription", { count: pendingTagFilterFavorite.tagPaths.length }) : undefined}
+          size="regular"
+        >
+          <AffairsTagFilterFavoriteForm
+            pending={pendingTagFilterFavorite}
+            submitting={tagFilterFavoriteSubmitting}
+            onChangeName={(name) => setPendingTagFilterFavorite((current) => current ? { ...current, name, error: null } : current)}
+            onCancel={() => setPendingTagFilterFavorite(null)}
+            onSubmit={submitTagFilterFavorite}
+          />
+        </DesktopModal>
+      )}
     </section>
   );
 }
@@ -5941,6 +6193,70 @@ function AffairsConversationCreateButton({
       <AffairsConversationPlusIcon />
       {compact ? null : <span>{t("shell.affairsConversationCreateAction")}</span>}
     </button>
+  );
+}
+
+function AffairsTagFilterFavoriteForm({
+  pending,
+  submitting,
+  onChangeName,
+  onCancel,
+  onSubmit
+}: {
+  pending: PendingTagFilterFavoriteState;
+  submitting: boolean;
+  onChangeName: (name: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void | Promise<void>;
+}) {
+  const inputId = useId();
+  if (!pending) {
+    return null;
+  }
+  return (
+    <form
+      className="affairs-tag-filter-favorite-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSubmit();
+      }}
+    >
+      <ModalSection>
+        <div className="affairs-tag-filter-favorite-summary">
+          <span>{t("shell.affairsTagFilterFavoriteSelectedCount", { count: pending.tagPaths.length })}</span>
+          <div className="affairs-tag-filter-favorite-tags">
+            {pending.tagPaths.map((tagPath) => (
+              <ModalTag key={tagPath}>{tagPath}</ModalTag>
+            ))}
+          </div>
+        </div>
+      </ModalSection>
+      <ModalField
+        label={t("shell.affairsTagFilterFavoriteNameLabel")}
+        htmlFor={inputId}
+        description={pending.tagPaths.length === 1
+          ? t("shell.affairsTagFilterFavoriteSingleNameHint")
+          : t("shell.affairsTagFilterFavoriteMultiNameHint")}
+      >
+        <input
+          id={inputId}
+          className="modal-input"
+          value={pending.name}
+          placeholder={t("shell.affairsTagFilterFavoriteNamePlaceholder")}
+          autoFocus
+          onChange={(event) => onChangeName(event.target.value)}
+        />
+        {pending.error ? <p className="modal-field-error">{pending.error}</p> : null}
+      </ModalField>
+      <ModalActions>
+        <button type="button" className="secondary-button" onClick={onCancel} disabled={submitting}>
+          {t("common.cancel")}
+        </button>
+        <button type="submit" className="primary-button" disabled={submitting}>
+          {submitting ? t("shell.affairsTagFilterFavoriteSaving") : t("shell.affairsTagFilterFavoriteConfirmAction")}
+        </button>
+      </ModalActions>
+    </form>
   );
 }
 
@@ -7994,6 +8310,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     setLibrarySortState,
     setLibraryViewMode,
     selectSidebarNode,
+    toggleFavorite,
     navigationGroups
   } = useAffairsWorkbenchInternal();
   const stageScrollRef = useRef<HTMLDivElement | null>(null);
@@ -8477,6 +8794,10 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       onOpen: target.kind === "document" || target.kind === "folder" ? () => handleOpenTarget(target) : null,
       onLocate: target.kind === "document" || target.kind === "folder" ? () => handleLocateTarget(target) : null,
       onDownload: target.kind === "document" ? () => handleDownload(target) : null,
+      onToggleFavorite: target.kind === "folder" ? () => toggleFolderFavoriteFromTarget(target) : null,
+      favoriteLabel: target.kind === "folder" && favoriteFolderPathSet.has(target.entry.path)
+        ? t("shell.affairsFavoriteRemoveAction")
+        : t("shell.affairsFavoriteAddAction"),
       onOpenWithLocalApp: platform.isDesktop && platform.ui.osFamily === "macos" && target.kind === "document"
         ? () => handleOpenWithLocalApp(target)
         : null,
@@ -8825,6 +9146,14 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     });
   }
 
+  async function toggleFolderFavoriteFromTarget(target: Extract<LibraryContextMenuTarget, { kind: "folder" }>) {
+    await toggleFavorite({
+      kind: "folder",
+      path: target.entry.path,
+      label: target.entry.title
+    });
+  }
+
   async function refreshPendingDocumentTagAssignmentTarget(target: Extract<PendingTagAssignmentTarget, { kind: "document" }>) {
     const details = await getAffairsDocumentTagDetails(workspaceId, target.documentId);
     setPendingTagAssignmentTarget((current) => {
@@ -8880,6 +9209,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     const isDocument = target.kind === "document";
     const isFileSystemTarget = target.kind === "document" || target.kind === "folder";
     const isBlankTarget = target.kind === "blank";
+    const isFolderFavorite = target.kind === "folder" && favoriteFolderPathSet.has(target.entry.path);
 
     const content = (
       <div
@@ -8913,6 +9243,11 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
         {isDocument ? (
           <button type="button" role="menuitem" onClick={() => void runContextAction(() => handleDownload(target))}>
             {t("shell.affairsLibraryContextDownload")}
+          </button>
+        ) : null}
+        {target.kind === "folder" ? (
+          <button type="button" role="menuitem" onClick={() => void runContextAction(() => toggleFolderFavoriteFromTarget(target))}>
+            {isFolderFavorite ? t("shell.affairsFavoriteRemoveAction") : t("shell.affairsFavoriteAddAction")}
           </button>
         ) : null}
         {isBlankTarget ? (
@@ -10193,8 +10528,7 @@ function AffairsTagTreeNode({
   expandedOverflowPaths,
   onSelect,
   onToggleExpand,
-  onToggleOverflow,
-  onToggleFavorite
+  onToggleOverflow
 }: {
   node: TagTreeNodeRecord;
   state: AffairsViewState;
@@ -10204,7 +10538,6 @@ function AffairsTagTreeNode({
   onSelect: (nodeId: string) => void;
   onToggleExpand: (path: string) => void;
   onToggleOverflow: (path: string) => void;
-  onToggleFavorite: (favorite: AffairsLibraryFavoriteRecordDto) => Promise<void>;
 }) {
   const nodeId = `library:tag:${node.path}`;
   const hasChildren = node.children.length > 0;
@@ -10224,7 +10557,7 @@ function AffairsTagTreeNode({
               aria-label={expanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
               onClick={() => onToggleExpand(node.path)}
             >
-              <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+              <AffairsTagTreeChevronIcon expanded={expanded} />
             </button>
           ) : (
             <span className="affairs-tag-tree-toggle placeholder" aria-hidden="true" />
@@ -10237,7 +10570,6 @@ function AffairsTagTreeNode({
               </div>
             </div>
           </button>
-          {renderFavoriteToggle(nodeId, node.label, onToggleFavorite)}
         </div>
       </div>
       {expanded ? (
@@ -10253,7 +10585,6 @@ function AffairsTagTreeNode({
               onSelect={onSelect}
               onToggleExpand={onToggleExpand}
               onToggleOverflow={onToggleOverflow}
-              onToggleFavorite={onToggleFavorite}
             />
           ))}
           {hasOverflowChildren ? (
@@ -12862,6 +13193,8 @@ function buildDesktopLibraryContextMenuItems(input: {
   onOpen: (() => void | Promise<void>) | null;
   onLocate: (() => void | Promise<void>) | null;
   onDownload: (() => void | Promise<void>) | null;
+  onToggleFavorite: (() => void | Promise<void>) | null;
+  favoriteLabel: string;
   onOpenWithLocalApp: (() => void | Promise<void>) | null;
   onCopyFile: (() => void | Promise<void>) | null;
   onCopyFileName: (() => void | Promise<void>) | null;
@@ -12918,6 +13251,14 @@ function buildDesktopLibraryContextMenuItems(input: {
       id: `download:${target.record.id}`,
       label: t("shell.affairsLibraryContextDownload"),
       onSelect: input.onDownload
+    });
+  }
+
+  if (target.kind === "folder" && input.onToggleFavorite) {
+    items.push({
+      id: `favorite:${target.kind}:${getContextTargetRelativePath(target)}`,
+      label: input.favoriteLabel,
+      onSelect: input.onToggleFavorite
     });
   }
 
@@ -15589,6 +15930,43 @@ function AffairsTagSearchIcon() {
   );
 }
 
+function AffairsFavoriteIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z" />
+    </svg>
+  );
+}
+
+function AffairsFavoriteFolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.8A2.3 2.3 0 0 1 5.8 4.5h4.1l2.1 2h6.2a2.3 2.3 0 0 1 2.3 2.3v8.4a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3V6.8Z" />
+    </svg>
+  );
+}
+
+function AffairsFavoriteTagIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 6.2A1.7 1.7 0 0 1 6.2 4.5h5.2c.5 0 .9.2 1.2.5l6.9 6.9a2 2 0 0 1 0 2.8l-4.8 4.8a2 2 0 0 1-2.8 0L5 12.6a1.7 1.7 0 0 1-.5-1.2V6.2Z" />
+      <circle cx="8.4" cy="8.4" r="1.1" />
+    </svg>
+  );
+}
+
+function AffairsTagTreeChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {expanded ? (
+        <path d="m7 9 5 5 5-5" />
+      ) : (
+        <path d="m9 7 5 5-5 5" />
+      )}
+    </svg>
+  );
+}
+
 function resolveAffairsTaskStatusLabel(status: AffairsTaskSnapshotDto["status"] | "queued"): string {
   switch (status) {
     case "running":
@@ -18034,6 +18412,44 @@ function buildFavoriteNodeId(favorite: AffairsLibraryFavoriteRecordDto) {
   return `library:favorite:${favorite.kind}:${favorite.path}`;
 }
 
+function areSameFavoriteRecord(left: AffairsLibraryFavoriteRecordDto, right: AffairsLibraryFavoriteRecordDto) {
+  return left.kind === right.kind && left.path === right.path;
+}
+
+function upsertFavoriteRecord(
+  favorites: AffairsLibraryFavoriteRecordDto[],
+  favorite: AffairsLibraryFavoriteRecordDto
+): AffairsLibraryFavoriteRecordDto[] {
+  const existingIndex = favorites.findIndex((item) => areSameFavoriteRecord(item, favorite));
+  if (existingIndex < 0) {
+    return [...favorites, favorite];
+  }
+  const nextFavorites = [...favorites];
+  nextFavorites.splice(existingIndex, 1, favorite);
+  return nextFavorites;
+}
+
+function normalizeFavoriteTagPaths(tagPaths: string[]): string[] {
+  return Array.from(new Set(tagPaths.map((item) => item.trim()).filter(Boolean)));
+}
+
+function buildTagFilterFavoritePath(tagPaths: string[]): string {
+  return normalizeFavoriteTagPaths(tagPaths).join("|");
+}
+
+function resolveFavoriteTagPaths(favorite: AffairsLibraryFavoriteRecordDto | null | undefined): string[] {
+  if (!favorite) {
+    return [];
+  }
+  if (favorite.kind === "tag") {
+    return favorite.path.trim() ? [favorite.path.trim()] : [];
+  }
+  if (favorite.kind === "tag_filter") {
+    return normalizeFavoriteTagPaths(favorite.tagPaths ?? favorite.path.split("|"));
+  }
+  return [];
+}
+
 function renderFavoriteToggle(
   nodeId: string,
   label: string,
@@ -18060,31 +18476,10 @@ function renderFavoriteToggle(
     );
   }
 
-  if (nodeId.startsWith("library:tag:")) {
-    const favorite: AffairsLibraryFavoriteRecordDto = {
-      kind: "tag",
-      path: nodeId.slice("library:tag:".length),
-      label
-    };
-    return (
-      <button
-        type="button"
-        className="affairs-favorite-toggle"
-        aria-label={t("shell.affairsFavoriteAddAction")}
-        onClick={(event) => {
-          event.stopPropagation();
-          void toggleFavorite(favorite);
-        }}
-      >
-        ☆
-      </button>
-    );
-  }
-
   if (nodeId.startsWith("library:favorite:")) {
     const [, , , kind, ...rest] = nodeId.split(":");
     const favorite: AffairsLibraryFavoriteRecordDto = {
-      kind: kind === "tag" ? "tag" : "folder",
+      kind: kind === "tag_filter" ? "tag_filter" : kind === "tag" ? "tag" : "folder",
       path: rest.join(":"),
       label
     };

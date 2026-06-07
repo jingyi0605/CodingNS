@@ -121,7 +121,7 @@ export interface WorkspaceManagementSummaryDto {
   codeComposition: WorkspaceCodeCompositionDto;
 }
 
-export type AffairsLibraryFavoriteKindDto = "folder" | "tag";
+export type AffairsLibraryFavoriteKindDto = "folder" | "tag" | "tag_filter";
 export type AffairsLibraryIndexStateDto = "fresh" | "stale" | "queued" | "running" | "queue_timeout" | "cooldown" | "failed";
 
 export interface AffairsLibraryBindingDto {
@@ -217,6 +217,7 @@ export interface AffairsLibraryFavoriteRecordDto {
   kind: AffairsLibraryFavoriteKindDto;
   path: string;
   label: string;
+  tagPaths?: string[];
 }
 
 export interface AffairsLibraryDocumentRecordDto {
