@@ -1,6 +1,6 @@
 # 任务清单 - 多用户数据隔离与用户管理基础（人话版）
 
-状态：In Progress
+状态：DONE
 
 ## 这份文档是干什么的
 
@@ -26,7 +26,7 @@
 
 ## 阶段 1：先把归属模型和迁移地基立住
 
-- [ ] 1.1 梳理核心对象归属并补数据库设计
+- [x] 1.1 梳理核心对象归属并补数据库设计
   - 状态：DONE
   - 本轮结果：已经给 `auth_users.status`、`workspaces.owner_user_id`、`session_bindings.user_id`、`butler_profiles.user_id`、`butler_projects.user_id`、`butler_sessions.user_id`、`butler_control_sessions.user_id` 补了 schema、索引和旧库迁移；旧数据会挂到历史默认用户，避免升级后丢数据。
   - 这一步到底做什么：把工作区、会话、Butler、后台任务这些核心对象分清楚哪些是用户私有，哪些还能继续实例共享，然后把数据库字段和索引方案定下来。
@@ -52,9 +52,9 @@
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 5
   - 对应设计：`design.md` §3.2、§4.1、§5.3
 
-- [ ] 1.2 建用户管理后端基础接口
-  - 状态：IN_REVIEW
-  - 本轮进展：后端已经补了用户列表、创建用户、停用用户和停用后撤销登录态的接口；这轮工作区隔离测试里已经用新建用户接口创建第二个用户，但还没有单独补完整用户管理集成测试。
+- [x] 1.2 建用户管理后端基础接口
+  - 状态：DONE
+  - 本轮结果：后端已经补了用户列表、创建、编辑、删除未使用用户、启用、禁用和使用详情接口；停用用户会撤销登录态，删除用户只允许未产生业务数据的新用户，避免误删工作区和会话。
   - 这一步到底做什么：补管理员创建用户、查看用户、停用用户登录态这些基础后端能力。
   - 做完你能看到什么：系统不再只能靠首次初始化那个账号硬撑，管理员能正式管理第二个、第三个用户。
   - 先依赖什么：1.1
@@ -77,7 +77,7 @@
 
 ### 阶段检查
 
-- [ ] 1.3 阶段 1 检查点：归属口径统一
+- [x] 1.3 阶段 1 检查点：归属口径统一
   - 状态：DONE
   - 本轮结果：工作区、会话、Butler 主表都已经有明确用户归属；后台链路不能再退回“第一个用户”。
   - 这一步到底做什么：检查“这条数据到底归谁”这件事是不是已经说清楚，不再让后续任务各改各的。
@@ -101,7 +101,7 @@
 
 ## 阶段 2：改核心后端，让工作区、会话、Butler 真正隔开
 
-- [ ] 2.1 改工作区查询和写入归属
+- [x] 2.1 改工作区查询和写入归属
   - 状态：DONE
   - 本轮结果：普通工作区接口和 assistant 工作区接口都改为按当前 `userId` 读取、导入、克隆、重排、删除和读取管理详情；内部旧方法保留给后台链路，避免一次性打断现有任务。
   - 这一步到底做什么：把工作区从“全局列表”改成“按当前用户读取和创建”，并给相关接口补无权限处理。
@@ -128,7 +128,7 @@
   - 对应需求：`requirements.md` 需求 2
   - 对应设计：`design.md` §2.3.2、§3.2、§4.1
 
-- [ ] 2.2 改会话核心归属和读取校验
+- [x] 2.2 改会话核心归属和读取校验
   - 状态：DONE
   - 本轮结果：`session_bindings.user_id` 已写入并用于会话查询；会话能力、续接、发送、分叉、权限请求主链路都按当前用户收口。
   - 这一步到底做什么：给 `session_bindings` 和相关核心表补用户归属，并把会话读取、续接、分叉、权限请求这些链路按用户收口。
@@ -154,7 +154,7 @@
   - 对应需求：`requirements.md` 需求 3、需求 4
   - 对应设计：`design.md` §3.2、§3.3、§4.1、§6.1、§6.2
 
-- [ ] 2.3 改 Butler 归属，去掉全局默认对象
+- [x] 2.3 改 Butler 归属，去掉全局默认对象
   - 状态：DONE
   - 本轮结果：Butler profile、project、session、control session 都补了 `user_id`，仓库和主服务按 userId 读写；旧的 `id = default` profile 会迁到 `default:<userId>`。
   - 这一步到底做什么：把 Butler profile、project、session、control session 从“全局默认一份”改成按用户独立。
@@ -182,7 +182,7 @@
 
 ### 阶段检查
 
-- [ ] 2.4 阶段 2 检查点：核心资源主链路已隔离
+- [x] 2.4 阶段 2 检查点：核心资源主链路已隔离
   - 状态：DONE
   - 本轮结果：工作区、会话、Butler 主链路都已有最小集成测试覆盖；assistant 能力入口和 workbench 也按当前用户收口。
   - 这一步到底做什么：检查工作区、会话、Butler 这三条最关键主链路是不是都已经真正按用户隔开。
@@ -207,7 +207,7 @@
 
 ## 阶段 3：补后台任务、前端入口和迁移验收
 
-- [ ] 3.1 清理后台任务里的单用户假设
+- [x] 3.1 清理后台任务里的单用户假设
   - 状态：DONE
   - 本轮结果：正式代码里 `listIds()[0]` 的默认用户假设已清掉；权限请求从 binding/workspace owner 推断用户，Butler 后台摘要逐个用户处理。
   - 这一步到底做什么：把 `listIds()[0]` 这类“默认第一个用户”的实现全部清掉，让后台刷新、权限请求、运行态恢复都显式带 `userId`。
@@ -234,10 +234,11 @@
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` §2.3.3、§5.3、§6.2
 
-- [ ] 3.2 补前端用户管理入口和最小交互
-  - 状态：TODO
-  - 这一步到底做什么：在 `user-app` 里补一个最小可用的用户管理入口，让管理员能创建和查看用户。
-  - 做完你能看到什么：这次改造不是只有后端能力，管理员能真的操作第二个用户。
+- [x] 3.2 补前端用户管理入口和最小交互
+  - 状态：DONE
+  - 本轮结果：已在设置页「安全与隐私」加入用户管理入口；模态框使用统一 `DesktopModal` / `MobileSheet`，包含「用户列表」和「使用详情」两个标签页。用户列表支持查看、添加、编辑、删除未使用用户、启用和禁用；使用详情按天/周/月展示用户会话数、Token 图表、模型、CLI 提供商和模型供应商统计。当前 Host 还没有真实 Token 用量落库，所以界面明确提示 Token 暂无记录，不造假数据。
+  - 这一步到底做什么：在 `user-app` 里补一个可用的用户管理入口，让管理员能创建、查看和管理用户。
+  - 做完你能看到什么：这次改造不是只有后端能力，管理员能真的操作第二个用户，并能查看每个用户的基础使用情况。
   - 先依赖什么：3.1
   - 开始前先看：
     - `requirements.md` 需求 1
@@ -250,16 +251,18 @@
   - 这一步先不做什么：先不做复杂角色权限后台页面。
   - 怎么算完成：
     1. 管理员能看到用户列表
-    2. 管理员能创建新用户并看到结果提示
+    2. 管理员能添加、编辑、启用、禁用和删除未使用用户
+    3. 管理员能按天、周、月查看每个用户的会话和使用详情
   - 怎么验证：
-    - `pnpm --dir apps/user-app test -- src/features/admin/UserManagementPage.test.tsx`
-    - 人工走查界面文案和交互
+    - `python3` 超时包装执行 `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - `python3` 超时包装执行 `pnpm --dir apps/user-app test -- src/features/settings/pages/SettingsPage.test.tsx src/settings/AuthDeviceManagementPanel.test.tsx`
+    - `python3` 超时包装执行 `pnpm --dir apps/host exec vitest run tests/integration/auth-user-management.test.ts --testTimeout 20000`
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` §3.3.1、§7.3
 
-- [ ] 3.3 做老数据迁移和回归验证
-  - 状态：IN_REVIEW
-  - 本轮结果：旧工作区、会话绑定、Butler profile/project/session/control session 的归属迁移已有 SQLite 启动测试；前端入口还没做，所以整体验收先不标 DONE。
+- [x] 3.3 做老数据迁移和回归验证
+  - 状态：DONE
+  - 本轮结果：旧工作区、会话绑定、Butler profile/project/session/control session 的归属迁移已有 SQLite 启动测试；前端入口和用户管理接口也已补齐，整体验收可闭合。
   - 这一步到底做什么：把旧实例里的全局数据迁到明确用户归属下，并验证升级后老数据还能继续用。
   - 做完你能看到什么：不是新装才支持多用户，老实例升级后也能稳住。
   - 先依赖什么：3.2
@@ -285,8 +288,9 @@
 
 ### 最终检查
 
-- [ ] 3.4 最终检查点
-  - 状态：TODO
+- [x] 3.4 最终检查点
+  - 状态：DONE
+  - 本轮结果：已完成多用户存储归属、工作区隔离、会话隔离、Butler 隔离、用户管理接口、设置页用户管理入口和最小回归验证。后续真正要补的是 Token 用量落库；这轮没有假装已有 Token 数据。
   - 这一步到底做什么：确认这次 Spec 真的把“多用户隔离基础”做到了，不是只把字段补了一半。
   - 做完你能看到什么：需求、设计、任务、测试和迁移证据能对得上。
   - 先依赖什么：3.1、3.2、3.3
@@ -302,6 +306,10 @@
     2. 风险和后续未做项已写清楚
     3. 接手的人能直接按任务继续做
   - 怎么验证：
-    - 按本 Spec 的验收标准逐项核对
+    - `python3` 超时包装执行 `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `python3` 超时包装执行 `pnpm --dir apps/host exec vitest run tests/integration/auth-user-management.test.ts tests/integration/butler-user-scope.test.ts tests/integration/session-user-scope.test.ts tests/integration/sqlite-bootstrap.test.ts tests/integration/workspace-management.test.ts -t 支持编辑、删除未使用用户，并按用户返回会话使用详情|按当前用户隔离工作区列表和管理入口|可以把旧 Butler 全局表挂到历史默认用户并完成启动|会话绑定和列表按 user_id 隔离|Butler profile --testTimeout 20000`
+    - `python3` 超时包装执行 `pnpm check:sqlite-runtime`
+    - `python3` 超时包装执行 `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - `python3` 超时包装执行 `pnpm --dir apps/user-app test -- src/features/settings/pages/SettingsPage.test.tsx src/settings/AuthDeviceManagementPanel.test.tsx`
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
