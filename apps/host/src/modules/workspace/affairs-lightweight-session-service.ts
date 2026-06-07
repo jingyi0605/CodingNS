@@ -68,6 +68,19 @@ export interface AffairsLightweightSessionDocument {
   messages: HistoryPage["messages"];
 }
 
+export interface AffairsLightweightAttachmentInput {
+  id?: string | null;
+  kind: "image" | "file";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  contentBase64: string;
+}
+
+interface AffairsLightweightRuntimeAttachment extends AffairsLightweightAttachmentInput {
+  id: string;
+}
+
 export interface StartAffairsLightweightSessionInput {
   workspaceId: string;
   userId: string;
@@ -76,6 +89,7 @@ export interface StartAffairsLightweightSessionInput {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: AffairsLightweightAttachmentInput[];
 }
 
 export interface SendAffairsLightweightSessionMessageInput {
@@ -86,6 +100,7 @@ export interface SendAffairsLightweightSessionMessageInput {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: AffairsLightweightAttachmentInput[];
 }
 
 export interface AffairsLightweightSessionTurnResult {
@@ -332,7 +347,8 @@ export class AffairsLightweightSessionService {
       content: input.content,
       clientRequestId,
       model: input.model ?? null,
-      reasoningLevel: input.reasoningLevel ?? null
+      reasoningLevel: input.reasoningLevel ?? null,
+      attachments: input.attachments ?? []
     });
   }
 
@@ -399,7 +415,8 @@ export class AffairsLightweightSessionService {
       content: input.content,
       clientRequestId,
       model: input.model ?? null,
-      reasoningLevel: input.reasoningLevel ?? null
+      reasoningLevel: input.reasoningLevel ?? null,
+      attachments: input.attachments ?? []
     }, onEvent);
   }
 
@@ -454,7 +471,8 @@ export class AffairsLightweightSessionService {
       clientRequestId: input.clientRequestId,
       sequence: document.messages.length + 1,
       timestamp: now,
-      rawStoreRef: document.session.rawStoreRef
+      rawStoreRef: document.session.rawStoreRef,
+      attachments: normalizeLightweightMessageAttachments(input.attachments ?? [], input.clientRequestId)
     });
 
     const runningDocument: AffairsLightweightSessionDocument = {
@@ -591,7 +609,7 @@ export class AffairsLightweightSessionService {
 
   private async generateOpenAiResponse(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput,
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string },
     onDelta?: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string> {
@@ -606,7 +624,7 @@ export class AffairsLightweightSessionService {
 
   private async generateAnthropicResponse(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput,
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string },
     onDelta?: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string> {
@@ -621,13 +639,15 @@ export class AffairsLightweightSessionService {
 
   private async generateOpenAiResponseSync(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string }
   ): Promise<string> {
     const runtime = await this.readOpenAiRuntimeConfig(input.model?.trim() || null);
     const responsePayload = createOpenAiResponsesPayload({
       model: runtime.model,
       messages: document.messages,
-      reasoningLevel: input.reasoningLevel ?? null
+      reasoningLevel: input.reasoningLevel ?? null,
+      activeClientRequestId: input.clientRequestId,
+      attachments: normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
     });
     const headers = {
       "content-type": "application/json",
@@ -661,7 +681,9 @@ export class AffairsLightweightSessionService {
         headers,
         body: JSON.stringify(createOpenAiChatPayload({
           model: runtime.model,
-          messages: document.messages
+          messages: document.messages,
+          activeClientRequestId: input.clientRequestId,
+          attachments: normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
         }))
       }
     });
@@ -682,13 +704,14 @@ export class AffairsLightweightSessionService {
 
   private async generateAnthropicResponseSync(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string }
   ): Promise<string> {
     const runtime = await this.readAnthropicRuntimeConfig(input.model?.trim() || null);
-    let messages = document.messages.map((message) => ({
-      role: message.role,
-      content: message.content
-    }));
+    let messages = document.messages.map((message) => createAnthropicMessagePayload(
+      message,
+      input.clientRequestId,
+      normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
+    ));
     let finalBody: any = null;
 
     for (let index = 0; index < 4; index += 1) {
@@ -752,7 +775,7 @@ export class AffairsLightweightSessionService {
 
   private async generateOpenAiResponseStream(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput,
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string },
     onDelta: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
@@ -765,7 +788,9 @@ export class AffairsLightweightSessionService {
       ...createOpenAiResponsesPayload({
         model: runtime.model,
         messages: document.messages,
-        reasoningLevel: input.reasoningLevel ?? null
+        reasoningLevel: input.reasoningLevel ?? null,
+        activeClientRequestId: input.clientRequestId,
+        attachments: normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
       }),
       stream: true
     };
@@ -797,7 +822,9 @@ export class AffairsLightweightSessionService {
         body: JSON.stringify({
           ...createOpenAiChatPayload({
             model: runtime.model,
-            messages: document.messages
+            messages: document.messages,
+            activeClientRequestId: input.clientRequestId,
+            attachments: normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
           }),
           stream: true
         })
@@ -812,7 +839,7 @@ export class AffairsLightweightSessionService {
 
   private async generateAnthropicResponseStream(
     document: AffairsLightweightSessionDocument,
-    input: SendAffairsLightweightSessionMessageInput,
+    input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string },
     onDelta: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
@@ -831,10 +858,11 @@ export class AffairsLightweightSessionService {
           model: runtime.model,
           max_tokens: 2048,
           system: LIGHTWEIGHT_SYSTEM_PROMPT,
-          messages: document.messages.map((message) => ({
-            role: message.role,
-            content: message.content
-          })),
+          messages: document.messages.map((message) => createAnthropicMessagePayload(
+            message,
+            input.clientRequestId,
+            normalizeLightweightRuntimeAttachments(input.attachments ?? [], input.clientRequestId)
+          )),
           tools: [
             {
               type: "web_search_20250305",
@@ -1129,6 +1157,7 @@ function createUserMessage(input: {
   sequence: number;
   timestamp: string;
   rawStoreRef: string;
+  attachments?: NonNullable<HistoryPage["messages"][number]["attachments"]>;
 }): HistoryPage["messages"][number] {
   return {
     messageId: `lightweight-user-${input.clientRequestId}`,
@@ -1139,6 +1168,7 @@ function createUserMessage(input: {
     content: input.content,
     toolCall: null,
     timestamp: input.timestamp,
+    attachments: input.attachments ?? [],
     sequence: input.sequence,
     rawRef: `${input.rawStoreRef}#${input.clientRequestId}`
   };
@@ -1296,6 +1326,8 @@ function createOpenAiResponsesPayload(input: {
   model: string;
   messages: HistoryPage["messages"];
   reasoningLevel: string | null;
+  activeClientRequestId?: string | null;
+  attachments?: AffairsLightweightRuntimeAttachment[];
 }) {
   return {
     model: input.model,
@@ -1318,7 +1350,7 @@ function createOpenAiResponsesPayload(input: {
       },
       ...input.messages.map((message) => ({
         role: message.role,
-        content: message.content
+        content: createOpenAiResponsesMessageContent(message, input.activeClientRequestId, input.attachments ?? [])
       }))
     ]
   };
@@ -1327,6 +1359,8 @@ function createOpenAiResponsesPayload(input: {
 function createOpenAiChatPayload(input: {
   model: string;
   messages: HistoryPage["messages"];
+  activeClientRequestId?: string | null;
+  attachments?: AffairsLightweightRuntimeAttachment[];
 }) {
   return {
     model: input.model,
@@ -1337,11 +1371,180 @@ function createOpenAiChatPayload(input: {
       },
       ...input.messages.map((message) => ({
         role: message.role,
-        content: message.content
+        content: createOpenAiChatMessageContent(message, input.activeClientRequestId, input.attachments ?? [])
       }))
     ],
     temperature: 0.2
   };
+}
+
+function normalizeLightweightRuntimeAttachments(
+  attachments: AffairsLightweightAttachmentInput[],
+  clientRequestId: string
+): AffairsLightweightRuntimeAttachment[] {
+  return attachments.map((attachment, index) => {
+    const kind: "image" | "file" = attachment.kind === "image" ? "image" : "file";
+    return {
+      id: attachment.id?.trim() || `lightweight-attachment-${clientRequestId}-${index + 1}`,
+      kind,
+    fileName: attachment.fileName.trim(),
+    mimeType: attachment.mimeType.trim(),
+      fileSize: Number(attachment.fileSize),
+      contentBase64: attachment.contentBase64.trim()
+    };
+  }).filter((attachment) => (
+    attachment.fileName.length > 0
+    && attachment.mimeType.length > 0
+    && attachment.contentBase64.length > 0
+    && Number.isFinite(attachment.fileSize)
+    && attachment.fileSize > 0
+  ));
+}
+
+function normalizeLightweightMessageAttachments(
+  attachments: AffairsLightweightAttachmentInput[],
+  clientRequestId: string
+): NonNullable<HistoryPage["messages"][number]["attachments"]> {
+  return normalizeLightweightRuntimeAttachments(attachments, clientRequestId).map((attachment) => ({
+    id: attachment.id,
+    kind: attachment.kind,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    fileSize: attachment.fileSize
+  }));
+}
+
+function shouldAttachRuntimePayloadToMessage(
+  message: HistoryPage["messages"][number],
+  activeClientRequestId: string | null | undefined,
+  attachments: AffairsLightweightRuntimeAttachment[]
+): boolean {
+  return message.role === "user"
+    && attachments.length > 0
+    && Boolean(activeClientRequestId?.trim())
+    && message.rawRef.includes(activeClientRequestId!.trim());
+}
+
+function createOpenAiResponsesMessageContent(
+  message: HistoryPage["messages"][number],
+  activeClientRequestId: string | null | undefined,
+  attachments: AffairsLightweightRuntimeAttachment[]
+) {
+  if (!shouldAttachRuntimePayloadToMessage(message, activeClientRequestId, attachments)) {
+    return message.content;
+  }
+
+  return [
+    { type: "input_text", text: message.content.trim() || "请根据附件回答。" },
+    ...attachments.flatMap((attachment) => createOpenAiResponsesAttachmentBlocks(attachment))
+  ];
+}
+
+function createOpenAiChatMessageContent(
+  message: HistoryPage["messages"][number],
+  activeClientRequestId: string | null | undefined,
+  attachments: AffairsLightweightRuntimeAttachment[]
+) {
+  if (!shouldAttachRuntimePayloadToMessage(message, activeClientRequestId, attachments)) {
+    return message.content;
+  }
+
+  return [
+    { type: "text", text: message.content.trim() || "请根据附件回答。" },
+    ...attachments.flatMap((attachment) => createOpenAiChatAttachmentBlocks(attachment))
+  ];
+}
+
+function createAnthropicMessagePayload(
+  message: HistoryPage["messages"][number],
+  activeClientRequestId: string | null | undefined,
+  attachments: AffairsLightweightRuntimeAttachment[]
+) {
+  if (!shouldAttachRuntimePayloadToMessage(message, activeClientRequestId, attachments)) {
+    return {
+      role: message.role,
+      content: message.content
+    };
+  }
+
+  return {
+    role: message.role,
+    content: [
+      { type: "text", text: message.content.trim() || "请根据附件回答。" },
+      ...attachments.flatMap((attachment) => createAnthropicAttachmentBlocks(attachment))
+    ]
+  };
+}
+
+function createOpenAiResponsesAttachmentBlocks(attachment: AffairsLightweightRuntimeAttachment): any[] {
+  if (attachment.kind === "image") {
+    return [{
+      type: "input_image",
+      image_url: buildAttachmentDataUrl(attachment)
+    }];
+  }
+  return [{ type: "input_text", text: buildAttachmentTextBlock(attachment) }];
+}
+
+function createOpenAiChatAttachmentBlocks(attachment: AffairsLightweightRuntimeAttachment): any[] {
+  if (attachment.kind === "image") {
+    return [{
+      type: "image_url",
+      image_url: { url: buildAttachmentDataUrl(attachment) }
+    }];
+  }
+  return [{ type: "text", text: buildAttachmentTextBlock(attachment) }];
+}
+
+function createAnthropicAttachmentBlocks(attachment: AffairsLightweightRuntimeAttachment): any[] {
+  if (attachment.kind === "image") {
+    return [{
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: attachment.mimeType,
+        data: attachment.contentBase64
+      }
+    }];
+  }
+  return [{ type: "text", text: buildAttachmentTextBlock(attachment) }];
+}
+
+function buildAttachmentDataUrl(attachment: AffairsLightweightRuntimeAttachment): string {
+  return `data:${attachment.mimeType};base64,${attachment.contentBase64}`;
+}
+
+function buildAttachmentTextBlock(attachment: AffairsLightweightRuntimeAttachment): string {
+  const decoded = decodeTextAttachment(attachment);
+  const header = [
+    `附件文件：${attachment.fileName}`,
+    `类型：${attachment.mimeType}`,
+    `大小：${attachment.fileSize} bytes`
+  ].join("\n");
+
+  if (!decoded) {
+    return `${header}\n内容：这个文件不是可直接读取的文本格式。请根据文件名、类型和用户问题判断；如果必须读取原始内容，请建议切换到 Agent 会话。`;
+  }
+
+  const preview = decoded.length > 20_000 ? `${decoded.slice(0, 20_000)}\n...（内容过长，已截断）` : decoded;
+  return `${header}\n内容：\n${preview}`;
+}
+
+function decodeTextAttachment(attachment: AffairsLightweightRuntimeAttachment): string | null {
+  const mimeType = attachment.mimeType.toLowerCase();
+  const fileName = attachment.fileName.toLowerCase();
+  const looksText = mimeType.startsWith("text/")
+    || ["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-yaml"].includes(mimeType)
+    || /\.(txt|md|csv|json|xml|yaml|yml|log|ts|tsx|js|jsx|css|html|sql)$/i.test(fileName);
+  if (!looksText) {
+    return null;
+  }
+
+  try {
+    return Buffer.from(attachment.contentBase64, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 function extractOpenAiResponseText(body: any): string | null {

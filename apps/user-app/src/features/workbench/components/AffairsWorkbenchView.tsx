@@ -74,6 +74,7 @@ import { ButlerRuntimeStore, useButlerRuntimeStore } from "../../butler/runtime/
 import type {
   AffairsDocumentTagDetailsDto,
   AffairsFolderTagDetailsDto,
+  AttachmentPayload,
   HistoryMessageDto,
   AffairsLibraryBindingDto,
   AffairsLibraryConfigDto,
@@ -6510,7 +6511,8 @@ function AffairsLightweightConversationDraftState(input: {
                 content,
                 clientRequestId,
                 model: options?.model ?? null,
-                reasoningLevel: options?.reasoningLevel ?? null
+                reasoningLevel: options?.reasoningLevel ?? null,
+                attachments: options?.attachments ?? []
               }, (event) => {
                 if (event.type === "started") {
                   activeSessionId = event.session.sessionId;
@@ -6827,6 +6829,7 @@ function useAffairsLightweightSessionController(input: {
         clientRequestId?: string;
         model?: string;
         reasoningLevel?: string;
+        attachments?: AttachmentPayload[];
         attachmentMeta?: HistoryMessageDto["attachments"];
       }
     ) => {
@@ -6838,7 +6841,7 @@ function useAffairsLightweightSessionController(input: {
           content,
           clientRequestId,
           options?.attachmentMeta ?? [],
-          []
+          options?.attachments ?? []
         ),
         createLightweightStreamingAssistantPlaceholder(input.sessionId, clientRequestId)
       ];
@@ -6856,7 +6859,8 @@ function useAffairsLightweightSessionController(input: {
           content,
           clientRequestId,
           model: options?.model ?? null,
-          reasoningLevel: options?.reasoningLevel ?? null
+          reasoningLevel: options?.reasoningLevel ?? null,
+          attachments: options?.attachments ?? []
         }, (event) => {
           if (event.type === "started") {
             setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
@@ -7206,7 +7210,7 @@ function createAffairsLightweightCapabilities(provider: ProviderId): ProviderCap
     supportsInterrupt: false,
     supportsStructuredToolCalls: false,
     supportsTokenUsage: false,
-    supportsAttachments: false,
+    supportsAttachments: true,
     supportsPermissionPrompt: false,
     supportsCheckpoint: false,
     supportsSlashMenu: false,

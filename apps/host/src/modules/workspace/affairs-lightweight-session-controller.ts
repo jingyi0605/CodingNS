@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import { requireUserId } from "../preferences/common.js";
-import type { AffairsLightweightSessionService } from "./affairs-lightweight-session-service.js";
+import type { AffairsLightweightAttachmentInput, AffairsLightweightSessionService } from "./affairs-lightweight-session-service.js";
 
 interface WorkspaceParams {
   workspaceId: string;
@@ -12,12 +12,21 @@ interface LightweightSessionParams extends WorkspaceParams {
   sessionId: string;
 }
 
+interface AffairsLightweightAttachmentBody {
+  kind?: "image" | "file";
+  fileName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  contentBase64?: string | null;
+}
+
 interface AffairsLightweightStartBody {
   provider?: string;
   content?: string;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: AffairsLightweightAttachmentBody[] | null;
 }
 
 interface AffairsLightweightSendBody extends AffairsLightweightStartBody {}
@@ -37,6 +46,55 @@ interface AffairsLightweightFavoriteBody {
 function requireText(value: string | null | undefined, field: string, detail: string): string {
   const normalized = value?.trim() ?? "";
   if (!normalized) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail,
+      field
+    });
+  }
+  return normalized;
+}
+
+function normalizeAttachments(input: AffairsLightweightStartBody | AffairsLightweightSendBody): AffairsLightweightAttachmentInput[] {
+  if (!Array.isArray(input.attachments)) {
+    return [];
+  }
+
+  return input.attachments.map((attachment, index) => {
+    const kind: "image" | "file" = attachment?.kind === "image" ? "image" : "file";
+    const fileName = attachment?.fileName?.trim() ?? "";
+    const mimeType = attachment?.mimeType?.trim() ?? "";
+    const contentBase64 = attachment?.contentBase64?.trim() ?? "";
+    const fileSize = Number(attachment?.fileSize ?? 0);
+
+    if (!fileName || !mimeType || !contentBase64 || !Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: `attachments[${index}] 缺少有效的附件字段`,
+        field: "attachments"
+      });
+    }
+
+    return {
+      kind,
+      fileName,
+      mimeType,
+      fileSize,
+      contentBase64
+    };
+  });
+}
+
+function requireTextOrAttachments(
+  value: string | null | undefined,
+  attachments: unknown[],
+  field: string,
+  detail: string
+): string {
+  const normalized = value?.trim() ?? "";
+  if (!normalized && attachments.length === 0) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
@@ -166,10 +224,12 @@ export class AffairsLightweightSessionController {
     request: FastifyRequest<{ Params: WorkspaceParams; Body: AffairsLightweightStartBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const content = requireText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireTextOrAttachments(
       request.body.content,
+      attachments,
       "content",
-      "事务轻量会话必须提供首条消息"
+      "事务轻量会话必须提供首条消息或附件"
     );
     const provider = requireText(
       request.body.provider,
@@ -184,7 +244,8 @@ export class AffairsLightweightSessionController {
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
-        reasoningLevel: request.body.reasoningLevel ?? null
+        reasoningLevel: request.body.reasoningLevel ?? null,
+        attachments
       })
     );
   };
@@ -193,10 +254,12 @@ export class AffairsLightweightSessionController {
     request: FastifyRequest<{ Params: WorkspaceParams; Body: AffairsLightweightStartBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const content = requireText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireTextOrAttachments(
       request.body.content,
+      attachments,
       "content",
-      "事务轻量会话必须提供首条消息"
+      "事务轻量会话必须提供首条消息或附件"
     );
     const provider = requireText(
       request.body.provider,
@@ -218,7 +281,8 @@ export class AffairsLightweightSessionController {
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
-        reasoningLevel: request.body.reasoningLevel ?? null
+        reasoningLevel: request.body.reasoningLevel ?? null,
+        attachments
       }, async (event) => {
         reply.raw.write(`${JSON.stringify(event)}\n`);
       });
@@ -239,10 +303,12 @@ export class AffairsLightweightSessionController {
     request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightSendBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const content = requireText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireTextOrAttachments(
       request.body.content,
+      attachments,
       "content",
-      "事务轻量会话发送消息必须提供 content"
+      "事务轻量会话发送消息必须提供 content 或附件"
     );
     reply.status(201).send(
       await this.affairsLightweightSessionService.sendMessage({
@@ -252,7 +318,8 @@ export class AffairsLightweightSessionController {
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
-        reasoningLevel: request.body.reasoningLevel ?? null
+        reasoningLevel: request.body.reasoningLevel ?? null,
+        attachments
       })
     );
   };
@@ -261,10 +328,12 @@ export class AffairsLightweightSessionController {
     request: FastifyRequest<{ Params: LightweightSessionParams; Body: AffairsLightweightSendBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const content = requireText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireTextOrAttachments(
       request.body.content,
+      attachments,
       "content",
-      "事务轻量会话发送消息必须提供 content"
+      "事务轻量会话发送消息必须提供 content 或附件"
     );
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -281,7 +350,8 @@ export class AffairsLightweightSessionController {
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
-        reasoningLevel: request.body.reasoningLevel ?? null
+        reasoningLevel: request.body.reasoningLevel ?? null,
+        attachments
       }, async (event) => {
         reply.raw.write(`${JSON.stringify(event)}\n`);
       });

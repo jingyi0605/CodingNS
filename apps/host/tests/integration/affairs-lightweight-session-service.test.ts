@@ -35,6 +35,78 @@ describe("AffairsLightweightSessionService", () => {
     vi.restoreAllMocks();
   });
 
+  it("轻量 Codex 会保存图片和文件附件，并把它们放进模型请求", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
+    process.env.HOME = homeDir;
+    await fs.mkdir(path.join(homeDir, ".codex"), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "proxy-key" }),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(homeDir, ".codex", "config.toml"),
+      [
+        'model = "gpt-5.4"',
+        'model_provider = "proxy"',
+        "",
+        "[model_providers.proxy]",
+        'base_url = "https://api.glor-ai.top:1443"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    let requestPayload: any = null;
+    global.fetch = vi.fn(async (_input, init) => {
+      requestPayload = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(
+        JSON.stringify({ output_text: "附件已读取" }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const hostDataRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-data-"));
+    const service = new AffairsLightweightSessionService(hostDataRootDir);
+    const result = await service.startSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "看看附件",
+      clientRequestId: "client-attachment-1",
+      attachments: [
+        {
+          kind: "image",
+          fileName: "demo.png",
+          mimeType: "image/png",
+          fileSize: 3,
+          contentBase64: "aW1n"
+        },
+        {
+          kind: "file",
+          fileName: "note.txt",
+          mimeType: "text/plain",
+          fileSize: 11,
+          contentBase64: Buffer.from("hello file", "utf8").toString("base64")
+        }
+      ]
+    });
+
+    expect(result.userMessage.attachments).toEqual([
+      expect.objectContaining({ kind: "image", fileName: "demo.png", mimeType: "image/png" }),
+      expect.objectContaining({ kind: "file", fileName: "note.txt", mimeType: "text/plain" })
+    ]);
+    const userInput = requestPayload.input.find((item: any) => item.role === "user");
+    expect(userInput.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "input_image", image_url: "data:image/png;base64,aW1n" }),
+      expect.objectContaining({ type: "input_text", text: expect.stringContaining("hello file") })
+    ]));
+  });
+
   it("会优先复用现有 Codex CLI provider 配置，并在第三方代理下走轻量 runtime", async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "affairs-lightweight-home-"));
     process.env.HOME = homeDir;

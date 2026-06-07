@@ -1419,6 +1419,7 @@ export interface StartAffairsLightweightSessionPayload {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: AttachmentPayload[];
 }
 
 export interface SendAffairsLightweightSessionMessagePayload {
@@ -1426,6 +1427,7 @@ export interface SendAffairsLightweightSessionMessagePayload {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: AttachmentPayload[];
 }
 
 export interface ForkSessionPayload {

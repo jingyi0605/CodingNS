@@ -53,6 +53,7 @@ const platformStateMock = vi.hoisted(() => ({
 
 const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 const showToastMock = vi.hoisted(() => vi.fn(() => "toast-test-id"));
+const composerPanelRenderMock = vi.hoisted(() => vi.fn());
 
 const liveSessionControllerMock = vi.hoisted(() => ({
   useLiveSessionController: vi.fn()
@@ -597,20 +598,31 @@ vi.mock("../../butler/runtime/butler-runtime-store", () => ({
 const useButlerRuntimeStoreMock = vi.mocked(useButlerRuntimeStore);
 
 vi.mock("../../conversation/components/ComposerPanel", () => ({
-  ComposerPanel: ({ onSend, isSubmitting }: { onSend?: (content: string) => Promise<void>; isSubmitting?: boolean }) => (
-    <button
-      type="button"
-      data-testid="affairs-composer-send"
-      disabled={Boolean(isSubmitting)}
-      onClick={() => {
-        if (onSend) {
-          void onSend("请帮我查一下今天的事务重点");
-        }
-      }}
-    >
-      发送
-    </button>
-  )
+  ComposerPanel: ({
+    onSend,
+    isSubmitting,
+    capabilities
+  }: {
+    onSend?: (content: string) => Promise<void>;
+    isSubmitting?: boolean;
+    capabilities?: { supportsAttachments?: boolean };
+  }) => {
+    composerPanelRenderMock(capabilities);
+    return (
+      <button
+        type="button"
+        data-testid="affairs-composer-send"
+        disabled={Boolean(isSubmitting)}
+        onClick={() => {
+          if (onSend) {
+            void onSend("请帮我查一下今天的事务重点");
+          }
+        }}
+      >
+        发送
+      </button>
+    );
+  }
 }));
 
 vi.mock("../../conversation/components/MessageTimeline", () => ({
@@ -2579,6 +2591,29 @@ describe("AffairsWorkbenchView", () => {
     expect(dialogScope.getAllByRole("button", { name: "Claude Code" })).toHaveLength(2);
     expect(dialogScope.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
     expect(dialogScope.queryByRole("button", { name: "Kimi" })).not.toBeInTheDocument();
+  });
+
+  it("事务轻量模式会打开 Composer 图片和文件附件能力", async () => {
+    const user = userEvent.setup();
+    composerPanelRenderMock.mockClear();
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: null
+    }, navigationGroupsWithBoundLibraryWorkspace);
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+
+    expect(await screen.findByTestId("affairs-composer-send")).toBeInTheDocument();
+    expect(composerPanelRenderMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      supportsAttachments: true
+    }));
   });
 
   it("事务轻量草稿发送首条消息后会走独立 lightweight runtime 并切到对话页面", async () => {
