@@ -6602,6 +6602,42 @@ function AffairsLightweightConversationDraftState(input: {
                 bootstrapMessages: created.messages
               });
             } catch (error) {
+              if (!activeSessionId) {
+                const recovered = await recoverAffairsLightweightSessionAfterCreateStreamFailure({
+                  workspaceId: input.workspaceId,
+                  provider: input.draft.provider,
+                  content,
+                  clientRequestId,
+                  fallbackStartedAt: session.createdAt
+                });
+                if (recovered) {
+                  const recoveredMessages = recovered.messages.map((message) => (
+                    convertHistoryMessageToViewModel(message, recovered.session.sessionId)
+                  ));
+                  setLightweightRuntimeSnapshot(recovered.session.sessionId, createAffairsLightweightRuntimeSnapshot({
+                    session: recovered.session,
+                    messages: recoveredMessages.length > 0
+                      ? recoveredMessages
+                      : initialMessages.map((message) => ({
+                        ...message,
+                        sessionId: recovered.session.sessionId,
+                        deliveryState: message.deliveryState === "failed" ? "sent" : message.deliveryState
+                      })),
+                    historyState: "ready",
+                    sending: false,
+                    streamingToolStatus: null
+                  }));
+                  setLightweightRuntimeSnapshot(session.sessionId, null);
+                  await reloadLightweightConversationSessions();
+                  activateConversationSession({
+                    kind: "lightweight",
+                    session: recovered.session,
+                    bootstrapMessages: recovered.messages
+                  });
+                  return;
+                }
+              }
+
               const failedSessionId = activeSessionId ?? session.sessionId;
               setLightweightRuntimeSnapshot(failedSessionId, (current) => {
                 const snapshot = current ?? createAffairsLightweightRuntimeSnapshot({
@@ -7274,6 +7310,51 @@ async function loadAffairsLightweightSessionExportSnapshot(
   return {
     messages: page.messages.map((message) => convertHistoryMessageToViewModel(message, sessionId))
   };
+}
+
+async function recoverAffairsLightweightSessionAfterCreateStreamFailure(input: {
+  workspaceId: string;
+  provider: ProviderId;
+  content: string;
+  clientRequestId: string;
+  fallbackStartedAt: string;
+}): Promise<{ session: SessionSummaryDto; messages: HistoryMessageDto[] } | null> {
+  const startedAtMs = Date.parse(input.fallbackStartedAt);
+  const minimumUpdatedAtMs = Number.isFinite(startedAtMs) ? startedAtMs - 10_000 : 0;
+
+  try {
+    const response = await listAffairsLightweightSessions(input.workspaceId);
+    const candidates = response.items
+      .filter((session) => session.provider === input.provider)
+      .filter((session) => {
+        const updatedAtMs = Date.parse(session.lastMessageAt ?? session.updatedAt ?? session.createdAt);
+        return !Number.isFinite(updatedAtMs) || updatedAtMs >= minimumUpdatedAtMs;
+      })
+      .slice(0, 5);
+
+    for (const session of candidates) {
+      const page = await getAffairsLightweightSessionMessages(input.workspaceId, session.sessionId);
+      const matchedByClientRequest = page.messages.some((message) => (
+        message.role === "user"
+        && typeof message.rawRef === "string"
+        && message.rawRef.includes(input.clientRequestId)
+      ));
+      const matchedByContent = page.messages.some((message) => (
+        message.role === "user"
+        && message.content.trim() === input.content.trim()
+      ));
+      if (matchedByClientRequest || matchedByContent) {
+        return {
+          session,
+          messages: page.messages
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function createLightweightStreamingAssistantPlaceholder(

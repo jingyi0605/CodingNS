@@ -9,7 +9,7 @@ import { userPreferenceStore } from "../../../preferences/user-preference-store"
 import { clearProviderCatalogStore } from "../../conversation/capability/provider-catalog-store";
 import { clearSessionProviderPickerCapabilityCache } from "../../conversation/components/SessionProviderPicker";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
-import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
+import type { HistoryMessageDto, SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getCodingNSDesktopBridge } from "../../../platform/desktop/codingns-desktop-bridge";
 import {
   AffairsAuxiliaryPanel,
@@ -2649,6 +2649,88 @@ describe("AffairsWorkbenchView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-1:");
     });
+  });
+
+  it("事务轻量新建流请求断开但服务端已创建时，会把草稿切到真实轻量会话", async () => {
+    const user = userEvent.setup();
+    const recoveredSession = createAgentSnapshotSession({
+      sessionId: "session-light-recovered",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "affairs-lightweight:codex:session-light-recovered",
+      rawStoreRef: "session-light-recovered.json",
+      title: "断流后恢复的轻量对话",
+      messageCount: 2,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastMessageAt: new Date().toISOString(),
+      activitySource: "runtime"
+    });
+    let recoveredMessages: HistoryMessageDto[] = [];
+    conversationApiMock.startAffairsLightweightSessionStream.mockImplementation(async (_workspaceId, payload) => {
+      const clientRequestId = payload.clientRequestId ?? "client-request-recovered";
+      recoveredMessages = [
+        {
+          messageId: "message-user-recovered",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-recovered",
+          role: "user",
+          kind: "text",
+          content: "请帮我查一下今天的事务重点",
+          attachments: [],
+          timestamp: new Date().toISOString(),
+          sequence: 1,
+          rawRef: `session-light-recovered.json#${clientRequestId}`
+        },
+        {
+          messageId: "message-assistant-recovered",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-recovered",
+          role: "assistant",
+          kind: "text",
+          content: "服务端已经完成回复",
+          attachments: [],
+          timestamp: new Date().toISOString(),
+          sequence: 2,
+          rawRef: "session-light-recovered.json#assistant-2"
+        }
+      ];
+      conversationApiMock.listAffairsLightweightSessions.mockResolvedValue({ items: [recoveredSession] });
+      throw new TypeError("Load failed");
+    });
+    conversationApiMock.getAffairsLightweightSessionMessages.mockImplementation(async (_workspaceId, sessionId) => ({
+      messages: sessionId === "session-light-recovered" ? recoveredMessages : [],
+      cursor: null,
+      nextCursor: null,
+      total: sessionId === "session-light-recovered" ? recoveredMessages.length : 0
+    }));
+    conversationApiMock.getAffairsLightweightSession.mockResolvedValue(recoveredSession);
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: null
+    }, navigationGroupsWithBoundLibraryWorkspace);
+    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+
+    await user.click(await screen.findByTestId("affairs-composer-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-recovered:");
+    });
+    expect(conversationApiMock.markAffairsLightweightSessionSeen).toHaveBeenCalledWith(
+      "workspace-1",
+      "session-light-recovered",
+      expect.any(String)
+    );
+    expect(screen.queryByText("重发")).not.toBeInTheDocument();
   });
 
   it("事务轻量会话联网搜索时会把工具调用和结果写进时间线", async () => {
