@@ -110,7 +110,7 @@ export class ButlerSessionService {
     input: StartButlerSessionInput,
     userId: string
   ): Promise<ButlerProjectSessionView> {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
 
     if (!this.sessionLiveRuntimeService) {
       throw new AppError({
@@ -148,7 +148,7 @@ export class ButlerSessionService {
         fallbackKey: `butler-session-start:${project.id}:${launch.sessionId}`
       });
 
-      return this.createManagedSessionFromLaunch(project, input, providerId, launch);
+      return this.createManagedSessionFromLaunch(project, input, providerId, launch, userId);
     } catch (error) {
       if (isRecoverableSessionIndexMissing(error)) {
         const recovered = this.tryRecoverManagedSession(project, input, userId, {
@@ -170,7 +170,7 @@ export class ButlerSessionService {
     userId: string,
     options: RecoverManagedButlerSessionOptions = {}
   ): ButlerProjectSessionView | null {
-    return this.tryRecoverManagedSession(this.getProjectOrThrow(projectId), input, userId, options);
+    return this.tryRecoverManagedSession(this.getProjectForUserOrThrow(projectId, userId), input, userId, options);
   }
 
   listByProject(
@@ -180,12 +180,12 @@ export class ButlerSessionService {
       includeArchived?: boolean;
     }
   ): ButlerProjectSessionView[] {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const includeArchived = options?.includeArchived ?? false;
 
-    return this.butlerSessionRepository.listByProject(project.id).flatMap((record) => {
+    return this.butlerSessionRepository.listByProject(project.id, userId).flatMap((record) => {
       const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
-      const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+      const binding = this.sessionBindingRepository.findBySessionIdForUser(canonicalSessionId, userId);
       const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
       const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
       const isArchived = index?.isArchived ?? false;
@@ -218,10 +218,10 @@ export class ButlerSessionService {
   }
 
   importSession(projectId: string, input: ImportButlerSessionInput, userId: string): ButlerProjectSessionView {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const requestedSessionId = requireNonEmptyText(input.sessionId, "sessionId", "sessionId 不能为空");
     const sessionId = this.resolveCanonicalSessionId(requestedSessionId);
-    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const binding = this.sessionBindingRepository.findBySessionIdForUser(sessionId, userId);
 
     if (!binding) {
       throw new AppError({
@@ -241,7 +241,7 @@ export class ButlerSessionService {
     }
 
     const existing = this.butlerSessionRepository
-      .listByProject(project.id)
+      .listByProject(project.id, userId)
       .find((record) => this.resolveCanonicalSessionId(record.sessionId) === sessionId);
 
     if (existing) {
@@ -263,6 +263,7 @@ export class ButlerSessionService {
 
     const created = this.butlerSessionRepository.create({
       id: createId(),
+      userId,
       projectId: project.id,
       sessionId,
       role: input.role ?? "adhoc",
@@ -317,7 +318,7 @@ export class ButlerSessionService {
       mode?: "blocking" | "background";
     }
   ): Promise<void> {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const mode = options?.mode ?? "blocking";
 
     if (!isWorkspaceAutoManagedProject(project) || !this.sessionHistoryService?.listWorkspaceSessions) {
@@ -350,7 +351,7 @@ export class ButlerSessionService {
     userId: string,
     input: CaptureButlerSessionSnapshotInput = {}
   ): ButlerProjectSessionView {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const record = this.butlerSessionRepository.findById(butlerSessionId);
 
     if (!record || record.projectId !== project.id) {
@@ -363,7 +364,7 @@ export class ButlerSessionService {
     }
 
     const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
-    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+    const binding = this.sessionBindingRepository.findBySessionIdForUser(canonicalSessionId, userId);
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
     const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
     const timestamp = nowIso();
@@ -426,7 +427,7 @@ export class ButlerSessionService {
     butlerSessionId: string,
     userId: string
   ): Promise<ResumeButlerSessionResult> {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const record = this.butlerSessionRepository.findById(butlerSessionId);
 
     if (!record || record.projectId !== project.id) {
@@ -461,7 +462,8 @@ export class ButlerSessionService {
     }
 
     const resumed = await this.sessionHistoryService.resumeSession(
-      this.resolveCanonicalSessionId(record.sessionId)
+      this.resolveCanonicalSessionId(record.sessionId),
+      userId
     );
     const session = this.captureSessionSnapshot(projectId, butlerSessionId, userId, {
       sourceKind: "manual"
@@ -475,9 +477,11 @@ export class ButlerSessionService {
     };
   }
 
-  getSessionWorkspaceId(sessionId: string): string {
+  getSessionWorkspaceId(sessionId: string, userId?: string): string {
     const canonicalSessionId = this.resolveCanonicalSessionId(sessionId);
-    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+    const binding = userId
+      ? this.sessionBindingRepository.findBySessionIdForUser(canonicalSessionId, userId)
+      : this.sessionBindingRepository.findBySessionId(canonicalSessionId);
 
     if (!binding) {
       throw new AppError({
@@ -496,10 +500,10 @@ export class ButlerSessionService {
     sessionId: string,
     userId: string
   ): Promise<ButlerSessionActionTarget> {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectForUserOrThrow(projectId, userId);
     const normalizedSessionId = requireNonEmptyText(sessionId, "sessionId", "sessionId 不能为空");
     const canonicalSessionId = this.resolveCanonicalSessionId(normalizedSessionId);
-    const workspaceId = this.getSessionWorkspaceId(canonicalSessionId);
+    const workspaceId = this.getSessionWorkspaceId(canonicalSessionId, userId);
 
     if (workspaceId !== project.workspaceId) {
       throw new AppError({
@@ -540,8 +544,8 @@ export class ButlerSessionService {
     };
   }
 
-  private getProjectOrThrow(projectId: string) {
-    const project = this.butlerProjectRepository.findById(projectId);
+  private getProjectForUserOrThrow(projectId: string, userId: string): ButlerProject {
+    const project = this.butlerProjectRepository.findByIdForUser(projectId, userId);
 
     if (!project) {
       throw new AppError({
@@ -561,11 +565,13 @@ export class ButlerSessionService {
     launch: {
       sessionId: string;
       acceptedAt: string;
-    }
+    },
+    userId: string
   ): ButlerProjectSessionView {
     const timestamp = launch.acceptedAt;
     const created = this.butlerSessionRepository.create({
       id: createId(),
+      userId,
       projectId: project.id,
       sessionId: launch.sessionId,
       role: input.role ?? "adhoc",
@@ -660,7 +666,7 @@ export class ButlerSessionService {
       return null;
     }
 
-    const existing = this.butlerSessionRepository.findBySessionId(candidate.sessionId);
+    const existing = this.butlerSessionRepository.findBySessionIdForUser(candidate.sessionId, userId);
 
     if (existing) {
       return existing.projectId === project.id ? this.buildManagedSessionView(existing, userId) : null;
@@ -674,6 +680,7 @@ export class ButlerSessionService {
     );
     const created = this.butlerSessionRepository.create({
       id: createId(),
+      userId,
       projectId: project.id,
       sessionId: candidate.sessionId,
       role: input.role ?? "adhoc",
@@ -760,7 +767,7 @@ export class ButlerSessionService {
 
   private buildManagedSessionView(record: ButlerSession, userId: string): ButlerProjectSessionView {
     const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
-    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+    const binding = this.sessionBindingRepository.findBySessionIdForUser(canonicalSessionId, userId);
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
     const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
 
@@ -796,12 +803,12 @@ export class ButlerSessionService {
     }
 
     const existingSessionIds = new Set(
-      this.butlerSessionRepository.listByProject(project.id).map((record) => record.sessionId)
+      this.butlerSessionRepository.listByProject(project.id, userId).map((record) => record.sessionId)
     );
     const workspaceSessions = this.sessionHistoryService.listWorkspaceSessions(project.workspaceId, userId);
 
     for (const session of workspaceSessions) {
-      const existing = this.butlerSessionRepository.findBySessionId(session.sessionId);
+      const existing = this.butlerSessionRepository.findBySessionIdForUser(session.sessionId, userId);
 
       if (
         session.isSubagent
@@ -829,7 +836,7 @@ export class ButlerSessionService {
     session: ReturnType<SessionHistoryService["listWorkspaceSessions"]>[number],
     userId: string
   ): ButlerSession | null {
-    const existing = this.butlerSessionRepository.findBySessionId(session.sessionId);
+    const existing = this.butlerSessionRepository.findBySessionIdForUser(session.sessionId, userId);
 
     if (existing) {
       return existing.projectId === project.id ? existing : null;
@@ -848,6 +855,7 @@ export class ButlerSessionService {
     try {
       created = this.butlerSessionRepository.create({
         id: recordId,
+        userId,
         projectId: project.id,
         sessionId: session.sessionId,
         role: "adhoc",
@@ -860,7 +868,7 @@ export class ButlerSessionService {
       });
     } catch (error) {
       if (isButlerSessionUniqueConstraintError(error)) {
-        return this.butlerSessionRepository.findBySessionId(session.sessionId);
+        return this.butlerSessionRepository.findBySessionIdForUser(session.sessionId, userId);
       }
 
       throw error;

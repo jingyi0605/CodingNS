@@ -96,23 +96,23 @@ export class ButlerControlSessionService {
   }
 
   getCurrentSession(userId: string, workspaceId?: string | null): ButlerControlSessionView | null {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     const normalizedWorkspaceId = workspaceId?.trim() ?? "";
     if (normalizedWorkspaceId) {
       return this.butlerControlSessionRepository
-        .listByProvider(profile.providerId)
+        .listByProvider(profile.providerId, userId)
         .filter((record) => record.status !== "closed")
         .map((record) => this.toView(record, userId))
         .find((record) => record.session.workspaceId === normalizedWorkspaceId) ?? null;
     }
 
-    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(profile.providerId);
+    const current = this.butlerControlSessionRepository.findLatestOpenByProviderForUser(profile.providerId, userId);
 
     return current ? this.toView(current, userId) : null;
   }
 
   getSession(controlSessionId: string, userId: string): ButlerControlSessionView | null {
-    const current = this.butlerControlSessionRepository.findById(controlSessionId.trim());
+    const current = this.butlerControlSessionRepository.findByIdForUser(controlSessionId.trim(), userId);
 
     if (!current) {
       return null;
@@ -122,15 +122,15 @@ export class ButlerControlSessionService {
   }
 
   listSessions(userId: string): ButlerControlSessionView[] {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     return this.butlerControlSessionRepository
-      .listByProvider(profile.providerId)
+      .listByProvider(profile.providerId, userId)
       .map((record) => this.toView(record, userId));
   }
 
-  resetCurrentSession(): void {
-    const profile = this.butlerProfileService.ensureInitialized();
-    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(profile.providerId);
+  resetCurrentSession(userId: string): void {
+    const profile = this.butlerProfileService.ensureInitialized(userId);
+    const current = this.butlerControlSessionRepository.findLatestOpenByProviderForUser(profile.providerId, userId);
 
     if (!current || current.status === "closed") {
       return;
@@ -147,7 +147,7 @@ export class ButlerControlSessionService {
     userId: string,
     input: StartButlerControlSessionInput = {}
   ): Promise<ButlerControlSessionView> {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     return this.startSessionInternal(userId, profile.providerId, input, {
       closeExistingCurrent: true
     });
@@ -178,8 +178,8 @@ export class ButlerControlSessionService {
     provider: string;
     providerSessionId: string;
   }> {
-    const profile = this.butlerProfileService.ensureInitialized();
-    const current = this.requireCurrentSession(profile.providerId);
+    const profile = this.butlerProfileService.ensureInitialized(userId);
+    const current = this.requireCurrentSession(profile.providerId, userId);
     await this.ensureSessionCanStartWork(current.sessionId, userId, "助手控制会话");
     const promptContext = await this.butlerContextAggregator.resolvePromptContext(userId, null);
     this.syncWorkspaceContext(
@@ -190,7 +190,7 @@ export class ButlerControlSessionService {
     );
 
     try {
-      const resumed = await this.sessionHistoryService.resumeSession(current.sessionId);
+      const resumed = await this.sessionHistoryService.resumeSession(current.sessionId, userId);
       const updated = this.butlerControlSessionRepository.update({
         ...current,
         status: "running",
@@ -222,11 +222,11 @@ export class ButlerControlSessionService {
     clientRequestId: string | null;
     message: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>["message"];
   }> {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     const current =
       input.controlSessionId?.trim()
-        ? this.requireSessionById(input.controlSessionId, profile.providerId)
-        : this.requireCurrentSession(profile.providerId);
+        ? this.requireSessionById(input.controlSessionId, profile.providerId, userId)
+        : this.requireCurrentSession(profile.providerId, userId);
     return this.sendMessageInternal(userId, current, input);
   }
 
@@ -244,7 +244,7 @@ export class ButlerControlSessionService {
     clientRequestId: string | null;
     message: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>["message"];
   }> {
-    const current = this.requireSessionByIdAnyProvider(input.controlSessionId);
+    const current = this.requireSessionByIdAnyProvider(input.controlSessionId, userId);
     return this.sendMessageInternal(userId, current, input);
   }
 
@@ -261,7 +261,7 @@ export class ButlerControlSessionService {
     clientRequestId: string | null;
     message: Awaited<ReturnType<SessionLiveRuntimeService["sendLiveMessage"]>>["message"];
   }> {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     this.assertProviderEnabled(current.providerId);
     await this.ensureSessionCanStartWork(current.sessionId, userId, "助手控制会话");
     const content = normalizeControlContent(input.content, "");
@@ -340,7 +340,7 @@ export class ButlerControlSessionService {
       closeExistingCurrent: boolean;
     }
   ): Promise<ButlerControlSessionView> {
-    const profile = this.butlerProfileService.ensureInitialized();
+    const profile = this.butlerProfileService.ensureInitialized(userId);
     this.assertProviderEnabled(providerId);
     const content = normalizeControlContent(input.content, "");
     const model = normalizeNullableText(input.model);
@@ -354,7 +354,7 @@ export class ButlerControlSessionService {
       content,
       workspaceId: normalizeNullableText(input.workspaceId)
     });
-    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(providerId);
+    const current = this.butlerControlSessionRepository.findLatestOpenByProviderForUser(providerId, userId);
 
     if (options.closeExistingCurrent && current && current.status !== "closed") {
       this.butlerControlSessionRepository.update({
@@ -390,6 +390,7 @@ export class ButlerControlSessionService {
       const timestamp = started.acceptedAt;
       const created = this.butlerControlSessionRepository.create({
         id: createId(),
+        userId,
         providerId,
         sessionId: started.sessionId,
         purpose: input.purpose ?? "chat",
@@ -411,8 +412,11 @@ export class ButlerControlSessionService {
     }
   }
 
-  private requireCurrentSession(providerId: ButlerProfile["providerId"]): ButlerControlSession {
-    const current = this.butlerControlSessionRepository.findLatestOpenByProvider(providerId);
+  private requireCurrentSession(
+    providerId: ButlerProfile["providerId"],
+    userId: string
+  ): ButlerControlSession {
+    const current = this.butlerControlSessionRepository.findLatestOpenByProviderForUser(providerId, userId);
 
     if (!current || current.status === "closed") {
       throw new AppError({
@@ -427,9 +431,10 @@ export class ButlerControlSessionService {
 
   private requireSessionById(
     controlSessionId: string,
-    providerId: ButlerProfile["providerId"]
+    providerId: ButlerProfile["providerId"],
+    userId: string
   ): ButlerControlSession {
-    const record = this.requireSessionByIdAnyProvider(controlSessionId);
+    const record = this.requireSessionByIdAnyProvider(controlSessionId, userId);
 
     if (record.providerId !== providerId) {
       throw new AppError({
@@ -442,8 +447,8 @@ export class ButlerControlSessionService {
     return record;
   }
 
-  private requireSessionByIdAnyProvider(controlSessionId: string): ButlerControlSession {
-    const record = this.butlerControlSessionRepository.findById(controlSessionId.trim());
+  private requireSessionByIdAnyProvider(controlSessionId: string, userId: string): ButlerControlSession {
+    const record = this.butlerControlSessionRepository.findByIdForUser(controlSessionId.trim(), userId);
 
     if (!record || record.status === "closed") {
       throw new AppError({

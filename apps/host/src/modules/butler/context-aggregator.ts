@@ -294,7 +294,7 @@ export class ButlerContextAggregator {
   }
 
   async getProjectContext(projectId: string, userId: string): Promise<ButlerProjectContext> {
-    const project = this.getProjectOrThrow(projectId);
+    const project = this.getProjectOrThrow(projectId, userId);
     const generatedAt = nowIso();
     await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
       mode: "background"
@@ -324,7 +324,7 @@ export class ButlerContextAggregator {
   }
 
   async resolvePromptContext(userId: string, userMessage?: string | null): Promise<ButlerPromptContext> {
-    const projectId = this.resolveProjectIdFromMessage(userMessage);
+    const projectId = this.resolveProjectIdFromMessage(userId, userMessage);
 
     if (projectId) {
       const context = await this.getProjectContext(projectId, userId);
@@ -405,8 +405,8 @@ export class ButlerContextAggregator {
       syncMode?: "blocking" | "background";
     }
   ): Promise<ProjectAggregateResult[]> {
-    const focusProjectIds = new Set(this.butlerProfileService.getProfile()?.focus.projectIds ?? []);
-    const projects = this.butlerProjectService.list();
+    const focusProjectIds = new Set(this.butlerProfileService.getProfile(userId)?.focus.projectIds ?? []);
+    const projects = this.butlerProjectService.list({ userId });
     await Promise.all(
       projects.map((project) =>
         this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
@@ -528,15 +528,15 @@ export class ButlerContextAggregator {
     };
   }
 
-  private resolveProjectIdFromMessage(userMessage?: string | null): string | null {
+  private resolveProjectIdFromMessage(userId: string, userMessage?: string | null): string | null {
     const normalized = userMessage?.trim().toLocaleLowerCase();
 
     if (!normalized) {
       return null;
     }
 
-    const projects = this.butlerProjectService.list();
-    const focusedProjectIds = this.butlerProfileService.getProfile()?.focus.projectIds ?? [];
+    const projects = this.butlerProjectService.list({ userId });
+    const focusedProjectIds = this.butlerProfileService.getProfile(userId)?.focus.projectIds ?? [];
 
     if (focusedProjectIds.length === 1 && /(这个项目|当前项目|该项目)/u.test(normalized)) {
       const focusedProjectId = focusedProjectIds[0]!;
@@ -563,8 +563,8 @@ export class ButlerContextAggregator {
     return null;
   }
 
-  private getProjectOrThrow(projectId: string): ButlerProject {
-    return this.butlerProjectService.getById(projectId);
+  private getProjectOrThrow(projectId: string, userId: string): ButlerProject {
+    return this.butlerProjectService.getById(projectId, userId);
   }
 }
 

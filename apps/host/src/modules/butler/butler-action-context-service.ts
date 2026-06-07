@@ -119,8 +119,8 @@ export class ButlerActionContextService {
     userId: string
   ): Promise<ButlerSessionActionContextView> {
     // 这里故意先按 workspace 解析项目，再走原来的 target 逻辑，避免改坏现有会话归属判断。
-    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
-    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
+    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId, userId);
+    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId, userId);
     const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
     const latestFollowUpTask = this.butlerFollowUpService.listTasks({
       sessionId,

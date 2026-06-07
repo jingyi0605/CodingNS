@@ -70,7 +70,7 @@ export class PatrolExecutionService {
       const plan = run.planId ? this.patrolPlanRepository.findById(run.planId) : null;
       const providerId = resolveProviderId(project);
       const adapter = this.providerAdapterRegistry.get(providerId);
-      const userId = this.resolveExecutorUserId();
+      const userId = project.userId;
       const memories = this.projectMemoryRepository.listByProject(project.id, {
         status: "active"
       });
@@ -108,7 +108,7 @@ export class PatrolExecutionService {
         instructionFilePath: null
       });
 
-      butlerSession = this.ensureButlerSession(project.id, launch.sessionId, launch.acceptedAt);
+      butlerSession = this.ensureButlerSession(project, launch.sessionId, launch.acceptedAt);
       const runningRun = this.patrolRunService.markRunRunning(runId, {
         butlerSessionId: butlerSession.id,
         startedAt: launch.acceptedAt
@@ -305,8 +305,8 @@ export class PatrolExecutionService {
       : null;
   }
 
-  private ensureButlerSession(projectId: string, sessionId: string, timestamp: string): ButlerSession {
-    const existing = this.butlerSessionRepository.findBySessionId(sessionId);
+  private ensureButlerSession(project: ButlerProject, sessionId: string, timestamp: string): ButlerSession {
+    const existing = this.butlerSessionRepository.findBySessionIdForUser(sessionId, project.userId);
 
     if (existing) {
       return this.updateButlerSession(existing, {
@@ -318,7 +318,8 @@ export class PatrolExecutionService {
 
     return this.butlerSessionRepository.create({
       id: createId(),
-      projectId,
+      userId: project.userId,
+      projectId: project.id,
       sessionId,
       role: "patrol",
       ownershipMode: "managed",
@@ -387,15 +388,6 @@ export class PatrolExecutionService {
     return project;
   }
 
-  private resolveExecutorUserId(): string {
-    const userId = this.authUserRepository.listIds()[0] ?? null;
-
-    if (!userId) {
-      throw new Error("PATROL_EXECUTOR_USER_NOT_FOUND");
-    }
-
-    return userId;
-  }
 }
 
 function mapPermissionMode(instruction: ButlerInstructionEnvelope): string {

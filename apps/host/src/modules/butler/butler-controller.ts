@@ -308,8 +308,8 @@ export class ButlerController {
   ) {}
 
   readonly getProfile = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const profile = this.butlerProfileService.getProfile();
     const userId = requireUserId(request);
+    const profile = this.butlerProfileService.getProfile(userId);
 
     reply.send({
       initialized: profile?.setupCompleted === true,
@@ -322,8 +322,8 @@ export class ButlerController {
     request: FastifyRequest<{ Body: ButlerProfilePatchInput }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const profile = this.butlerProfileService.initProfile(request.body ?? {});
     const userId = requireUserId(request);
+    const profile = this.butlerProfileService.initProfile(userId, request.body ?? {});
 
     reply.status(201).send({
       initialized: true,
@@ -336,8 +336,8 @@ export class ButlerController {
     request: FastifyRequest<{ Body: ButlerProfilePatchInput }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const profile = this.butlerProfileService.updateProfile(request.body ?? {});
     const userId = requireUserId(request);
+    const profile = this.butlerProfileService.updateProfile(userId, request.body ?? {});
 
     reply.send({
       initialized: true,
@@ -415,19 +415,19 @@ export class ButlerController {
   };
 
   readonly listControlSessionEvents = async (
-    _request: FastifyRequest,
+    request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      items: this.butlerControlActionService.listCurrentEvents()
+      items: this.butlerControlActionService.listCurrentEvents(requireUserId(request))
     });
   };
 
   readonly resetControlSession = async (
-    _request: FastifyRequest,
+    request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> => {
-    this.butlerControlSessionService.resetCurrentSession();
+    this.butlerControlSessionService.resetCurrentSession(requireUserId(request));
     reply.send({
       controlSession: null
     });
@@ -719,8 +719,8 @@ export class ButlerController {
       return;
     }
 
-    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
-    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
+    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId, userId);
+    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId, userId);
     const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
 
     reply.send({
@@ -746,8 +746,8 @@ export class ButlerController {
       return;
     }
 
-    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
-    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
+    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId, userId);
+    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId, userId);
     const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
     const latestFollowUpTask = this.butlerFollowUpService.listTasks({
       sessionId,
@@ -805,13 +805,16 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.status(201).send({
-      result: await this.butlerControlActionService.startPatrol({
-        projectId: request.body.projectId?.trim() ?? "",
-        planId: request.body.planId?.trim() || null,
-        triggerRef: request.body.triggerRef?.trim() || null,
-        butlerSessionId: request.body.butlerSessionId?.trim() || null,
-        suggestions: request.body.suggestions
-      })
+      result: await this.butlerControlActionService.startPatrol(
+        {
+          projectId: request.body.projectId?.trim() ?? "",
+          planId: request.body.planId?.trim() || null,
+          triggerRef: request.body.triggerRef?.trim() || null,
+          butlerSessionId: request.body.butlerSessionId?.trim() || null,
+          suggestions: request.body.suggestions
+        },
+        requireUserId(request)
+      )
     });
   };
 
@@ -819,14 +822,17 @@ export class ButlerController {
     request: FastifyRequest<{ Body: StartButlerVerificationActionBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const result = await this.butlerControlActionService.startVerification({
-      projectId: request.body.projectId?.trim() ?? "",
-      verificationType: request.body.verificationType,
-      targetRef: request.body.targetRef?.trim() || null,
-      butlerSessionId: request.body.butlerSessionId?.trim() || null,
-      sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
-      spec: request.body.spec
-    });
+    const result = await this.butlerControlActionService.startVerification(
+      {
+        projectId: request.body.projectId?.trim() ?? "",
+        verificationType: request.body.verificationType,
+        targetRef: request.body.targetRef?.trim() || null,
+        butlerSessionId: request.body.butlerSessionId?.trim() || null,
+        sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
+        spec: request.body.spec
+      },
+      requireUserId(request)
+    );
 
     if (result.run.butlerSessionId) {
       this.butlerActionContextService?.invalidateSessionActionContext(result.run.butlerSessionId);
@@ -839,8 +845,10 @@ export class ButlerController {
     request: FastifyRequest<{ Querystring: ButlerProjectListQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const userId = requireUserId(request);
     reply.send({
       items: this.butlerProjectService.list({
+        userId,
         workspaceId: request.query.workspaceId?.trim() || undefined,
         lifecycleStatus: request.query.status,
         riskLevel: request.query.riskLevel
@@ -852,7 +860,7 @@ export class ButlerController {
     request: FastifyRequest<{ Body: CreateButlerProjectBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const project = this.butlerProjectService.create({
+    const project = this.butlerProjectService.create(requireUserId(request), {
       workspaceId: request.body.workspaceId?.trim() || "",
       name: request.body.name?.trim() || "",
       repoRoot: request.body.repoRoot?.trim() || "",
@@ -869,7 +877,7 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      project: this.butlerProjectService.getById(request.params.projectId)
+      project: this.butlerProjectService.getById(request.params.projectId, requireUserId(request))
     });
   };
 
@@ -888,7 +896,7 @@ export class ButlerController {
         lifecycleStatus: request.body.lifecycleStatus,
         riskLevel: request.body.riskLevel,
         config: request.body.config
-      })
+      }, requireUserId(request))
     });
   };
 
@@ -898,7 +906,7 @@ export class ButlerController {
   ): Promise<void> => {
     const userId = requireUserId(request);
     await this.butlerSessionService.ensureProjectSessionsSynced(request.params.projectId, userId);
-    const overview = this.butlerProjectService.getOverview(request.params.projectId);
+    const overview = this.butlerProjectService.getOverview(request.params.projectId, userId);
 
     reply.send({
       ...overview,

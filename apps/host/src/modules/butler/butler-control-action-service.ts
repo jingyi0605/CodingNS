@@ -72,7 +72,7 @@ export class ButlerControlActionService {
     private readonly butlerProfileService: Pick<ButlerProfileService, "ensureInitialized">,
     private readonly butlerControlSessionRepository: Pick<
       ButlerControlSessionRepository,
-      "findLatestByProvider" | "update"
+      "findLatestByProviderForUser" | "update"
     >,
     private readonly butlerControlEventRepository: Pick<
       ButlerControlEventRepository,
@@ -89,16 +89,21 @@ export class ButlerControlActionService {
     private readonly butlerContextAggregator: Pick<ButlerContextAggregator, "getProjectContext">
   ) {}
 
-  listCurrentEvents(): ButlerControlEvent[] {
-    const current = this.getCurrentControlSession();
+  listCurrentEvents(userId: string): ButlerControlEvent[] {
+    const current = this.getCurrentControlSession(userId);
     return current
       ? this.butlerControlEventRepository.listByControlSessionId(current.id)
       : [];
   }
 
+  private getCurrentControlSession(userId: string): ButlerControlSession | null {
+    const profile = this.butlerProfileService.ensureInitialized(userId);
+    return this.butlerControlSessionRepository.findLatestByProviderForUser(profile.providerId, userId);
+  }
+
   async openProject(projectId: string, userId: string): Promise<OpenButlerProjectActionResult> {
-    const current = this.requireCurrentControlSession();
-    const project = this.butlerProjectService.getById(projectId);
+    const current = this.requireCurrentControlSession(userId);
+    const project = this.butlerProjectService.getById(projectId, userId);
 
     try {
       const context = await this.butlerContextAggregator.getProjectContext(project.id, userId);
@@ -128,8 +133,8 @@ export class ButlerControlActionService {
     input: ResumeButlerProjectSessionActionInput,
     userId: string
   ): Promise<ResumeButlerProjectSessionActionResult> {
-    const project = this.butlerProjectService.getById(input.projectId);
-    const current = this.requireCurrentControlSession();
+    const project = this.butlerProjectService.getById(input.projectId, userId);
+    const current = this.requireCurrentControlSession(userId);
 
     try {
       const resumed = await this.butlerSessionService.resumeSession(
@@ -175,10 +180,11 @@ export class ButlerControlActionService {
   }
 
   async startPatrol(
-    input: StartButlerPatrolActionInput
+    input: StartButlerPatrolActionInput,
+    userId: string
   ): Promise<StartButlerPatrolActionResult> {
-    const project = this.butlerProjectService.getById(input.projectId);
-    const current = this.requireCurrentControlSession();
+    const project = this.butlerProjectService.getById(input.projectId, userId);
+    const current = this.requireCurrentControlSession(userId);
 
     try {
       const queuedRun = this.patrolRunService.startRun(input.projectId, {
@@ -216,10 +222,11 @@ export class ButlerControlActionService {
   }
 
   async startVerification(
-    input: StartButlerVerificationActionInput
+    input: StartButlerVerificationActionInput,
+    userId: string
   ): Promise<StartButlerVerificationActionResult> {
-    const project = this.butlerProjectService.getById(input.projectId);
-    const current = this.requireCurrentControlSession();
+    const project = this.butlerProjectService.getById(input.projectId, userId);
+    const current = this.requireCurrentControlSession(userId);
 
     try {
       const run = await this.verificationRunService.startRun(input.projectId, {
@@ -255,14 +262,9 @@ export class ButlerControlActionService {
     }
   }
 
-  private getCurrentControlSession(): ButlerControlSession | null {
-    const profile = this.butlerProfileService.ensureInitialized();
-    return this.butlerControlSessionRepository.findLatestByProvider(profile.providerId);
-  }
-
-  private requireCurrentControlSession(): ButlerControlSession {
-    const profile = this.butlerProfileService.ensureInitialized();
-    const current = this.butlerControlSessionRepository.findLatestByProvider(profile.providerId);
+  private requireCurrentControlSession(userId: string): ButlerControlSession {
+    const profile = this.butlerProfileService.ensureInitialized(userId);
+    const current = this.butlerControlSessionRepository.findLatestByProviderForUser(profile.providerId, userId);
 
     if (!current || current.status === "closed") {
       throw new AppError({

@@ -56,7 +56,7 @@ export class ButlerControlTimerService {
     controlSessionId?: string | null;
     limit?: number;
   }): ButlerControlTimerView[] {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(filters.userId);
     return this.assistantAutomationService
       .listTasks({
         userId: filters.userId,
@@ -69,12 +69,12 @@ export class ButlerControlTimerService {
   }
 
   getTimer(timerId: string, userId: string): ButlerControlTimerView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(userId);
     return this.mapTaskToTimerView(this.assistantAutomationService.getTask(timerId.trim(), userId));
   }
 
   createTimer(input: CreateButlerControlTimerInput): ButlerControlTimerView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(input.userId);
     const created = this.assistantAutomationService.createTask({
       userId: input.userId,
       controlSessionId: input.controlSessionId,
@@ -97,12 +97,11 @@ export class ButlerControlTimerService {
   }
 
   cancelTimer(timerId: string, userId: string): ButlerControlTimerView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(userId);
     return this.mapTaskToTimerView(this.assistantAutomationService.cancelTask(timerId.trim(), userId));
   }
 
   async runDueTimers(referenceAt: string): Promise<ButlerControlTimerRunDueTimersResult> {
-    this.butlerProfileService.ensureInitialized();
     const result = await this.assistantAutomationService.runDueTasks(referenceAt);
     return {
       activeTimerCount: result.activeTaskCount,

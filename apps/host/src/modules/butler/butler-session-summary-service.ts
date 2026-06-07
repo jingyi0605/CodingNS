@@ -85,7 +85,7 @@ export class ButlerSessionSummaryService {
     >,
     private readonly sessionIndexRepository: Pick<SessionIndexRepository, "findIndexRecordBySessionId">,
     private readonly authUserRepository: Pick<AuthUserRepository, "listIds">,
-    private readonly workspaceService: Pick<WorkspaceService, "importWorkspace">,
+    private readonly workspaceService: Pick<WorkspaceService, "importWorkspace" | "importWorkspaceForUser">,
     private readonly sessionHistoryService: Pick<SessionHistoryService, "readSessionHistory">,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
     private readonly instructionAdapter: SessionSummaryInstructionAdapter,
@@ -100,23 +100,41 @@ export class ButlerSessionSummaryService {
   }
 
   async runOnce(): Promise<ButlerSessionSummaryRunOnceResult> {
-    const profile = this.butlerProfileService.getProfile();
+    let totalSessionCount = 0;
+    let totalScheduledCount = 0;
+    let totalSummarizedCount = 0;
+    let totalProjectCount = 0;
+
+    for (const userId of this.authUserRepository.listIds()) {
+      const result = await this.runOnceForUser(userId);
+      totalProjectCount += result.projectCount;
+      totalSessionCount += result.sessionCount;
+      totalScheduledCount += result.scheduledCount;
+      totalSummarizedCount += result.summarizedCount;
+    }
+
+    return {
+      projectCount: totalProjectCount,
+      sessionCount: totalSessionCount,
+      scheduledCount: totalScheduledCount,
+      summarizedCount: totalSummarizedCount,
+      idle: totalProjectCount === 0 && totalSessionCount === 0
+    };
+  }
+
+  private async runOnceForUser(userId: string): Promise<ButlerSessionSummaryRunOnceResult> {
+    const profile = this.butlerProfileService.getProfile(userId);
 
     if (!profile) {
       return createIdleSummaryRunResult();
     }
 
-    const userId = this.resolveExecutorUserId();
-
-    if (!userId) {
-      return createIdleSummaryRunResult();
-    }
-
-    this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
+    this.workspaceService.importWorkspaceForUser(userId, profile.workspacePath, "代码助手");
     this.syncSummaryInstructionFiles(profile.workspacePath, profile.providerId);
     const debounceMs = this.resolveDebounceMs(profile.focus.summaryDebounceSeconds);
 
     const projects = this.butlerProjectService.list({
+      userId,
       lifecycleStatus: "active"
     });
     let sessionCount = 0;
@@ -426,10 +444,6 @@ export class ButlerSessionSummaryService {
         finishedAt: timestamp
       });
     }
-  }
-
-  private resolveExecutorUserId(): string | null {
-    return this.authUserRepository.listIds()[0] ?? null;
   }
 
   private hasPersistedButlerSession(butlerSessionId: string): boolean {

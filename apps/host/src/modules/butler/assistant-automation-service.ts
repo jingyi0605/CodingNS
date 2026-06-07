@@ -154,7 +154,7 @@ export class AssistantAutomationService {
     controlSessionId?: string | null;
     limit?: number;
   }): AssistantAutomationTaskView[] {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(filters.userId);
     return this.taskRepository
       .list({
         statuses: filters.statuses,
@@ -165,13 +165,13 @@ export class AssistantAutomationService {
   }
 
   getTask(taskId: string, userId: string): AssistantAutomationTaskView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(userId);
     const task = this.requireTask(taskId.trim());
     return this.toTaskView(task, userId);
   }
 
-  listRuns(taskId: string, _userId: string, limit?: number): AssistantAutomationRunView[] {
-    this.butlerProfileService.ensureInitialized();
+  listRuns(taskId: string, userId: string, limit?: number): AssistantAutomationRunView[] {
+    this.butlerProfileService.ensureInitialized(userId);
     this.requireTask(taskId);
     return this.runRepository
       .listByAutomation(taskId.trim(), limit)
@@ -183,7 +183,7 @@ export class AssistantAutomationService {
     controlSessionId?: string | null;
     limit?: number;
   }): AssistantAutomationRunView[] {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(filters.userId);
     const limit = filters.limit && filters.limit > 0 ? filters.limit : DEFAULT_RECENT_RUN_LIMIT;
     const taskMap = new Map(this.taskRepository.list().map((task) => [task.id, task] as const));
 
@@ -207,7 +207,7 @@ export class AssistantAutomationService {
   }
 
   createTask(input: CreateAssistantAutomationInput): AssistantAutomationTaskView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(input.userId);
     const controlSession = input.controlSessionId?.trim()
       ? this.butlerControlSessionService.getSession(input.controlSessionId, input.userId)
       : this.butlerControlSessionService.getCurrentSession(input.userId);
@@ -250,7 +250,7 @@ export class AssistantAutomationService {
   }
 
   updateTask(input: UpdateAssistantAutomationInput): AssistantAutomationTaskView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(input.userId);
     const current = this.requireTask(input.taskId);
 
     if (current.status !== "active") {
@@ -295,7 +295,7 @@ export class AssistantAutomationService {
   }
 
   cancelTask(taskId: string, userId: string): AssistantAutomationTaskView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(userId);
     const current = this.requireTask(taskId);
     const cancelledAt = nowIso();
     const updated = this.taskRepository.update({
@@ -310,7 +310,7 @@ export class AssistantAutomationService {
   }
 
   skipCurrentWait(taskId: string, userId: string): AssistantAutomationTaskView {
-    this.butlerProfileService.ensureInitialized();
+    this.butlerProfileService.ensureInitialized(userId);
     const current = this.requireTask(taskId);
 
     if (current.status !== "active" || !current.nextRunAt) {
@@ -364,7 +364,6 @@ export class AssistantAutomationService {
   }
 
   async runDueTasks(referenceAt: string): Promise<AssistantAutomationRunDueTasksResult> {
-    this.butlerProfileService.ensureInitialized();
     return await this.taskManager.enqueue<{
       referenceAt: string;
     }, AssistantAutomationRunDueTasksResult>(HOST_TASK_TYPES.assistantAutomationTick, {

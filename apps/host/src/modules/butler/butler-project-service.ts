@@ -37,20 +37,21 @@ export class ButlerProjectService {
   ) {}
 
   list(input?: {
+    userId?: string;
     workspaceId?: string;
     lifecycleStatus?: ButlerProject["lifecycleStatus"];
     riskLevel?: ButlerProject["riskLevel"];
   }): ButlerProject[] {
-    this.syncManagedProjects();
+    this.syncManagedProjects(input?.userId);
     return this.butlerProjectRepository.list(input);
   }
 
-  create(input: CreateButlerProjectInput): ButlerProject {
-    const workspace = this.getWorkspaceOrThrow(input.workspaceId);
+  create(userId: string, input: CreateButlerProjectInput): ButlerProject {
+    const workspace = this.getWorkspaceForUserOrThrow(input.workspaceId, userId);
     const name = requireNonEmptyText(input.name, "name", "项目名称不能为空");
     const repoRoot = this.resolveRepoRootWithinWorkspace(workspace.path, input.repoRoot);
 
-    if (this.butlerProjectRepository.list({ workspaceId: workspace.id }).some((item) => item.repoRoot === repoRoot)) {
+    if (this.butlerProjectRepository.list({ userId, workspaceId: workspace.id }).some((item) => item.repoRoot === repoRoot)) {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_PROJECT_EXISTS",
@@ -63,6 +64,7 @@ export class ButlerProjectService {
 
     return this.butlerProjectRepository.create({
       id: createId(),
+      userId,
       workspaceId: workspace.id,
       name,
       repoRoot,
@@ -80,9 +82,11 @@ export class ButlerProjectService {
     });
   }
 
-  getById(projectId: string): ButlerProject {
-    this.syncManagedProjects();
-    const project = this.butlerProjectRepository.findById(projectId);
+  getById(projectId: string, userId?: string): ButlerProject {
+    this.syncManagedProjects(userId);
+    const project = userId
+      ? this.butlerProjectRepository.findByIdForUser(projectId, userId)
+      : this.butlerProjectRepository.findById(projectId);
 
     if (!project) {
       throw new AppError({
@@ -95,9 +99,9 @@ export class ButlerProjectService {
     return project;
   }
 
-  resolveWorkspaceActionProject(workspaceId: string): ButlerProject {
-    this.syncManagedProjects();
-    const projects = this.butlerProjectRepository.list({ workspaceId });
+  resolveWorkspaceActionProject(workspaceId: string, userId?: string): ButlerProject {
+    this.syncManagedProjects(userId);
+    const projects = this.butlerProjectRepository.list({ userId, workspaceId });
     const activeProjects = projects.filter((project) => project.lifecycleStatus === "active");
     const preferredProject =
       activeProjects.find(isWorkspaceAutoManagedProject)
@@ -117,8 +121,8 @@ export class ButlerProjectService {
     return preferredProject;
   }
 
-  update(projectId: string, input: UpdateButlerProjectInput): ButlerProject {
-    const current = this.getById(projectId);
+  update(projectId: string, input: UpdateButlerProjectInput, userId?: string): ButlerProject {
+    const current = this.getById(projectId, userId);
 
     const nextLifecycleStatus = input.lifecycleStatus ?? current.lifecycleStatus;
     const nextArchivedAt = nextLifecycleStatus === "archived" ? current.archivedAt ?? nowIso() : null;
@@ -149,7 +153,7 @@ export class ButlerProjectService {
     return updated;
   }
 
-  getOverview(projectId: string): {
+  getOverview(projectId: string, userId?: string): {
     project: ButlerProject;
     activeSessionCount: number;
     latestPatrolRun: null;
@@ -157,9 +161,9 @@ export class ButlerProjectService {
     topRisks: string[];
     nextSuggestions: string[];
   } {
-    this.syncManagedProjects();
-    const project = this.getById(projectId);
-    const sessions = this.butlerSessionRepository.listByProject(project.id);
+    this.syncManagedProjects(userId);
+    const project = this.getById(projectId, userId);
+    const sessions = this.butlerSessionRepository.listByProject(project.id, project.userId);
 
     return {
       project,
@@ -171,10 +175,10 @@ export class ButlerProjectService {
     };
   }
 
-  private getWorkspaceOrThrow(workspaceId: string) {
+  private getWorkspaceForUserOrThrow(workspaceId: string, userId: string) {
     const workspace = this.workspaceRepository.findById(workspaceId);
 
-    if (!workspace || workspace.removedAt) {
+    if (!workspace || workspace.removedAt || workspace.ownerUserId !== userId) {
       throw new AppError({
         statusCode: 404,
         errorCode: "WORKSPACE_NOT_FOUND",
@@ -185,10 +189,18 @@ export class ButlerProjectService {
     return workspace;
   }
 
-  private syncManagedProjects(): void {
-    const profile = this.butlerProfileService?.getProfile() ?? null;
+  private syncManagedProjects(userId?: string): void {
+    const profile = this.butlerProfileService?.getProfile(userId) ?? null;
     const butlerWorkspacePath = profile?.workspacePath ? path.resolve(profile.workspacePath) : null;
     const activeWorkspaces = this.workspaceRepository.list().filter((workspace) => {
+      if (userId && workspace.ownerUserId !== userId) {
+        return false;
+      }
+
+      if (!userId && !workspace.ownerUserId) {
+        return false;
+      }
+
       if (!butlerWorkspacePath) {
         return true;
       }
@@ -196,7 +208,7 @@ export class ButlerProjectService {
       return !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath);
     });
     const activeWorkspaceIds = new Set(activeWorkspaces.map((workspace) => workspace.id));
-    const projects = this.butlerProjectRepository.list();
+    const projects = this.butlerProjectRepository.list({ userId });
 
     for (const workspace of activeWorkspaces) {
       const normalizedWorkspacePath = path.resolve(workspace.path);
@@ -209,10 +221,17 @@ export class ButlerProjectService {
       const autoProject = sameWorkspaceProjects.find(isWorkspaceAutoManagedProject) ?? null;
 
       if (sameWorkspaceProjects.length === 0) {
+        const ownerUserId = userId ?? workspace.ownerUserId;
+
+        if (!ownerUserId) {
+          continue;
+        }
+
         const timestamp = nowIso();
 
         this.butlerProjectRepository.create({
           id: createId(),
+          userId: ownerUserId,
           workspaceId: workspace.id,
           name: workspace.name,
           repoRoot: workspace.repoRoot ?? workspace.path,

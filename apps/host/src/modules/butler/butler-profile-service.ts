@@ -15,7 +15,7 @@ import type { ButlerProjectRepository } from "../../storage/repositories/butler-
 import type { ProviderControlRepository } from "../../storage/repositories/provider-control-repository.js";
 import { createProviderDisabledError } from "../provider/provider-disabled.js";
 
-const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
+const BUTLER_PROFILE_ID_PREFIX = "default";
 const DEFAULT_BUTLER_DISPLAY_NAME = "代码助手";
 const DEFAULT_BUTLER_WORKSPACE_DIRNAME = "butler-workspace";
 const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex", "claude-code"];
@@ -61,17 +61,17 @@ export class ButlerProfileService {
     };
   }
 
-  getProfile(): ButlerProfile | null {
-    const profile = this.butlerProfileRepository.find();
+  getProfile(userId?: string): ButlerProfile | null {
+    const profile = this.butlerProfileRepository.find(userId);
     return profile ? hydrateStoredProfile(profile) : null;
   }
 
-  isSetupCompleted(): boolean {
-    return this.getProfile()?.setupCompleted === true;
+  isSetupCompleted(userId?: string): boolean {
+    return this.getProfile(userId)?.setupCompleted === true;
   }
 
-  initProfile(input: ButlerProfileInitInput): ButlerProfile {
-    const current = this.getProfile();
+  initProfile(userId: string, input: ButlerProfileInitInput): ButlerProfile {
+    const current = this.getProfile(userId);
 
     if (current?.setupCompleted) {
       throw createButlerAlreadyInitializedError();
@@ -79,6 +79,7 @@ export class ButlerProfileService {
 
     const timestamp = nowIso();
     const profile = buildButlerProfileRecord(
+      userId,
       input,
       timestamp,
       current,
@@ -92,7 +93,7 @@ export class ButlerProfileService {
         ? this.butlerProfileRepository.update(profile)
         : this.butlerProfileRepository.create(profile);
     } catch (error) {
-      if (isSqlitePrimaryKeyConflict(error) && this.isSetupCompleted()) {
+      if (isSqlitePrimaryKeyConflict(error) && this.isSetupCompleted(userId)) {
         throw createButlerAlreadyInitializedError();
       }
 
@@ -100,8 +101,8 @@ export class ButlerProfileService {
     }
   }
 
-  updateProfile(input: ButlerProfilePatchInput): ButlerProfile {
-    const current = this.getProfile();
+  updateProfile(userId: string, input: ButlerProfilePatchInput): ButlerProfile {
+    const current = this.getProfile(userId);
 
     if (!current) {
       throw new AppError({
@@ -112,6 +113,7 @@ export class ButlerProfileService {
     }
 
     const updated = buildButlerProfileRecord(
+      userId,
       input,
       current.initializedAt,
       current,
@@ -123,8 +125,8 @@ export class ButlerProfileService {
     return this.butlerProfileRepository.update(updated);
   }
 
-  ensureInitialized(): ButlerProfile {
-    const profile = this.getProfile();
+  ensureInitialized(userId?: string): ButlerProfile {
+    const profile = this.getProfile(userId);
 
     if (!profile) {
       throw new AppError({
@@ -139,6 +141,7 @@ export class ButlerProfileService {
 }
 
 function buildButlerProfileRecord(
+  userId: string,
   input: ButlerProfileInitInput | ButlerProfilePatchInput,
   initializedAt: string,
   current: ButlerProfile | null,
@@ -188,7 +191,8 @@ function buildButlerProfileRecord(
   );
 
   return {
-    id: BUTLER_PROFILE_ID,
+    id: `${BUTLER_PROFILE_ID_PREFIX}:${userId}`,
+    userId,
     displayName,
     providerId,
     workspacePath,
