@@ -187,6 +187,7 @@ export class SearchIndexBuilder {
     const outputDir = path.join(this.config.exportDir, "search");
     const tempDir = path.join(outputDir, ".tmp");
     ensureDir(outputDir);
+    fs.rmSync(tempDir, { recursive: true, force: true });
     ensureDir(tempDir);
 
     const filesWritten: string[] = [];

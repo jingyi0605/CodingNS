@@ -4437,8 +4437,8 @@ function resolveAffairsLibraryRelativePath(rootDir: string, absolutePath: string
   return relativePath;
 }
 
-function normalizeMutationRefreshTarget(relativePath: string): string | null {
-  const normalizedPath = relativePath.trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+function normalizeMutationRefreshTarget(relativePath: string | null | undefined): string | null {
+  const normalizedPath = relativePath?.trim().replace(/^\.\/+/, "").replace(/\/+$/, "") ?? "";
   return normalizedPath || null;
 }
 

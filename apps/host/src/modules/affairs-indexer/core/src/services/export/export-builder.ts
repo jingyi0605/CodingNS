@@ -83,6 +83,9 @@ interface FolderBootstrapNode {
 
 const RELATION_MAX_POSTING = 128;
 const META_SHARD_TARGET_DOCUMENTS = 64;
+const SEARCH_REUSE_MAX_CHANGED_PATHS = 32;
+const SEARCH_REUSE_MAX_DIRTY_TAG_PATHS = 128;
+const SEARCH_REUSE_MAX_DIRTY_RELATIONS = 128;
 
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -238,6 +241,41 @@ function isRelationEligibleTag(tagPath: string): boolean {
     || tagPath.startsWith("时间/")
     || tagPath.startsWith("状态/")
   );
+}
+
+function countDirtyScopeItems(dirtyScope: DirtyScope | undefined): {
+  changedPathCount: number;
+  dirtyTagPathCount: number;
+  dirtyRelationCount: number;
+} {
+  return {
+    changedPathCount: dirtyScope?.changedPaths.length ?? 0,
+    dirtyTagPathCount: dirtyScope?.dirtyTagPaths.length ?? 0,
+    dirtyRelationCount: dirtyScope?.dirtyRelations.length ?? 0,
+  };
+}
+
+function canReuseSearchIndexForIncrementalBuild(input: {
+  dirtyScope: DirtyScope | undefined;
+  lightBuild: boolean;
+  previousManifest: ManifestEntry | null;
+  searchManifestPath: string;
+}): boolean {
+  if (input.lightBuild) {
+    return false;
+  }
+  if (!input.dirtyScope || input.dirtyScope.trigger === "full") {
+    return false;
+  }
+  if (!input.previousManifest || !fs.existsSync(input.searchManifestPath)) {
+    return false;
+  }
+
+  const counts = countDirtyScopeItems(input.dirtyScope);
+  return counts.changedPathCount > 0
+    && counts.changedPathCount <= SEARCH_REUSE_MAX_CHANGED_PATHS
+    && counts.dirtyTagPathCount <= SEARCH_REUSE_MAX_DIRTY_TAG_PATHS
+    && counts.dirtyRelationCount <= SEARCH_REUSE_MAX_DIRTY_RELATIONS;
 }
 
 /**
@@ -690,12 +728,26 @@ export class ExportBuilder {
     const taxonomyPath = path.join(this.config.exportDir, "taxonomy.json");
     const relationsPath = path.join(this.config.exportDir, "relations.json");
     const bootstrapPath = path.join(this.config.exportDir, "bootstrap.json");
+    const searchManifestPath = path.join(this.config.exportDir, "search", "manifest.json");
+    const reuseSearchIndex = canReuseSearchIndexForIncrementalBuild({
+      dirtyScope: options.dirtyScope,
+      lightBuild,
+      previousManifest,
+      searchManifestPath,
+    });
 
     startStage("export_search", {
-      lightBuild
+      lightBuild,
+      reuseSearchIndex,
+      ...countDirtyScopeItems(options.dirtyScope)
     });
-    const searchIndexResult = lightBuild
-      ? { bucketCount: 0, filesWritten: [] as string[], manifestPath: path.join(this.config.exportDir, "search", "manifest.json") }
+    const searchIndexResult = lightBuild || reuseSearchIndex
+      ? {
+        bucketCount: previousManifest?.search_buckets.length ?? 0,
+        filesWritten: [] as string[],
+        manifestPath: searchManifestPath,
+        exportedAt
+      }
       : await new SearchIndexBuilder(this.config).build({
         dirtyScope: options.dirtyScope,
         signal: options.signal,
@@ -703,6 +755,22 @@ export class ExportBuilder {
         reason: options.reason,
         targetPath: options.targetPath
       });
+    if (reuseSearchIndex) {
+      writeAffairsLibraryDebugLog({
+        event: "search_build_reused",
+        processRole: "helper",
+        rootDir: this.config.rootDir,
+        command: options.commandName ?? "export",
+        reason: options.reason,
+        targetPath: options.targetPath,
+        status: "finished",
+        details: {
+          manifestPath: searchManifestPath,
+          bucketCount: searchIndexResult.bucketCount,
+          ...countDirtyScopeItems(options.dirtyScope)
+        }
+      });
+    }
     logAffairsIndexerRss(this.config, "export.search_complete", {
       rootDir: this.config.rootDir,
       searchBucketCount: searchIndexResult.bucketCount,
@@ -743,7 +811,7 @@ export class ExportBuilder {
 
     filesWritten.push(statusPath, taxonomyPath, relationsPath, bootstrapPath, ...searchIndexResult.filesWritten);
 
-    const searchManifest = lightBuild
+    const searchManifest = lightBuild || reuseSearchIndex
       ? { buckets: previousManifest?.search_buckets ?? [] }
       : readJson<{ buckets?: ManifestEntry["search_buckets"] }>(searchIndexResult.manifestPath);
     const manifest: ManifestEntry = {

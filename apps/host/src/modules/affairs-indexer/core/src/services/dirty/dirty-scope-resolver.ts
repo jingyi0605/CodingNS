@@ -6,6 +6,7 @@ import { CatalogRepository } from "../../repositories/catalog-repository.js";
 export interface DirtyScope {
   trigger: "full" | "incremental";
   changedPaths: string[];
+  deletedPaths?: string[];
   dirtyDirectories: string[];
   dirtyTagPaths: string[];
   dirtyMetaShards: string[];
@@ -82,6 +83,7 @@ export class DirtyScopeResolver {
     return {
       trigger: input.triggerOverride ?? (input.targetPath ? "incremental" : "full"),
       changedPaths,
+      deletedPaths,
       dirtyDirectories,
       dirtyTagPaths,
       dirtyMetaShards: uniqueSorted(dirtyDirectories.map(directory => stableShardId("meta", directory))),
