@@ -10533,6 +10533,7 @@ textarea:focus-visible {
   bottom: calc(100% + 8px);
   z-index: 90;
   gap: 4px;
+  min-height: 240px;
   max-height: 240px;
   overflow: auto;
   margin: 0;
@@ -10603,9 +10604,14 @@ textarea:focus-visible {
 }
 
 .composer-mention-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
   color: var(--text-secondary);
   padding: 4px 6px;
+  text-align: center;
 }
 
 .conversation-panel {

@@ -1316,6 +1316,8 @@ export function ComposerPanel({
   }, [attachmentDecision.allowed, haptics, inRunSendBlocked, platform.isNativeMobile]);
 
   const closeMentionMenu = useCallback(() => {
+    // 关闭面板时让未完成的旧搜索失效，避免用户已经退出 @ 后，慢请求回来又把面板弹出来。
+    mentionRequestIdRef.current += 1;
     setMentionMenuOpen(false);
     setMentionLoading(false);
     setMentionActiveIndex(0);
@@ -1324,6 +1326,10 @@ export function ComposerPanel({
   const loadMentionItems = useCallback(async (rawKeyword: string) => {
     const requestId = mentionRequestIdRef.current + 1;
     mentionRequestIdRef.current = requestId;
+    // 输入 @ 后先把面板打开，慢仓库里搜索还没返回时也要让用户看到“正在加载”。
+    setMentionItems([]);
+    setMentionActiveIndex(0);
+    setMentionMenuOpen(true);
     setMentionLoading(true);
 
     try {
@@ -1342,7 +1348,6 @@ export function ComposerPanel({
       const mappedFiles = result.files.map((item) => mapMentionFileItem(item));
       setMentionItems([...mappedSkills, ...mappedFiles]);
       setMentionActiveIndex(0);
-      setMentionMenuOpen(true);
     } catch {
       if (mentionRequestIdRef.current !== requestId) {
         return;
@@ -1350,7 +1355,6 @@ export function ComposerPanel({
 
       setMentionItems([]);
       setMentionActiveIndex(0);
-      setMentionMenuOpen(true);
     } finally {
       if (mentionRequestIdRef.current === requestId) {
         setMentionLoading(false);

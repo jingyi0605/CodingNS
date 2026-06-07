@@ -161,9 +161,9 @@ vi.mock("../../../preferences/user-preference-store", () => ({
   userPreferenceStore: preferenceStoreMock.userPreferenceStore
 }));
 
-function createDeferred() {
-  let resolve: (() => void) | null = null;
-  const promise = new Promise<void>((res) => {
+function createDeferred<T>() {
+  let resolve: ((value: T) => void) | null = null;
+  const promise = new Promise<T>((res) => {
     resolve = res;
   });
 
@@ -407,6 +407,43 @@ describe("ComposerPanel mentions", () => {
     });
     expect(screen.getByLabelText(t("conversation.mentionSelectedListLabel"))).toBeInTheDocument();
     expect(screen.getByText("office-browser-opencli-bridge").closest(".composer-selected-mention-chip")).not.toBeNull();
+  });
+
+  it("输入 @ 后会立刻打开面板并显示加载中", async () => {
+    const deferred = createDeferred<{
+      skills: [];
+      files: [];
+    }>();
+    mockSearchComposerMentionItems.mockReturnValue(deferred.promise);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@"
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("listbox", { name: t("conversation.mentionMenuTitle") })).toBeInTheDocument();
+      expect(screen.getByText(t("conversation.mentionLoading"))).toBeInTheDocument();
+    });
+
+    deferred.resolve({
+      skills: [],
+      files: []
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(t("conversation.mentionEmpty"))).toBeInTheDocument();
+    });
   });
 
   it("@ 过滤结果为空时会显示空态", async () => {
