@@ -307,6 +307,69 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("归档会话列表会显示子会话，并给子会话加类型标签", async () => {
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "parent-session",
+            title: "已归档父会话",
+            workspaceId: "workspace-1",
+            isArchived: true
+          }),
+          createSessionSummary({
+            sessionId: "child-subagent",
+            title: "已归档子代理",
+            workspaceId: "workspace-1",
+            parentSessionId: "parent-session",
+            isArchived: true,
+            isSubagent: true,
+            subagentLabel: "worker · Banach"
+          }),
+          createSessionSummary({
+            sessionId: "child-fork",
+            title: "已归档消息分叉",
+            workspaceId: "workspace-1",
+            parentSessionId: "parent-session",
+            isArchived: true,
+            forkMethod: "native_message_fork",
+            forkSourceType: "message"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.includes("/api/providers/")) {
+        return createJsonResponse(createAvailableCapabilities("codex"));
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    const archiveFolder = await screen.findByRole("button", {
+      name: new RegExp(`^${t("shell.archiveFolderLabel")}(?:\\s+3)?$`)
+    });
+    await userEvent.click(archiveFolder);
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") });
+    expect(within(dialog).getByText("已归档父会话")).toBeInTheDocument();
+    expect(within(dialog).getByText("已归档子代理")).toBeInTheDocument();
+    expect(within(dialog).getByText("已归档消息分叉")).toBeInTheDocument();
+    expect(within(dialog).getByText("worker · Banach")).toBeInTheDocument();
+    expect(within(dialog).getByText(t("shell.sessionForkMessage"))).toBeInTheDocument();
+  });
+
   it("收藏会话在快照短暂缺失后恢复时，不会被前端错误清掉", async () => {
     const favoriteSession = createSessionSummary({
       sessionId: "session-2",

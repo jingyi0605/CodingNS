@@ -20,6 +20,51 @@ export function isRealSubagentSession(session: {
   return session.isSubagent === true && !hasSessionForkMetadata(session);
 }
 
+export function isArchivedSessionVisibleInArchive(session: {
+  isArchived?: boolean;
+}): boolean {
+  return session.isArchived === true;
+}
+
+export function resolveArchivedChildSessionBadgeLabel(session: {
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
+  parentSessionId?: string | null;
+  displayParentSessionId?: string | null;
+  sessionKind?: SessionKind;
+  forkMethod?: ForkMethod | null;
+  forkSourceType?: ForkSourceType | null;
+}): string | null {
+  if (!resolveArchivedChildSessionParentId(session)) {
+    return null;
+  }
+
+  const kindBadge = resolveSessionKindBadgeLabel(session);
+
+  if (kindBadge) {
+    return kindBadge;
+  }
+
+  const forkBadge = resolveSessionForkBadgeLabel(session);
+
+  if (forkBadge) {
+    return forkBadge;
+  }
+
+  if (isRealSubagentSession(session)) {
+    return session.subagentLabel?.trim() || t("shell.subagentBadge");
+  }
+
+  return t("shell.sessionChildBadge");
+}
+
+function resolveArchivedChildSessionParentId(session: {
+  parentSessionId?: string | null;
+  displayParentSessionId?: string | null;
+}) {
+  return session.displayParentSessionId?.trim() || session.parentSessionId?.trim() || null;
+}
+
 export function resolveSessionForkBadgeTone(session: {
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;

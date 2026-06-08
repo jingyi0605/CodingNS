@@ -52,7 +52,11 @@ import {
   BranchTreeActionIcon
 } from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
-import { isRealSubagentSession } from "../session-fork-display";
+import {
+  isArchivedSessionVisibleInArchive,
+  isRealSubagentSession,
+  resolveArchivedChildSessionBadgeLabel
+} from "../session-fork-display";
 import { buildConversationTimelineSourceItems } from "../timeline-source-items";
 import {
   resolveSessionNavigationWorkspaceId,
@@ -496,7 +500,7 @@ function LiveConversationPage({
   const mobileArchivedSessions = useMemo(
     () =>
       mobileWorkspaceTarget?.sessions.filter(
-        (item) => item.isArchived === true && !isRealSubagentSession(item)
+        (item) => isArchivedSessionVisibleInArchive(item)
       ) ?? [],
     [mobileWorkspaceTarget]
   );
@@ -1106,7 +1110,7 @@ function DraftConversationPage({
   const mobileArchivedSessions = useMemo(
     () =>
       mobileWorkspaceTarget?.sessions.filter(
-        (item) => item.isArchived === true && !isRealSubagentSession(item)
+        (item) => isArchivedSessionVisibleInArchive(item)
       ) ?? [],
     [mobileWorkspaceTarget]
   );
@@ -2956,6 +2960,7 @@ function ConversationArchiveFolderModal({
           {filteredSessions.map((session) => {
             const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
             const archiveSummary = summaryBySessionId[session.sessionId]?.trim() ?? "";
+            const childBadgeLabel = resolveArchivedChildSessionBadgeLabel(session);
 
             return (
               <ModalListItem
@@ -2975,7 +2980,12 @@ function ConversationArchiveFolderModal({
                 )}
               >
                 <div className="workbench-archive-item-main">
-                  <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                  <div className="workbench-archive-title-row">
+                    <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                    {childBadgeLabel ? (
+                      <span className="session-fork-badge archive-child">{childBadgeLabel}</span>
+                    ) : null}
+                  </div>
                   <p>{formatMobilePreviewMeta(session)}</p>
                   {searchOpen && archiveSummary ? (
                     <p className="workbench-archive-item-summary">{archiveSummary}</p>

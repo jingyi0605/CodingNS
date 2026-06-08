@@ -143,7 +143,9 @@ import {
   resolveSessionDisplayParentSessionId
 } from "../parallel-session-display";
 import {
+  isArchivedSessionVisibleInArchive,
   isRealSubagentSession,
+  resolveArchivedChildSessionBadgeLabel,
   resolveSessionForkBadgeLabel,
   resolveSessionForkBadgeTone
 } from "../session-fork-display";
@@ -1939,7 +1941,7 @@ function isSubagentSession(session: SessionSummaryDto) {
 }
 
 function isArchivedSession(session: SessionSummaryDto) {
-  return session.isArchived === true;
+  return isArchivedSessionVisibleInArchive(session);
 }
 
 function resolveParentSessionId(session: SessionSummaryDto) {
@@ -2531,7 +2533,7 @@ function buildWorkspaceSidebarWorktreeNodes(
       meta: node.meta,
       visibleSessions,
       archivedSessions: scopedSessions.filter(
-        (session) => isArchivedSession(session) && !resolveParentSessionId(session)
+        (session) => isArchivedSession(session)
       ),
       visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
         (treeNode) =>
@@ -8933,6 +8935,7 @@ function SidebarContent({
             {filteredArchiveSessions.map((session) => {
               const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
               const archiveSummary = archiveSummaryBySessionId[session.sessionId]?.trim() ?? "";
+              const childBadgeLabel = resolveArchivedChildSessionBadgeLabel(session);
 
               return (
                 <ModalListItem
@@ -8951,7 +8954,12 @@ function SidebarContent({
                   )}
                 >
                   <div className="workbench-archive-item-main">
-                    <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                    <div className="workbench-archive-title-row">
+                      <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                      {childBadgeLabel ? (
+                        <span className="session-fork-badge archive-child">{childBadgeLabel}</span>
+                      ) : null}
+                    </div>
                     <p>
                       {buildSessionMeta(session, archiveWorkspaceGroup.workspace, false)} ·{" "}
                       {formatProviderLabel(session.provider)}
@@ -11792,7 +11800,7 @@ export function WorkbenchLayout({
           workspace: group.workspace,
           visibleSessions,
           archivedSessions: group.sessions.filter(
-            (session) => isArchivedSession(session) && !resolveParentSessionId(session)
+            (session) => isArchivedSession(session)
           ),
           visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
             (node) =>

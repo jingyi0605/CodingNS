@@ -2173,6 +2173,11 @@ a {
   color: #047857;
 }
 
+.session-fork-badge.archive-child {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
 [data-theme="dark"] .session-fork-badge.session {
   background: rgba(14, 165, 233, 0.2);
   color: #7dd3fc;
@@ -20397,6 +20402,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .workbench-archive-item-main {
+  min-width: 0;
+}
+
+.workbench-archive-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 

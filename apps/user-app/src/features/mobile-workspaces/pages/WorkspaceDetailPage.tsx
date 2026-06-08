@@ -17,7 +17,11 @@ import { useRegisteredDebugTemplates } from "../../debug-target/hooks/useRegiste
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
-import { isRealSubagentSession } from "../../conversation/session-fork-display";
+import {
+  isArchivedSessionVisibleInArchive,
+  isRealSubagentSession,
+  resolveArchivedChildSessionBadgeLabel
+} from "../../conversation/session-fork-display";
 import {
   buildWorkspaceCompositionChartItems,
   createWorkspaceCompositionChartStyle,
@@ -43,7 +47,7 @@ function isVisibleSession(session: SessionSummaryDto) {
 }
 
 function isArchivedSession(session: SessionSummaryDto) {
-  return session.isArchived === true && !isRealSubagentSession(session);
+  return isArchivedSessionVisibleInArchive(session);
 }
 
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
@@ -530,25 +534,34 @@ export function WorkspaceDetailPage() {
               <span className="mobile-feature-counter">{archivedSessions.length}</span>
             </div>
             <div className="mobile-feature-stack">
-              {visibleArchivedSessions.map((session) => (
-                <article key={session.sessionId} className="mobile-session-row surface-card">
-                  <div className="mobile-session-row-primary mobile-session-row-primary-static">
-                    <span className="mobile-session-row-title" title={session.title}>{session.title}</span>
-                    <span className="mobile-session-row-provider">{getProviderDisplayName(session.provider)}</span>
-                  </div>
-                  <div className="mobile-session-row-actions">
-                    <button
-                      type="button"
-                      className="secondary-button mobile-session-row-restore"
-                      onClick={() => {
-                        void unarchiveSession(session.sessionId);
-                      }}
-                    >
-                      {t("shell.unarchiveAction")}
-                    </button>
-                  </div>
-                </article>
-              ))}
+              {visibleArchivedSessions.map((session) => {
+                const childBadgeLabel = resolveArchivedChildSessionBadgeLabel(session);
+
+                return (
+                  <article key={session.sessionId} className="mobile-session-row surface-card">
+                    <div className="mobile-session-row-primary mobile-session-row-primary-static">
+                      <span className="mobile-session-row-title" title={session.title}>
+                        {session.title}
+                        {childBadgeLabel ? (
+                          <span className="session-fork-badge archive-child">{childBadgeLabel}</span>
+                        ) : null}
+                      </span>
+                      <span className="mobile-session-row-provider">{getProviderDisplayName(session.provider)}</span>
+                    </div>
+                    <div className="mobile-session-row-actions">
+                      <button
+                        type="button"
+                        className="secondary-button mobile-session-row-restore"
+                        onClick={() => {
+                          void unarchiveSession(session.sessionId);
+                        }}
+                      >
+                        {t("shell.unarchiveAction")}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
             {visibleArchivedSessions.length < archivedSessions.length ? (
               <button

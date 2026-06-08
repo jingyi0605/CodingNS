@@ -6,7 +6,10 @@ import { t } from "../../../shared/i18n";
 import type { ProviderId, SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
-import { isRealSubagentSession } from "../../conversation/session-fork-display";
+import {
+  isArchivedSessionVisibleInArchive,
+  resolveArchivedChildSessionBadgeLabel
+} from "../../conversation/session-fork-display";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../components/MobileCreateSessionSheet";
 import {
@@ -115,9 +118,7 @@ export function SessionIndexPage() {
   const archivedSessions = useMemo(
     () =>
       currentWorkspaceTarget
-        ? currentWorkspaceTarget.sessions.filter(
-            (session) => session.isArchived === true && !isRealSubagentSession(session)
-          )
+        ? currentWorkspaceTarget.sessions.filter(isArchivedSessionVisibleInArchive)
         : ([] as SessionSummaryDto[]),
     [currentWorkspaceTarget]
   );
@@ -506,24 +507,33 @@ function MobileArchivedSessionsDialog({
         <div className="workbench-modal-body">
           {sessions.length > 0 ? (
             <div className="workbench-archive-list">
-              {sessions.map((session) => (
-                <article key={session.sessionId} className="workbench-archive-item">
-                  <div className="workbench-archive-item-main">
-                    <strong title={session.title ?? session.sessionId}>{session.title ?? session.sessionId}</strong>
-                    <p>{buildArchivedSessionMeta(session)}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={restoringSessionId === session.sessionId}
-                    onClick={() => {
-                      void onRestore(session.sessionId);
-                    }}
-                  >
-                    {t("shell.unarchiveAction")}
-                  </button>
-                </article>
-              ))}
+              {sessions.map((session) => {
+                const childBadgeLabel = resolveArchivedChildSessionBadgeLabel(session);
+
+                return (
+                  <article key={session.sessionId} className="workbench-archive-item">
+                    <div className="workbench-archive-item-main">
+                      <div className="workbench-archive-title-row">
+                        <strong title={session.title ?? session.sessionId}>{session.title ?? session.sessionId}</strong>
+                        {childBadgeLabel ? (
+                          <span className="session-fork-badge archive-child">{childBadgeLabel}</span>
+                        ) : null}
+                      </div>
+                      <p>{buildArchivedSessionMeta(session)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={restoringSessionId === session.sessionId}
+                      onClick={() => {
+                        void onRestore(session.sessionId);
+                      }}
+                    >
+                      {t("shell.unarchiveAction")}
+                    </button>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
