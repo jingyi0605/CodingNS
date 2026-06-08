@@ -343,6 +343,7 @@ const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
 
 type LibrarySortMode = AffairsLibrarySortMode;
 type FinderColumnKey = "name" | "size" | "updatedAt" | "type" | "createdAt";
+type TagResultStructureMode = "file" | "directory";
 
 type LibrarySortState = AffairsLibrarySortState;
 
@@ -441,9 +442,20 @@ type LibraryEntry =
     }
   | {
       id: string;
+      kind: "tag-directory";
+      title: string;
+      path: string;
+      depth: number;
+      count: number;
+      createdAt: string | null;
+      updatedAt: string | null;
+    }
+  | {
+      id: string;
       kind: "document";
       title: string;
       path: string;
+      depth?: number;
       updatedAt: string;
       createdAt: string | null;
       sizeBytes: number | null;
@@ -8329,6 +8341,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   const [measuredGridItemHeight, setMeasuredGridItemHeight] = useState(AFFAIRS_GRID_ITEM_HEIGHT);
   const [measuredGridRowGap, setMeasuredGridRowGap] = useState(AFFAIRS_GRID_ROW_GAP);
   const [finderColumnWidths, setFinderColumnWidths] = useState<Record<FinderColumnKey, number>>(DEFAULT_FINDER_COLUMN_WIDTHS);
+  const [tagResultStructureMode, setTagResultStructureMode] = useState<TagResultStructureMode>("file");
+  const [collapsedTagDirectoryPaths, setCollapsedTagDirectoryPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<LibraryContextMenuState | null>(null);
   const [libraryClipboard, setLibraryClipboard] = useState<LibraryClipboardState | null>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<LibrarySubmenuKey | null>(null);
@@ -8375,13 +8389,44 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       : [],
     [activeSection, childFolders, favoriteFolderPathSet, filteredDocuments, folderDocuments, state.browseMode]
   );
+  const showTagDirectoryList = activeSection === "library"
+    && state.browseMode === "tag"
+    && state.viewMode === "list"
+    && selectedTagPaths.length > 0
+    && tagResultStructureMode === "directory";
+  const toggleTagDirectoryCollapsed = useCallback((folderPath: string) => {
+    const normalizedPath = normalizeFolderPath(folderPath);
+    if (!normalizedPath) {
+      return;
+    }
+    setCollapsedTagDirectoryPaths((previous) => {
+      const next = new Set(previous);
+      if (next.has(normalizedPath)) {
+        next.delete(normalizedPath);
+      } else {
+        next.add(normalizedPath);
+      }
+      return next;
+    });
+  }, []);
   const sortedLibraryEntries = useMemo(
-    () => sortLibraryEntries(libraryEntries, state.librarySort),
-    [libraryEntries, state.librarySort]
+    () => {
+      const nextEntries = showTagDirectoryList
+      ? buildTagDirectoryEntries(filteredDocuments, state.librarySort)
+      : sortLibraryEntries(libraryEntries, state.librarySort);
+      return showTagDirectoryList
+        ? filterCollapsedTagDirectoryEntries(nextEntries, collapsedTagDirectoryPaths)
+        : nextEntries;
+    },
+    [collapsedTagDirectoryPaths, filteredDocuments, libraryEntries, showTagDirectoryList, state.librarySort]
   );
   const estimatedLibraryEntryCount = useMemo(() => {
     if (activeSection !== "library") {
       return 0;
+    }
+
+    if (showTagDirectoryList) {
+      return sortedLibraryEntries.length + (libraryDocumentHasMore ? LIST_VIRTUAL_OVERSCAN_ROWS * 4 : 0);
     }
 
     if (state.browseMode === "folder") {
@@ -8392,7 +8437,9 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
   }, [
     activeSection,
     filteredDocuments.length,
+    libraryDocumentHasMore,
     libraryVisibleEntryTotal,
+    showTagDirectoryList,
     sortedLibraryEntries.length,
     state.browseMode
   ]);
@@ -8778,10 +8825,17 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
       };
     }
 
+    if (entry.kind === "folder") {
+      return {
+        kind: "folder",
+        entry,
+        record: folderRecords.find((item) => item.path === entry.path) ?? null
+      };
+    }
+
     return {
-      kind: "folder",
-      entry,
-      record: folderRecords.find((item) => item.path === entry.path) ?? null
+      kind: "blank",
+      folderPath: entry.path
     };
   }
 
@@ -9390,6 +9444,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   selectedTagPath={state.selectedTagPath}
                   selectedTagPaths={selectedTagPaths}
                   sortState={state.librarySort}
+                  tagResultStructureMode={tagResultStructureMode}
                   viewMode={state.viewMode}
                   onNavigateFolder={navigateLibraryFolder}
                   onNavigateTag={navigateLibraryTag}
@@ -9397,6 +9452,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                   onOpenSettings={() => setSettingsOpen(true)}
                   onRefresh={refreshLibrary}
                   onSetSortState={setLibrarySortState}
+                  onSetTagResultStructureMode={setTagResultStructureMode}
                   onSetViewMode={setLibraryViewMode}
                   refreshPending={libraryRefreshPending}
                 />
@@ -9435,6 +9491,9 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               </button>
                             );
                           }
+                          if (entry.kind === "tag-directory") {
+                            return null;
+                          }
                           return (
                             <button
                               key={entry.id}
@@ -9461,8 +9520,11 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                     </div>
                   ) : (
                     <div className="affairs-doc-grid">
-                      {sortedLibraryEntries.map((entry) => (
-                        entry.kind === "folder" ? (
+                      {sortedLibraryEntries.map((entry) => {
+                        if (entry.kind === "tag-directory") {
+                          return null;
+                        }
+                        return entry.kind === "folder" ? (
                           <button
                             key={entry.id}
                             type="button"
@@ -9497,8 +9559,8 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               <span className="affairs-doc-muted">{formatRelativeMeta(entry.updatedAt)}</span>
                             </div>
                           </button>
-                        )
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -9559,6 +9621,33 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             />
                           );
                         }
+                        if (entry.kind === "tag-directory") {
+                          const collapsed = collapsedTagDirectoryPaths.has(normalizeFolderPath(entry.path));
+                          return (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              className="affairs-finder-row affairs-finder-directory-row"
+                              aria-expanded={!collapsed}
+                              onClick={() => toggleTagDirectoryCollapsed(entry.path)}
+                              style={buildFinderRowStyle(finderGridTemplateColumns, entry.depth)}
+                            >
+                              <span className="affairs-finder-name-cell">
+                                <span className="affairs-finder-tree-indent" aria-hidden="true" />
+                                <span className="affairs-finder-disclosure" aria-hidden="true">{collapsed ? "›" : "⌄"}</span>
+                                <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
+                                <span className="affairs-finder-name" title={formatFolderPath(entry.path)}>{entry.title}</span>
+                                <span className="affairs-finder-directory-count">
+                                  {t("shell.affairsLibraryTagDirectoryFileCount", { count: entry.count })}
+                                </span>
+                              </span>
+                              <span className="affairs-finder-cell">{formatLibrarySize(null)}</span>
+                              <span className="affairs-finder-cell">{formatFinderDateTime(entry.updatedAt ?? "")}</span>
+                              <span className="affairs-finder-cell">{t("shell.affairsFinderKindFolder")}</span>
+                              <span className="affairs-finder-cell">{formatFinderDateTime(entry.createdAt ?? "")}</span>
+                            </button>
+                          );
+                        }
                         if (entry.kind === "folder") {
                           return (
                             <button
@@ -9568,7 +9657,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                               onClick={() => handleLibraryFolderEntryClick(entry.path)}
                               onDoubleClick={() => openLibraryFolderEntry(entry.path)}
                               onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
-                              style={{ gridTemplateColumns: finderGridTemplateColumns }}
+                              style={buildFinderRowStyle(finderGridTemplateColumns)}
                             >
                               <span className="affairs-finder-name-cell">
                                 <span className="affairs-finder-icon">{renderFolderShape("row")}</span>
@@ -9588,7 +9677,7 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
                             className={selectedObject.section === "library" && selectedObject.record?.id === entry.documentId ? "affairs-finder-row active" : "affairs-finder-row"}
                             onClick={() => selectObject(entry.documentId)}
                             onContextMenu={(event) => openContextMenu(event, resolveContextTarget(entry))}
-                            style={{ gridTemplateColumns: finderGridTemplateColumns }}
+                            style={buildFinderRowStyle(finderGridTemplateColumns, entry.depth ?? 0)}
                             onDoubleClick={() => {
                               const record = documentRecords.find((item) => item.id === entry.documentId);
                               if (record) {
@@ -11261,6 +11350,7 @@ function AffairsLibraryStageToolbar({
   selectedTagPath,
   selectedTagPaths,
   sortState,
+  tagResultStructureMode,
   viewMode,
   onNavigateFolder,
   onNavigateTag,
@@ -11268,6 +11358,7 @@ function AffairsLibraryStageToolbar({
   onOpenSettings,
   onRefresh,
   onSetSortState,
+  onSetTagResultStructureMode,
   onSetViewMode,
   refreshPending
 }: {
@@ -11280,6 +11371,7 @@ function AffairsLibraryStageToolbar({
   selectedTagPath: string | null;
   selectedTagPaths: string[];
   sortState: LibrarySortState;
+  tagResultStructureMode: TagResultStructureMode;
   viewMode: "grid" | "list";
   onNavigateFolder: (path: string | null) => void;
   onNavigateTag: (path: string | null) => void;
@@ -11287,11 +11379,13 @@ function AffairsLibraryStageToolbar({
   onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
   onSetSortState: (state: LibrarySortState) => void;
+  onSetTagResultStructureMode: (mode: TagResultStructureMode) => void;
   onSetViewMode: (mode: "grid" | "list") => void;
   refreshPending: boolean;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const rightToolsRef = useRef<HTMLDivElement | null>(null);
+  const structureSwitchRef = useRef<HTMLSpanElement | null>(null);
   const measureRefs = useRef(new Map<string, HTMLSpanElement>());
   const statusTriggerRef = useRef<HTMLButtonElement | null>(null);
   const statusPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -11322,15 +11416,19 @@ function AffairsLibraryStageToolbar({
       return;
     }
     const sync = () => {
-      const nextWidth = Math.max(120, toolbar.clientWidth - rightTools.clientWidth - 32);
+      const structureSwitchWidth = structureSwitchRef.current?.offsetWidth ?? 0;
+      const nextWidth = Math.max(120, toolbar.clientWidth - rightTools.clientWidth - structureSwitchWidth - 40);
       setAvailableBreadcrumbWidth(nextWidth);
     };
     sync();
     const observer = new ResizeObserver(sync);
     observer.observe(toolbar);
     observer.observe(rightTools);
+    if (structureSwitchRef.current) {
+      observer.observe(structureSwitchRef.current);
+    }
     return () => observer.disconnect();
-  }, []);
+  }, [browseMode, selectedTagPaths.length, viewMode]);
 
   useEffect(() => {
     if (!statusPopoverOpen) {
@@ -11431,6 +11529,31 @@ function AffairsLibraryStageToolbar({
             <button type="button" className="affairs-stage-breadcrumb-reset" onClick={onResetTags}>
               {t("shell.affairsLibraryTagTreeReset")}
             </button>
+          ) : null}
+          {browseMode === "tag" && selectedTagPaths.length > 0 && viewMode === "list" ? (
+            <span
+              ref={structureSwitchRef}
+              className="affairs-tag-result-structure-switch"
+              role="group"
+              aria-label={t("shell.affairsLibraryTagResultStructureLabel")}
+            >
+              <button
+                type="button"
+                className={tagResultStructureMode === "file" ? "active" : ""}
+                onClick={() => onSetTagResultStructureMode("file")}
+                aria-pressed={tagResultStructureMode === "file"}
+              >
+                {t("shell.affairsLibraryTagResultFileMode")}
+              </button>
+              <button
+                type="button"
+                className={tagResultStructureMode === "directory" ? "active" : ""}
+                onClick={() => onSetTagResultStructureMode("directory")}
+                aria-pressed={tagResultStructureMode === "directory"}
+              >
+                {t("shell.affairsLibraryTagResultDirectoryMode")}
+              </button>
+            </span>
           ) : null}
         </div>
         <div className="affairs-stage-breadcrumb-measure" aria-hidden="true">
@@ -17049,12 +17172,16 @@ function sortLibraryEntries(entries: LibraryEntry[], sortState: LibrarySortState
   const next = [...entries];
   next.sort((left, right) => {
     if (left.kind !== right.kind) {
-      return left.kind === "folder" ? -1 : 1;
+      const leftDirectoryLike = isDirectoryLikeLibraryEntry(left);
+      const rightDirectoryLike = isDirectoryLikeLibraryEntry(right);
+      if (leftDirectoryLike !== rightDirectoryLike) {
+        return leftDirectoryLike ? -1 : 1;
+      }
     }
     const direction = sortState.direction === "asc" ? 1 : -1;
     if (sortState.mode === "type") {
-      const leftType = left.kind === "folder" ? "folder" : resolveDocumentType(left.path);
-      const rightType = right.kind === "folder" ? "folder" : resolveDocumentType(right.path);
+      const leftType = isDirectoryLikeLibraryEntry(left) ? "folder" : resolveDocumentType(left.path);
+      const rightType = isDirectoryLikeLibraryEntry(right) ? "folder" : resolveDocumentType(right.path);
       const typeCompare = leftType.localeCompare(rightType, "zh-CN") * direction;
       if (typeCompare !== 0) {
         return typeCompare;
@@ -17065,8 +17192,8 @@ function sortLibraryEntries(entries: LibraryEntry[], sortState: LibrarySortState
       return left.title.localeCompare(right.title, "zh-CN") * direction;
     }
     if (sortState.mode === "size") {
-      const leftSize = left.kind === "folder" ? -1 : left.sizeBytes ?? -1;
-      const rightSize = right.kind === "folder" ? -1 : right.sizeBytes ?? -1;
+      const leftSize = isDirectoryLikeLibraryEntry(left) ? -1 : left.sizeBytes ?? -1;
+      const rightSize = isDirectoryLikeLibraryEntry(right) ? -1 : right.sizeBytes ?? -1;
       if (leftSize !== rightSize) {
         return (leftSize - rightSize) * direction;
       }
@@ -17088,6 +17215,12 @@ function sortLibraryEntries(entries: LibraryEntry[], sortState: LibrarySortState
     return left.title.localeCompare(right.title, "zh-CN");
   });
   return next;
+}
+
+function isDirectoryLikeLibraryEntry(
+  entry: LibraryEntry
+): entry is Extract<LibraryEntry, { kind: "folder" | "tag-directory" }> {
+  return entry.kind === "folder" || entry.kind === "tag-directory";
 }
 
 function getDefaultSortState(mode: LibrarySortMode): LibrarySortState {
@@ -17289,6 +17422,147 @@ function buildLibraryEntries({
   ];
 }
 
+type TagDirectoryMeta = Extract<LibraryEntry, { kind: "tag-directory" }>;
+type TagDirectoryDocumentEntry = Extract<LibraryEntry, { kind: "document" }>;
+
+function buildTagDirectoryEntries(
+  documents: DocumentRecord[],
+  sortState: LibrarySortState
+): LibraryEntry[] {
+  const directories = new Map<string, TagDirectoryMeta>();
+  const childDirectoryPathsByParent = new Map<string, Set<string>>();
+  const documentsByParent = new Map<string, TagDirectoryDocumentEntry[]>();
+
+  const addChildDirectory = (parentPath: string, childPath: string) => {
+    const children = childDirectoryPathsByParent.get(parentPath) ?? new Set<string>();
+    children.add(childPath);
+    childDirectoryPathsByParent.set(parentPath, children);
+  };
+
+  const touchDirectory = (path: string, document: DocumentRecord) => {
+    const normalizedPath = normalizeFolderPath(path);
+    if (!normalizedPath) {
+      return;
+    }
+    const existing = directories.get(normalizedPath);
+    const nextUpdatedAt = pickLatestDate(existing?.updatedAt ?? null, document.updatedAt);
+    const nextCreatedAt = pickEarliestDate(existing?.createdAt ?? null, document.createdAt);
+    directories.set(normalizedPath, {
+      id: `tag-directory:${normalizedPath}`,
+      kind: "tag-directory",
+      title: getFolderName(normalizedPath),
+      path: normalizedPath,
+      depth: getFolderDepth(normalizedPath),
+      count: (existing?.count ?? 0) + 1,
+      createdAt: nextCreatedAt,
+      updatedAt: nextUpdatedAt
+    });
+  };
+
+  for (const document of documents) {
+    const parentPath = normalizeFolderPath(getDocumentParentPath(document.filePath));
+    const depth = parentPath ? parentPath.split("/").length : 0;
+    const documentEntry: TagDirectoryDocumentEntry = {
+      id: `document:${document.id}`,
+      kind: "document",
+      title: document.displayName,
+      path: document.filePath,
+      depth,
+      updatedAt: document.updatedAt,
+      createdAt: document.createdAt,
+      sizeBytes: document.sizeBytes,
+      summary: document.summary,
+      isFavorite: document.isFavorite,
+      documentId: document.id
+    };
+    const siblingDocuments = documentsByParent.get(parentPath) ?? [];
+    siblingDocuments.push(documentEntry);
+    documentsByParent.set(parentPath, siblingDocuments);
+
+    if (!parentPath) {
+      continue;
+    }
+
+    const segments = parentPath.split("/").filter(Boolean);
+    for (let index = 0; index < segments.length; index += 1) {
+      const directoryPath = segments.slice(0, index + 1).join("/");
+      const directoryParentPath = segments.slice(0, index).join("/");
+      touchDirectory(directoryPath, document);
+      addChildDirectory(directoryParentPath, directoryPath);
+    }
+  }
+
+  const entries: LibraryEntry[] = [];
+  const visit = (parentPath: string) => {
+    const childDirectoryPaths = Array.from(childDirectoryPathsByParent.get(parentPath) ?? [])
+      .sort((left, right) => getFolderName(left).localeCompare(getFolderName(right), "zh-CN"));
+
+    for (const childPath of childDirectoryPaths) {
+      const directory = directories.get(childPath);
+      if (!directory) {
+        continue;
+      }
+      entries.push(directory);
+      visit(childPath);
+    }
+
+    entries.push(...sortLibraryEntries(documentsByParent.get(parentPath) ?? [], sortState));
+  };
+
+  visit("");
+  return entries;
+}
+
+function filterCollapsedTagDirectoryEntries(
+  entries: LibraryEntry[],
+  collapsedPaths: Set<string>
+): LibraryEntry[] {
+  if (collapsedPaths.size === 0) {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    if (entry.kind === "tag-directory") {
+      return !hasCollapsedAncestorPath(entry.path, collapsedPaths);
+    }
+
+    if (entry.kind === "document") {
+      return !isPathUnderCollapsedDirectory(getDocumentParentPath(entry.path), collapsedPaths);
+    }
+
+    return true;
+  });
+}
+
+function hasCollapsedAncestorPath(path: string, collapsedPaths: Set<string>) {
+  const normalizedPath = normalizeFolderPath(path);
+  for (const collapsedPath of collapsedPaths) {
+    const normalizedCollapsedPath = normalizeFolderPath(collapsedPath);
+    if (!normalizedCollapsedPath || normalizedCollapsedPath === normalizedPath) {
+      continue;
+    }
+    if (isSameOrChildFolderPath(normalizedPath, normalizedCollapsedPath)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPathUnderCollapsedDirectory(path: string, collapsedPaths: Set<string>) {
+  const normalizedPath = normalizeFolderPath(path);
+  for (const collapsedPath of collapsedPaths) {
+    const normalizedCollapsedPath = normalizeFolderPath(collapsedPath);
+    if (normalizedCollapsedPath && isSameOrChildFolderPath(normalizedPath, normalizedCollapsedPath)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isSameOrChildFolderPath(path: string, parentPath: string) {
+  return path === parentPath || path.startsWith(`${parentPath}/`);
+}
+
 function buildFolderDetailState(
   folders: FolderRecord[],
   documents: DocumentRecord[],
@@ -17365,6 +17639,50 @@ function getDocumentParentPath(filePath: string) {
 function formatFolderPath(path: string | null) {
   const normalized = normalizeFolderPath(path);
   return normalized || t("shell.affairsLibraryFolderRootLabel");
+}
+
+function getFolderName(path: string | null | undefined) {
+  const normalized = normalizeFolderPath(path);
+  if (!normalized) {
+    return t("shell.affairsLibraryFolderRootLabel");
+  }
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function getFolderDepth(path: string | null | undefined) {
+  const normalized = normalizeFolderPath(path);
+  return normalized ? normalized.split("/").length - 1 : 0;
+}
+
+function pickLatestDate(left: string | null | undefined, right: string | null | undefined) {
+  if (!left) {
+    return right ?? null;
+  }
+  if (!right) {
+    return left;
+  }
+  const leftTime = Date.parse(left) || 0;
+  const rightTime = Date.parse(right) || 0;
+  return rightTime > leftTime ? right : left;
+}
+
+function pickEarliestDate(left: string | null | undefined, right: string | null | undefined) {
+  if (!left) {
+    return right ?? null;
+  }
+  if (!right) {
+    return left;
+  }
+  const leftTime = Date.parse(left) || 0;
+  const rightTime = Date.parse(right) || 0;
+  if (!leftTime) {
+    return right;
+  }
+  if (!rightTime) {
+    return left;
+  }
+  return rightTime < leftTime ? right : left;
 }
 
 function getParentFolderPath(path: string | null) {
@@ -18376,6 +18694,13 @@ function buildFinderGridTemplateColumns(widths: Record<FinderColumnKey, number>)
     `minmax(${FINDER_COLUMN_MIN_WIDTHS.type}px, ${Math.round(normalized.type)}px)`,
     `minmax(${FINDER_COLUMN_MIN_WIDTHS.createdAt}px, 1fr)`
   ].join(" ");
+}
+
+function buildFinderRowStyle(gridTemplateColumns: string, depth = 0): CSSProperties {
+  return {
+    gridTemplateColumns,
+    "--affairs-finder-depth": String(Math.max(0, depth))
+  } as CSSProperties;
 }
 
 function formatIndexStatusDateTime(value: string) {

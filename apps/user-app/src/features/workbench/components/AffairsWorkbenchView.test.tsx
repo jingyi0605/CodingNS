@@ -4850,6 +4850,137 @@ describe("AffairsWorkbenchView", () => {
     expect(breadcrumb).toHaveTextContent("文本");
   });
 
+  it("标签筛选在列表视图可以切到目录视图，按文件实际路径分组显示", async () => {
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.classList.contains("affairs-finder-list")) {
+          return 520;
+        }
+        return originalClientHeight?.get ? originalClientHeight.get.call(this) : 0;
+      }
+    });
+
+    conversationApiMock.listAffairsLibraryDocuments
+      .mockResolvedValueOnce(createDocumentListResponse([]))
+      .mockResolvedValueOnce({
+        total: 3,
+        offset: 0,
+        limit: 120,
+        tagFacetCounts: {
+          "类型": 3,
+          "类型/文本": 3
+        },
+        items: [
+          {
+            documentId: "doc-trip-list",
+            path: "000-临时文档/202502-旅行社AI解决方案/文旅大模型平台建设清单.xlsx",
+            title: "文旅大模型平台建设清单.xlsx",
+            summary: "摘要",
+            updatedAt: "2025-02-17T14:14:00.000Z",
+            createdAt: "2025-02-17T14:14:00.000Z",
+            sizeBytes: 117 * 1024,
+            tags: ["类型/文本"],
+            derivedTags: [],
+            isFavorite: false
+          },
+          {
+            documentId: "doc-test-pdf",
+            path: "000-临时文档/202508-深信服设备测试/样机借用协议-嘉略盖章.pdf",
+            title: "样机借用协议-嘉略盖章.pdf",
+            summary: "摘要",
+            updatedAt: "2025-08-21T10:52:00.000Z",
+            createdAt: "2025-08-21T10:52:00.000Z",
+            sizeBytes: 809 * 1024,
+            tags: ["类型/文本"],
+            derivedTags: [],
+            isFavorite: false
+          },
+          {
+            documentId: "doc-desktop-list",
+            path: "昌乐客户云桌面项目/云桌面清单 V3.xlsx",
+            title: "云桌面清单 V3.xlsx",
+            summary: "摘要",
+            updatedAt: "2024-01-11T14:14:00.000Z",
+            createdAt: "2024-01-11T14:14:00.000Z",
+            sizeBytes: 35 * 1024,
+            tags: ["类型/文本"],
+            derivedTags: [],
+            isFavorite: false
+          }
+        ]
+      });
+
+    try {
+      renderWorkbench();
+      const user = userEvent.setup();
+
+      await screen.findByRole("tree", { name: t("shell.affairsLibraryTagTreeTitle") });
+      const typeLabel = (await screen.findAllByText("类型")).find((node) => node.classList.contains("affairs-sidebar-item-title"));
+      expect(typeLabel).toBeTruthy();
+      const typeNode = typeLabel.closest(".affairs-tag-tree-node");
+      const expandButton = typeNode?.querySelector<HTMLButtonElement>(".affairs-tag-tree-toggle");
+      expect(expandButton).not.toBeNull();
+      await user.click(expandButton!);
+      const expandedTypeNode = findTagTreeNode("类型");
+      expect(expandedTypeNode).not.toBeNull();
+      await user.click(within(expandedTypeNode!).getByRole("button", { name: /文本/ }));
+
+      await user.click(await screen.findByRole("button", { name: t("shell.affairsLibraryViewModeList") }));
+
+      const directoryModeButton = await screen.findByRole("button", { name: t("shell.affairsLibraryTagResultDirectoryMode") });
+      expect(screen.getByRole("button", { name: t("shell.affairsLibraryTagResultFileMode") })).toHaveAttribute("aria-pressed", "true");
+      expect(document.querySelector(".affairs-finder-directory-row")).toBeNull();
+
+      await user.click(directoryModeButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: t("shell.affairsLibraryTagResultDirectoryMode") })).toHaveAttribute("aria-pressed", "true");
+        const directoryRows = Array.from(document.querySelectorAll(".affairs-finder-directory-row"));
+        expect(directoryRows.map((row) => row.textContent ?? "")).toEqual(expect.arrayContaining([
+          expect.stringContaining("000-临时文档"),
+          expect.stringContaining("202502-旅行社AI解决方案"),
+          expect.stringContaining("202508-深信服设备测试"),
+          expect.stringContaining("昌乐客户云桌面项目")
+        ]));
+      });
+
+      expect(screen.getByText("文旅大模型平台建设清单.xlsx")).toBeInTheDocument();
+      expect(screen.getByText("样机借用协议-嘉略盖章.pdf")).toBeInTheDocument();
+      expect(screen.getByText("云桌面清单 V3.xlsx")).toBeInTheDocument();
+
+      const rootDirectoryRow = Array.from(document.querySelectorAll<HTMLButtonElement>(".affairs-finder-directory-row"))
+        .find((row) => row.textContent?.includes("000-临时文档"));
+      expect(rootDirectoryRow).toBeTruthy();
+      expect(rootDirectoryRow).toHaveAttribute("aria-expanded", "true");
+
+      await user.click(rootDirectoryRow!);
+
+      await waitFor(() => {
+        expect(rootDirectoryRow).toHaveAttribute("aria-expanded", "false");
+        expect(screen.queryByText("202502-旅行社AI解决方案")).toBeNull();
+        expect(screen.queryByText("202508-深信服设备测试")).toBeNull();
+        expect(screen.queryByText("文旅大模型平台建设清单.xlsx")).toBeNull();
+        expect(screen.queryByText("样机借用协议-嘉略盖章.pdf")).toBeNull();
+        expect(screen.getByText("昌乐客户云桌面项目")).toBeInTheDocument();
+        expect(screen.getByText("云桌面清单 V3.xlsx")).toBeInTheDocument();
+      });
+
+      await user.click(rootDirectoryRow!);
+
+      await waitFor(() => {
+        expect(rootDirectoryRow).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText("202502-旅行社AI解决方案")).toBeInTheDocument();
+        expect(screen.getByText("文旅大模型平台建设清单.xlsx")).toBeInTheDocument();
+      });
+    } finally {
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+    }
+  });
+
   it("标签支持多选过滤，并且顶部会出现重置按钮", async () => {
     conversationApiMock.listAffairsLibraryDocuments.mockResolvedValueOnce(createDocumentListResponse([
       {
