@@ -1,10 +1,13 @@
 import { t } from "../../shared/i18n";
 import type {
+  ForkMethod,
+  ForkSourceType,
   SessionActivityResolutionSource,
   SessionActivitySource,
   SessionActivityState,
   SessionRunningState
 } from "./api/conversation-api";
+import { isRealSubagentSession } from "./session-fork-display";
 
 export interface SessionActivityDisplayInput {
   runningState?: SessionRunningState | null;
@@ -13,6 +16,9 @@ export interface SessionActivityDisplayInput {
   activityResolutionSource?: SessionActivityResolutionSource | null;
   lastErrorCode?: string | null;
   lastErrorDetail?: string | null;
+  isSubagent?: boolean | null;
+  forkMethod?: ForkMethod | null;
+  forkSourceType?: ForkSourceType | null;
 }
 
 type SessionIndicatorVariant =
@@ -91,27 +97,85 @@ export function resolveSessionIndicatorClassVariant(
 export function resolveSessionActivityBadgeLabel(
   session: SessionActivityDisplayInput
 ): string | null {
-  if (session.runningState === "stale") {
-    return t("conversation.runtimeStale");
+  if (!isRealSubagentSession(session)) {
+    return null;
   }
 
-  if (session.runningState === "unknown") {
-    return t("conversation.runtimeUnknown");
-  }
+  const lifecycleState = resolveSessionLifecycleState(session);
 
-  return null;
+  switch (lifecycleState) {
+    case "starting":
+      return t("conversation.runtimeStarting");
+    case "running":
+      return t("conversation.runtimeRunning");
+    case "reconnecting":
+      return t("conversation.runtimeReconnecting");
+    case "stale":
+      return t("conversation.runtimeStale");
+    case "unknown":
+      return t("conversation.runtimeUnknown");
+    case "completed":
+      return t("conversation.runtimeCompleted");
+    case "interrupted":
+      return t("conversation.runtimeInterrupted");
+    case "failed":
+      return t("conversation.runtimeFailed");
+    default:
+      return null;
+  }
 }
 
 export function resolveSessionActivityBadgeClassName(
   baseClassName: string,
   session: SessionActivityDisplayInput
 ): string | null {
+  if (!isRealSubagentSession(session)) {
+    return null;
+  }
+
+  const lifecycleState = resolveSessionLifecycleState(session);
+
+  if (!lifecycleState || lifecycleState === "idle") {
+    return null;
+  }
+
+  return `${baseClassName} is-${lifecycleState.replace("_", "-")}`;
+}
+
+
+function resolveSessionLifecycleState(
+  session: SessionActivityDisplayInput
+): SessionRunningState | null {
+  if (hasSessionDisplayError(session)) {
+    return "failed";
+  }
+
+  if (session.runningState === "starting") {
+    return "starting";
+  }
+
+  if (session.runningState === "reconnecting") {
+    return "reconnecting";
+  }
+
+  if (session.activityState === "running" || session.runningState === "running") {
+    return "running";
+  }
+
   if (session.runningState === "stale") {
-    return `${baseClassName} is-stale`;
+    return "stale";
   }
 
   if (session.runningState === "unknown") {
-    return `${baseClassName} is-unknown`;
+    return "unknown";
+  }
+
+  if (session.runningState === "interrupted") {
+    return "interrupted";
+  }
+
+  if (session.activityState === "completed_unread" || session.runningState === "completed") {
+    return "completed";
   }
 
   return null;

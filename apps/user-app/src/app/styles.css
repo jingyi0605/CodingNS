@@ -2201,6 +2201,7 @@ a {
 .session-activity-badge {
   display: inline-flex;
   align-items: center;
+  margin-left: auto;
   padding: 1px 5px;
   border-radius: 999px;
   font-size: 9px;
@@ -2212,6 +2213,28 @@ a {
 .session-activity-badge.is-stale {
   background: color-mix(in srgb, var(--warning) 14%, transparent);
   color: color-mix(in srgb, var(--warning) 74%, #704100);
+}
+
+.session-activity-badge.is-starting,
+.session-activity-badge.is-running,
+.session-activity-badge.is-reconnecting {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 76%, #0f3f8a);
+}
+
+.session-activity-badge.is-completed {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: color-mix(in srgb, var(--success) 72%, #166534);
+}
+
+.session-activity-badge.is-interrupted {
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--text-secondary);
+}
+
+.session-activity-badge.is-failed {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: color-mix(in srgb, var(--error) 78%, #991b1b);
 }
 
 .session-activity-badge.is-unknown {

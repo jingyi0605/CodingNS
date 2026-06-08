@@ -522,6 +522,28 @@
   color: color-mix(in srgb, var(--warning) 74%, #704100);
 }
 
+.session-list-activity-badge.is-starting,
+.session-list-activity-badge.is-running,
+.session-list-activity-badge.is-reconnecting {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 76%, #0f3f8a);
+}
+
+.session-list-activity-badge.is-completed {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: color-mix(in srgb, var(--success) 72%, #166534);
+}
+
+.session-list-activity-badge.is-interrupted {
+  background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
+  color: var(--text-secondary);
+}
+
+.session-list-activity-badge.is-failed {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: color-mix(in srgb, var(--error) 78%, #991b1b);
+}
+
 .session-list-activity-badge.is-unknown {
   background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
   color: var(--text-muted);

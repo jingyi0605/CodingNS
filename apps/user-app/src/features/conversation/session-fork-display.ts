@@ -13,11 +13,28 @@ export function hasSessionForkMetadata(session: {
 }
 
 export function isRealSubagentSession(session: {
-  isSubagent?: boolean;
+  isSubagent?: boolean | null;
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
 }): boolean {
   return session.isSubagent === true && !hasSessionForkMetadata(session);
+}
+
+export function resolveSubagentDisplayLabel(session: {
+  subagentLabel?: string | null;
+}): string {
+  const rawLabel = session.subagentLabel?.trim();
+
+  if (!rawLabel) {
+    return t("shell.subagentBadge");
+  }
+
+  const parts = rawLabel
+    .split("·")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.at(-1) || rawLabel;
 }
 
 export function isArchivedSessionVisibleInArchive(session: {
@@ -52,7 +69,7 @@ export function resolveArchivedChildSessionBadgeLabel(session: {
   }
 
   if (isRealSubagentSession(session)) {
-    return session.subagentLabel?.trim() || t("shell.subagentBadge");
+    return resolveSubagentDisplayLabel(session);
   }
 
   return t("shell.sessionChildBadge");

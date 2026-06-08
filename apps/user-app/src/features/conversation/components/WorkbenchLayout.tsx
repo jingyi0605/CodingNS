@@ -147,7 +147,8 @@ import {
   isRealSubagentSession,
   resolveArchivedChildSessionBadgeLabel,
   resolveSessionForkBadgeLabel,
-  resolveSessionForkBadgeTone
+  resolveSessionForkBadgeTone,
+  resolveSubagentDisplayLabel
 } from "../session-fork-display";
 import {
   buildSessionExportFileName,
@@ -4564,7 +4565,7 @@ function SessionCard({
   const supportsSessionDelete = createDraftCapabilities(session.provider).supportsSessionDelete === true;
   const showWebExportMenu = !platform.isDesktop && !platform.isMobile;
   const subagentBadgeLabel = isSubagentSession(session)
-    ? session.subagentLabel?.trim() || t("shell.subagentBadge")
+    ? resolveSubagentDisplayLabel(session)
     : null;
   const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
   const sessionActivityBadgeLabel = resolveSessionActivityBadgeLabel(session);

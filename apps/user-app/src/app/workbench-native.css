@@ -4743,6 +4743,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 .session-activity-badge {
   display: inline-flex;
   align-items: center;
+  margin-left: auto;
   min-height: 15px;
   padding: 0 6px;
   border-radius: 999px;
@@ -4755,6 +4756,28 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
 .session-activity-badge.is-stale {
   background: rgba(255, 159, 10, 0.12);
   color: #a66a00;
+}
+
+.session-activity-badge.is-starting,
+.session-activity-badge.is-running,
+.session-activity-badge.is-reconnecting {
+  background: rgba(0, 122, 255, 0.12);
+  color: #0069d9;
+}
+
+.session-activity-badge.is-completed {
+  background: rgba(52, 199, 89, 0.12);
+  color: #248a3d;
+}
+
+.session-activity-badge.is-interrupted {
+  background: rgba(120, 120, 128, 0.12);
+  color: #6f7076;
+}
+
+.session-activity-badge.is-failed {
+  background: rgba(255, 59, 48, 0.12);
+  color: #c9342c;
 }
 
 .session-activity-badge.is-unknown {
