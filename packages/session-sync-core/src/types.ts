@@ -106,6 +106,26 @@ export interface ProviderSessionSummary {
   subagentLabel?: string | null;
   sourceMtimeMs?: number;
   sourceSizeBytes?: number;
+  activityObservation?: ProviderSessionActivityObservation | null;
+}
+
+export type ProviderSessionObservedRunningState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "completed"
+  | "interrupted"
+  | "failed";
+
+export type ProviderSessionActivityConfidence = "authoritative" | "strong" | "weak";
+
+export interface ProviderSessionActivityObservation {
+  runningState: ProviderSessionObservedRunningState;
+  confidence: ProviderSessionActivityConfidence;
+  observedAt: string | null;
+  detail?: string | null;
+  errorCode?: string | null;
+  runId?: string | null;
 }
 
 export interface ProviderArchiveUpdateResult {

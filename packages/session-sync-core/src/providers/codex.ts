@@ -15,6 +15,7 @@ import type {
   ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
+  ProviderSessionActivityObservation,
   ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -77,6 +78,10 @@ export interface CodexThreadControlTransport {
   archiveThread(providerSessionId: string): Promise<void>;
   unarchiveThread(providerSessionId: string): Promise<void>;
   readThread(providerSessionId: string): Promise<Record<string, unknown>>;
+  setThreadName?(providerSessionId: string, name: string): Promise<void>;
+  listThreads?(input: {
+    workspacePath: string;
+  }): Promise<Record<string, unknown>[]>;
   close(): void;
 }
 
@@ -112,16 +117,26 @@ interface CodexThreadMetadata {
   title: string | null;
   cwd: string | null;
   createdAtMs: number | null;
+  updatedAtMs: number | null;
   firstUserMessage: string | null;
   agentNickname: string | null;
   agentRole: string | null;
+  parentProviderSessionId: string | null;
+  parentRelationKind: "fork" | "spawn" | null;
   isArchived: boolean | null;
   rolloutPath: string | null;
+  activityObservation: ProviderSessionActivityObservation | null;
 }
 
 interface CodexSpawnRelation {
   parentProviderSessionId: string;
   kind: "fork" | "spawn";
+}
+
+interface CodexSessionInheritanceBoundary {
+  threadId: string;
+  inheritedParentThreadId: string | null;
+  startLineNumber: number | null;
 }
 
 interface CodexSpawnRelationScanCacheEntry {
@@ -186,7 +201,7 @@ export class CodexAdapter implements ProviderAdapter {
     const knownSessions = (options?.knownSessions ?? []).filter(
       (session) => session.provider === this.providerId
     );
-    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const threadMetadataIndex = await this.readThreadMetadataIndexForWorkspace(targetPath);
     const files = this.listSessionFiles(targetPath, threadMetadataIndex, knownSessions);
     const knownByRawStoreRef = new Map(
       knownSessions.map((session) => [session.rawStoreRef, session] as const)
@@ -465,6 +480,9 @@ export class CodexAdapter implements ProviderAdapter {
         fileSessionId;
       const lastMessageAt =
         messages.at(-1)?.timestamp ?? (ensureText(metaPayload.timestamp) || null);
+      const fileActivityObservation = resolveCodexJsonlActivityObservation(
+        filterInheritedCodexSubagentRecords(records, codexSessionId)
+      );
 
       const summary = this.hydrateSessionSummary({
         provider: this.providerId,
@@ -474,7 +492,8 @@ export class CodexAdapter implements ProviderAdapter {
         rawStoreRef: filePath,
         lastMessageAt,
         messageCount: messages.length,
-        isArchived: false
+        isArchived: false,
+        activityObservation: fileActivityObservation
       }, filePath, stats, currentThreadMetadata, currentSpawnRelation);
       sessionsByProviderSessionId.set(codexSessionId, summary);
       this.touchSessionSummaryCache(filePath, {
@@ -927,6 +946,19 @@ export class CodexAdapter implements ProviderAdapter {
     title: string
   ): Promise<string> {
     const nextTitle = title.trim();
+    const transport = this.options.threadControlTransportFactory?.();
+
+    if (transport) {
+      try {
+        await transport.initialize();
+        await transport.setThreadName?.(providerSessionId, nextTitle);
+      } catch {
+        // app-server 的 thread/name/set 是首选，但失败时不能破坏原有本地改名能力。
+      } finally {
+        transport.close();
+      }
+    }
+
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
     const indexPath = join(this.options.homeDir, "session_index.jsonl");
     const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
@@ -1247,11 +1279,15 @@ export class CodexAdapter implements ProviderAdapter {
             title: normalizeCodexIndexedTitle(ensureText(record.thread_name)) || null,
             cwd: null,
             createdAtMs: null,
+            updatedAtMs: null,
             firstUserMessage: null,
             agentNickname: null,
             agentRole: null,
+            parentProviderSessionId: null,
+            parentRelationKind: null,
             isArchived: null,
-            rolloutPath: null
+            rolloutPath: null,
+            activityObservation: null
           });
         } catch {
           continue;
@@ -1316,11 +1352,14 @@ export class CodexAdapter implements ProviderAdapter {
           title: current?.title ?? dbTitle,
           cwd: ensureText(row.cwd).trim() || (current?.cwd ?? null),
           createdAtMs: Number.isFinite(createdAtSeconds) ? createdAtSeconds * 1000 : null,
+          updatedAtMs: current?.updatedAtMs ?? null,
           firstUserMessage:
             ensureText(row.first_user_message).trim() || (current?.firstUserMessage ?? null),
           agentNickname:
             ensureText(row.agent_nickname).trim() || (current?.agentNickname ?? null),
           agentRole: ensureText(row.agent_role).trim() || (current?.agentRole ?? null),
+          parentProviderSessionId: current?.parentProviderSessionId ?? null,
+          parentRelationKind: current?.parentRelationKind ?? null,
           rolloutPath:
             ensureText(row.rollout_path).trim() || (current?.rolloutPath ?? null),
           isArchived:
@@ -1328,7 +1367,8 @@ export class CodexAdapter implements ProviderAdapter {
               ? row.archived === 1
               : ensureText(row.rollout_path).includes("archived_sessions")
                 ? true
-                : (current?.isArchived ?? null)
+                : (current?.isArchived ?? null),
+          activityObservation: current?.activityObservation ?? null
         });
       }
     } catch {
@@ -1350,6 +1390,130 @@ export class CodexAdapter implements ProviderAdapter {
       index
     };
     return index;
+  }
+
+  private async readThreadMetadataIndexForWorkspace(
+    workspacePath: string
+  ): Promise<Map<string, CodexThreadMetadata>> {
+    const index = new Map(this.readThreadMetadataIndex());
+    await this.mergeAppServerThreadMetadata(index, workspacePath);
+    return index;
+  }
+
+  private async mergeAppServerThreadMetadata(
+    index: Map<string, CodexThreadMetadata>,
+    workspacePath: string
+  ): Promise<void> {
+    const createTransport = this.options.threadControlTransportFactory;
+
+    if (!createTransport) {
+      return;
+    }
+
+    const transport = createTransport();
+
+    try {
+      await transport.initialize();
+      const threads = await transport.listThreads?.({ workspacePath });
+
+      if (!threads || threads.length === 0) {
+        return;
+      }
+
+      for (const thread of threads) {
+        const metadata = normalizeCodexAppServerThreadMetadata(thread);
+
+        if (!metadata) {
+          continue;
+        }
+
+        const current = index.get(metadata.threadId);
+        index.set(metadata.threadId, {
+          title: metadata.title ?? current?.title ?? null,
+          cwd: metadata.cwd ?? current?.cwd ?? null,
+          createdAtMs: metadata.createdAtMs ?? current?.createdAtMs ?? null,
+          updatedAtMs: metadata.updatedAtMs ?? current?.updatedAtMs ?? null,
+          firstUserMessage:
+            metadata.firstUserMessage ?? current?.firstUserMessage ?? null,
+          agentNickname: metadata.agentNickname ?? current?.agentNickname ?? null,
+          agentRole: metadata.agentRole ?? current?.agentRole ?? null,
+          parentProviderSessionId:
+            metadata.parentProviderSessionId ?? current?.parentProviderSessionId ?? null,
+          parentRelationKind: metadata.parentRelationKind ?? current?.parentRelationKind ?? null,
+          isArchived: metadata.isArchived ?? current?.isArchived ?? null,
+          rolloutPath: metadata.rolloutPath ?? current?.rolloutPath ?? null,
+          activityObservation:
+            metadata.activityObservation ?? current?.activityObservation ?? null
+        });
+      }
+
+      await this.mergeAppServerSubagentActivityFromParentThreads(
+        index,
+        threads,
+        transport
+      );
+    } catch {
+      // app-server 是增强信息来源，失败时退回 JSONL/state DB，不能拖垮会话列表。
+    } finally {
+      transport.close();
+    }
+  }
+
+  private async mergeAppServerSubagentActivityFromParentThreads(
+    index: Map<string, CodexThreadMetadata>,
+    threads: Record<string, unknown>[],
+    transport: CodexThreadControlTransport
+  ): Promise<void> {
+    const childrenByParentThreadId = new Map<string, string[]>();
+
+    for (const thread of threads) {
+      const metadata = normalizeCodexAppServerThreadMetadata(thread);
+
+      if (
+        !metadata
+        || metadata.parentRelationKind !== "spawn"
+        || !metadata.parentProviderSessionId
+      ) {
+        continue;
+      }
+
+      const children = childrenByParentThreadId.get(metadata.parentProviderSessionId) ?? [];
+      children.push(metadata.threadId);
+      childrenByParentThreadId.set(metadata.parentProviderSessionId, children);
+    }
+
+    for (const [parentThreadId, childThreadIds] of childrenByParentThreadId) {
+      let parentThread: Record<string, unknown> | null = null;
+
+      try {
+        const result = await transport.readThread(parentThreadId);
+        parentThread = asCodexRecord(result.thread) ?? result;
+      } catch {
+        continue;
+      }
+
+      for (const childThreadId of childThreadIds) {
+        const observation = resolveLatestCodexCollabAgentActivityObservation(
+          parentThread,
+          childThreadId
+        );
+
+        if (!observation) {
+          continue;
+        }
+
+        const current = index.get(childThreadId);
+
+        if (!current) {
+          continue;
+        }
+
+        index.set(childThreadId, {
+          ...current,
+          activityObservation: observation
+        });
+      }
+    }
   }
 
   private listSessionFiles(
@@ -1768,12 +1932,24 @@ export class CodexAdapter implements ProviderAdapter {
     const normalizedFirstUserMessage = normalizeCodexIndexedTitle(metadata?.firstUserMessage);
 
     if (indexedTitle) {
+      if (
+        isCodexSubagentThread(metadata, null)
+        && normalizedFirstUserMessage
+        && indexedTitle === normalizedFirstUserMessage
+      ) {
+        return null;
+      }
+
       // Codex 有时会把第一条用户消息原样回填成 title，这种脏标题仍然按统一长度预算裁掉。
       if (normalizedFirstUserMessage && indexedTitle === normalizedFirstUserMessage) {
         return indexedTitle.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH);
       }
 
       return indexedTitle;
+    }
+
+    if (isCodexSubagentThread(metadata, null)) {
+      return null;
     }
 
     return normalizeCodexMessageTitle(metadata?.firstUserMessage);
@@ -1943,6 +2119,14 @@ export class CodexAdapter implements ProviderAdapter {
         continue;
       }
 
+      if (metadata.parentProviderSessionId) {
+        directRelations.set(threadId, {
+          parentProviderSessionId: metadata.parentProviderSessionId,
+          kind: metadata.parentRelationKind ?? "spawn"
+        });
+        continue;
+      }
+
       if (!metadata.agentRole && !metadata.agentNickname) {
         continue;
       }
@@ -2025,6 +2209,7 @@ export class CodexAdapter implements ProviderAdapter {
   ): ProviderSessionSummary {
     const resolvedRelation = relation ?? null;
     const resolvedMetadata = metadata ?? null;
+    const metadataTitle = resolveCodexMetadataTitle(resolvedMetadata);
     const isSubagent =
       resolvedMetadata || resolvedRelation
         ? isCodexSubagentThread(resolvedMetadata, resolvedRelation)
@@ -2032,6 +2217,7 @@ export class CodexAdapter implements ProviderAdapter {
 
     return {
       ...summary,
+      title: metadataTitle ?? summary.title,
       rawStoreRef: filePath,
       isArchived: resolveCodexArchivedState(resolvedMetadata, filePath),
       parentProviderSessionId:
@@ -2042,7 +2228,11 @@ export class CodexAdapter implements ProviderAdapter {
           ? buildCodexSubagentLabel(resolvedMetadata)
           : summary.subagentLabel ?? null,
       sourceMtimeMs: stats.mtimeMs,
-      sourceSizeBytes: stats.size
+      sourceSizeBytes: stats.size,
+      activityObservation: mergeCodexActivityObservation(
+        resolvedMetadata?.activityObservation ?? null,
+        summary.activityObservation ?? null
+      )
     };
   }
 
@@ -2059,7 +2249,9 @@ export class CodexAdapter implements ProviderAdapter {
     records: Array<Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>,
     providerSessionId: string
   ): NormalizedMessage[] {
-    const effectiveRecords = filterRolledBackCodexRecords(records);
+    const effectiveRecords = filterRolledBackCodexRecords(
+      filterInheritedCodexSubagentRecords(records, providerSessionId)
+    );
     const messages: Array<{
       source: CodexMessageSource;
       dedupeKey: string;
@@ -2519,6 +2711,158 @@ function filterRolledBackCodexRecords<T extends Pick<RawJsonLine, "lineNumber" |
   return filteredRecords;
 }
 
+function filterInheritedCodexSubagentRecords<T extends Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>(
+  records: T[],
+  providerSessionId: string
+): T[] {
+  const boundary = resolveCodexSessionInheritanceBoundary(records, providerSessionId);
+
+  if (!boundary.inheritedParentThreadId || boundary.startLineNumber === null) {
+    return records;
+  }
+
+  const startLineNumber = boundary.startLineNumber;
+
+  return records.filter((record) => {
+    if (record.lineNumber < startLineNumber) {
+      return shouldKeepCodexRecordBeforeSubagentBoundary(record, boundary.threadId);
+    }
+
+    return true;
+  });
+}
+
+function resolveCodexSessionInheritanceBoundary<T extends Pick<RawJsonLine, "lineNumber" | "data">>(
+  records: T[],
+  providerSessionId: string
+): CodexSessionInheritanceBoundary {
+  const fallbackThreadId = ensureText(providerSessionId).trim();
+  let currentThreadId = fallbackThreadId;
+  let inheritedParentThreadId: string | null = null;
+  let startLineNumber: number | null = null;
+
+  for (const record of records) {
+    if (record.data.type !== "session_meta") {
+      continue;
+    }
+
+    const payload = ((record.data.payload ?? {}) as Record<string, unknown>);
+    const metaId = ensureText(payload.id).trim();
+    const threadId = looksLikeCodexThreadId(metaId) ? metaId : fallbackThreadId || metaId;
+    const parentRelation = resolveCodexParentThreadRelation(payload);
+    const isSubagent =
+      parentRelation.kind === "spawn"
+      || ensureText(payload.thread_source).trim() === "subagent"
+      || ensureText(payload.agent_nickname).trim().length > 0
+      || ensureText(payload.agent_role).trim().length > 0;
+
+    if (
+      isSubagent
+      && parentRelation.parentThreadId
+      && (!fallbackThreadId || threadId === fallbackThreadId)
+    ) {
+      currentThreadId = threadId;
+      inheritedParentThreadId = parentRelation.parentThreadId;
+      continue;
+    }
+
+    if (inheritedParentThreadId && threadId === inheritedParentThreadId) {
+      continue;
+    }
+
+    if (inheritedParentThreadId && threadId === currentThreadId && startLineNumber === null) {
+      startLineNumber = record.lineNumber;
+    }
+  }
+
+  if (inheritedParentThreadId && startLineNumber === null) {
+    startLineNumber = findFirstOwnCodexSubagentTurnLineNumber(
+      records,
+      currentThreadId,
+      inheritedParentThreadId
+    );
+  }
+
+  return {
+    threadId: currentThreadId,
+    inheritedParentThreadId,
+    startLineNumber
+  };
+}
+
+function findFirstOwnCodexSubagentTurnLineNumber<T extends Pick<RawJsonLine, "lineNumber" | "data">>(
+  records: T[],
+  threadId: string,
+  inheritedParentThreadId: string
+): number | null {
+  for (const record of records) {
+    if (record.data.type === "turn_context") {
+      const payload = ((record.data.payload ?? {}) as Record<string, unknown>);
+      const turnId = ensureText(payload.turn_id).trim();
+
+      if (isCodexOwnTurnId(turnId, threadId, inheritedParentThreadId)) {
+        return record.lineNumber;
+      }
+
+      continue;
+    }
+
+    if (record.data.type !== "event_msg") {
+      continue;
+    }
+
+    const payload = ((record.data.payload ?? {}) as Record<string, unknown>);
+    const eventType = ensureText(payload.type).trim();
+    const turnId = ensureText(payload.turn_id).trim();
+
+    if (
+      eventType === "task_started"
+      && turnId.length > 0
+      && isCodexOwnTurnId(turnId, threadId, inheritedParentThreadId)
+    ) {
+      return record.lineNumber;
+    }
+  }
+
+  return null;
+}
+
+function isCodexOwnTurnId(
+  turnId: string,
+  threadId: string,
+  inheritedParentThreadId: string
+): boolean {
+  if (!looksLikeCodexThreadId(turnId)) {
+    return false;
+  }
+
+  if (turnId === inheritedParentThreadId) {
+    return false;
+  }
+
+  if (looksLikeCodexThreadId(threadId)) {
+    // Codex 的 thread id / turn id 都是 UUIDv7。子 Agent 自己的 turn 会在子 thread 创建之后；
+    // fork 继承来的父会话 turn 一定早于子 thread。这里用时间有序 ID 切掉继承前缀。
+    return turnId.localeCompare(threadId) >= 0;
+  }
+
+  return !turnId.startsWith(inheritedParentThreadId.slice(0, 8));
+}
+
+function shouldKeepCodexRecordBeforeSubagentBoundary<T extends Pick<RawJsonLine, "data">>(
+  record: T,
+  threadId: string
+): boolean {
+  if (record.data.type !== "session_meta") {
+    return false;
+  }
+
+  const payload = ((record.data.payload ?? {}) as Record<string, unknown>);
+  const metaId = ensureText(payload.id).trim();
+
+  return metaId === threadId;
+}
+
 function buildRecentHistoryPage(
   messages: NormalizedMessage[],
   totalMessageCount: number,
@@ -2900,6 +3244,15 @@ function readNonNegativeInteger(value: unknown): number | null {
   return null;
 }
 
+function readFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Number.parseFloat(ensureText(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function clampUsageRatio(promptTokens: number, contextWindow: number): number {
   if (contextWindow <= 0) {
     return 0;
@@ -2992,6 +3345,445 @@ function resolveCodexParentThreadRelation(payload: Record<string, unknown>): {
   };
 }
 
+function normalizeCodexAppServerThreadMetadata(
+  thread: Record<string, unknown>
+): (CodexThreadMetadata & { threadId: string }) | null {
+  const threadId = ensureText(thread.id).trim();
+
+  if (!looksLikeCodexThreadId(threadId)) {
+    return null;
+  }
+
+  const source = thread.source as unknown;
+  const sourceRecord = typeof source === "object" && source !== null
+    ? (source as Record<string, unknown>)
+    : null;
+  const subAgentSource =
+    typeof sourceRecord?.subAgent === "object" && sourceRecord.subAgent !== null
+      ? (sourceRecord.subAgent as Record<string, unknown>)
+      : typeof sourceRecord?.subagent === "object" && sourceRecord.subagent !== null
+        ? (sourceRecord.subagent as Record<string, unknown>)
+        : null;
+  const threadSpawn =
+    typeof subAgentSource?.thread_spawn === "object" && subAgentSource.thread_spawn !== null
+      ? (subAgentSource.thread_spawn as Record<string, unknown>)
+      : typeof subAgentSource?.threadSpawn === "object" && subAgentSource.threadSpawn !== null
+        ? (subAgentSource.threadSpawn as Record<string, unknown>)
+        : null;
+  const spawnParentThreadId =
+    ensureText(threadSpawn?.parent_thread_id).trim()
+    || ensureText(threadSpawn?.parentThreadId).trim();
+  const forkedFromId = ensureText(thread.forkedFromId ?? thread.forked_from_id).trim();
+  const parentProviderSessionId = spawnParentThreadId || forkedFromId || null;
+  const agentNickname =
+    ensureText(thread.agentNickname ?? thread.agent_nickname).trim()
+    || ensureText(threadSpawn?.agent_nickname ?? threadSpawn?.agentNickname).trim()
+    || null;
+  const agentRole =
+    ensureText(thread.agentRole ?? thread.agent_role).trim()
+    || ensureText(threadSpawn?.agent_role ?? threadSpawn?.agentRole).trim()
+    || null;
+  const createdAtSeconds = readFiniteNumber(thread.createdAt ?? thread.created_at);
+  const updatedAtSeconds = readFiniteNumber(thread.updatedAt ?? thread.updated_at);
+  const preview = ensureText(thread.preview).trim();
+  const name = normalizeCodexIndexedTitle(ensureText(thread.name));
+  const path = ensureText(thread.path).trim();
+  const cwd = ensureText(thread.cwd).trim();
+  const activityObservation = resolveCodexThreadActivityObservation(thread);
+
+  return {
+    threadId,
+    title: name || null,
+    cwd: cwd || null,
+    createdAtMs: createdAtSeconds !== null ? createdAtSeconds * 1000 : null,
+    updatedAtMs: updatedAtSeconds !== null ? updatedAtSeconds * 1000 : null,
+    firstUserMessage: preview || null,
+    agentNickname,
+    agentRole,
+    parentProviderSessionId,
+    parentRelationKind:
+      spawnParentThreadId.length > 0
+        ? "spawn"
+        : forkedFromId.length > 0
+          ? "fork"
+          : null,
+    isArchived: null,
+    rolloutPath: path || null,
+    activityObservation
+  };
+}
+
+function resolveCodexThreadActivityObservation(
+  thread: Record<string, unknown>
+): ProviderSessionActivityObservation | null {
+  const direct = resolveCodexThreadStatusActivityObservation(thread);
+  const threadId = ensureText(thread.id).trim();
+  const parent = resolveLatestCodexCollabAgentActivityObservation(thread, threadId);
+
+  if (!direct) {
+    return parent;
+  }
+
+  if (!parent) {
+    return direct;
+  }
+
+  if (
+    isTerminalProviderSessionObservation(parent)
+    && (direct.runningState === "starting" || direct.runningState === "running")
+  ) {
+    return parent;
+  }
+
+  const directAt = direct.observedAt ?? "";
+  const parentAt = parent.observedAt ?? "";
+
+  if (parentAt && (!directAt || parentAt.localeCompare(directAt) >= 0)) {
+    return parent;
+  }
+
+  return direct;
+}
+
+function resolveCodexJsonlActivityObservation(
+  records: Array<Pick<RawJsonLine, "data">>
+): ProviderSessionActivityObservation | null {
+  let latest: ProviderSessionActivityObservation | null = null;
+
+  for (const record of records) {
+    if (record.data.type !== "event_msg") {
+      continue;
+    }
+
+    const payload = (record.data.payload ?? {}) as Record<string, unknown>;
+    const eventType = ensureText(payload.type).trim();
+    const turnId = ensureText(payload.turn_id).trim() || null;
+    const observedAt =
+      (
+        codexSecondsToIso(payload.completed_at ?? payload.completedAt)
+        ?? codexSecondsToIso(payload.started_at ?? payload.startedAt)
+        ?? ensureText(record.data.timestamp).trim()
+      )
+      || null;
+    let observation: ProviderSessionActivityObservation | null = null;
+
+    if (eventType === "task_started") {
+      observation = {
+        runningState: "running",
+        confidence: "strong",
+        observedAt,
+        detail: null,
+        errorCode: null,
+        runId: turnId
+      };
+    } else if (eventType === "task_complete") {
+      observation = {
+        runningState: "completed",
+        confidence: "strong",
+        observedAt,
+        detail: null,
+        errorCode: null,
+        runId: turnId
+      };
+    } else if (eventType === "task_failed") {
+      observation = {
+        runningState: "failed",
+        confidence: "strong",
+        observedAt,
+        detail:
+          ensureText(payload.error).trim()
+          || ensureText(payload.message).trim()
+          || "Codex task failed",
+        errorCode: "CODEX_TASK_FAILED",
+        runId: turnId
+      };
+    }
+
+    if (!observation) {
+      continue;
+    }
+
+    if (!latest || compareNullableIso(observation.observedAt, latest.observedAt) >= 0) {
+      latest = observation;
+    }
+  }
+
+  return latest;
+}
+
+function mergeCodexActivityObservation(
+  primary: ProviderSessionActivityObservation | null,
+  fallback: ProviderSessionActivityObservation | null
+): ProviderSessionActivityObservation | null {
+  if (!primary) {
+    return fallback;
+  }
+
+  if (!fallback) {
+    return primary;
+  }
+
+  if (isTerminalProviderSessionObservation(primary)) {
+    return primary;
+  }
+
+  if (isTerminalProviderSessionObservation(fallback)) {
+    return fallback;
+  }
+
+  if (primary.runningState === "starting" || primary.runningState === "running") {
+    return primary;
+  }
+
+  if (fallback.runningState === "starting" || fallback.runningState === "running") {
+    return fallback;
+  }
+
+  const primaryAt = primary.observedAt ?? "";
+  const fallbackAt = fallback.observedAt ?? "";
+
+  return fallbackAt && (!primaryAt || fallbackAt.localeCompare(primaryAt) > 0)
+    ? fallback
+    : primary;
+}
+
+function isTerminalProviderSessionObservation(
+  observation: ProviderSessionActivityObservation
+): boolean {
+  return observation.runningState === "completed"
+    || observation.runningState === "interrupted"
+    || observation.runningState === "failed";
+}
+
+function resolveCodexThreadStatusActivityObservation(
+  thread: Record<string, unknown>
+): ProviderSessionActivityObservation | null {
+  const status = asCodexRecord(thread.status);
+  const statusType = ensureText(status?.type).trim();
+  const observedAt = codexSecondsToIso(thread.updatedAt ?? thread.updated_at);
+
+  if (statusType === "active") {
+    return {
+      runningState: "running",
+      confidence: "authoritative",
+      observedAt,
+      detail: null,
+      errorCode: null,
+      runId: null
+    };
+  }
+
+  if (statusType === "idle" || statusType === "notLoaded") {
+    return {
+      runningState: "idle",
+      confidence: "strong",
+      observedAt,
+      detail: null,
+      errorCode: null,
+      runId: null
+    };
+  }
+
+  if (statusType === "systemError") {
+    return {
+      runningState: "failed",
+      confidence: "strong",
+      observedAt,
+      detail: "Codex app-server reported a system error",
+      errorCode: "CODEX_APP_SERVER_SYSTEM_ERROR",
+      runId: null
+    };
+  }
+
+  return null;
+}
+
+function resolveLatestCodexCollabAgentActivityObservation(
+  thread: Record<string, unknown>,
+  threadId: string
+): ProviderSessionActivityObservation | null {
+  if (!threadId) {
+    return null;
+  }
+
+  let latest: ProviderSessionActivityObservation | null = null;
+
+  for (const turn of collectCodexThreadTurns(thread)) {
+    const turnRecord = asCodexRecord(turn);
+    const observedAt =
+      codexSecondsToIso(turnRecord?.completedAt ?? turnRecord?.completed_at)
+      ?? codexSecondsToIso(turnRecord?.startedAt ?? turnRecord?.started_at)
+      ?? codexSecondsToIso(thread.updatedAt ?? thread.updated_at);
+    const runId = ensureText(turnRecord?.id).trim() || null;
+    const items = Array.isArray(turnRecord?.items) ? turnRecord.items : [];
+
+    for (const item of items) {
+      const itemRecord = asCodexRecord(item);
+
+      if (!itemRecord || ensureText(itemRecord.type).trim() !== "collabAgentToolCall") {
+        continue;
+      }
+
+      const receivers = Array.isArray(itemRecord.receiverThreadIds)
+        ? itemRecord.receiverThreadIds.map((value) => ensureText(value).trim())
+        : [];
+
+      if (!receivers.includes(threadId)) {
+        continue;
+      }
+
+      const agentsStates = asCodexRecord(itemRecord.agentsStates);
+      const agentState = asCodexRecord(agentsStates?.[threadId]);
+      const agentStatus = ensureText(agentState?.status).trim();
+      const observation = mapCodexCollabAgentStatusToActivityObservation({
+        status: agentStatus,
+        message: ensureText(agentState?.message).trim() || null,
+        tool: ensureText(itemRecord.tool).trim(),
+        callStatus: ensureText(itemRecord.status).trim(),
+        observedAt,
+        runId
+      });
+
+      if (!observation) {
+        continue;
+      }
+
+      if (!latest || compareNullableIso(observation.observedAt, latest.observedAt) >= 0) {
+        latest = observation;
+      }
+    }
+  }
+
+  return latest;
+}
+
+function mapCodexCollabAgentStatusToActivityObservation(input: {
+  status: string;
+  message: string | null;
+  tool: string;
+  callStatus: string;
+  observedAt: string | null;
+  runId: string | null;
+}): ProviderSessionActivityObservation | null {
+  const terminalDetail = input.message ?? null;
+
+  switch (input.status) {
+    case "pendingInit":
+      return {
+        runningState: "starting",
+        confidence: "authoritative",
+        observedAt: input.observedAt,
+        detail: input.tool ? `Codex sub-agent ${input.tool} is pending` : null,
+        errorCode: null,
+        runId: input.runId
+      };
+    case "running":
+      return {
+        runningState: "running",
+        confidence: "authoritative",
+        observedAt: input.observedAt,
+        detail: null,
+        errorCode: null,
+        runId: input.runId
+      };
+    case "completed":
+      return {
+        runningState: "completed",
+        confidence: "strong",
+        observedAt: input.observedAt,
+        detail: terminalDetail,
+        errorCode: null,
+        runId: input.runId
+      };
+    case "interrupted":
+      return {
+        runningState: "interrupted",
+        confidence: "strong",
+        observedAt: input.observedAt,
+        detail: terminalDetail,
+        errorCode: null,
+        runId: input.runId
+      };
+    case "errored":
+      return {
+        runningState: "failed",
+        confidence: "strong",
+        observedAt: input.observedAt,
+        detail: terminalDetail ?? "Codex sub-agent failed",
+        errorCode: "CODEX_SUBAGENT_FAILED",
+        runId: input.runId
+      };
+    case "shutdown":
+    case "notFound":
+      return {
+        runningState: "completed",
+        confidence: "strong",
+        observedAt: input.observedAt,
+        detail: terminalDetail,
+        errorCode: null,
+        runId: input.runId
+      };
+    default:
+      if (input.tool === "closeAgent" && input.callStatus === "completed") {
+        return {
+          runningState: "completed",
+          confidence: "strong",
+          observedAt: input.observedAt,
+          detail: terminalDetail,
+          errorCode: null,
+          runId: input.runId
+        };
+      }
+
+      return null;
+  }
+}
+
+function collectCodexThreadTurns(thread: Record<string, unknown>): unknown[] {
+  if (Array.isArray(thread.turns)) {
+    return thread.turns;
+  }
+
+  const nestedThread = asCodexRecord(thread.thread);
+
+  if (Array.isArray(nestedThread?.turns)) {
+    return nestedThread.turns;
+  }
+
+  return [];
+}
+
+function asCodexRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function codexSecondsToIso(value: unknown): string | null {
+  const seconds = readFiniteNumber(value);
+
+  if (seconds === null) {
+    return null;
+  }
+
+  const date = new Date(seconds * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function compareNullableIso(left: string | null, right: string | null): number {
+  if (left === right) {
+    return 0;
+  }
+
+  if (!left) {
+    return -1;
+  }
+
+  if (!right) {
+    return 1;
+  }
+
+  return left.localeCompare(right);
+}
+
 function toTimestampMs(value: unknown): number | null {
   const timestampMs = Date.parse(ensureText(value).trim());
   return Number.isFinite(timestampMs) ? timestampMs : null;
@@ -3037,6 +3829,22 @@ function isCodexSubagentThread(
   return Boolean(
     relation?.kind === "spawn" || metadata?.agentRole || metadata?.agentNickname
   );
+}
+
+function resolveCodexMetadataTitle(metadata: CodexThreadMetadata | null | undefined): string | null {
+  const title = normalizeCodexIndexedTitle(metadata?.title);
+
+  if (!title) {
+    return null;
+  }
+
+  const firstUserMessage = normalizeCodexIndexedTitle(metadata?.firstUserMessage);
+
+  if (firstUserMessage && title === firstUserMessage) {
+    return null;
+  }
+
+  return title;
 }
 
 function buildCodexSubagentLabel(metadata: CodexThreadMetadata | null | undefined): string | null {

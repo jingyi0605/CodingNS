@@ -784,6 +784,78 @@ test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread
   }
 });
 
+test("CodexAdapter 改名时会优先调用 Codex 官方 thread/name/set", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-set-"));
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const sessionFile = join(sessionDir, "session.jsonl");
+  const threadId = "019ea636-3698-7332-a898-a147969b36aa";
+  const calls = [];
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: "/Users/jackson/Code/CodingNS"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "请使用子Agent写一个笑话，保存到输出物文件夹"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {
+          calls.push("initialize");
+        },
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread() {
+          throw new Error("SHOULD_NOT_READ");
+        },
+        async setThreadName(providerSessionId, name) {
+          calls.push(`set:${providerSessionId}:${name}`);
+        },
+        close() {
+          calls.push("close");
+        }
+      })
+    });
+
+    const nextTitle = await adapter.renameSessionTitle(threadId, sessionFile, "子 Agent 笑话输出");
+
+    assert.equal(nextTitle, "子 Agent 笑话输出");
+    assert.deepEqual(calls, [
+      "initialize",
+      `set:${threadId}:子 Agent 笑话输出`,
+      "close"
+    ]);
+    assert.match(
+      readFileSync(join(tempDir, "session_index.jsonl"), "utf8"),
+      /子 Agent 笑话输出/
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 读取标题时应优先复用 discovery 摘要缓存，避免重复解析整份会话", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-cache-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
@@ -3103,6 +3175,796 @@ test("CodexAdapter 会优先使用 session_meta 里的 parent_thread_id 识别�
     assert.equal(childSession?.parentProviderSessionId, parentThreadId);
     assert.equal(childSession?.isSubagent, true);
     assert.equal(childSession?.subagentLabel, "worker · Wegener");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 读取 Codex 子 Agent 时不会把昵称当标题，也不会保留继承的父会话消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-inherited-history-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const parentThreadId = "019ea4ef-a305-7f20-8da5-0b4dcc47ea29";
+  const childThreadId = "019ea5e8-05c2-77a1-977e-90a6df8a44a7";
+  const parentTurnId = "019ea4ef-a386-7c71-a7d3-35b97dd841b9";
+  const childTurnId = "019ea5e8-06c2-7ae3-bb16-891a49a43bc9";
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+  const inheritedParentPrompt =
+    "https://github.com/certd/certd\n请分析以上证书自动化部署的开源项目";
+  const ownPrompt = "继续补齐未完成 Spec。你只负责 028-Vue完整业务控制台";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.228Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            forked_from_id: parentThreadId,
+            cwd: workspacePath,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  depth: 1,
+                  agent_nickname: "Einstein",
+                  agent_role: null
+                }
+              }
+            },
+            thread_source: "subagent",
+            agent_nickname: "Einstein"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:48.805Z",
+          type: "session_meta",
+          payload: {
+            id: parentThreadId,
+            cwd: workspacePath,
+            source: "vscode"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:48.806Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: parentTurnId
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:49.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: inheritedParentPrompt
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:54:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "父会话回答"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.300Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: childTurnId
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.301Z",
+          type: "turn_context",
+          payload: {
+            turn_id: childTurnId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.302Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: ownPrompt
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "我先检查模板结构。"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      childThreadId,
+      inheritedParentPrompt,
+      workspacePath,
+      Math.floor(Date.parse("2026-06-08T06:25:07.228Z") / 1000),
+      0,
+      inheritedParentPrompt,
+      "Einstein",
+      null,
+      childSessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
+
+    assert.ok(childSession);
+    assert.equal(childSession.title, ownPrompt.slice(0, 48));
+    assert.equal(childSession.subagentLabel, "Einstein");
+
+    const page = await adapter.readSessionHistory(childThreadId, childSessionFile, null, 50);
+
+    assert.deepEqual(
+      page.messages.map((message) => message.content),
+      [ownPrompt, "我先检查模板结构。"]
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会使用 app-server Thread.name 作为子 Agent 独立会话名，而不是昵称", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-appserver-title-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const parentThreadId = "019ea4ef-a305-7f20-8da5-0b4dcc47ea29";
+  const childThreadId = "019ea5e8-05c2-77a1-977e-90a6df8a44a7";
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+  const calls = [];
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.228Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            forked_from_id: parentThreadId,
+            cwd: workspacePath,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  depth: 1,
+                  agent_nickname: "Einstein",
+                  agent_role: null
+                }
+              }
+            },
+            thread_source: "subagent",
+            agent_nickname: "Einstein"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "子 Agent 自己的任务"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {
+          calls.push("initialize");
+        },
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread() {
+          throw new Error("SHOULD_NOT_READ");
+        },
+        async listThreads(input) {
+          calls.push(`list:${input.workspacePath}`);
+          return [
+            {
+              id: childThreadId,
+              sessionId: childThreadId,
+              forkedFromId: parentThreadId,
+              cwd: workspacePath,
+              name: "补齐 Vue 控制台 Spec",
+              preview: "父会话第一条消息不该当标题",
+              path: childSessionFile,
+              createdAt: Math.floor(Date.parse("2026-06-08T06:25:07.228Z") / 1000),
+              source: {
+                subAgent: {
+                  thread_spawn: {
+                    parent_thread_id: parentThreadId,
+                    depth: 1,
+                    agent_nickname: "Einstein",
+                    agent_role: null
+                  }
+                }
+              },
+              agentNickname: "Einstein",
+              agentRole: null
+            }
+          ];
+        },
+        close() {
+          calls.push("close");
+        }
+      })
+    });
+
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
+
+    assert.ok(childSession);
+    assert.equal(childSession.title, "补齐 Vue 控制台 Spec");
+    assert.equal(childSession.parentProviderSessionId, parentThreadId);
+    assert.equal(childSession.isSubagent, true);
+    assert.equal(childSession.subagentLabel, "Einstein");
+    assert.deepEqual(calls, ["initialize", `list:${workspacePath}`, "close"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会使用 app-server Thread.name 修正父会话里缓存的第一句话标题", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-parent-appserver-title-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const parentThreadId = "019ea4ef-a305-7f20-8da5-0b4dcc47ea29";
+  const parentSessionFile = join(sessionDir, `rollout-${parentThreadId}.jsonl`);
+  const firstPrompt = "https://github.com/certd/certd 请分析这个项目";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      parentSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:48.805Z",
+          type: "session_meta",
+          payload: {
+            id: parentThreadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:49.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: firstPrompt
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const stats = statSync(parentSessionFile);
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {},
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread() {
+          throw new Error("SHOULD_NOT_READ");
+        },
+        async listThreads(input) {
+          assert.equal(input.workspacePath, workspacePath);
+          return [
+            {
+              id: parentThreadId,
+              sessionId: parentThreadId,
+              cwd: workspacePath,
+              name: "certd 开源项目分析",
+              preview: firstPrompt,
+              path: parentSessionFile,
+              createdAt: Date.parse("2026-06-08T01:53:48.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T01:54:00.000Z") / 1000,
+              status: {
+                type: "idle"
+              },
+              source: "vscode"
+            }
+          ];
+        },
+        close() {}
+      })
+    });
+
+    const sessions = await adapter.detectSessions(workspacePath, {
+      knownSessions: [
+        {
+          provider: "codex",
+          providerSessionId: parentThreadId,
+          title: firstPrompt,
+          workspacePath,
+          rawStoreRef: parentSessionFile,
+          lastMessageAt: "2026-06-08T01:53:49.000Z",
+          messageCount: 1,
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        }
+      ]
+    });
+    const parentSession = sessions.find((session) => session.providerSessionId === parentThreadId);
+
+    assert.ok(parentSession);
+    assert.equal(parentSession.title, "certd 开源项目分析");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会从 app-server Thread.status 读取 Codex 会话运行状态", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-thread-status-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const threadId = "019ea5e8-05c2-77a1-977e-90a6df8a44a7";
+  const sessionFile = join(sessionDir, `rollout-${threadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.228Z",
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "检查当前状态"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {},
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread() {
+          throw new Error("SHOULD_NOT_READ");
+        },
+        async listThreads() {
+          return [
+            {
+              id: threadId,
+              sessionId: threadId,
+              cwd: workspacePath,
+              name: "检查当前状态",
+              preview: "检查当前状态",
+              path: sessionFile,
+              createdAt: Date.parse("2026-06-08T06:25:07.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T06:25:09.000Z") / 1000,
+              status: {
+                type: "active",
+                activeFlags: []
+              },
+              source: "vscode"
+            }
+          ];
+        },
+        close() {}
+      })
+    });
+
+    const sessions = await adapter.detectSessions(workspacePath);
+    const session = sessions.find((item) => item.providerSessionId === threadId);
+
+    assert.ok(session);
+    assert.deepEqual(session.activityObservation, {
+      runningState: "running",
+      confidence: "authoritative",
+      observedAt: "2026-06-08T06:25:09.000Z",
+      detail: null,
+      errorCode: null,
+      runId: null
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会用父线程 collabAgentToolCall 状态覆盖子 Agent 运行状态", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-collab-status-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const parentThreadId = "019ea4ef-a305-7f20-8da5-0b4dcc47ea29";
+  const childThreadId = "019ea5e8-05c2-77a1-977e-90a6df8a44a7";
+  const parentSessionFile = join(sessionDir, `rollout-${parentThreadId}.jsonl`);
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      parentSessionFile,
+      JSON.stringify({
+        timestamp: "2026-06-08T01:53:48.805Z",
+        type: "session_meta",
+        payload: {
+          id: parentThreadId,
+          cwd: workspacePath
+        }
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:07.228Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            forked_from_id: parentThreadId,
+            cwd: workspacePath,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  agent_nickname: "Einstein"
+                }
+              }
+            },
+            thread_source: "subagent",
+            agent_nickname: "Einstein"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T06:25:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "子 Agent 自己的任务"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {},
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread(providerSessionId) {
+          assert.equal(providerSessionId, parentThreadId);
+          return {
+            thread: {
+              id: parentThreadId,
+              turns: [
+                {
+                  id: "019ea5e8-1000-7000-9000-000000000001",
+                  startedAt: Date.parse("2026-06-08T06:26:00.000Z") / 1000,
+                  completedAt: Date.parse("2026-06-08T06:26:02.000Z") / 1000,
+                  items: [
+                    {
+                      type: "collabAgentToolCall",
+                      id: "call-close-agent",
+                      tool: "closeAgent",
+                      status: "completed",
+                      senderThreadId: parentThreadId,
+                      receiverThreadIds: [childThreadId],
+                      agentsStates: {
+                        [childThreadId]: {
+                          status: "shutdown",
+                          message: null
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          };
+        },
+        async listThreads() {
+          return [
+            {
+              id: parentThreadId,
+              sessionId: parentThreadId,
+              cwd: workspacePath,
+              name: "父会话",
+              preview: "父会话",
+              path: parentSessionFile,
+              createdAt: Date.parse("2026-06-08T01:53:48.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T06:26:02.000Z") / 1000,
+              status: {
+                type: "idle"
+              },
+              source: "vscode"
+            },
+            {
+              id: childThreadId,
+              sessionId: childThreadId,
+              forkedFromId: parentThreadId,
+              cwd: workspacePath,
+              name: "子 Agent 自己的任务",
+              preview: "父会话第一条消息不该当标题",
+              path: childSessionFile,
+              createdAt: Date.parse("2026-06-08T06:25:07.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T06:25:09.000Z") / 1000,
+              status: {
+                type: "active",
+                activeFlags: []
+              },
+              source: {
+                subAgent: {
+                  thread_spawn: {
+                    parent_thread_id: parentThreadId,
+                    agent_nickname: "Einstein"
+                  }
+                }
+              },
+              agentNickname: "Einstein"
+            }
+          ];
+        },
+        close() {}
+      })
+    });
+
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((item) => item.providerSessionId === childThreadId);
+
+    assert.ok(childSession);
+    assert.equal(childSession.isSubagent, true);
+    assert.equal(childSession.activityObservation?.runningState, "completed");
+    assert.equal(childSession.activityObservation?.confidence, "strong");
+    assert.equal(childSession.activityObservation?.observedAt, "2026-06-08T06:26:02.000Z");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会用子 Agent JSONL 的 task_started 推断运行中状态", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-jsonl-running-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const parentThreadId = "019ea661-e1a1-7fc2-b33e-216c42289e9b";
+  const childThreadId = "019ea663-88f0-7b22-8f11-712df2017784";
+  const childTurnId = "019ea663-89d9-7f71-8219-e06449e0c916";
+  const parentSessionFile = join(sessionDir, `rollout-${parentThreadId}.jsonl`);
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      parentSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T08:38:28.000Z",
+          type: "session_meta",
+          payload: {
+            id: parentThreadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T08:40:01.516Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "spawn_agent",
+            call_id: "call_spawn",
+            arguments: JSON.stringify({
+              agent_type: "worker",
+              message: "请写一个简短笑话"
+            })
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T08:40:01.964Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call_spawn",
+            output: JSON.stringify({
+              agent_id: childThreadId,
+              nickname: "Arendt"
+            })
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T08:40:01.755Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            forked_from_id: parentThreadId,
+            cwd: workspacePath,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  agent_nickname: "Arendt",
+                  agent_role: "worker"
+                }
+              }
+            },
+            thread_source: "subagent",
+            agent_nickname: "Arendt",
+            agent_role: "worker"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T08:40:01.759Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: childTurnId,
+            started_at: Date.parse("2026-06-08T08:40:01.000Z") / 1000
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T08:40:16.756Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "请写一个简短笑话"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      threadControlTransportFactory: () => ({
+        async initialize() {},
+        async archiveThread() {
+          throw new Error("SHOULD_NOT_ARCHIVE");
+        },
+        async unarchiveThread() {
+          throw new Error("SHOULD_NOT_UNARCHIVE");
+        },
+        async readThread(providerSessionId) {
+          assert.equal(providerSessionId, parentThreadId);
+          return {
+            thread: {
+              id: parentThreadId,
+              turns: []
+            }
+          };
+        },
+        async listThreads() {
+          return [
+            {
+              id: parentThreadId,
+              sessionId: parentThreadId,
+              cwd: workspacePath,
+              name: "父会话",
+              preview: "父会话",
+              path: parentSessionFile,
+              createdAt: Date.parse("2026-06-08T08:38:28.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T08:40:01.000Z") / 1000,
+              status: {
+                type: "active"
+              }
+            },
+            {
+              id: childThreadId,
+              sessionId: childThreadId,
+              forkedFromId: parentThreadId,
+              cwd: workspacePath,
+              name: "请写一个简短笑话",
+              preview: "请写一个简短笑话",
+              path: childSessionFile,
+              createdAt: Date.parse("2026-06-08T08:40:01.000Z") / 1000,
+              updatedAt: Date.parse("2026-06-08T08:40:01.000Z") / 1000,
+              status: {
+                type: "idle"
+              },
+              source: {
+                subAgent: {
+                  thread_spawn: {
+                    parent_thread_id: parentThreadId,
+                    agent_nickname: "Arendt",
+                    agent_role: "worker"
+                  }
+                }
+              },
+              agentNickname: "Arendt",
+              agentRole: "worker"
+            }
+          ];
+        },
+        close() {}
+      })
+    });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((item) => item.providerSessionId === childThreadId);
+
+    assert.ok(childSession);
+    assert.equal(childSession.isSubagent, true);
+    assert.equal(childSession.subagentLabel, "worker · Arendt");
+    assert.deepEqual(childSession.activityObservation, {
+      runningState: "running",
+      confidence: "strong",
+      observedAt: "2026-06-08T08:40:01.000Z",
+      detail: null,
+      errorCode: null,
+      runId: childTurnId
+    });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
