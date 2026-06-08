@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { basename, dirname, join, resolve } from "node:path";
@@ -73,6 +73,7 @@ interface ActiveTurnContext {
   rawStoreRef: string;
   homeDir: string | null;
   sequence: number;
+  lifecycle: CodexTurnLifecycle;
   toolNameByCallId: Map<string, string>;
   stableMessageRefByIdentity: Map<string, CodexStableMessageRef>;
   lastSignatureByIdentity: Map<string, string>;
@@ -109,10 +110,17 @@ interface CodexRuntimeOptions {
   }) => Promise<unknown>;
 }
 
+interface CodexTurnLifecycle {
+  keepTransportAliveAfterTurn: boolean;
+}
+
 const CODEX_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_PERF_DEBUG?.trim() ?? ""
 );
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 20_000;
+const CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS = 6 * 60 * 60 * 1000;
+const CODEX_SPAWN_AGENT_RAW_SCAN_BYTES = 2 * 1024 * 1024;
+const CODEX_SPAWN_AGENT_POLL_INTERVAL_MS = 2_000;
 
 function logCodexRuntimeStep(
   scope: string,
@@ -126,6 +134,244 @@ function logCodexRuntimeStep(
   const durationMs = Math.round(performance.now() - startedAtMs);
   const suffix = formatCodexRuntimeDebugDetail(detail);
   console.info(`[perf][codex-runtime] ${scope} ${durationMs}ms${suffix ? ` ${suffix}` : ""}`);
+}
+
+function closeCodexTransportAfterTurn(
+  transport: CodexAppServerTransport,
+  lifecycle: CodexTurnLifecycle,
+  rawStoreRef: string
+): void {
+  if (!shouldKeepCodexTransportAliveAfterTurn(lifecycle, rawStoreRef)) {
+    transport.close();
+    return;
+  }
+
+  // 子 Agent 依附在 Codex app-server 进程上。父 turn 完成后立即 close
+  // 会把刚 spawn 出来的子 Agent 一起 SIGTERM 掉。这里给一个足够长的
+  // 宽限期，让子 Agent 自己跑完；宽限期到了再兜底回收，避免进程永久泄漏。
+  const timer = setTimeout(() => {
+    transport.close();
+  }, CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS);
+
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+function shouldKeepCodexTransportAliveAfterTurn(
+  lifecycle: CodexTurnLifecycle,
+  rawStoreRef: string
+): boolean {
+  return lifecycle.keepTransportAliveAfterTurn || codexRawStoreContainsSpawnAgentCall(rawStoreRef);
+}
+
+function codexRawStoreContainsSpawnAgentCall(rawStoreRef: string): boolean {
+  const text = readCodexRawStoreTail(rawStoreRef);
+
+  if (!text || !text.includes("spawn_agent")) {
+    return false;
+  }
+
+  for (const line of text.split("\n")) {
+    if (!line.includes("spawn_agent")) {
+      continue;
+    }
+
+    try {
+      const record = toRecord(JSON.parse(line));
+      const payload = toRecord(readProp(record, "payload"));
+
+      if (
+        isCodexSpawnAgentItem(record)
+        || isCodexSpawnAgentItem(payload)
+        || isCodexSpawnAgentItem(toRecord(readProp(record, "item")))
+        || isCodexSpawnAgentItem(toRecord(readProp(payload, "item")))
+      ) {
+        return true;
+      }
+    } catch {
+      // 单行坏掉不影响判断，继续看下一行。
+    }
+  }
+
+  return false;
+}
+
+function extractCodexSpawnedAgentIdsFromRawStore(rawStoreRef: string): string[] {
+  const text = readCodexRawStoreTail(rawStoreRef);
+
+  if (!text || !text.includes("spawn_agent")) {
+    return [];
+  }
+
+  const spawnCallIds = new Set<string>();
+  const agentIds = new Set<string>();
+
+  for (const line of text.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      const record = toRecord(JSON.parse(line));
+      const payload = toRecord(readProp(record, "payload"));
+
+      if (!payload) {
+        continue;
+      }
+
+      if (isCodexSpawnAgentItem(payload)) {
+        const callId = ensureText(readProp(payload, "call_id")).trim();
+
+        if (callId) {
+          spawnCallIds.add(callId);
+        }
+        continue;
+      }
+
+      if (ensureText(readProp(payload, "type")).trim() !== "function_call_output") {
+        continue;
+      }
+
+      const callId = ensureText(readProp(payload, "call_id")).trim();
+
+      if (!callId || !spawnCallIds.has(callId)) {
+        continue;
+      }
+
+      const parsedOutput = parseStructuredJson(ensureText(readProp(payload, "output")));
+      const agentId = ensureText(readProp(parsedOutput, "agent_id")).trim();
+
+      if (looksLikeCodexThreadId(agentId)) {
+        agentIds.add(agentId);
+      }
+    } catch {
+      // 单行坏掉不影响判断，继续看下一行。
+    }
+  }
+
+  return [...agentIds];
+}
+
+function isCodexRawStoreTerminal(rawStoreRef: string): boolean {
+  const text = readCodexRawStoreTail(rawStoreRef);
+
+  if (!text) {
+    return false;
+  }
+
+  for (const line of text.split("\n")) {
+    if (
+      !line.includes("task_complete")
+      && !line.includes("turn_aborted")
+      && !line.includes("turn_failed")
+    ) {
+      continue;
+    }
+
+    try {
+      const record = toRecord(JSON.parse(line));
+      const payload = toRecord(readProp(record, "payload"));
+      const recordType = ensureText(readProp(record, "type")).trim();
+      const payloadType = ensureText(readProp(payload, "type")).trim();
+
+      if (
+        (recordType === "event_msg" && payloadType === "task_complete")
+        || (recordType === "event_msg" && payloadType === "turn_aborted")
+        || (recordType === "event_msg" && payloadType === "turn_failed")
+      ) {
+        return true;
+      }
+    } catch {
+      // 单行坏掉不影响判断，继续看下一行。
+    }
+  }
+
+  return false;
+}
+
+function readCodexRawStoreTail(rawStoreRef: string): string {
+  try {
+    if (!rawStoreRef.trim() || !existsSync(rawStoreRef)) {
+      return "";
+    }
+
+    const stat = statSync(rawStoreRef);
+
+    if (!stat.isFile()) {
+      return "";
+    }
+
+    if (stat.size <= CODEX_SPAWN_AGENT_RAW_SCAN_BYTES) {
+      return readFileSync(rawStoreRef, "utf8");
+    }
+
+    const fd = openSync(rawStoreRef, "r");
+
+    try {
+      const length = CODEX_SPAWN_AGENT_RAW_SCAN_BYTES;
+      const buffer = Buffer.allocUnsafe(length);
+      const bytesRead = readSync(fd, buffer, 0, length, stat.size - length);
+
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+function isCodexSpawnAgentEvent(event: unknown): boolean {
+  const eventRecord = toRecord(event);
+
+  if (!eventRecord) {
+    return false;
+  }
+
+  // app-server 通常发的是 { type: "item.completed", item: {...} }。
+  // 但真实 3002 路径里，父 turn 的 transcript 也会出现已经展开的
+  // { type: "function_call", name: "spawn_agent" } 记录。两种都必须识别，
+  // 否则父 turn 完成后会 close app-server，把子 Agent 一起中断。
+  return isCodexSpawnAgentItem(toRecord(readProp(eventRecord, "item")) ?? eventRecord);
+}
+
+function markCodexSpawnAgentLifecycleFromEvents(
+  lifecycle: CodexTurnLifecycle,
+  events: Record<string, unknown>[]
+): void {
+  if (lifecycle.keepTransportAliveAfterTurn) {
+    return;
+  }
+
+  if (events.some((event) => isCodexSpawnAgentEvent(event))) {
+    lifecycle.keepTransportAliveAfterTurn = true;
+  }
+}
+
+function isCodexSpawnAgentItem(item: Record<string, unknown> | null): boolean {
+  if (!item) {
+    return false;
+  }
+
+  const itemType = ensureText(readProp(item, "type")).trim();
+
+  if (
+    itemType === "function_call"
+    || itemType === "functionCall"
+    || itemType === "custom_tool_call"
+  ) {
+    return (
+      ensureText(readProp(item, "name")).trim() === "spawn_agent"
+      || ensureText(readProp(item, "tool")).trim() === "spawn_agent"
+    );
+  }
+
+  if (itemType === "dynamicToolCall" || itemType === "mcpToolCall") {
+    return ensureText(readProp(item, "tool")).trim() === "spawn_agent";
+  }
+
+  return false;
 }
 
 function formatCodexRuntimeDebugDetail(detail: Record<string, unknown>): string {
@@ -220,6 +466,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       });
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
+      const lifecycle: CodexTurnLifecycle = {
+        keepTransportAliveAfterTurn: false
+      };
       const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
       const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
@@ -269,6 +518,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           });
         }
           const translated = translateNotification(notification);
+          markCodexSpawnAgentLifecycleFromEvents(lifecycle, translated.events);
           forwardTranslatedNotification(translated);
       });
       transport.setServerRequestHandler(async (serverRequest) => {
@@ -298,6 +548,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (startTurnNotification) {
         const translated = translateNotification(startTurnNotification);
+        markCodexSpawnAgentLifecycleFromEvents(lifecycle, translated.events);
         forwardTranslatedNotification(translated);
       }
       logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
@@ -333,9 +584,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           eventQueue.iterator,
           [],
           launchedAtMs,
-          launchPerfStartedAtMs
+          launchPerfStartedAtMs,
+          lifecycle
         ).finally(() => {
-          transport.close();
+          closeCodexTransportAfterTurn(transport, lifecycle, rawStoreRef);
         })
       };
     } catch (error) {
@@ -451,6 +703,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           : pickedRawStoreRef;
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
+      const lifecycle: CodexTurnLifecycle = {
+        keepTransportAliveAfterTurn: false
+      };
       const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
       logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
@@ -478,6 +733,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           });
         }
         const translated = translateNotification(notification);
+        markCodexSpawnAgentLifecycleFromEvents(lifecycle, translated.events);
         forwardTranslatedNotification(translated);
       });
       transport.setServerRequestHandler(async (serverRequest) => {
@@ -507,6 +763,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (startTurnNotification) {
         const translated = translateNotification(startTurnNotification);
+        markCodexSpawnAgentLifecycleFromEvents(lifecycle, translated.events);
         forwardTranslatedNotification(translated);
       }
       logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
@@ -541,9 +798,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
           abortController,
           eventQueue.iterator,
           [],
-          Date.now()
+          Date.now(),
+          performance.now(),
+          lifecycle
         ).finally(() => {
-          transport.close();
+          closeCodexTransportAfterTurn(transport, lifecycle, rawStoreRef);
         })
       };
     } catch (error) {
@@ -620,7 +879,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     preparedEvents?: AsyncIterator<unknown>,
     bufferedEvents: unknown[] = [],
     launchedAtMs = Date.now(),
-    launchPerfStartedAtMs = performance.now()
+    launchPerfStartedAtMs = performance.now(),
+    lifecycle: CodexTurnLifecycle = {
+      keepTransportAliveAfterTurn: false
+    }
   ): Promise<void> {
     const context: ActiveTurnContext = {
       providerSessionId,
@@ -628,6 +890,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       // 运行时消息必须接在历史消息后面，不能每轮都从 1 重新编号，
       // 否则前端会把新 assistant/tool 消息排到旧消息前面，表现成用户消息一直挂在底部。
       sequence: Math.max(0, request.sequenceBase ?? 0),
+      lifecycle,
       toolNameByCallId: new Map(),
       stableMessageRefByIdentity: new Map(),
       lastSignatureByIdentity: new Map(),
@@ -663,6 +926,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         const next = await events.next();
 
         if (next.done) {
+          await this.waitForSpawnedCodexAgentsIfNeeded(context, abortController.signal);
           return;
         }
 
@@ -697,6 +961,44 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
   }
 
+  private async waitForSpawnedCodexAgentsIfNeeded(
+    context: ActiveTurnContext,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (!shouldKeepCodexTransportAliveAfterTurn(context.lifecycle, context.rawStoreRef)) {
+      return;
+    }
+
+    const agentIds = extractCodexSpawnedAgentIdsFromRawStore(context.rawStoreRef);
+
+    if (agentIds.length === 0) {
+      return;
+    }
+
+    const deadline = Date.now() + CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS;
+    const remainingAgentIds = new Set(agentIds);
+
+    while (remainingAgentIds.size > 0 && Date.now() < deadline && !signal.aborted) {
+      for (const agentId of [...remainingAgentIds]) {
+        const rawStoreRef = this.findRawStoreRefOnce(
+          agentId,
+          context.workspacePath,
+          context.homeDir
+        );
+
+        if (rawStoreRef && isCodexRawStoreTerminal(rawStoreRef)) {
+          remainingAgentIds.delete(agentId);
+        }
+      }
+
+      if (remainingAgentIds.size === 0 || Date.now() >= deadline || signal.aborted) {
+        break;
+      }
+
+      await sleep(CODEX_SPAWN_AGENT_POLL_INTERVAL_MS);
+    }
+  }
+
   private async handleEvent(
     event: unknown,
     request: ProviderRuntimeRunRequest,
@@ -707,6 +1009,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
     if (eventType.length === 0) {
       return;
+    }
+
+    if (isCodexSpawnAgentEvent(event)) {
+      context.lifecycle.keepTransportAliveAfterTurn = true;
     }
 
     if (context.lastSignatureByIdentity.size === 0 && eventType.startsWith("item.")) {
@@ -2374,6 +2680,18 @@ function translateCodexAppServerItem(item: Record<string, unknown> | null): Reco
     };
   }
 
+  if (itemType === "functionCall" || itemType === "function_call") {
+    return {
+      type: "function_call",
+      id: item.id,
+      name: item.name,
+      arguments: readProp(item, "arguments") ?? readProp(item, "input"),
+      output: item.output,
+      error: item.error,
+      status: normalizeCodexItemStatus(item.status)
+    };
+  }
+
   if (itemType === "dynamicToolCall") {
     const toolName = ensureText(item.tool).trim();
     const patchText = isCodexExecCommandToolName(toolName)
@@ -2996,6 +3314,22 @@ function ensureText(value: unknown): string {
 function normalizeText(value: unknown): string | null {
   const normalized = ensureText(value).trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function parseStructuredJson(value: string): Record<string, unknown> | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(normalized);
+
+    return toRecord(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function readThreadIdFromRawStore(rawStoreRef: string | null): string | null {
