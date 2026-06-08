@@ -17,7 +17,7 @@ env:
 jobs:
   build-macos-universal:
     name: macos-universal-release
-    runs-on: macos-latest
+    runs-on: macos-26
     environment: macOS-Package
     permissions:
       contents: read
@@ -42,6 +42,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: 固定 macOS 构建 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo xcode-select -s /Applications/Xcode_26.5.app
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
 
       - name: Cache Rust artifacts
         uses: swatinem/rust-cache@v2

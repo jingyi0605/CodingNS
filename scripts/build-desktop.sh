@@ -38,6 +38,8 @@ CARGO_HOME_DEFAULT="$REPO_DIR/.cargo-home"
 MACOS_RELEASE_COPY_DIR_DEFAULT="$HOME/WorkFile/临时文件"
 DESKTOP_UPDATER_MANIFEST_URL_DEFAULT="https://github.com/jingyi0605/CodingNS/releases/latest/download/latest.json"
 TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER="__CODINGNS_TAURI_UPDATER_PUBLIC_KEY__"
+MACOS_MIN_SDK_VERSION_DEFAULT="26.0"
+MACOS_MIN_SDK_VERSION="${MACOS_MIN_SDK_VERSION:-$MACOS_MIN_SDK_VERSION_DEFAULT}"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -422,6 +424,114 @@ check_macos_release_deps() {
     fi
 
     return $missing
+}
+
+compare_version_ge() {
+    local actual="$1"
+    local minimum="$2"
+    local python_cmd
+
+    python_cmd="$(resolve_python_cmd)" || return 1
+
+    "$python_cmd" - "$actual" "$minimum" <<'PY'
+import re
+import sys
+
+
+def parse_version(value: str) -> list[int]:
+    parts = [int(part) for part in re.findall(r"\d+", value)]
+    return parts or [0]
+
+
+actual = parse_version(sys.argv[1])
+minimum = parse_version(sys.argv[2])
+size = max(len(actual), len(minimum))
+actual += [0] * (size - len(actual))
+minimum += [0] * (size - len(minimum))
+sys.exit(0 if actual >= minimum else 1)
+PY
+}
+
+read_macos_sdk_version() {
+    xcrun --sdk macosx --show-sdk-version 2>/dev/null | tr -d '[:space:]'
+}
+
+ensure_macos_sdk_version() {
+    local sdk_version
+
+    sdk_version="$(read_macos_sdk_version)"
+
+    if [[ -z "$sdk_version" ]]; then
+        log_error "无法读取 macOS SDK 版本，请检查 Xcode / Command Line Tools。"
+        return 1
+    fi
+
+    log_info "当前 macOS SDK: $sdk_version，最低要求: $MACOS_MIN_SDK_VERSION"
+
+    if ! compare_version_ge "$sdk_version" "$MACOS_MIN_SDK_VERSION"; then
+        log_error "macOS SDK 版本过低：$sdk_version < $MACOS_MIN_SDK_VERSION"
+        log_error "请切换到 Xcode 26 或更高版本，例如：sudo xcode-select -s /Applications/Xcode_26.5.app"
+        return 1
+    fi
+}
+
+verify_macos_app_linked_sdk() {
+    local app_path="$1"
+    local binary_path
+
+    binary_path="$(find_macos_app_binary "$app_path")"
+
+    if [[ -z "$binary_path" || ! -f "$binary_path" ]]; then
+        log_error "未找到 macOS app 主二进制，无法校验链接 SDK: $app_path"
+        return 1
+    fi
+
+    verify_macos_binary_linked_sdk "$binary_path"
+}
+
+verify_macos_binary_linked_sdk() {
+    local binary_path="$1"
+    local python_cmd
+
+    python_cmd="$(resolve_python_cmd)" || return 1
+
+    otool -l "$binary_path" | "$python_cmd" - "$MACOS_MIN_SDK_VERSION" "$binary_path" <<'PY'
+import re
+import sys
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    parts = tuple(int(part) for part in re.findall(r"\d+", value))
+    return parts or (0,)
+
+
+def pad(value: tuple[int, ...], size: int) -> tuple[int, ...]:
+    return value + (0,) * (size - len(value))
+
+
+minimum_raw = sys.argv[1]
+binary_path = sys.argv[2]
+sdks = re.findall(r"^\s*sdk\s+([0-9][0-9.]+)", sys.stdin.read(), re.MULTILINE)
+
+if not sdks:
+    print(f"无法从二进制读取链接 SDK: {binary_path}", file=sys.stderr)
+    sys.exit(1)
+
+minimum = parse_version(minimum_raw)
+failed = []
+
+for sdk in sdks:
+    actual = parse_version(sdk)
+    size = max(len(actual), len(minimum))
+    if pad(actual, size) < pad(minimum, size):
+        failed.append(sdk)
+
+print(f"macOS app 链接 SDK: {', '.join(sdks)}，最低要求: {minimum_raw}")
+
+if failed:
+    print(f"macOS app 链接 SDK 版本过低：{', '.join(failed)} < {minimum_raw}", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 verify_sign_identity() {
@@ -943,6 +1053,7 @@ build_macos() {
     log_info "============================================"
 
     check_macos_deps || true
+    ensure_macos_sdk_version || exit 1
 
     cd "$REPO_DIR"
 
@@ -975,6 +1086,7 @@ EOF
     # 显示产物
     log_success "macOS 构建完成！"
     print_macos_build_artifacts "$(find_built_macos_app)"
+    verify_macos_app_linked_sdk "$(find_built_macos_app)" || exit 1
     show_macos_binary_architecture "$(find_built_macos_app)"
 }
 
