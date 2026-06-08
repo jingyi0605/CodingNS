@@ -495,8 +495,9 @@ verify_macos_binary_linked_sdk() {
 
     python_cmd="$(resolve_python_cmd)" || return 1
 
-    otool -l "$binary_path" | "$python_cmd" - "$MACOS_MIN_SDK_VERSION" "$binary_path" <<'PY'
+    "$python_cmd" - "$MACOS_MIN_SDK_VERSION" "$binary_path" <<'PY'
 import re
+import subprocess
 import sys
 
 
@@ -511,7 +512,14 @@ def pad(value: tuple[int, ...], size: int) -> tuple[int, ...]:
 
 minimum_raw = sys.argv[1]
 binary_path = sys.argv[2]
-sdks = re.findall(r"^\s*sdk\s+([0-9][0-9.]+)", sys.stdin.read(), re.MULTILINE)
+completed = subprocess.run(
+    ["otool", "-l", binary_path],
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+sdks = re.findall(r"^\s*sdk\s+([0-9][0-9.]+)", completed.stdout, re.MULTILINE)
 
 if not sdks:
     print(f"无法从二进制读取链接 SDK: {binary_path}", file=sys.stderr)
