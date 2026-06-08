@@ -56,6 +56,8 @@ type ParentToHelperMessage =
         | "archiveThread"
         | "unarchiveThread"
         | "readThread"
+        | "setThreadName"
+        | "listThreads"
         | "rollbackThread"
         | "resumeThreadFromHistory"
         | "startTurn"
@@ -65,6 +67,7 @@ type ParentToHelperMessage =
       request?: ProviderRuntimeRunRequest;
       options?: RuntimeSendOptions;
       providerSessionId?: string;
+      name?: string;
       expectedTurnId?: string;
       numTurns?: number;
       workspacePath?: string;
@@ -428,6 +431,8 @@ export class CodexAppServerHelperClient {
       method: Extract<ParentToHelperMessage, { type: "transport_request" }>["method"],
       input: {
         providerSessionId?: string;
+        name?: string;
+        workspacePath?: string;
       } = {}
     ): Promise<Record<string, unknown>> => {
       if (state.closed) {
@@ -484,6 +489,22 @@ export class CodexAppServerHelperClient {
         return await request("readThread", {
           providerSessionId
         });
+      },
+      async setThreadName(providerSessionId, name) {
+        await request("setThreadName", {
+          providerSessionId,
+          name
+        });
+      },
+      async listThreads(input) {
+        const result = await request("listThreads", {
+          workspacePath: input.workspacePath
+        });
+        return Array.isArray(result.data)
+          ? result.data.filter((item): item is Record<string, unknown> =>
+              typeof item === "object" && item !== null
+            )
+          : [];
       },
       close: () => {
         this.closeLogicalTransport(transportId, state, null);

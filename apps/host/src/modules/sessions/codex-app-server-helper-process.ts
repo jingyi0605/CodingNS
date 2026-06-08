@@ -20,6 +20,8 @@ type ParentToHelperMessage =
         | "archiveThread"
         | "unarchiveThread"
         | "readThread"
+        | "setThreadName"
+        | "listThreads"
         | "rollbackThread"
         | "resumeThreadFromHistory"
         | "startTurn"
@@ -29,6 +31,7 @@ type ParentToHelperMessage =
       request?: ProviderRuntimeRunRequest;
       options?: RuntimeSendOptions;
       providerSessionId?: string;
+      name?: string;
       expectedTurnId?: string;
       numTurns?: number;
       workspacePath?: string;
@@ -315,6 +318,44 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
         emitResponse(message.transportId, message.requestId, result);
         return;
       }
+      case "setThreadName": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+        const name = ensureText(message.name).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        if (!name) {
+          throw new Error("CODEX_APP_SERVER_THREAD_NAME_REQUIRED");
+        }
+
+        await sendJsonRpcRequest(transport, {
+          method: "thread/name/set",
+          params: {
+            threadId: providerSessionId,
+            name
+          }
+        });
+        emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "listThreads": {
+        const workspacePath = ensureText(message.workspacePath).trim();
+
+        if (!workspacePath) {
+          throw new Error("CODEX_APP_SERVER_WORKSPACE_PATH_REQUIRED");
+        }
+
+        const activeThreads = await listCodexThreads(transport, workspacePath, false);
+        const archivedThreads = await listCodexThreads(transport, workspacePath, true)
+          .catch(() => []);
+
+        emitResponse(message.transportId, message.requestId, {
+          data: [...activeThreads, ...archivedThreads]
+        });
+        return;
+      }
       case "rollbackThread": {
         const providerSessionId = ensureText(message.providerSessionId).trim();
         const numTurns = Math.trunc(Number(message.numTurns ?? 0));
@@ -585,6 +626,43 @@ function sendJsonRpcRequest(
       params: message.params
     });
   });
+}
+
+async function listCodexThreads(
+  transport: TransportRecord,
+  workspacePath: string,
+  archived: boolean
+): Promise<unknown[]> {
+  const threads: unknown[] = [];
+  let cursor: string | null = null;
+
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    const result = await sendJsonRpcRequest(transport, {
+      method: "thread/list",
+      params: {
+        limit: 200,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        cwd: workspacePath,
+        sourceKinds: ["vscode", "appServer", "subAgent", "subAgentThreadSpawn"],
+        archived,
+        ...(cursor ? { cursor } : {})
+      }
+    });
+    const data = readProp(result, "data");
+
+    if (Array.isArray(data)) {
+      threads.push(...data);
+    }
+
+    cursor = ensureText(readProp(result, "nextCursor")).trim() || null;
+
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return threads;
 }
 
 function writeJsonRpcMessage(

@@ -82,6 +82,90 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("workspace discovery 会把 provider 上报的 Codex 子 Agent 终态写入会话活动状态", async () => {
+    const providerSessionId = "019ea5e8-05c2-77a1-977e-90a6df8a44a7";
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return await definition.run(input, context);
+          }
+
+          const workspacePath = String((input as { workspacePath: string }).workspacePath);
+
+          return {
+            sessions: [
+              {
+                provider: "codex",
+                providerSessionId,
+                title: "子 Agent 自己的任务",
+                workspacePath,
+                rawStoreRef: `codex://thread/${providerSessionId}`,
+                isArchived: false,
+                lastMessageAt: "2026-06-08T06:25:08.000Z",
+                messageCount: 1,
+                parentProviderSessionId: "019ea4ef-a305-7f20-8da5-0b4dcc47ea29",
+                isSubagent: true,
+                subagentLabel: "Einstein",
+                activityObservation: {
+                  runningState: "completed",
+                  confidence: "strong",
+                  observedAt: "2026-06-08T06:26:02.000Z",
+                  detail: null,
+                  errorCode: null,
+                  runId: "019ea5e8-1000-7000-9000-000000000001"
+                }
+              }
+            ],
+            isComplete: true,
+            providerDiagnostics: []
+          };
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+
+    const items = await service.instance.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      provider: "codex",
+      providerSessionId,
+      isSubagent: true,
+      subagentLabel: "Einstein",
+      runningState: "completed",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_provider_event",
+      activityConfidence: "strong",
+      runId: "019ea5e8-1000-7000-9000-000000000001",
+      completedAt: "2026-06-08T06:26:02.000Z"
+    });
+
+    const stateRow = service.database.db
+      .prepare(
+        `SELECT running_state, activity_source, completed_at
+         FROM session_states
+         WHERE session_id = ?`
+      )
+      .get(items[0].sessionId) as {
+        running_state: string;
+        activity_source: string;
+        completed_at: string | null;
+      } | undefined;
+
+    expect(stateRow).toEqual({
+      running_state: "completed",
+      activity_source: "runtime",
+      completed_at: "2026-06-08T06:26:02.000Z"
+    });
+
+    service.dispose();
+  });
+
   it("workspace discovery scan 同时最多只放 2 个 helper 并发，其余任务进入排队", async () => {
     const scanDeferredByPath = new Map<string, ReturnType<typeof createDeferred<{
       sessions: [];
@@ -133,6 +217,7 @@ describe("SessionHistoryService background tasks", () => {
 
     service.workspaceRepository.create({
       id: "workspace-2",
+      ownerUserId: "user-1",
       name: "Workspace 2",
       path: workspacePaths[1],
       repoRoot: workspacePaths[1],
@@ -143,6 +228,7 @@ describe("SessionHistoryService background tasks", () => {
     });
     service.workspaceRepository.create({
       id: "workspace-3",
+      ownerUserId: "user-1",
       name: "Workspace 3",
       path: workspacePaths[2],
       repoRoot: workspacePaths[2],
@@ -903,6 +989,7 @@ function seedWorkspace(
 
   workspaceRepository.create({
     id: "workspace-1",
+    ownerUserId: "user-1",
     name: "Workspace 1",
     path: workspacePath,
     repoRoot: workspacePath,

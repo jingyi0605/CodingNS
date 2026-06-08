@@ -22,6 +22,7 @@ import {
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
+  type ProviderSessionActivityObservation,
   type ProviderSessionDiscovery,
   type ProviderSubscription,
   type SendMessageResult
@@ -101,6 +102,7 @@ import {
   type TaskMetricsSnapshot
 } from "../tasks/task-types.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
+import { CodexSessionTitleGenerator } from "./codex-session-title-generator.js";
 import {
   CodingnsProviderSessionDeleteCli,
   type ProviderSessionDeleteCli
@@ -308,6 +310,7 @@ export class SessionHistoryService {
   private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable">;
+  private readonly codexSessionTitleGenerator: CodexSessionTitleGenerator;
   private readonly sessionProviderConfigService: Pick<
     SessionProviderConfigService,
     "prepareSessionBinding"
@@ -369,6 +372,10 @@ export class SessionHistoryService {
     this.sessionProviderConfigService = sessionProviderConfigService;
     this.providerRuntimeStateService = providerRuntimeStateService
       ?? new ProviderRuntimeStateService(config);
+    this.codexSessionTitleGenerator = new CodexSessionTitleGenerator({
+      hostDataRootDir: dirname(config.databasePath),
+      codexHomeDir: config.codexHomeDir
+    });
     this.providerControlRepository = providerControlRepository ?? {
       get: (providerId: string) => ({
         providerId: providerId.trim(),
@@ -527,6 +534,18 @@ export class SessionHistoryService {
             }
           );
         }
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.sessionCodexTitleGenerate)) {
+      this.taskManager.register<{
+        sessionId: string;
+      }, { title: string | null }>({
+        taskType: HOST_TASK_TYPES.sessionCodexTitleGenerate,
+        executionLane: "external_process",
+        timeoutMs: 45_000,
+        run: async ({ sessionId }, context) =>
+          this.runCodexSessionTitleGeneration(sessionId, context.signal)
       });
     }
   }
@@ -893,6 +912,7 @@ export class SessionHistoryService {
   async syncSessionTitle(sessionId: string, signal?: AbortSignal): Promise<void> {
     const binding = this.getBindingOrThrow(sessionId);
     await this.syncSessionTitleFromProvider(sessionId, binding, signal);
+    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.sync_session_title");
   }
 
   async syncWorkspaceSessionTitles(
@@ -1929,6 +1949,7 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
+    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.read_recent_history");
     const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
@@ -2579,6 +2600,18 @@ export class SessionHistoryService {
         workspaceId,
         relationMap
       );
+      this.observeDiscoveredProviderActivity(
+        sessions,
+        discoveredSessionIds,
+        userId,
+        timestamp
+      );
+      for (const persisted of persistedSessions) {
+        this.requestCodexTitleGenerationIfNeeded(
+          persisted.sessionId,
+          "session_history.discover_workspace_sessions.codex_title"
+        );
+      }
 
       const listItemsStartedAt = Date.now();
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
@@ -3006,6 +3039,98 @@ export class SessionHistoryService {
     return relationMap;
   }
 
+  private observeDiscoveredProviderActivity(
+    sessions: Array<{
+      provider: string;
+      providerSessionId: string;
+      activityObservation?: ProviderSessionActivityObservation | null;
+    }>,
+    discoveredSessionIds: Map<string, string>,
+    userId: string,
+    timestamp: string
+  ): void {
+    for (const session of sessions) {
+      const providerObservation = session.activityObservation ?? null;
+
+      if (!providerObservation) {
+        continue;
+      }
+
+      const sessionId = discoveredSessionIds.get(
+        buildProviderSessionKey(session.provider, session.providerSessionId)
+      );
+
+      if (!sessionId) {
+        continue;
+      }
+
+      const observedAt = providerObservation.observedAt ?? timestamp;
+      const resolution = this.sessionActivityAuthorityService.observe({
+        sessionId,
+        runId: providerObservation.runId ?? null,
+        runningState: providerObservation.runningState,
+        source: "authoritative_provider_event",
+        confidence: providerObservation.confidence,
+        detail: providerObservation.detail ?? null,
+        interruptSource:
+          providerObservation.runningState === "interrupted" ? "runtime" : null,
+        errorCode: providerObservation.errorCode ?? null,
+        observedAt
+      });
+      const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+
+      this.sessionStateRepository.upsert({
+        sessionId,
+        userId,
+        runningState: mapResolvedRunningStateToStored(resolution.runningState, current),
+        activitySource: "runtime",
+        favorite: current?.favorite ?? false,
+        lastEventAt: resolution.lastObservedAt ?? current?.lastEventAt ?? null,
+        completedAt:
+          isTerminalResolvedRunningState(resolution.runningState)
+            ? resolution.terminalAt ?? current?.completedAt ?? observedAt
+            : null,
+        lastSeenAt: current?.lastSeenAt ?? null,
+        updatedAt: timestamp
+      });
+
+      const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+      const shouldClearFailure =
+        currentSnapshot?.syncStatus === "error"
+        && providerObservation.runningState !== "failed";
+
+      this.sessionStatusSnapshotRepository.upsert({
+        sessionId,
+        syncStatus:
+          providerObservation.runningState === "failed"
+            ? "error"
+            : shouldClearFailure
+              ? "idle"
+              : currentSnapshot?.syncStatus ?? "idle",
+        syncCursor: currentSnapshot?.syncCursor ?? null,
+        lastSyncAt:
+          resolution.lastObservedAt
+          ?? resolution.terminalAt
+          ?? currentSnapshot?.lastSyncAt
+          ?? null,
+        lastErrorCode:
+          providerObservation.runningState === "failed"
+            ? providerObservation.errorCode ?? "CODEX_PROVIDER_EVENT_FAILED"
+            : shouldClearFailure
+              ? null
+              : currentSnapshot?.lastErrorCode ?? null,
+        lastErrorDetail:
+          providerObservation.runningState === "failed"
+            ? providerObservation.detail ?? "Provider reported session failure"
+            : shouldClearFailure
+              ? null
+              : currentSnapshot?.lastErrorDetail ?? null,
+        resumedAt: currentSnapshot?.resumedAt ?? null,
+        updatedAt: timestamp
+      });
+    }
+  }
+
   private enrichSessionItems(workspaceId: string, items: SessionListItem[]): SessionListItem[] {
     const relationMap = this.workspaceSessionRelations.get(workspaceId);
     const projectionBySessionId = this.buildParallelProjectionBySessionId(items);
@@ -3365,6 +3490,7 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
+    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.publish_history_envelope");
     const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
@@ -3441,6 +3567,126 @@ export class SessionHistoryService {
       title: resolvedTitle,
       updatedAt: nowIso()
     });
+  }
+
+  private requestCodexTitleGenerationIfNeeded(sessionId: string, source: string): void {
+    if (!this.shouldRequestCodexTitleGeneration(sessionId)) {
+      return;
+    }
+
+    const handle = this.taskManager.enqueue<{
+      sessionId: string;
+    }, { title: string | null }>(HOST_TASK_TYPES.sessionCodexTitleGenerate, {
+      key: sessionId,
+      source,
+      input: {
+        sessionId
+      }
+    });
+
+    if (handle.deduped) {
+      return;
+    }
+
+    void handle.promise.catch((error) => {
+      logPerformance(
+        "session.codex_title_generate.background_failed",
+        0,
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : "unknown"
+        },
+        {
+          thresholdMs: 0,
+          force: true
+        }
+      );
+    });
+  }
+
+  private shouldRequestCodexTitleGeneration(sessionId: string): boolean {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+    if (!binding || !index || binding.provider !== "codex") {
+      return false;
+    }
+
+    if (isPendingBindingValue(binding.providerSessionId) || isPendingBindingValue(binding.rawStoreRef)) {
+      return false;
+    }
+
+    if (index.messageCount <= 0) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async runCodexSessionTitleGeneration(
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<{ title: string | null }> {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+    if (!binding || !index || binding.provider !== "codex") {
+      return { title: null };
+    }
+
+    if (isPendingBindingValue(binding.providerSessionId) || isPendingBindingValue(binding.rawStoreRef)) {
+      return { title: null };
+    }
+
+    const page = await this.sessionSyncService.readHistory(
+      binding.provider,
+      binding.providerSessionId,
+      binding.rawStoreRef,
+      null,
+      16,
+      "forward"
+    ).catch(() => null);
+
+    if (!page) {
+      return { title: null };
+    }
+    const firstUserMessage = page.messages.find((message) => message.role === "user")?.content ?? null;
+
+    if (!shouldGenerateCodexSessionTitle(index.title, firstUserMessage)) {
+      return { title: null };
+    }
+
+    const title = await this.codexSessionTitleGenerator.generate({
+      currentTitle: index.title,
+      messages: page.messages.map((message) => ({
+        role: message.role,
+        content: message.content
+      })),
+      signal
+    });
+
+    if (!title || !shouldApplyGeneratedCodexSessionTitle(title, firstUserMessage)) {
+      return { title: null };
+    }
+
+    await this.sessionSyncService.renameSessionTitle(
+      binding.provider,
+      binding.providerSessionId,
+      binding.rawStoreRef,
+      title
+    );
+
+    const latestIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+    if (latestIndex && shouldGenerateCodexSessionTitle(latestIndex.title, firstUserMessage)) {
+      this.sessionIndexRepository.upsert({
+        ...latestIndex,
+        title,
+        updatedAt: nowIso()
+      });
+    }
+
+    return { title };
   }
 
   private async readFirstUserMessageTitleForSync(
@@ -6374,6 +6620,39 @@ function shouldSyncSessionTitleFromProvider(
   }
 
   return false;
+}
+
+function shouldGenerateCodexSessionTitle(
+  currentTitle: string | null,
+  firstUserMessage: string | null
+): boolean {
+  const normalizedTitle = currentTitle?.trim() ?? "";
+
+  if (!normalizedTitle) {
+    return true;
+  }
+
+  if (looksLikeGeneratedSessionTitle(normalizedTitle) || isSyntheticCodexSessionTitle(normalizedTitle)) {
+    return true;
+  }
+
+  const firstUserTitle = normalizeRuntimePromptTitle(firstUserMessage);
+
+  return Boolean(firstUserTitle && normalizedTitle === firstUserTitle);
+}
+
+function shouldApplyGeneratedCodexSessionTitle(
+  generatedTitle: string,
+  firstUserMessage: string | null
+): boolean {
+  const normalizedTitle = generatedTitle.trim();
+  const firstUserTitle = normalizeRuntimePromptTitle(firstUserMessage);
+
+  if (!normalizedTitle) {
+    return false;
+  }
+
+  return !firstUserTitle || normalizedTitle !== firstUserTitle;
 }
 
 function looksLikeSyntheticTitleSourceMessage(provider: string, content: string): boolean {

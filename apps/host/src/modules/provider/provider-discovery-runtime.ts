@@ -11,6 +11,7 @@ import {
   type ProviderSessionSummary
 } from "@codingns/session-sync-core";
 
+import { CodexAppServerHelperClient } from "../sessions/codex-app-server-helper-client.js";
 import type { ProviderSessionDiscoveryHelperConfig } from "./provider-discovery-helper-client.js";
 
 const WORKSPACE_DISCOVERY_CACHE_MAX_AGE_MS = 5_000;
@@ -151,7 +152,11 @@ function getWorkspaceDiscoveryService(
       legacyClaudeHomeDir: config.claudeCodeHomeDir
     }),
     new CodexAdapter({
-      homeDir: config.codexHomeDir
+      homeDir: config.codexHomeDir,
+      threadControlTransportFactory: createCodexThreadControlTransportFactory(
+        config.codexCliPath,
+        config.codexHomeDir
+      )
     }),
     new GeminiAdapter({
       homeDir: config.geminiHomeDir,
@@ -175,6 +180,24 @@ function getWorkspaceDiscoveryService(
   };
 
   return service;
+}
+
+function createCodexThreadControlTransportFactory(
+  commandPath: string,
+  homeDir: string
+) {
+  return () => {
+    const client = new CodexAppServerHelperClient(commandPath, { homeDir });
+    const transport = client.createThreadControlTransport();
+
+    return {
+      ...transport,
+      close() {
+        transport.close();
+        client.dispose();
+      }
+    };
+  };
 }
 
 function buildWorkspaceDiscoveryRuntimeKey(
