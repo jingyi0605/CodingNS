@@ -466,10 +466,10 @@ ensure_macos_sdk_version() {
         return 1
     fi
 
-    log_info "当前 macOS SDK: $sdk_version，最低要求: $MACOS_MIN_SDK_VERSION"
+    log_info "当前 macOS SDK: ${sdk_version}，最低要求: ${MACOS_MIN_SDK_VERSION}"
 
     if ! compare_version_ge "$sdk_version" "$MACOS_MIN_SDK_VERSION"; then
-        log_error "macOS SDK 版本过低：$sdk_version < $MACOS_MIN_SDK_VERSION"
+        log_error "macOS SDK 版本过低：${sdk_version} < ${MACOS_MIN_SDK_VERSION}"
         log_error "请切换到 Xcode 26 或更高版本，例如：sudo xcode-select -s /Applications/Xcode_26.5.app"
         return 1
     fi
