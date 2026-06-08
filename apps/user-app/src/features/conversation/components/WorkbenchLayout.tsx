@@ -12914,7 +12914,7 @@ export function WorkbenchLayout({
       writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, nextMode);
       const nextAffairsViewState = createDefaultAffairsLibraryLandingState(
         AFFAIRS_GLOBAL_WORKSPACE_ID,
-        affairsViewState ?? readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID) ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
+        readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID) ?? affairsViewState ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
       );
       flushSync(() => {
         setAffairsRightCollapsed(false);
