@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/codingns"
 STAGING_DIR=""
+NPM_AUTH_CONFIG_FILE=""
 WORKTREE_PARENT_DIR=""
 WORKTREE_DIR=""
 SELECTED_COMMIT_SHA=""
@@ -16,6 +17,10 @@ dry_run="false"
 provenance="false"
 publish_tag=""
 selected_mode=""
+
+# npm access token 的默认读取位置。
+# 不要把 token 放进仓库；这个文件应该只存在于当前用户的 HOME 目录。
+DEFAULT_NPM_TOKEN_FILE="${HOME:-}/.codingns/npmjs-token"
 
 print_help() {
   cat <<'EOF'
@@ -30,12 +35,24 @@ print_help() {
   --provenance  发布时附带 npm provenance
   --tag         显式指定 npm dist-tag；默认根据版本号自动判断
   --help        显示帮助
+
+npm token 读取顺序：
+
+  1. NODE_AUTH_TOKEN 环境变量
+  2. NPM_TOKEN 环境变量
+  3. NPM_TOKEN_FILE 指向的文件
+  4. CODINGNS_NPM_TOKEN_FILE 指向的文件
+  5. ~/.codingns/npmjs-token
 EOF
 }
 
 cleanup() {
   if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
     rm -rf "$STAGING_DIR"
+  fi
+
+  if [[ -n "$NPM_AUTH_CONFIG_FILE" && -f "$NPM_AUTH_CONFIG_FILE" ]]; then
+    rm -f "$NPM_AUTH_CONFIG_FILE"
   fi
 
   if [[ -n "$WORKTREE_DIR" ]]; then
@@ -96,6 +113,73 @@ read_package_field() {
     cd "$target_root"
     node -p "require('./packages/codingns/package.json')['$field_name']"
   )
+}
+
+read_first_line_from_file() {
+  local file_path="$1"
+
+  if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+    return 1
+  fi
+
+  sed -n '1{s/[[:space:]]*$//;p;}' "$file_path"
+}
+
+resolve_npm_auth_token() {
+  local token=""
+
+  if [[ -n "${NODE_AUTH_TOKEN:-}" ]]; then
+    printf '%s' "$NODE_AUTH_TOKEN"
+    return 0
+  fi
+
+  if [[ -n "${NPM_TOKEN:-}" ]]; then
+    printf '%s' "$NPM_TOKEN"
+    return 0
+  fi
+
+  token="$(read_first_line_from_file "${NPM_TOKEN_FILE:-}" || true)"
+  if [[ -n "$token" ]]; then
+    printf '%s' "$token"
+    return 0
+  fi
+
+  token="$(read_first_line_from_file "${CODINGNS_NPM_TOKEN_FILE:-}" || true)"
+  if [[ -n "$token" ]]; then
+    printf '%s' "$token"
+    return 0
+  fi
+
+  token="$(read_first_line_from_file "$DEFAULT_NPM_TOKEN_FILE" || true)"
+  if [[ -n "$token" ]]; then
+    printf '%s' "$token"
+    return 0
+  fi
+
+  return 1
+}
+
+configure_npm_auth_for_publish() {
+  local token=""
+
+  token="$(resolve_npm_auth_token || true)"
+
+  if [[ -z "$token" ]]; then
+    echo "未发现脚本专用 npm token，将继续使用 npm 当前登录态。"
+    return 0
+  fi
+
+  NPM_AUTH_CONFIG_FILE="$(mktemp "${TMPDIR:-/tmp}/codingns-npmrc.XXXXXX")"
+
+  chmod 600 "$NPM_AUTH_CONFIG_FILE"
+  {
+    echo "registry=https://registry.npmjs.org/"
+    printf '//registry.npmjs.org/:_authToken=%s\n' "$token"
+  } >"$NPM_AUTH_CONFIG_FILE"
+
+  export NPM_CONFIG_USERCONFIG="$NPM_AUTH_CONFIG_FILE"
+
+  echo "已从预定义位置读取 npm token，并写入临时 npm 配置。"
 }
 
 choose_recent_commit() {
@@ -292,6 +376,8 @@ execute_publish_flow() {
       tgz="$(run_npm_pack_and_resolve_filename "$STAGING_DIR")"
       verify_published_tarball "$STAGING_DIR/$tgz"
       rm -f "$STAGING_DIR/$tgz"
+
+      configure_npm_auth_for_publish
 
       publish_cmd=(npm publish --access public --tag "$target_publish_tag")
 
