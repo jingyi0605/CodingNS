@@ -7715,7 +7715,9 @@ function convertHistoryMessageToViewModel(
     sessionId,
     role: message.role,
     kind: message.kind ?? "text",
-    content: message.content,
+    content: message.role === "assistant" && (message.kind ?? "text") === "text"
+      ? normalizeAffairsLightweightAssistantMarkdown(message.content)
+      : message.content,
     toolCall: message.toolCall ?? null,
     attachments: message.attachments,
     attachmentPayloads: null,
@@ -7727,6 +7729,19 @@ function convertHistoryMessageToViewModel(
     deliveryState: "sent",
     clientRequestId: null
   };
+}
+
+function normalizeAffairsLightweightAssistantMarkdown(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+
+  if (!normalized.includes("#")) {
+    return normalized;
+  }
+
+  return normalized
+    .replace(/([^\n#])\s*(#{2,6})(?=[^\s#\n])/g, "$1\n\n$2 ")
+    .replace(/([^\n#])\s+(#{2,6}\s+\S)/g, "$1\n\n$2")
+    .replace(/(^|\n)(#{2,6})([^\s#\n])/g, "$1$2 $3");
 }
 
 async function loadAffairsLightweightSessionExportSnapshot(

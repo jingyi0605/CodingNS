@@ -35010,3 +35010,74 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     justify-content: flex-start;
   }
 }
+
+/* 会话正文统一按标准 Markdown 排版，后面的局部样式不能再把段落和列表压成一坨。 */
+.message-content.markdown-content {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-content.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.message-content.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.message-content.markdown-content p {
+  display: block;
+  margin: 0 0 0.75em;
+}
+
+.message-content.markdown-content p + p {
+  margin-top: 0;
+}
+
+.message-content.markdown-content :where(h1, h2, h3, h4, h5, h6) {
+  display: block;
+  margin: 1.15em 0 0.55em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.message-content.markdown-content h1 { font-size: 1.35em; }
+.message-content.markdown-content h2 { font-size: 1.22em; }
+.message-content.markdown-content h3 { font-size: 1.1em; }
+.message-content.markdown-content h4,
+.message-content.markdown-content h5,
+.message-content.markdown-content h6 { font-size: 1em; }
+
+.message-content.markdown-content :where(ul, ol) {
+  display: block;
+  margin: 0.5em 0 0.85em;
+  padding-left: 1.55em;
+}
+
+.message-content.markdown-content li {
+  display: list-item;
+  margin: 0.22em 0;
+}
+
+.message-content.markdown-content li > :where(p, ul, ol) {
+  margin-top: 0.3em;
+  margin-bottom: 0.3em;
+}
+
+.message-content.markdown-content blockquote {
+  display: block;
+  margin: 0.85em 0;
+}
+
+.message-content.markdown-content pre {
+  display: block;
+  margin: 0.85em 0;
+}
+
+.message-content.markdown-content table {
+  margin: 0.85em 0;
+}
