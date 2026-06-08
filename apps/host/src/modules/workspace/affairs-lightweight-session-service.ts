@@ -26,6 +26,7 @@ const LIGHTWEIGHT_SYSTEM_PROMPT = [
   "你没有本地文件、终端、浏览器自动化、工作区读写、MCP、本地工具权限。",
   "如果用户要求你读取本地目录、执行命令、修改文件、调用本地工具，必须明确说当前轻量模式做不到，并建议切到 Agent 会话。",
   "需要最新信息时，优先使用联网搜索，再给结论。",
+  "回答必须使用标准 Markdown：标题写成 `## 标题`，列表写成 `- 条目`，段落之间保留空行，不要把标题、列表和正文挤在同一行。",
   "回答直接、清楚、少废话。"
 ].join("\n");
 
@@ -1611,6 +1612,10 @@ function normalizeText(value: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function normalizeStreamingTextDelta(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function pickFirstText(...values: Array<string | null | undefined>): string | null {
   for (const value of values) {
     const normalized = normalizeText(value);
@@ -1679,16 +1684,16 @@ async function streamAnthropicSseText(
       await onTool?.(toolEvent);
     }
     if (eventType === "content_block_delta" && payload?.delta?.type === "text_delta") {
-      const chunk = normalizeText(payload?.delta?.text);
-      if (chunk) {
+      const chunk = normalizeStreamingTextDelta(payload?.delta?.text);
+      if (chunk !== null) {
         accumulated += chunk;
         await onDelta(chunk);
       }
       return;
     }
     if (eventType === "content_block_start" && payload?.content_block?.type === "text") {
-      const chunk = normalizeText(payload?.content_block?.text);
-      if (chunk) {
+      const chunk = normalizeStreamingTextDelta(payload?.content_block?.text);
+      if (chunk !== null) {
         accumulated += chunk;
         await onDelta(chunk);
       }
@@ -1766,18 +1771,18 @@ async function consumeSseResponse(
 
 function extractOpenAiSseDeltaChunks(payload: any): string[] {
   const chunks: string[] = [];
-  const responseDelta = normalizeText(payload?.delta);
-  if (responseDelta) {
+  const responseDelta = normalizeStreamingTextDelta(payload?.delta);
+  if (responseDelta !== null) {
     chunks.push(responseDelta);
   }
 
-  const outputTextDelta = normalizeText(payload?.text);
-  if (payload?.type === "response.output_text.delta" && outputTextDelta) {
+  const outputTextDelta = normalizeStreamingTextDelta(payload?.text);
+  if (payload?.type === "response.output_text.delta" && outputTextDelta !== null) {
     chunks.push(outputTextDelta);
   }
 
   const chatDelta = payload?.choices?.[0]?.delta?.content;
-  if (typeof chatDelta === "string" && chatDelta.trim().length > 0) {
+  if (typeof chatDelta === "string" && chatDelta.length > 0) {
     chunks.push(chatDelta);
   }
 
