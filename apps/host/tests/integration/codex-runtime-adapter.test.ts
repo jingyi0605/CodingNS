@@ -561,4 +561,241 @@ describe("CodexRuntimeAdapter", () => {
       })
     );
   });
+
+  it.each([
+    [
+      "turn/completed items 里的 functionCall",
+      [
+        {
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-spawn-agent",
+              status: "completed",
+              items: [
+                {
+                  type: "functionCall",
+                  id: "call-spawn-agent",
+                  name: "spawn_agent",
+                  arguments: "{}",
+                  status: "completed"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    [
+      "实时事件里已经展开的 function_call",
+      [
+        {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "function_call",
+              id: "call-spawn-agent",
+              name: "spawn_agent",
+              arguments: "{}",
+              status: "completed"
+            }
+          }
+        },
+        {
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-spawn-agent",
+              status: "completed",
+              items: []
+            }
+          }
+        }
+      ]
+    ]
+  ])("父 turn 创建子 Agent 后不会立刻关闭 app-server：%s", async (_caseName, notifications) => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-spawn-agent-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, "", "utf8");
+    let closed = false;
+    const close = vi.fn(() => {
+      closed = true;
+    });
+
+    let notificationHandler: ((notification: Record<string, unknown>) => void | Promise<void>) | null =
+      null;
+
+    const transport: CodexAppServerTransport = {
+      initialize: vi.fn(async () => undefined),
+      startThread: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent",
+        rawStoreRef
+      })),
+      resumeThread: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent",
+        rawStoreRef
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent",
+        rawStoreRef
+      })),
+      startTurn: vi.fn(async () => {
+        const [firstNotification, ...restNotifications] = notifications as Record<string, unknown>[];
+
+        for (const notification of restNotifications) {
+          setTimeout(() => {
+            void notificationHandler?.(notification);
+          }, 0);
+        }
+
+        return { notification: firstNotification };
+      }),
+      steerTurn: vi.fn(async () => undefined),
+      interruptTurn: vi.fn(async () => undefined),
+      setNotificationHandler: (handler) => {
+        notificationHandler = handler;
+      },
+      setServerRequestHandler: () => undefined,
+      setOnClose: () => undefined,
+      isClosed: () => closed,
+      close
+    };
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => transport
+    });
+    const sink: ProviderRuntimeEventSink = {
+      emit: vi.fn(async () => undefined),
+      updateSessionBinding: vi.fn()
+    };
+
+    const launched = await adapter.startSession(
+      {
+        sessionId: "session-spawn-agent",
+        workspaceId: "workspace-1",
+        workspacePath: tempDir,
+        provider: "codex",
+        providerSessionId: null,
+        rawStoreRef: null,
+        options: {
+          content: "启动子 Agent",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      sink
+    );
+
+    await launched.completed;
+
+    expect(close).not.toHaveBeenCalled();
+    expect(sink.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "complete",
+        status: "completed"
+      })
+    );
+  });
+
+  it("父 turn 的 raw transcript 出现 spawn_agent 时也不会立刻关闭 app-server", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-spawn-agent-raw-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "session.jsonl");
+    writeFileSync(rawStoreRef, "", "utf8");
+    let closed = false;
+    const close = vi.fn(() => {
+      closed = true;
+    });
+
+    const transport: CodexAppServerTransport = {
+      initialize: vi.fn(async () => undefined),
+      startThread: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent-raw",
+        rawStoreRef
+      })),
+      resumeThread: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent-raw",
+        rawStoreRef
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "thread-spawn-agent-raw",
+        rawStoreRef
+      })),
+      startTurn: vi.fn(async () => {
+        writeFileSync(
+          rawStoreRef,
+          `${JSON.stringify({
+            timestamp: "2026-06-08T14:16:14.309Z",
+            type: "response_item",
+            payload: {
+              type: "function_call",
+              name: "spawn_agent",
+              arguments: "{}",
+              call_id: "call-spawn-agent"
+            }
+          })}
+`,
+          "utf8"
+        );
+
+        return {
+          notification: {
+            method: "turn/completed",
+            params: {
+              turn: {
+                id: "turn-spawn-agent-raw",
+                status: "completed",
+                items: []
+              }
+            }
+          }
+        };
+      }),
+      steerTurn: vi.fn(async () => undefined),
+      interruptTurn: vi.fn(async () => undefined),
+      setNotificationHandler: () => undefined,
+      setServerRequestHandler: () => undefined,
+      setOnClose: () => undefined,
+      isClosed: () => closed,
+      close
+    };
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => transport
+    });
+    const sink: ProviderRuntimeEventSink = {
+      emit: vi.fn(async () => undefined),
+      updateSessionBinding: vi.fn()
+    };
+
+    const launched = await adapter.startSession(
+      {
+        sessionId: "session-spawn-agent-raw",
+        workspaceId: "workspace-1",
+        workspacePath: tempDir,
+        provider: "codex",
+        providerSessionId: null,
+        rawStoreRef: null,
+        options: {
+          content: "启动子 Agent",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      sink
+    );
+
+    await launched.completed;
+
+    expect(close).not.toHaveBeenCalled();
+  });
 });
