@@ -3523,6 +3523,20 @@ function mergeCodexActivityObservation(
     return primary;
   }
 
+  const primaryAt = primary.observedAt ?? "";
+  const fallbackAt = fallback.observedAt ?? "";
+  const order = compareNullableIso(fallback.observedAt, primary.observedAt);
+
+  // 同一份 Codex 记录里，后面的 task_started 才代表当前状态。
+  // 旧逻辑无脑保留 terminal，会把上一轮 task_complete 错当成整个父会话已经结束。
+  if (order > 0) {
+    return fallback;
+  }
+
+  if (order < 0) {
+    return primary;
+  }
+
   if (isTerminalProviderSessionObservation(primary)) {
     return primary;
   }
@@ -3538,9 +3552,6 @@ function mergeCodexActivityObservation(
   if (fallback.runningState === "starting" || fallback.runningState === "running") {
     return fallback;
   }
-
-  const primaryAt = primary.observedAt ?? "";
-  const fallbackAt = fallback.observedAt ?? "";
 
   return fallbackAt && (!primaryAt || fallbackAt.localeCompare(primaryAt) > 0)
     ? fallback

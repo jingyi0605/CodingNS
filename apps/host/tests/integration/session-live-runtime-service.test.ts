@@ -3541,7 +3541,7 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
-  it("persistRuntimeEvent 在终态后收到迟到消息时不会把会话抬回 running", async () => {
+  it("persistRuntimeEvent 在终态后继续收到消息时会把会话抬回 running", async () => {
     const {
       service,
       sessionHistoryService,
@@ -3611,8 +3611,8 @@ describe("SessionLiveRuntimeService", () => {
     expect(sessionChangedFileService.recordMessages).toHaveBeenCalledTimes(1);
     expect(sessionStateRepository.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        runningState: "completed",
-        completedAt: "2026-03-26T10:00:10.000Z",
+        runningState: "running",
+        completedAt: null,
         lastEventAt: "2026-03-26T10:00:10.100Z"
       })
     );

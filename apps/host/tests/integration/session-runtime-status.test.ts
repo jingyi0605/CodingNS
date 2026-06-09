@@ -82,6 +82,45 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBe("2026-03-26T10:00:05.000Z");
   });
 
+  it("Codex task_complete 后如果还有新输出，不能继续显示已完成", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "codex-complete-then-message.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T10:00:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T10:00:06.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "还在继续输出" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "codex",
+      rawStoreRef,
+      Date.parse("2026-03-26T10:00:07.000Z")
+    );
+
+    expect(inspection.runningState).toBe("running");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBeNull();
+  });
+
   it("Codex 纯文本输出阶段，只要最近仍有事件，就应继续判定为运行中", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
     tempDirs.push(tempDir);

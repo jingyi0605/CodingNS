@@ -137,6 +137,40 @@ describe("ActiveRunRegistry", () => {
       expect(slowSeen).toEqual(["第一段响应", "第二段响应"]);
     });
   });
+
+  it("终态后如果继续收到消息，会把运行状态拉回 running", async () => {
+    const registry = new ActiveRunRegistry();
+    const handle = registry.register({
+      sessionId: "session-terminal-then-message",
+      workspaceId: "workspace-1",
+      workspacePath: "/tmp/workspace-1",
+      provider: "codex",
+      providerSessionId: null,
+      rawStoreRef: null
+    });
+
+    await handle.emit({
+      type: "complete",
+      status: "completed",
+      providerSessionId: "thread-1",
+      rawStoreRef: "codex://thread-1",
+      detail: "codex turn completed",
+      timestamp: "2026-04-09T09:00:01.000Z"
+    });
+
+    expect(handle.getSnapshot()).toMatchObject({
+      runningState: "completed",
+      completedAt: "2026-04-09T09:00:01.000Z"
+    });
+
+    await handle.emit(buildMessageEvent("thread-1", "完成事件后追加的消息", 2, "2026-04-09T09:00:02.000Z"));
+
+    expect(handle.getSnapshot()).toMatchObject({
+      runningState: "running",
+      completedAt: null,
+      lastEventAt: "2026-04-09T09:00:02.000Z"
+    });
+  });
 });
 
 function buildMessageEvent(

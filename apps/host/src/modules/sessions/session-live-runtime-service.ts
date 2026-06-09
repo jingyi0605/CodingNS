@@ -2709,7 +2709,7 @@ export class SessionLiveRuntimeService {
       this.sessionStateRepository.findBySessionAndUser(sessionId, userId)
     );
     const currentRunningState = currentState?.runningState ?? null;
-    const shouldPreserveTerminalState = isTerminalSessionRunningState(currentRunningState);
+    const shouldPreserveTerminalStatusEvent = isTerminalSessionRunningState(currentRunningState);
 
     if (event.type === "message") {
       this.runtimeMessageSeenSessions.add(sessionId);
@@ -2743,11 +2743,11 @@ export class SessionLiveRuntimeService {
         this.sessionStateRepository.upsert({
           sessionId,
           userId,
-          runningState: shouldPreserveTerminalState ? currentRunningState : "running",
+          runningState: "running",
           activitySource: "runtime",
           favorite: currentState?.favorite ?? false,
           lastEventAt: event.message.timestamp,
-          completedAt: shouldPreserveTerminalState ? currentState?.completedAt ?? null : null,
+          completedAt: null,
           lastSeenAt: currentState?.lastSeenAt ?? null,
           updatedAt: nowIso()
         });
@@ -2769,7 +2769,7 @@ export class SessionLiveRuntimeService {
       return;
     }
 
-    if (shouldPreserveTerminalState) {
+    if (shouldPreserveTerminalStatusEvent) {
       await this.runRuntimeSqliteWrite(sessionId, "upsertTerminalPreservedState", () => {
         this.sessionStateRepository.upsert({
           sessionId,

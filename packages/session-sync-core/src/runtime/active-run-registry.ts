@@ -228,8 +228,17 @@ export class ActiveRunRegistry {
     if (event.type === "message") {
       record.lastEventAt = event.message.timestamp;
 
-      if (record.runningState === "starting") {
+      if (
+        record.runningState === "starting" ||
+        record.runningState === "completed" ||
+        record.runningState === "interrupted" ||
+        record.runningState === "failed"
+      ) {
         record.runningState = "running";
+        record.completedAt = null;
+        record.detail = null;
+        record.interruptSource = null;
+        record.errorCode = null;
       }
 
       return;
