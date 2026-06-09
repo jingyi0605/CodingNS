@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -1402,6 +1402,263 @@ test("CodexRuntimeAdapter 不会把 turn/completed 回放的同一批 items 再�
         }
       ]
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会话完成", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-wait-"));
+  const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
+  const childThreadId = "019eab55-1f95-7a64-89ea-6f1234567890";
+  const parentThreadPath = join(tempDir, "parent.jsonl");
+  const childSessionDir = join(tempDir, "sessions", "2026", "06", "09");
+  const childThreadPath = join(
+    childSessionDir,
+    `rollout-2026-06-09T15-45-00-${childThreadId}.jsonl`
+  );
+  const emitted = [];
+  let notificationHandler = null;
+  let completeEventSeenBeforeChildDone = false;
+  let childDone = false;
+  let closed = false;
+
+  try {
+    mkdirSync(childSessionDir, { recursive: true });
+
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId: parentThreadId,
+                turnId: "turn-parent",
+                item: {
+                  type: "function_call",
+                  id: "call_spawn",
+                  call_id: "call_spawn",
+                  name: "spawn_agent",
+                  arguments: JSON.stringify({ message: "请继续检查" }),
+                  output: JSON.stringify({
+                    agent_id: childThreadId,
+                    nickname: "Arendt"
+                  }),
+                  status: "completed"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId: parentThreadId,
+                turn: { id: "turn-parent", items: [], status: "completed" }
+              }
+            });
+          });
+          setTimeout(() => {
+            writeFileSync(
+              childThreadPath,
+              [
+                JSON.stringify({
+                  timestamp: "2026-06-09T07:45:00.000Z",
+                  type: "session_meta",
+                  payload: {
+                    id: childThreadId,
+                    cwd: tempDir,
+                    source: {
+                      subagent: {
+                        thread_spawn: {
+                          parent_thread_id: parentThreadId,
+                          agent_nickname: "Arendt"
+                        }
+                      }
+                    },
+                    thread_source: "subagent"
+                  }
+                }),
+                JSON.stringify({
+                  timestamp: "2026-06-09T07:45:01.000Z",
+                  type: "event_msg",
+                  payload: {
+                    type: "task_started",
+                    turn_id: "turn-child",
+                    started_at: Date.parse("2026-06-09T07:45:01.000Z") / 1000
+                  }
+                }),
+                JSON.stringify({
+                  timestamp: "2026-06-09T07:45:02.000Z",
+                  type: "event_msg",
+                  payload: {
+                    type: "task_complete",
+                    turn_id: "turn-child",
+                    completed_at: Date.parse("2026-06-09T07:45:02.000Z") / 1000
+                  }
+                })
+              ].join("\n"),
+              "utf8"
+            );
+            childDone = true;
+          }, 50);
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-subagent-wait",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        if (event.type === "complete" && !childDone) {
+          completeEventSeenBeforeChildDone = true;
+        }
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    assert.equal(completeEventSeenBeforeChildDone, false);
+    assert.equal(childDone, true);
+    assert.equal(emitted.some((event) => event.type === "complete"), true);
+    assert.equal(closed, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 父会话故障停止时不会继续等待 spawn_agent 子会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-parent-failed-"));
+  const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
+  const childThreadId = "019eab55-1f95-7a64-89ea-6f1234567890";
+  const parentThreadPath = join(tempDir, "parent.jsonl");
+  const emitted = [];
+  let notificationHandler = null;
+  let closeHandler = null;
+  let closed = false;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId: parentThreadId,
+                turnId: "turn-parent",
+                item: {
+                  type: "function_call",
+                  id: "call_spawn",
+                  call_id: "call_spawn",
+                  name: "spawn_agent",
+                  arguments: JSON.stringify({ message: "请继续检查" }),
+                  output: JSON.stringify({
+                    agent_id: childThreadId,
+                    nickname: "Arendt"
+                  }),
+                  status: "completed"
+                }
+              }
+            });
+            closeHandler?.(new Error("CODEX_APP_SERVER_CLOSED"));
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          closeHandler = handler;
+        },
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-subagent-parent-failed",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await Promise.race([
+      launch.completed,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("父会话故障后仍在等待子 Agent")), 200);
+      })
+    ]);
+
+    assert.equal(emitted.some((event) => event.type === "complete"), false);
+    assert.equal(emitted.some((event) => event.type === "error"), true);
+    assert.equal(closed, true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

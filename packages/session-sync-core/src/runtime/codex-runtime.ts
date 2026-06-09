@@ -112,6 +112,8 @@ interface CodexRuntimeOptions {
 
 interface CodexTurnLifecycle {
   keepTransportAliveAfterTurn: boolean;
+  spawnedAgentsSettledAfterTurn: boolean;
+  parentTurnStopped: boolean;
 }
 
 const CODEX_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
@@ -162,6 +164,14 @@ function shouldKeepCodexTransportAliveAfterTurn(
   lifecycle: CodexTurnLifecycle,
   rawStoreRef: string
 ): boolean {
+  if (lifecycle.parentTurnStopped) {
+    return false;
+  }
+
+  if (lifecycle.spawnedAgentsSettledAfterTurn) {
+    return false;
+  }
+
   return lifecycle.keepTransportAliveAfterTurn || codexRawStoreContainsSpawnAgentCall(rawStoreRef);
 }
 
@@ -222,9 +232,14 @@ function extractCodexSpawnedAgentIdsFromRawStore(rawStoreRef: string): string[] 
 
       if (isCodexSpawnAgentItem(payload)) {
         const callId = ensureText(readProp(payload, "call_id")).trim();
+        const agentId = extractCodexAgentIdFromToolOutput(readProp(payload, "output"));
 
         if (callId) {
           spawnCallIds.add(callId);
+        }
+
+        if (agentId) {
+          agentIds.add(agentId);
         }
         continue;
       }
@@ -234,15 +249,17 @@ function extractCodexSpawnedAgentIdsFromRawStore(rawStoreRef: string): string[] 
       }
 
       const callId = ensureText(readProp(payload, "call_id")).trim();
+      const outputBelongsToSpawnAgent =
+        ensureText(readProp(payload, "name")).trim() === "spawn_agent"
+        || ensureText(readProp(payload, "tool")).trim() === "spawn_agent";
 
-      if (!callId || !spawnCallIds.has(callId)) {
+      if ((!callId || !spawnCallIds.has(callId)) && !outputBelongsToSpawnAgent) {
         continue;
       }
 
-      const parsedOutput = parseStructuredJson(ensureText(readProp(payload, "output")));
-      const agentId = ensureText(readProp(parsedOutput, "agent_id")).trim();
+      const agentId = extractCodexAgentIdFromToolOutput(readProp(payload, "output"));
 
-      if (looksLikeCodexThreadId(agentId)) {
+      if (agentId) {
         agentIds.add(agentId);
       }
     } catch {
@@ -251,6 +268,17 @@ function extractCodexSpawnedAgentIdsFromRawStore(rawStoreRef: string): string[] 
   }
 
   return [...agentIds];
+}
+
+function extractCodexAgentIdFromToolOutput(output: unknown): string | null {
+  const parsedOutput = typeof output === "string"
+    ? parseStructuredJson(output)
+    : toRecord(output);
+  const agentId =
+    ensureText(readProp(parsedOutput, "agent_id")).trim()
+    || ensureText(readProp(parsedOutput, "agentId")).trim();
+
+  return looksLikeCodexThreadId(agentId) ? agentId : null;
 }
 
 function isCodexRawStoreTerminal(rawStoreRef: string): boolean {
@@ -467,7 +495,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
       const lifecycle: CodexTurnLifecycle = {
-        keepTransportAliveAfterTurn: false
+        keepTransportAliveAfterTurn: false,
+        spawnedAgentsSettledAfterTurn: false,
+        parentTurnStopped: false
       };
       const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
@@ -534,6 +564,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       });
       transport.setOnClose((error) => {
         if (error) {
+          lifecycle.parentTurnStopped = true;
           eventQueue.push({
             type: "turn.failed",
             timestamp: nextTimestamp(),
@@ -704,7 +735,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       const abortController = new AbortController();
       const eventQueue = createAsyncEventQueue();
       const lifecycle: CodexTurnLifecycle = {
-        keepTransportAliveAfterTurn: false
+        keepTransportAliveAfterTurn: false,
+        spawnedAgentsSettledAfterTurn: false,
+        parentTurnStopped: false
       };
       const translateNotification = createCodexAppServerNotificationTranslator();
       const forwardTranslatedNotification = createCodexTranslatedNotificationForwarder(eventQueue);
@@ -749,6 +782,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       });
       transport.setOnClose((error) => {
         if (error) {
+          lifecycle.parentTurnStopped = true;
           eventQueue.push({
             type: "turn.failed",
             timestamp: nextTimestamp(),
@@ -881,7 +915,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     launchedAtMs = Date.now(),
     launchPerfStartedAtMs = performance.now(),
     lifecycle: CodexTurnLifecycle = {
-      keepTransportAliveAfterTurn: false
+      keepTransportAliveAfterTurn: false,
+      spawnedAgentsSettledAfterTurn: false,
+      parentTurnStopped: false
     }
   ): Promise<void> {
     const context: ActiveTurnContext = {
@@ -913,7 +949,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       for (const event of bufferedEvents) {
         await this.refreshSessionBindingIfNeeded(context);
         persistSyntheticEventIfNeeded(context.rawStoreRef, context.providerSessionId, event);
-        await this.handleEvent(event, request, context, abortController.signal.aborted);
+        await this.handleEvent(event, request, context, abortController.signal);
       }
 
       const events =
@@ -926,13 +962,17 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         const next = await events.next();
 
         if (next.done) {
+          if (context.lifecycle.parentTurnStopped) {
+            return;
+          }
+
           await this.waitForSpawnedCodexAgentsIfNeeded(context, abortController.signal);
           return;
         }
 
         await this.refreshSessionBindingIfNeeded(context);
         persistSyntheticEventIfNeeded(context.rawStoreRef, context.providerSessionId, next.value);
-        await this.handleEvent(next.value, request, context, abortController.signal.aborted);
+        await this.handleEvent(next.value, request, context, abortController.signal);
       }
     } catch (error) {
       if (abortController.signal.aborted) {
@@ -978,7 +1018,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const deadline = Date.now() + CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS;
     const remainingAgentIds = new Set(agentIds);
 
-    while (remainingAgentIds.size > 0 && Date.now() < deadline && !signal.aborted) {
+    while (
+      remainingAgentIds.size > 0
+      && Date.now() < deadline
+      && !signal.aborted
+      && !context.lifecycle.parentTurnStopped
+    ) {
       for (const agentId of [...remainingAgentIds]) {
         const rawStoreRef = this.findRawStoreRefOnce(
           agentId,
@@ -991,11 +1036,20 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         }
       }
 
-      if (remainingAgentIds.size === 0 || Date.now() >= deadline || signal.aborted) {
+      if (
+        remainingAgentIds.size === 0
+        || Date.now() >= deadline
+        || signal.aborted
+        || context.lifecycle.parentTurnStopped
+      ) {
         break;
       }
 
       await sleep(CODEX_SPAWN_AGENT_POLL_INTERVAL_MS);
+    }
+
+    if (remainingAgentIds.size === 0) {
+      context.lifecycle.spawnedAgentsSettledAfterTurn = true;
     }
   }
 
@@ -1003,9 +1057,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     event: unknown,
     request: ProviderRuntimeRunRequest,
     context: ActiveTurnContext,
-    interrupted: boolean
+    signal: AbortSignal
   ): Promise<void> {
     const eventType = ensureText(readProp(event, "type")).trim();
+    const interrupted = signal.aborted;
 
     if (eventType.length === 0) {
       return;
@@ -1024,6 +1079,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "turn.completed") {
+      await this.waitForSpawnedCodexAgentsIfNeeded(context, signal);
       await context.sink.emit({
         type: "complete",
         status: "completed",
@@ -1036,6 +1092,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "turn.failed") {
+      context.lifecycle.parentTurnStopped = true;
       const detail = extractTextBlocks(readProp(event, "error")).trim() || "codex turn failed";
       await context.sink.emit({
         type: "error",
@@ -1050,6 +1107,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "turn.interrupted") {
+      context.lifecycle.parentTurnStopped = true;
       await context.sink.emit({
         type: "interrupted",
         status: "interrupted",
