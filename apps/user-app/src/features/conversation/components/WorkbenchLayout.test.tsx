@@ -1150,6 +1150,160 @@ describe("WorkbenchLayout", () => {
     expect(rootTreeScope.getAllByRole("button", { name: t("shell.subagentExpandMore") })).toHaveLength(1);
   });
 
+  it("根会话展开更多子会话后，导航刷新不会把列表自动收回去", async () => {
+    const subagentSessions = Array.from({ length: 7 }, (_, index) => ({
+      ...createSessionSummary({
+        sessionId: `root-subagent-${index + 1}`,
+        title: `Refresh Subagent ${index + 1}`,
+        workspaceId: "workspace-1",
+        parentSessionId: "root-session",
+        isSubagent: true,
+        subagentLabel: `worker · refresh-${index + 1}`
+      }),
+      lastMessageAt: `2026-03-24T10:0${8 - index}:00.000Z`,
+      updatedAt: `2026-03-24T10:0${8 - index}:00.000Z`
+    }));
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "root-session",
+            title: "Root Session",
+            workspaceId: "workspace-1"
+          }),
+          ...subagentSessions
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
+
+    const rootSession = await findSessionCardByTitle("Root Session");
+    const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
+
+    expect(rootTreeNode).not.toBeNull();
+
+    const rootTreeScope = within(rootTreeNode!);
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpand") }));
+    expect(rootTreeScope.queryByText("Refresh Subagent 6")).not.toBeInTheDocument();
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpandMore") }));
+    expect(rootTreeScope.getByText("Refresh Subagent 6")).toBeInTheDocument();
+    expect(rootTreeScope.getByText("Refresh Subagent 7")).toBeInTheDocument();
+    expect(rootTreeScope.queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: currentSnapshot
+    });
+
+    await waitFor(() => {
+      expect(rootTreeScope.getByText("Refresh Subagent 6")).toBeInTheDocument();
+      expect(rootTreeScope.getByText("Refresh Subagent 7")).toBeInTheDocument();
+    });
+    expect(rootTreeScope.queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
+  });
+
+  it("已关闭的子 Agent 收进列表第一位按钮，点击后才展开", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "root-session",
+            title: "Root Session",
+            workspaceId: "workspace-1"
+          }),
+          {
+            ...createSessionSummary({
+              sessionId: "running-subagent",
+              title: "Running Subagent",
+              workspaceId: "workspace-1",
+              parentSessionId: "root-session",
+              isSubagent: true,
+              subagentLabel: "worker · running",
+              runningState: "running",
+              activityState: "running"
+            }),
+            lastMessageAt: "2026-03-24T10:08:00.000Z",
+            updatedAt: "2026-03-24T10:08:00.000Z"
+          },
+          {
+            ...createSessionSummary({
+              sessionId: "closed-subagent",
+              title: "Closed Subagent",
+              workspaceId: "workspace-1",
+              parentSessionId: "root-session",
+              isSubagent: true,
+              subagentLabel: "worker · closed",
+              runningState: "completed",
+              activityState: "completed_unread"
+            }),
+            lastMessageAt: "2026-03-24T10:09:00.000Z",
+            updatedAt: "2026-03-24T10:09:00.000Z",
+            completedAt: "2026-03-24T10:09:30.000Z"
+          }
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
+
+    const rootSession = await findSessionCardByTitle("Root Session");
+    const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
+
+    expect(rootTreeNode).not.toBeNull();
+
+    const rootTreeScope = within(rootTreeNode!);
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpand") }));
+
+    const subagentList = rootTreeNode!.querySelector(".workbench-subsession-list");
+
+    expect(subagentList).not.toBeNull();
+    expect(rootTreeScope.getByText("Running Subagent")).toBeInTheDocument();
+    expect(rootTreeScope.queryByText("Closed Subagent")).not.toBeInTheDocument();
+    expect(subagentList!.firstElementChild).toHaveTextContent(t("shell.closedSubagentToggle"));
+    expect(subagentList!.firstElementChild).toHaveClass("workbench-session-tree-node");
+    expect(
+      subagentList!.firstElementChild?.querySelector(".workbench-session-tree-guide-branch")
+    ).not.toBeNull();
+
+    const closedSubagentToggle = rootTreeScope.getByRole("button", {
+      name: new RegExp(`^${t("shell.closedSubagentToggle")}`)
+    });
+
+    expect(closedSubagentToggle).toHaveClass("workbench-closed-subagent-toggle");
+
+    await userEvent.click(closedSubagentToggle);
+
+    expect(rootTreeScope.getByText("Closed Subagent")).toBeInTheDocument();
+  });
+
   it("工作区根会话默认分段渲染，并保证当前激活会话不会被折叠掉", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {

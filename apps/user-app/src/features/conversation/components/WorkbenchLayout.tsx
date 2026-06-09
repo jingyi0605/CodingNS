@@ -1703,6 +1703,16 @@ type RenderableSessionTreeNode = {
   forceInactive?: boolean;
 };
 
+type SubagentRenderGroup = {
+  key: "open" | "closed";
+  nodes: RenderableSessionTreeNode[];
+  count: number;
+  collapsedToggle?: {
+    stateKey: string;
+    expanded: boolean;
+  };
+};
+
 export type WorkbenchShellMode = "desktop" | "mobile";
 
 function hasValidTreeNodeSession(
@@ -1719,6 +1729,17 @@ export function getTreeNodeChildren(
 
 function getTreeNodeSession(node: NavigationSessionTreeNode | { session?: SessionSummaryDto } | null | undefined) {
   return node && "item" in node ? node.item : node?.session ?? null;
+}
+
+function isClosedSubagentSession(session: SessionSummaryDto): boolean {
+  return (
+    isRealSubagentSession(session)
+    && (session.runningState === "completed"
+      || session.runningState === "interrupted"
+      || session.runningState === "failed"
+      || session.activityState === "completed_unread"
+      || Boolean(session.completedAt))
+  );
 }
 
 export function getVisibleSessionTreeNodes(
@@ -2058,6 +2079,10 @@ function buildParallelAnchorProjectionKey(sessionId: string) {
   return `${sessionId}::parallel-anchor-member`;
 }
 
+function buildClosedSubagentStateKey(sessionId: string) {
+  return `${sessionId}::closed-subagents`;
+}
+
 function createProjectedNavigationTreeNode(input: {
   session: SessionSummaryDto;
   depth: number;
@@ -2170,10 +2195,12 @@ export function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
 function limitVisibleDescendantTree(
   node: NavigationSessionTreeNode,
   visibleCount: number,
-  sessionDisplaySortMode: SessionDisplaySortMode
+  sessionDisplaySortMode: SessionDisplaySortMode,
+  shouldCountNode: (node: NavigationSessionTreeNode) => boolean = () => true
 ): NavigationSessionTreeNode {
   const childNodes = getTreeNodeChildren(node);
   const descendantNodes = flattenSessionTreeNodes(childNodes)
+    .filter(shouldCountNode)
     .sort((left, right) =>
       compareSessionSummaryByDisplayMode(left.item, right.item, sessionDisplaySortMode)
     );
@@ -6111,7 +6138,7 @@ function SidebarContent({
           ...getVisibleSessionTreeNodes(group),
           ...collectSidebarVisibleSessionTrees(group.childWorktrees)
         ]) {
-          for (const node of flattenSessionTreeNodes(getTreeNodeChildren(rootNode))) {
+          for (const node of [rootNode, ...flattenSessionTreeNodes(getTreeNodeChildren(rootNode))]) {
             const childNodes = getTreeNodeChildren(node);
 
             if (childNodes.length === 0) {
@@ -6132,6 +6159,24 @@ function SidebarContent({
               current[node.item.sessionId],
               activeDescendantIndex
             );
+
+            const closedDescendantNodes = descendantNodes.filter((childNode) =>
+              isClosedSubagentSession(childNode.item)
+            );
+            const activeClosedDescendantIndex = closedDescendantNodes.findIndex(
+              (childNode) => childNode.item.sessionId === activeSessionId
+            );
+
+            if (closedDescendantNodes.length > 0) {
+              const closedStateKey = buildClosedSubagentStateKey(node.item.sessionId);
+
+              next[closedStateKey] = resolveVisibleItemCount(
+                closedDescendantNodes.length,
+                SUBAGENT_PAGE_SIZE,
+                current[closedStateKey],
+                activeClosedDescendantIndex
+              );
+            }
           }
         }
       }
@@ -6157,8 +6202,23 @@ function SidebarContent({
         )
       ]
     );
+    const closedSubagentGroupIdsToExpand = workspaceGroups.flatMap((group) =>
+      [
+        ...getVisibleSessionTreeNodes(group),
+        ...collectSidebarVisibleSessionTrees(group.childWorktrees)
+      ].flatMap((rootNode) =>
+        [rootNode, ...flattenSessionTreeNodes(getTreeNodeChildren(rootNode))]
+          .filter((node) =>
+            getTreeNodeChildren(node).some((childNode) =>
+              isClosedSubagentSession(childNode.item) && childNode.item.sessionId === activeSessionId
+            )
+          )
+          .map((node) => buildClosedSubagentStateKey(node.item.sessionId))
+      )
+    );
+    const expandedIds = [...sessionIdsToExpand, ...closedSubagentGroupIdsToExpand];
 
-    if (sessionIdsToExpand.length === 0) {
+    if (expandedIds.length === 0) {
       return;
     }
 
@@ -6166,7 +6226,7 @@ function SidebarContent({
       const currentSet = new Set(current);
       let changed = false;
 
-      for (const sessionId of sessionIdsToExpand) {
+      for (const sessionId of expandedIds) {
         if (!currentSet.has(sessionId)) {
           currentSet.add(sessionId);
           changed = true;
@@ -6716,6 +6776,171 @@ function SidebarContent({
     );
   }
 
+  function renderSubagentTreeChildren(input: {
+    groups: SubagentRenderGroup[];
+    workspace: WorkspaceDto;
+    workspaceContext: WorkspaceVisualContext;
+    menuKeyPrefix: string;
+    showWorkspaceName: boolean;
+    selectionMode: boolean;
+    favoriteEnabled: boolean;
+    nextAncestorHasNextSiblings: readonly boolean[];
+    hasMoreSubagents: boolean;
+    expansionStateKey: string;
+    ancestorExpanded: boolean;
+  }) {
+    const {
+      groups,
+      workspace,
+      workspaceContext,
+      menuKeyPrefix,
+      showWorkspaceName,
+      selectionMode,
+      favoriteEnabled,
+      nextAncestorHasNextSiblings,
+      hasMoreSubagents,
+      expansionStateKey,
+      ancestorExpanded
+    } = input;
+    const visibleChildCount = groups.reduce((count, group) => {
+      if (group.key === "closed" && group.collapsedToggle && !group.collapsedToggle.expanded) {
+        return count;
+      }
+
+      return count + group.nodes.length;
+    }, 0);
+    let renderedIndex = 0;
+
+    return (
+      <div className="workbench-subsession-list">
+        {groups.flatMap((group) => {
+          if (group.key === "closed" && group.collapsedToggle) {
+            const { stateKey, expanded } = group.collapsedToggle;
+            const toggleElement = (
+              <div key={`${stateKey}:toggle`} className="workbench-session-tree-node">
+                <div
+                  className="workbench-session-tree-row workbench-closed-subagent-toggle-row"
+                  style={
+                    {
+                      "--workbench-session-tree-depth": 1
+                    } as CSSProperties
+                  }
+                >
+                  <div className="workbench-session-tree-guides" aria-hidden="true">
+                    <span
+                      className="workbench-session-tree-guide-branch"
+                      data-continue={visibleChildCount > 0}
+                      data-first="true"
+                      style={
+                        {
+                          "--workbench-session-tree-level": 1
+                        } as CSSProperties
+                      }
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="workbench-subsession-expand workbench-closed-subagent-toggle ghost-button"
+                    aria-expanded={expanded}
+                    onClick={() => handleToggleSubagentList(stateKey)}
+                  >
+                    <span>{t("shell.closedSubagentToggle")}</span>
+                    <span className="workbench-section-counter">{group.count}</span>
+                  </button>
+                </div>
+              </div>
+            );
+
+            if (!expanded) {
+              return [toggleElement];
+            }
+
+            return [
+              toggleElement,
+              ...group.nodes.map((childEntry) => renderSubagentTreeNode(childEntry, renderedIndex++, visibleChildCount, {
+                workspace,
+                workspaceContext,
+                menuKeyPrefix,
+                showWorkspaceName,
+                selectionMode,
+                favoriteEnabled,
+                nextAncestorHasNextSiblings,
+                ancestorExpanded
+              }))
+            ];
+          }
+
+          return group.nodes.map((childEntry) => renderSubagentTreeNode(childEntry, renderedIndex++, visibleChildCount, {
+            workspace,
+            workspaceContext,
+            menuKeyPrefix,
+            showWorkspaceName,
+            selectionMode,
+            favoriteEnabled,
+            nextAncestorHasNextSiblings,
+            ancestorExpanded
+          }));
+        })}
+        {hasMoreSubagents ? (
+          <button
+            type="button"
+            className="workbench-subsession-expand ghost-button"
+            onClick={() => handleExpandSubagents(expansionStateKey)}
+          >
+            {t("shell.subagentExpandMore")}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderSubagentTreeNode(
+    childEntry: RenderableSessionTreeNode,
+    siblingIndex: number,
+    visibleChildCount: number,
+    input: {
+      workspace: WorkspaceDto;
+      workspaceContext: WorkspaceVisualContext;
+      menuKeyPrefix: string;
+      showWorkspaceName: boolean;
+      selectionMode: boolean;
+      favoriteEnabled: boolean;
+      nextAncestorHasNextSiblings: readonly boolean[];
+      ancestorExpanded: boolean;
+    }
+  ) {
+    const {
+      workspace,
+      workspaceContext,
+      menuKeyPrefix,
+      showWorkspaceName,
+      selectionMode,
+      favoriteEnabled,
+      nextAncestorHasNextSiblings,
+      ancestorExpanded
+    } = input;
+
+    return renderSessionTreeBranch({
+      node: childEntry.node,
+      fullNode: childEntry.fullNode,
+      branchKey: childEntry.branchKey,
+      subagentStateKey: childEntry.subagentStateKey,
+      workspace,
+      workspaceContext,
+      menuKeyPrefix,
+      showWorkspaceName,
+      selectionMode,
+      favoriteEnabled,
+      showParallelBadge: childEntry.showParallelBadge,
+      forceInactive: childEntry.forceInactive,
+      allowToggle: true,
+      ancestorHasNextSiblings: nextAncestorHasNextSiblings,
+      ancestorExpanded,
+      hasNextSibling: siblingIndex < visibleChildCount - 1,
+      isFirstSibling: siblingIndex === 0
+    });
+  }
+
   function isWorktreeNodeExpanded(workspaceId: string, containsActiveWorkspace: boolean) {
     if (collapsedWorktreeNodeIdSet.has(workspaceId)) {
       return false;
@@ -6993,6 +7218,7 @@ function SidebarContent({
     // 只让真正的展开根节点负责子会话分页，递归子节点只消费父节点已经裁好的树，
     // 否则同一棵树会被重复裁剪，冒出多个“展开更多子会话”按钮。
     const shouldPaginateSubagentTree = locallyExpanded && allowToggle;
+    const shouldHideClosedSubagentsBehindToggle = showSubagentChildren && allowToggle;
     const visibleNode =
       inheritedExpanded
         ? node
@@ -7000,12 +7226,19 @@ function SidebarContent({
           ? limitVisibleDescendantTree(
               node,
               getVisibleSubagentCount(expansionStateKey),
-              sessionDisplaySortMode
+              sessionDisplaySortMode,
+              shouldHideClosedSubagentsBehindToggle
+                ? (candidateNode) => !isClosedSubagentSession(candidateNode.item)
+                : undefined
             )
           : fullNode;
     const visibleChildren = showSubagentChildren ? getTreeNodeChildren(visibleNode) : [];
-    const totalDescendantCount = flattenSessionTreeNodes(childNodes).length;
-    const visibleDescendantCount = flattenSessionTreeNodes(visibleChildren).length;
+    const totalDescendantCount = flattenSessionTreeNodes(childNodes).filter((childNode) =>
+      !shouldHideClosedSubagentsBehindToggle || !isClosedSubagentSession(childNode.item)
+    ).length;
+    const visibleDescendantCount = flattenSessionTreeNodes(visibleChildren).filter((childNode) =>
+      !shouldHideClosedSubagentsBehindToggle || !isClosedSubagentSession(childNode.item)
+    ).length;
     const hasMoreSubagents = shouldPaginateSubagentTree && visibleDescendantCount < totalDescendantCount;
     const nextAncestorHasNextSiblings =
       node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
@@ -7064,6 +7297,35 @@ function SidebarContent({
             node: childNode,
             fullNode: childNodes.find((item) => item.item.sessionId === childNode.item.sessionId) ?? childNode
           }));
+    const closedSubagentStateKey = buildClosedSubagentStateKey(expansionStateKey);
+    const closedSubagentExpanded = isSubagentListExpanded(closedSubagentStateKey);
+    const closedChildren = childNodes
+      .filter((childNode) => isClosedSubagentSession(childNode.item))
+      .map((childNode) => ({
+        node: childNode,
+        fullNode: childNode
+      }));
+    const openChildren = renderableChildren.filter((childEntry) => !isClosedSubagentSession(childEntry.node.item));
+    const subagentGroups: SubagentRenderGroup[] = [
+      ...(closedChildren.length > 0
+        ? [{
+            key: "closed" as const,
+            nodes: closedChildren,
+            count: closedChildren.length,
+            collapsedToggle: {
+              stateKey: closedSubagentStateKey,
+              expanded: closedSubagentExpanded
+            }
+          }]
+        : []),
+      ...(openChildren.length > 0
+        ? [{
+            key: "open" as const,
+            nodes: openChildren,
+            count: openChildren.length
+          }]
+        : [])
+    ];
 
     return (
       <div key={branchKey ?? session.sessionId} className="workbench-session-tree-node">
@@ -7153,39 +7415,21 @@ function SidebarContent({
             onCloseMenu={closeSessionMenu}
           />
         </div>
-        {childNodes.length > 0 && showSubagentChildren ? (
-          <div className="workbench-subsession-list">
-            {renderableChildren.map((childEntry, index) => {
-              return renderSessionTreeBranch({
-                node: childEntry.node,
-                fullNode: childEntry.fullNode,
-                branchKey: childEntry.branchKey,
-                subagentStateKey: childEntry.subagentStateKey,
-                workspace,
-                workspaceContext,
-                menuKeyPrefix,
-                showWorkspaceName,
-                selectionMode,
-                favoriteEnabled,
-                showParallelBadge: childEntry.showParallelBadge,
-                forceInactive: childEntry.forceInactive,
-                allowToggle: true,
-                ancestorHasNextSiblings: nextAncestorHasNextSiblings,
-                hasNextSibling: index < renderableChildren.length - 1,
-                isFirstSibling: index === 0
-              });
-            })}
-            {hasMoreSubagents ? (
-              <button
-                type="button"
-                className="workbench-subsession-expand ghost-button"
-                onClick={() => handleExpandSubagents(expansionStateKey)}
-              >
-                {t("shell.subagentExpandMore")}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+        {childNodes.length > 0 && showSubagentChildren
+          ? renderSubagentTreeChildren({
+              groups: subagentGroups,
+              workspace,
+              workspaceContext,
+              menuKeyPrefix,
+              showWorkspaceName,
+              selectionMode,
+              favoriteEnabled,
+              nextAncestorHasNextSiblings,
+              hasMoreSubagents,
+              expansionStateKey,
+              ancestorExpanded: showSubagentChildren
+            })
+          : null}
       </div>
     );
   }
