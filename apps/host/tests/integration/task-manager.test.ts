@@ -88,6 +88,59 @@ describe("TaskManager", () => {
     expect(metrics.totals.finished).toBe(1);
   });
 
+  it("可以按 taskType 和 key 前缀批量取消活动任务", async () => {
+    const manager = createTaskManager();
+    const firstDeferred = createDeferred<string>();
+    const secondDeferred = createDeferred<string>();
+    const otherDeferred = createDeferred<string>();
+
+    manager.register({
+      taskType: "test.cancel_matching",
+      executionLane: "host_background",
+      run: async ({ value }: { value: string }) => {
+        if (value === "first") {
+          return firstDeferred.promise;
+        }
+        if (value === "second") {
+          return secondDeferred.promise;
+        }
+        return otherDeferred.promise;
+      }
+    });
+
+    const first = manager.enqueue<{ value: string }, string>("test.cancel_matching", {
+      key: "workspace-1:doc:a",
+      input: { value: "first" }
+    });
+    const second = manager.enqueue<{ value: string }, string>("test.cancel_matching", {
+      key: "workspace-1:folder:b",
+      input: { value: "second" }
+    });
+    const other = manager.enqueue<{ value: string }, string>("test.cancel_matching", {
+      key: "workspace-2:doc:a",
+      input: { value: "other" }
+    });
+
+    const cancelled = manager.cancelMatching(
+      {
+        taskTypes: ["test.cancel_matching"],
+        keyPrefix: "workspace-1:"
+      },
+      "workspace disabled"
+    );
+
+    expect(cancelled.map((snapshot) => snapshot.key).sort()).toEqual([
+      "workspace-1:doc:a",
+      "workspace-1:folder:b"
+    ]);
+    await expect(first.promise).rejects.toBeInstanceOf(TaskCancelledError);
+    await expect(second.promise).rejects.toBeInstanceOf(TaskCancelledError);
+
+    otherDeferred.resolve("other");
+    await expect(other.promise).resolves.toBe("other");
+    expect(manager.peek("test.cancel_matching", "workspace-2:doc:a")?.status).toBe("succeeded");
+  });
+
   it("超时任务会中止并记录 timeout 指标", async () => {
     const manager = createTaskManager();
 

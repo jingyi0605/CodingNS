@@ -122,6 +122,7 @@ function createService(options: {
   peek?: (taskType: string, key: string) => TaskSnapshot | null;
   enqueue?: ReturnType<typeof vi.fn>;
   cancel?: ReturnType<typeof vi.fn>;
+  cancelMatching?: ReturnType<typeof vi.fn>;
 }) {
   return new AffairsLibraryService(
     {
@@ -211,7 +212,8 @@ function createService(options: {
         cancel: vi.fn()
       })),
       peek: vi.fn(options.peek ?? (() => null)),
-      cancel: options.cancel ?? vi.fn()
+      cancel: options.cancel ?? vi.fn(),
+      cancelMatching: options.cancelMatching ?? vi.fn(() => [])
     } as never,
     {
       info: vi.fn(),
@@ -2574,6 +2576,21 @@ describe("AffairsLibraryService global binding", () => {
     const upsert = vi.fn();
     upsert.mockImplementation((record) => record);
 
+    const cancelMatching = vi.fn(() => [
+      {
+        taskId: "task-index",
+        taskType: HOST_TASK_TYPES.affairsLibraryIndex,
+        key: "workspace-1",
+        executionLane: "helper_process",
+        status: "running",
+        source: "test",
+        attempt: 1,
+        enqueuedAt: Date.now(),
+        startedAt: Date.now(),
+        finishedAt: null,
+        timeoutMs: null
+      }
+    ]);
     const service = new AffairsLibraryService(
       {
         getWorkspaceOrThrow: vi.fn(() => createWorkspace(rootDir)),
@@ -2628,7 +2645,9 @@ describe("AffairsLibraryService global binding", () => {
           promise: Promise.resolve(createIndexerResult("index")),
           cancel: vi.fn()
         })),
-        peek: vi.fn(() => null)
+        peek: vi.fn(() => null),
+        cancel: vi.fn(),
+        cancelMatching
       } as never,
       {
         info: vi.fn(),
@@ -2649,6 +2668,35 @@ describe("AffairsLibraryService global binding", () => {
       enabled: false,
       lastWorkspaceId: "workspace-1"
     }));
+    expect(cancelMatching).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskTypes: [
+          HOST_TASK_TYPES.affairsLibraryApplyConfig,
+          HOST_TASK_TYPES.affairsLibraryIndex,
+          HOST_TASK_TYPES.affairsLibraryExport
+        ],
+        key: "workspace-1"
+      }),
+      "affairs_library_disabled:library_disabled"
+    );
+    expect(cancelMatching).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskTypes: [
+          HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+          HOST_TASK_TYPES.affairsLibraryTagRecompute,
+          HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
+          HOST_TASK_TYPES.affairsLibraryTagExportRefresh
+        ],
+        keyPrefix: "workspace-1:"
+      }),
+      "affairs_library_disabled:library_disabled"
+    );
+    expect(cancelMatching).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyPrefix: "workspace-1::"
+      }),
+      "affairs_library_disabled:library_disabled"
+    );
 
     service.dispose();
     fs.rmSync(rootDir, { recursive: true, force: true });
