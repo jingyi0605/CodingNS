@@ -281,6 +281,13 @@ interface AssistantCapabilitySnapshot {
 
 type CodexAgentToolAction = "create" | "read" | "update" | "reply" | "close";
 
+interface SubagentNotificationSnapshot {
+  agentPath: string | null;
+  statusLabel: string;
+  resultMarkdown: string;
+  rows: AssistantCapabilitySnapshot["rows"];
+}
+
 type FoldedPromptKind = "rules" | "system_prompt" | "skill_context";
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
@@ -1147,6 +1154,68 @@ function resolveToolStatusLabel(status: ResolvedToolCall["status"]): string {
     default:
       return t("conversation.toolStatusCompleted");
   }
+}
+
+function parseSubagentNotificationMessage(content: string): SubagentNotificationSnapshot | null {
+  const match = content.trim().match(/^<subagent_notification>\s*([\s\S]*?)\s*<\/subagent_notification>$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  let parsed: unknown = null;
+
+  try {
+    parsed = JSON.parse(match[1] ?? "");
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(parsed)) {
+    return null;
+  }
+
+  const status = readRecord(parsed, "status");
+
+  if (!status) {
+    return null;
+  }
+
+  const completed = readText(status, "completed");
+  const failed = readText(status, "failed");
+  const cancelled = readText(status, "cancelled");
+  const running = readText(status, "running");
+  const resultMarkdown = completed ?? failed ?? cancelled ?? running;
+
+  if (!resultMarkdown) {
+    return null;
+  }
+
+  const statusLabel =
+    completed ? t("conversation.toolStatusCompleted")
+      : failed ? t("conversation.toolStatusFailed")
+        : cancelled ? t("conversation.subagentNotificationStatusCancelled")
+          : t("conversation.toolStatusRunning");
+  const agentPath = readText(parsed, "agent_path");
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+
+  pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelAgent"), agentPath);
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), statusLabel);
+  pushAssistantCapabilityRow(rows, t("conversation.subagentNotificationLabelSummary"), readFirstMeaningfulLine(resultMarkdown));
+
+  return {
+    agentPath,
+    statusLabel,
+    resultMarkdown,
+    rows
+  };
+}
+
+function readFirstMeaningfulLine(markdown: string): string | null {
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").trim())
+    .find(Boolean) ?? null;
 }
 
 function extractAssistantCliCommand(tool: ResolvedToolCall): string | null {
@@ -4330,6 +4399,88 @@ function AssistantCapabilityToolItem({
   );
 }
 
+function SubagentNotificationReportCard({
+  message,
+  snapshot,
+  actionState,
+  onForkMessage,
+  exportMode = false
+}: {
+  message: SessionMessageViewModel;
+  snapshot: SubagentNotificationSnapshot;
+  actionState: MessageActionState;
+  onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
+  exportMode?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const rawLabel = expanded
+    ? t("conversation.assistantCapabilityRawCollapse")
+    : t("conversation.assistantCapabilityRawExpand");
+
+  return (
+    <article className="message-item tool-message-row subagent-notification-row" data-message-id={message.id}>
+      <div className="tool-call-item assistant-capability-item" data-kind="session">
+        <div className="assistant-capability-header">
+          <div className="assistant-capability-heading">
+            <span className="assistant-capability-icon">
+              <AssistantCapabilityIcon kind="session" />
+            </span>
+            <div className="assistant-capability-heading-main">
+              <span className="assistant-capability-badge">{t("conversation.assistantCapabilityBadgeSubAgent")}</span>
+              <strong>{t("conversation.subagentNotificationTitle")}</strong>
+              <span className="assistant-capability-summary">{t("conversation.subagentNotificationSummary")}</span>
+            </div>
+          </div>
+          {!exportMode ? (
+            <button
+              type="button"
+              className="task-tool-raw-toggle"
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {rawLabel}
+            </button>
+          ) : null}
+        </div>
+
+        {snapshot.rows.length > 0 ? (
+          <div className="assistant-capability-list">
+            {snapshot.rows.map((row) => (
+              <div key={row.label} className="assistant-capability-row">
+                <span className="assistant-capability-row-label">{row.label}</span>
+                <span className="assistant-capability-row-value">{row.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="subagent-notification-body">
+          <MessageMarkdownBody
+            content={snapshot.resultMarkdown}
+            className="message-text message-content markdown-content"
+            exportMode={exportMode}
+          />
+        </div>
+
+        {!exportMode && expanded ? (
+          <div className="tool-call-output">
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolInputLabel")}</div>
+              <pre>{message.content}</pre>
+            </div>
+          </div>
+        ) : null}
+
+        <MessageMetadataBar
+          text={snapshot.resultMarkdown}
+          canCopy={actionState.canCopy}
+          canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+          onFork={onForkMessage ? () => onForkMessage(message) : null}
+        />
+      </div>
+    </article>
+  );
+}
+
 function TaskToolItem({
   tool,
   snapshot,
@@ -4746,6 +4897,10 @@ function MessageItem({
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;
   const structuredQuestions = richContent.structuredQuestions;
+  const subagentNotification = useMemo(
+    () => (isUser ? parseSubagentNotificationMessage(message.content) : null),
+    [isUser, message.content]
+  );
   const [originDetailOpen, setOriginDetailOpen] = useState(false);
   const [originDetailLoading, setOriginDetailLoading] = useState(false);
   const [originDetailError, setOriginDetailError] = useState<string | null>(null);
@@ -4794,6 +4949,18 @@ function MessageItem({
           />
         </div>
       </article>
+    );
+  }
+
+  if (subagentNotification) {
+    return (
+      <SubagentNotificationReportCard
+        message={message}
+        snapshot={subagentNotification}
+        actionState={actionState}
+        onForkMessage={onForkMessage}
+        exportMode={exportMode}
+      />
     );
   }
 

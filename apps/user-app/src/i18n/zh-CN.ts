@@ -1832,6 +1832,10 @@ export const zhCN = {
     codexAgentToolLabelTimeout: "等待",
     codexAgentToolLabelMessage: "消息",
     codexAgentToolLabelReason: "结果",
+    subagentNotificationTitle: "子 agent 汇报",
+    subagentNotificationSummary: "子 agent 已返回本次任务结果。",
+    subagentNotificationLabelSummary: "摘要",
+    subagentNotificationStatusCancelled: "已取消",
     roleSystem: "系统"
   },
   git: {

@@ -1409,6 +1409,45 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("Erdos")).toBeInTheDocument();
   });
 
+  it("会把子 agent 通知用户消息渲染成结果汇报卡片", () => {
+    const notification = {
+      agent_path: "019eab8c-12af-7550-a640-41076f763450",
+      status: {
+        completed: [
+          "已完成 Spec 014 前端控制台和前端契约修复。",
+          "",
+          "## 改动文件",
+          "",
+          "- `web/src/api/modules/gateways.api.ts`",
+          "- `web/src/views/gateways/GatewaysView.vue`",
+          "",
+          "## 测试结果",
+          "",
+          "Test Files 2 passed",
+          "Tests 9 passed"
+        ].join("\n")
+      }
+    };
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createTextMessage(`<subagent_notification>\n${JSON.stringify(notification)}\n</subagent_notification>`)
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.subagentNotificationTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.assistantCapabilityBadgeSubAgent"))).toBeInTheDocument();
+    expect(screen.getByText("019eab8c-12af-7550-a640-41076f763450")).toBeInTheDocument();
+    expect(screen.getAllByText("已完成 Spec 014 前端控制台和前端契约修复。").length).toBeGreaterThan(0);
+    expect(screen.getByText("web/src/api/modules/gateways.api.ts")).toBeInTheDocument();
+    expect(screen.queryByText(/<subagent_notification>/)).not.toBeInTheDocument();
+  });
+
   it("会把 codingns assistant timers create 命令渲染成助手自动化卡片", () => {
     render(
       <MessageTimeline

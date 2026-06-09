@@ -2019,6 +2019,10 @@ export const enUS = {
     codexAgentToolLabelTimeout: "Wait",
     codexAgentToolLabelMessage: "Message",
     codexAgentToolLabelReason: "Result",
+    subagentNotificationTitle: "Sub-agent Report",
+    subagentNotificationSummary: "The sub-agent returned the task result.",
+    subagentNotificationLabelSummary: "Summary",
+    subagentNotificationStatusCancelled: "Cancelled",
     roleSystem: "System"
   },
   git: {

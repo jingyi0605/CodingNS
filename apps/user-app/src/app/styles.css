@@ -15954,6 +15954,32 @@ textarea:focus-visible {
   flex: 1 1 auto;
 }
 
+.subagent-notification-body {
+  padding: 8px 10px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--assistant-capability-accent) 10%, var(--border-primary));
+}
+
+.subagent-notification-body .message-content {
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.subagent-notification-body .markdown-content {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.subagent-notification-body .markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.subagent-notification-body .markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
 .apply-patch-item {
   display: flex;
   flex-direction: column;
