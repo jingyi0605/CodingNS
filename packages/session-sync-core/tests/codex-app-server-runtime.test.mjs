@@ -1666,6 +1666,178 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
   }
 });
 
+test("CodexRuntimeAdapter 不会因为一个子 Agent 汇报就提前完成父会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-partial-report-"));
+  const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
+  const childThreadIds = [
+    "019eab55-1f95-7a64-89ea-6f1111111111",
+    "019eab55-1f95-7a64-89ea-6f2222222222",
+    "019eab55-1f95-7a64-89ea-6f3333333333"
+  ];
+  const parentThreadPath = join(tempDir, "parent.jsonl");
+  const childSessionDir = join(tempDir, "sessions", "2026", "06", "09");
+  const emitted = [];
+  const closedAgentIds = [];
+  let notificationHandler = null;
+  let completeBeforeLastChildDone = false;
+  let completedChildCount = 0;
+  let closed = false;
+
+  function writeChildTerminal(agentId) {
+    writeFileSync(
+      join(childSessionDir, `rollout-2026-06-09T15-45-00-${agentId}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: "2026-06-09T07:45:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: agentId,
+            cwd: tempDir,
+            thread_source: "subagent"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-09T07:45:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: `turn-child-${agentId}`
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    completedChildCount += 1;
+  }
+
+  try {
+    mkdirSync(childSessionDir, { recursive: true });
+
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            childThreadIds.forEach((agentId, index) => {
+              void notificationHandler?.({
+                method: "item/completed",
+                params: {
+                  threadId: parentThreadId,
+                  turnId: "turn-parent",
+                  item: {
+                    type: "function_call",
+                    id: `call_spawn_${index}`,
+                    call_id: `call_spawn_${index}`,
+                    name: "spawn_agent",
+                    output: JSON.stringify({
+                      agent_id: agentId,
+                      nickname: `Agent ${index + 1}`
+                    }),
+                    status: "completed"
+                  }
+                }
+              });
+            });
+
+            writeChildTerminal(childThreadIds[0]);
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId: parentThreadId,
+                turnId: "turn-parent",
+                item: {
+                  type: "function_call",
+                  id: "call_wait_agents",
+                  call_id: "call_wait_agents",
+                  name: "wait_agent",
+                  output: JSON.stringify({
+                    status: {
+                      [childThreadIds[0]]: {
+                        completed: "第一个子 Agent 已汇报，但另外两个仍在运行"
+                      }
+                    },
+                    timed_out: false
+                  }),
+                  status: "completed"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId: parentThreadId,
+                turn: { id: "turn-parent", items: [], status: "completed" }
+              }
+            });
+          });
+
+          setTimeout(() => writeChildTerminal(childThreadIds[1]), 50);
+          setTimeout(() => writeChildTerminal(childThreadIds[2]), 100);
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        async closeSpawnedAgent(agentId) {
+          closedAgentIds.push(agentId);
+        },
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-subagent-partial-report",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        if (event.type === "complete" && completedChildCount < childThreadIds.length) {
+          completeBeforeLastChildDone = true;
+        }
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    assert.equal(completeBeforeLastChildDone, false);
+    assert.equal(completedChildCount, childThreadIds.length);
+    assert.deepEqual(closedAgentIds.sort(), [...childThreadIds].sort());
+    assert.equal(emitted.some((event) => event.type === "complete"), true);
+    assert.equal(closed, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 关闭已完成子 Agent 失败时不会阻塞父会话完成", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-close-failed-"));
   const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";

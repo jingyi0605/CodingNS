@@ -115,6 +115,7 @@ interface CodexTurnLifecycle {
   keepTransportAliveAfterTurn: boolean;
   spawnedAgentsSettledAfterTurn: boolean;
   parentTurnStopped: boolean;
+  spawnedAgentIds: Set<string>;
   pendingComplete: {
     timestamp: string;
     detail: string;
@@ -188,6 +189,10 @@ function shouldKeepCodexTransportAliveAfterTurn(
 
   if (lifecycle.spawnedAgentsSettledAfterTurn) {
     return false;
+  }
+
+  if (lifecycle.spawnedAgentIds.size > 0) {
+    return lifecycle.closedSpawnedAgentIds.size < lifecycle.spawnedAgentIds.size;
   }
 
   return lifecycle.keepTransportAliveAfterTurn || codexRawStoreContainsSpawnAgentCall(rawStoreRef);
@@ -282,6 +287,26 @@ function extractCodexSpawnedAgentIdsFromRawStore(rawStoreRef: string): string[] 
       }
     } catch {
       // 单行坏掉不影响判断，继续看下一行。
+    }
+  }
+
+  return [...agentIds];
+}
+
+function extractCodexSpawnedAgentIdsFromEvents(events: Record<string, unknown>[]): string[] {
+  const agentIds = new Set<string>();
+
+  for (const event of events) {
+    const item = toRecord(readProp(event, "item")) ?? event;
+
+    if (!isCodexSpawnAgentItem(item)) {
+      continue;
+    }
+
+    const agentId = extractCodexAgentIdFromToolOutput(readProp(item, "output"));
+
+    if (agentId) {
+      agentIds.add(agentId);
     }
   }
 
@@ -386,11 +411,11 @@ function markCodexSpawnAgentLifecycleFromEvents(
   lifecycle: CodexTurnLifecycle,
   events: Record<string, unknown>[]
 ): void {
-  if (lifecycle.keepTransportAliveAfterTurn) {
-    return;
+  for (const agentId of extractCodexSpawnedAgentIdsFromEvents(events)) {
+    lifecycle.spawnedAgentIds.add(agentId);
   }
 
-  if (events.some((event) => isCodexSpawnAgentEvent(event))) {
+  if (!lifecycle.keepTransportAliveAfterTurn && events.some((event) => isCodexSpawnAgentEvent(event))) {
     lifecycle.keepTransportAliveAfterTurn = true;
   }
 }
@@ -517,6 +542,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         keepTransportAliveAfterTurn: false,
         spawnedAgentsSettledAfterTurn: false,
         parentTurnStopped: false,
+        spawnedAgentIds: new Set(),
         pendingComplete: null,
         closedSpawnedAgentIds: new Set()
       };
@@ -760,6 +786,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         keepTransportAliveAfterTurn: false,
         spawnedAgentsSettledAfterTurn: false,
         parentTurnStopped: false,
+        spawnedAgentIds: new Set(),
         pendingComplete: null,
         closedSpawnedAgentIds: new Set()
       };
@@ -943,6 +970,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       keepTransportAliveAfterTurn: false,
       spawnedAgentsSettledAfterTurn: false,
       parentTurnStopped: false,
+      spawnedAgentIds: new Set(),
       pendingComplete: null,
       closedSpawnedAgentIds: new Set()
     },
@@ -1057,7 +1085,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       return;
     }
 
-    const agentIds = extractCodexSpawnedAgentIdsFromRawStore(context.rawStoreRef);
+    const agentIds = Array.from(
+      new Set([
+        ...context.lifecycle.spawnedAgentIds,
+        ...extractCodexSpawnedAgentIdsFromRawStore(context.rawStoreRef)
+      ])
+    );
 
     if (agentIds.length === 0) {
       return;
