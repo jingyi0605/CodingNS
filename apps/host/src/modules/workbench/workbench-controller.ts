@@ -26,12 +26,13 @@ export class WorkbenchController {
   ): Promise<void> => {
     const userId = requireUserId(request);
     const refresh = request.headers["x-codingns-workbench-refresh"] === "true";
-    const awaitDiscovery = request.headers["x-codingns-workbench-await-discovery"] === "true";
 
     if (refresh) {
+      // HTTP 导航刷新也不能等待 workspace discovery。
+      // 旧前端可能还会带 await-discovery header；服务端必须兜底，只安排后台刷新并立即返回当前缓存。
       reply.send(await this.workbenchService.refreshSnapshot(userId, {
         force: true,
-        awaitDiscovery
+        awaitDiscovery: false
       }));
       return;
     }

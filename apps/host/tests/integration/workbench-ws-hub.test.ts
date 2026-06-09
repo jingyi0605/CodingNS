@@ -648,6 +648,69 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
+  it("侧边栏定时刷新发现会话过期时也只广播缓存，不触发 discovery", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      callerKind: "interactive_user",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({
+        revision: "rev-1",
+        items: []
+      })),
+      shouldRefreshSnapshot: vi.fn(() => true),
+      refreshSnapshot: vi.fn(async () => ({
+        revision: "rev-2",
+        items: []
+      })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "workbench.subscribe"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workbenchService.refreshSnapshot).not.toHaveBeenCalled();
+    expect(client.send).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushAsyncTasks();
+    await vi.advanceTimersByTimeAsync(120);
+    await flushAsyncTasks();
+
+    expect(workbenchService.shouldRefreshSnapshot).toHaveBeenCalled();
+    expect(workbenchService.refreshSnapshot).not.toHaveBeenCalled();
+    expect(workbenchService.getSnapshot).toHaveBeenCalledTimes(2);
+
+    hub.cleanupClient(client);
+  });
+
   it("实时会话广播会在短时间内合并，避免每条消息都全量刷新工作台", async () => {
     vi.useFakeTimers();
 
@@ -773,7 +836,7 @@ describe("WorkbenchWsHub", () => {
     hub.cleanupClient(client);
   });
 
-  it("workbench.subscribe 会在发送纯读快照后等待 discovery，并把新快照补推给客户端", async () => {
+  it("workbench.subscribe 只发送缓存快照，不再触发 discovery", async () => {
     const client = {
       send: vi.fn()
     } as unknown as WebSocket;
@@ -855,28 +918,18 @@ describe("WorkbenchWsHub", () => {
     await flushAsyncTasks();
 
     expect(workbenchService.getSnapshot).toHaveBeenCalledWith("user-1");
-    expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
-      force: false,
-      awaitDiscovery: true
-    });
+    expect(refreshSnapshot).not.toHaveBeenCalled();
 
     const sentPayloads = (client.send as unknown as ReturnType<typeof vi.fn>).mock.calls
       .map((call) => JSON.parse(call[0] as string));
 
-    expect(sentPayloads).toHaveLength(2);
+    expect(sentPayloads).toHaveLength(1);
     expect(sentPayloads[0]).toEqual(
       expect.objectContaining({
         type: "workbench.snapshot",
         revision: "rev-1"
       })
     );
-    expect(sentPayloads[1]).toEqual(
-      expect.objectContaining({
-        type: "workbench.snapshot",
-        revision: "rev-2"
-      })
-    );
-    expect(sentPayloads[1]?.snapshot?.items?.[0]?.sessions?.[0]?.title).toBe("来自原生 Codex 的会话");
 
     hub.cleanupClient(client);
   });
@@ -1043,12 +1096,13 @@ describe("WorkbenchWsHub", () => {
 
     expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
       force: true,
-      awaitDiscovery: true
+      awaitDiscovery: false
     });
     expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
   });
 
-  it("Codex 归档目录发生变化后，会主动等待 discovery 完成再广播新快照", async () => {
+  it("Codex 归档目录变化只广播缓存快照，不再触发 discovery", async () => {
+    vi.useFakeTimers();
     const client = {
       send: vi.fn()
     } as unknown as WebSocket;
@@ -1169,11 +1223,10 @@ describe("WorkbenchWsHub", () => {
     expect(onChange).toBeTypeOf("function");
     onChange?.();
     await flushAsyncTasks();
+    expect(refreshSnapshot).not.toHaveBeenCalled();
 
-    expect(refreshSnapshot).toHaveBeenCalledWith("user-1", {
-      force: true,
-      awaitDiscovery: true
-    });
+    await vi.advanceTimersByTimeAsync(120);
+    await flushAsyncTasks();
 
     const sentPayloads = (client.send as unknown as ReturnType<typeof vi.fn>).mock.calls
       .map((call) => JSON.parse(call[0] as string));
@@ -1181,10 +1234,10 @@ describe("WorkbenchWsHub", () => {
     expect(sentPayloads.at(-1)).toEqual(
       expect.objectContaining({
         type: "workbench.snapshot",
-        revision: "rev-2"
+        revision: "rev-1"
       })
     );
-    expect(sentPayloads.at(-1)?.snapshot?.items?.[0]?.sessions?.[0]?.isArchived).toBe(true);
+    expect(sentPayloads.at(-1)?.snapshot?.items?.[0]?.sessions?.[0]?.isArchived).toBe(false);
   });
 
   it("Terminal 面板刷新改成事件驱动，状态抖动会经过 quiet window 合并", async () => {

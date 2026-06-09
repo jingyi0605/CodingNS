@@ -10452,7 +10452,9 @@ export function WorkbenchLayout({
     try {
       const snapshot = await getWorkbenchSnapshot({
         refresh: true,
-        awaitDiscovery: true
+        // 导航刷新不能等待 workspace discovery。
+        // Codex 归档历史很大时，等待 discovery 会把页面刷新绑到后端重扫描上，表现成前端长时间无响应。
+        awaitDiscovery: false
       });
 
       if (requestId !== requestIdRef.current) {

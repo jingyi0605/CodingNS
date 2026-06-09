@@ -543,6 +543,7 @@ export class SessionHistoryService {
       }, { title: string | null }>({
         taskType: HOST_TASK_TYPES.sessionCodexTitleGenerate,
         executionLane: "external_process",
+        concurrency: 1,
         timeoutMs: 45_000,
         run: async ({ sessionId }, context) =>
           this.runCodexSessionTitleGeneration(sessionId, context.signal)
@@ -2606,12 +2607,6 @@ export class SessionHistoryService {
         userId,
         timestamp
       );
-      for (const persisted of persistedSessions) {
-        this.requestCodexTitleGenerationIfNeeded(
-          persisted.sessionId,
-          "session_history.discover_workspace_sessions.codex_title"
-        );
-      }
 
       const listItemsStartedAt = Date.now();
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);

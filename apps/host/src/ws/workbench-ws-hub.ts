@@ -224,17 +224,10 @@ export class WorkbenchWsHub {
       switch (message.type) {
         case "workbench.subscribe":
           void this.sendWorkbenchSnapshotToClient(client, userId, channel, message.knownRevision);
-          if (this.workbenchService.shouldRefreshSnapshot(userId)) {
-            void this.refreshAndBroadcast(userId, false, {
-              awaitDiscovery: true
-            }).catch((error) => {
-              this.reportAsyncError("workbenchSubscribeRefresh", error, { userId });
-            });
-          }
           return true;
         case "workbench.refresh":
           void this.refreshAndBroadcast(userId, true, {
-            awaitDiscovery: true
+            awaitDiscovery: false
           });
           return true;
         case "fileTree.subscribe":
@@ -509,9 +502,7 @@ export class WorkbenchWsHub {
 
   private handleCodexArchiveChange(): void {
     for (const userId of this.userChannels.keys()) {
-      void this.refreshAndBroadcast(userId, true, {
-        awaitDiscovery: true
-      }).catch((error) => {
+      void this.broadcastSnapshot(userId).catch((error) => {
         this.reportAsyncError("handleCodexArchiveChange", error, { userId });
       });
     }
@@ -559,9 +550,9 @@ export class WorkbenchWsHub {
         return;
       }
 
-      void this.refreshAndBroadcast(userId, false, {
-        awaitDiscovery: true
-      }).catch((error) => {
+      // 定时器只允许读现有缓存并广播差异。
+      // 不要在这里触发 workspace discovery；Codex 归档历史很大时会把 Host 主线程堵住。
+      void this.broadcastSnapshot(userId).catch((error) => {
         this.reportAsyncError("workbenchTimer", error, { userId });
       });
     }, WORKBENCH_REFRESH_INTERVAL_MS);

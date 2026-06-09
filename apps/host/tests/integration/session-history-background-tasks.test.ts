@@ -162,6 +162,9 @@ describe("SessionHistoryService background tasks", () => {
       activity_source: "runtime",
       completed_at: "2026-06-08T06:26:02.000Z"
     });
+    expect(
+      service.instance.observeBackgroundTaskMetrics().taskTypes[HOST_TASK_TYPES.sessionCodexTitleGenerate]
+    ).toBeUndefined();
 
     service.dispose();
   });
