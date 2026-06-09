@@ -677,6 +677,68 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("Codex 新会话标题生成成功后会通知工作台刷新", async () => {
+    const service = createSessionHistoryService();
+    const titleChangedEvents: Array<{
+      sessionId: string;
+      userId: string;
+      workspaceId: string;
+      title: string;
+    }> = [];
+    const providerSessionId = "019d9025-e575-7fa1-84e2-9e797a2d61df";
+    const rawStoreRef = join(
+      service.codexHomeDir,
+      "runtime",
+      "codex",
+      `${providerSessionId}.jsonl`
+    );
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    mkdirSync(dirname(rawStoreRef), { recursive: true });
+    writeFileSync(rawStoreRef, "");
+    seedSession(service.database.db, {
+      sessionId: "session-codex-title-notify",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId,
+      rawStoreRef,
+      title: "请帮我修复工作台卡顿问题",
+      messageCount: 1,
+      lastMessageAt: "2026-04-25T10:30:00.000Z",
+      createdAt: "2026-04-25T10:30:00.000Z",
+      updatedAt: "2026-04-25T10:30:00.000Z"
+    });
+    const subscription = service.instance.registerSessionTitleChangedObserver((event) => {
+      titleChangedEvents.push(event);
+    });
+    const generateSpy = vi
+      .spyOn(service.instance["codexSessionTitleGenerator"], "generate")
+      .mockResolvedValue("工作台卡顿修复");
+
+    service.instance.requestCodexTitleGenerationForNewSession(
+      "session-codex-title-notify",
+      "请帮我修复工作台卡顿问题"
+    );
+    await waitUntil(() => titleChangedEvents.length > 0);
+
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(titleChangedEvents).toEqual([
+      {
+        sessionId: "session-codex-title-notify",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        title: "工作台卡顿修复"
+      }
+    ]);
+    expect(
+      service.database.db
+        .prepare("SELECT title FROM session_indices WHERE session_id = ?")
+        .get("session-codex-title-notify")
+    ).toMatchObject({ title: "工作台卡顿修复" });
+
+    subscription.close();
+    service.dispose();
+  });
+
   it("workspace discovery 任务取消后会把 AbortSignal 传给 provider helper", async () => {
     let receivedSignal: AbortSignal | null = null;
     const taskManager = createTaskManager(null, {
@@ -1015,6 +1077,7 @@ describe("SessionHistoryService background tasks", () => {
       database,
       workspaceRepository,
       workspacePath,
+      codexHomeDir,
       geminiHomeDir,
       dispose() {
         database.close();
@@ -1160,6 +1223,21 @@ async function flushMicrotasks(): Promise<void> {
 
 async function waitForDuration(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 2_000
+): Promise<void> {
+  const startedAt = Date.now();
+
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("等待条件超时");
+    }
+
+    await waitForDuration(10);
+  }
 }
 
 function createDeferred<T>() {

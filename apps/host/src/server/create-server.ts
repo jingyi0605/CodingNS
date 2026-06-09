@@ -1773,6 +1773,20 @@ export function createServer(config: HostConfig) {
     terminalService,
     codexArchiveWatcher
   );
+  const sessionTitleChangedWorkbenchSync = sessionHistoryService.registerSessionTitleChangedObserver(
+    (event) => {
+      void workbenchWsHub.broadcastSnapshot(event.userId).catch((error) => {
+        app.log.warn(
+          {
+            error,
+            userId: event.userId,
+            sessionId: event.sessionId
+          },
+          "session title change workbench broadcast failed"
+        );
+      });
+    }
+  );
   const wsHandle = createWsServer(
     app.server,
     new WsAuthGuard(authService),
@@ -1957,6 +1971,7 @@ export function createServer(config: HostConfig) {
     workspaceSessionInstructionWatchService.dispose();
     affairsLibraryDirtyWatchService.dispose();
     affairsLibraryService.dispose();
+    sessionTitleChangedWorkbenchSync.close();
     workbenchRuntimeTerminalSync.close();
     await wsHandle.close();
     codexArchiveWatcher.dispose();

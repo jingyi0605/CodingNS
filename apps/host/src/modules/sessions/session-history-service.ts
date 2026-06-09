@@ -253,6 +253,12 @@ interface SessionHistoryAdapterOverrides {
 }
 
 type LiveActivityObservationResolver = (sessionId: string) => SessionActivityObservation | null;
+type SessionTitleChangedObserver = (input: {
+  sessionId: string;
+  userId: string;
+  workspaceId: string;
+  title: string;
+}) => Promise<void> | void;
 type SessionDeletedObserver = (input: {
   sessionId: string;
   userId: string;
@@ -323,6 +329,7 @@ export class SessionHistoryService {
   private readonly codexDirtyBindingRepairStates = new Map<string, CodexDirtyBindingRepairState>();
   private readonly streamingDeltaSuppressionDebugState = new Map<string, string>();
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
+  private readonly sessionTitleChangedObservers = new Set<SessionTitleChangedObserver>();
   private readonly sessionDeletedObservers = new Set<SessionDeletedObserver>();
   private readonly workspaceSessionRelations = new Map<
     string,
@@ -472,6 +479,18 @@ export class SessionHistoryService {
     return {
       close: () => {
         this.sessionDeletedObservers.delete(observer);
+      }
+    };
+  }
+
+  registerSessionTitleChangedObserver(
+    observer: SessionTitleChangedObserver
+  ): { close(): void } {
+    this.sessionTitleChangedObservers.add(observer);
+
+    return {
+      close: () => {
+        this.sessionTitleChangedObservers.delete(observer);
       }
     };
   }
@@ -3673,9 +3692,40 @@ export class SessionHistoryService {
         title,
         updatedAt: nowIso()
       });
+
+      await this.notifySessionTitleChanged({
+        sessionId,
+        userId: binding.userId,
+        workspaceId: binding.workspaceId,
+        title
+      });
     }
 
     return { title };
+  }
+
+  private async notifySessionTitleChanged(input: {
+    sessionId: string;
+    userId: string | null;
+    workspaceId: string;
+    title: string;
+  }): Promise<void> {
+    const userId = input.userId ?? this.workspaceRepository.findById(input.workspaceId)?.ownerUserId;
+
+    if (!userId) {
+      return;
+    }
+
+    await Promise.allSettled(
+      Array.from(this.sessionTitleChangedObservers).map(async (observer) => {
+        await observer({
+          sessionId: input.sessionId,
+          userId,
+          workspaceId: input.workspaceId,
+          title: input.title
+        });
+      })
+    );
   }
 
   private async readFirstUserMessageTitleForSync(
