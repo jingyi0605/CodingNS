@@ -79,6 +79,44 @@
   gap: 8px;
 }
 
+.settings-update-progress {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #ff9f0a 34%, var(--border-subtle));
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+}
+
+.settings-update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+
+.settings-update-progress-bar {
+  display: block;
+  height: 100%;
+  min-width: 18%;
+  border-radius: inherit;
+  background: color-mix(in srgb, #0a84ff 82%, var(--text-primary));
+  transition: width 180ms ease;
+}
+
+.settings-update-progress-text {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.settings-update-progress-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .settings-update-confirm-body {
   gap: 0;
 }

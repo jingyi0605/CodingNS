@@ -215,6 +215,9 @@ export function ServiceUpdatePanel() {
             {t("settings.serverInstallWarning")}
           </p>
         ) : null}
+        {isPendingTask(task?.status) || isRestarting ? (
+          <ServiceUpdateProgress task={task} restarting={isRestarting} />
+        ) : null}
         {statusText ? (
           <p
             className="settings-update-status"
@@ -255,6 +258,47 @@ export function ServiceUpdatePanel() {
       />
     </>
   );
+}
+
+function ServiceUpdateProgress({
+  task,
+  restarting
+}: {
+  task: ServiceUpdateTaskInfo | null;
+  restarting: boolean;
+}) {
+  const stage = resolveServiceProgressStage(task, restarting);
+
+  return (
+    <div className="settings-update-progress" role="status" aria-label={t("settings.serverProgressLabel")}>
+      <div className="settings-update-progress-track">
+        <span className="settings-update-progress-bar" style={{ width: `${stage.percent}%` }} />
+      </div>
+      <span className="settings-update-progress-text">
+        {t("settings.serverProgressCurrentStage", { stage: stage.label })}
+      </span>
+      <span className="settings-update-progress-hint">{t("settings.serverProgressHint")}</span>
+    </div>
+  );
+}
+
+function resolveServiceProgressStage(
+  task: ServiceUpdateTaskInfo | null,
+  restarting: boolean
+): { label: string; percent: number } {
+  if (restarting) {
+    return { label: t("settings.serverProgressRestarting"), percent: 90 };
+  }
+
+  if (task?.status === "queued") {
+    return { label: t("settings.serverProgressQueued"), percent: 20 };
+  }
+
+  if (task?.status === "running") {
+    return { label: t("settings.serverProgressInstalling"), percent: 65 };
+  }
+
+  return { label: t("settings.serverProgressPreparing"), percent: 10 };
 }
 
 function resolveServiceStatus(

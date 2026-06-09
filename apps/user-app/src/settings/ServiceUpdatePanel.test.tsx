@@ -32,6 +32,7 @@ describe("ServiceUpdatePanel", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: false,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });

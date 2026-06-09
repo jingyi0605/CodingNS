@@ -228,6 +228,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: false,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -307,6 +308,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -671,6 +673,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -702,6 +705,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -745,7 +749,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
   });
 
-  it("桌面运行时使用移动布局时，会同时显示服务端和客户端更新", () => {
+  it("桌面运行时使用移动布局时，会显示统一更新和更新选项", () => {
     window.__TAURI_INTERNALS__ = {
       invoke: vi.fn()
     };
@@ -753,12 +757,15 @@ describe("SettingsPage", () => {
 
     renderSettingsPage("/settings/software-update");
 
-    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
-    expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.updateOneClickTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.updateOptions"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("settings.releaseCheckNow") })).toBeInTheDocument();
+    expect(screen.getByText(t("settings.autoDownloadUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.updateCheckAll") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.updateInstallAll") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseOpenPage") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("settings.serverCheckNow") })).not.toBeInTheDocument();
   });
 
   it("调试端口池只保留一个共享范围配置", async () => {
@@ -834,6 +841,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -842,7 +850,8 @@ describe("SettingsPage", () => {
     renderSettingsPage("/settings/software-update");
 
     expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
-    expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoCheckUpdate"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoDownloadUpdate"))).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.releaseCheckNow") }));
 
@@ -867,6 +876,7 @@ describe("SettingsPage", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -876,7 +886,8 @@ describe("SettingsPage", () => {
 
     expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
-    expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoCheckUpdate"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoDownloadUpdate"))).not.toBeInTheDocument();
     expect(screen.getByText(t("settings.clientUpdateUnsupported"))).toBeInTheDocument();
   });
 
@@ -907,7 +918,7 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.softwareUpdate")) }));
 
     expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("settings.releaseCheckNow") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("settings.updateCheckAll") })).not.toBeInTheDocument();
     expect(screen.queryByText(/^Web$/)).not.toBeInTheDocument();
     expect(screen.queryByText("当前运行平台")).not.toBeInTheDocument();
   });

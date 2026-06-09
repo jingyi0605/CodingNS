@@ -7,8 +7,7 @@ import { getActiveHostBaseUrl } from "../../../config/client-config-types";
 import type {
   AppLanguage,
   ClientRuntimeConfig,
-  ClientPermissionMode,
-  ReleaseChannel
+  ClientPermissionMode
 } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -23,6 +22,7 @@ import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/t
 import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ClientUpdatePanel } from "../../../settings/ClientUpdatePanel";
+import { DesktopUnifiedUpdatePanel } from "../../../settings/DesktopUnifiedUpdatePanel";
 import { ModelManagementPanel } from "../../../settings/ModelManagementPanel";
 import { OnlyOfficeSettingsButton } from "../../../settings/OnlyOfficeSettingsButton";
 import { ProviderManagementPanel } from "../../../settings/ProviderManagementPanel";
@@ -88,9 +88,9 @@ interface SettingsPageModel {
   }>;
   readonly handleHostBaseUrlSubmit: (event: FormEvent<HTMLFormElement>) => void;
   readonly handleLogout: () => void;
-  readonly updateReleaseChannel: (value: string) => void;
   readonly updateAutoReconnect: (enabled: boolean) => void;
   readonly updateAutoCheckUpdate: (enabled: boolean) => void;
+  readonly updateAutoDownloadUpdate: (enabled: boolean) => void;
   readonly updateDefaultPermissionMode: (value: string) => void;
   readonly updateSessionDisplaySortMode: (value: string) => void;
   readonly updateShowSystemFiles: (enabled: boolean) => void;
@@ -136,10 +136,6 @@ function normalizeSettingsSectionId(value: string | undefined): SettingsSectionI
 
 function getLanguageLabel(language: AppLanguage): string {
   return language === "en-US" ? t("locale.enUS") : t("locale.zhCN");
-}
-
-function getReleaseChannelLabel(channel: ReleaseChannel): string {
-  return channel === "beta" ? t("settings.releaseBeta") : t("settings.releaseStable");
 }
 
 function getPermissionModeLabel(mode: ClientPermissionMode): string {
@@ -271,12 +267,6 @@ function useSettingsPageModel(): SettingsPageModel {
     }
   ];
 
-  function updateReleaseChannel(value: string): void {
-    void clientConfigStore.update({
-      releaseChannel: value === "beta" ? "beta" : "stable"
-    });
-  }
-
   function updateAutoReconnect(enabled: boolean): void {
     void clientConfigStore.update({
       autoReconnect: enabled
@@ -286,6 +276,12 @@ function useSettingsPageModel(): SettingsPageModel {
   function updateAutoCheckUpdate(enabled: boolean): void {
     void clientConfigStore.update({
       autoCheckUpdate: enabled
+    });
+  }
+
+  function updateAutoDownloadUpdate(enabled: boolean): void {
+    void clientConfigStore.update({
+      autoDownloadUpdate: enabled
     });
   }
 
@@ -352,9 +348,9 @@ function useSettingsPageModel(): SettingsPageModel {
     sessionDisplaySortModeOptions,
     handleHostBaseUrlSubmit,
     handleLogout,
-    updateReleaseChannel,
     updateAutoReconnect,
     updateAutoCheckUpdate,
+    updateAutoDownloadUpdate,
     updateDefaultPermissionMode,
     updateSessionDisplaySortMode,
     updateShowSystemFiles,
@@ -404,9 +400,9 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     platform,
     handleHostBaseUrlSubmit,
     handleLogout,
-    updateReleaseChannel,
     updateAutoReconnect,
     updateAutoCheckUpdate,
+    updateAutoDownloadUpdate,
     updateDefaultPermissionMode,
     updateSessionDisplaySortMode,
     updateShowSystemFiles,
@@ -789,58 +785,76 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.softwareUpdate")}</h2>
           <div className="settings-card">
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.releaseChannel")}</span>
-                <span className="settings-row-description">
-                  {t("settings.releaseChannelDescription")}
-                </span>
+            {platform.isDesktop ? (
+              <div className="settings-row">
+                <div className="settings-row-label">
+                  <span className="settings-row-title">{t("settings.updateOneClickTitle")}</span>
+                  <span className="settings-row-description">
+                    {t("settings.updateOneClickDescription")}
+                  </span>
+                </div>
+                <div className="settings-row-control settings-row-control-stretch">
+                  <DesktopUnifiedUpdatePanel />
+                </div>
               </div>
-              <div className="settings-row-control">
-                <select
-                  aria-label={t("settings.releaseChannel")}
-                  className="settings-select"
-                  value={runtimeConfig.releaseChannel}
-                  onChange={(event) => updateReleaseChannel(event.target.value)}
-                >
-                  <option value="stable">{t("settings.releaseStable")}</option>
-                  <option value="beta">{t("settings.releaseBeta")}</option>
-                </select>
+            ) : (
+              <div className="settings-row">
+                <div className="settings-row-label">
+                  <span className="settings-row-title">{t("settings.serverUpdate")}</span>
+                </div>
+                <div className="settings-row-control settings-row-control-stretch">
+                  <ServiceUpdatePanel />
+                </div>
               </div>
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.serverUpdate")}</span>
-              </div>
-              <div className="settings-row-control settings-row-control-stretch">
-                <ServiceUpdatePanel />
-              </div>
-            </div>
+            )}
 
             {!platform.isWeb ? (
               <>
-                <div className="settings-row">
-                  <div className="settings-row-label">
-                    <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
-                  </div>
-                  <div className="settings-row-control">
-                    <SettingsSwitch
-                      checked={runtimeConfig.autoCheckUpdate}
-                      label={t("settings.autoCheckUpdate")}
-                      onChange={updateAutoCheckUpdate}
-                    />
-                  </div>
-                </div>
+                {platform.isDesktop ? (
+                  <>
+                    <div className="settings-row">
+                      <div className="settings-row-label">
+                        <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
+                        <span className="settings-row-description">
+                          {t("settings.autoCheckUpdateDescription")}
+                        </span>
+                      </div>
+                      <div className="settings-row-control">
+                        <SettingsSwitch
+                          checked={runtimeConfig.autoCheckUpdate}
+                          label={t("settings.autoCheckUpdate")}
+                          onChange={updateAutoCheckUpdate}
+                        />
+                      </div>
+                    </div>
+                    <div className="settings-row">
+                      <div className="settings-row-label">
+                        <span className="settings-row-title">{t("settings.autoDownloadUpdate")}</span>
+                        <span className="settings-row-description">
+                          {t("settings.autoDownloadUpdateDescription")}
+                        </span>
+                      </div>
+                      <div className="settings-row-control">
+                        <SettingsSwitch
+                          checked={runtimeConfig.autoDownloadUpdate}
+                          label={t("settings.autoDownloadUpdate")}
+                          onChange={updateAutoDownloadUpdate}
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : null}
 
-                <div className="settings-row">
-                  <div className="settings-row-label">
-                    <span className="settings-row-title">{t("settings.clientUpdate")}</span>
+                {!platform.isDesktop ? (
+                  <div className="settings-row">
+                    <div className="settings-row-label">
+                      <span className="settings-row-title">{t("settings.clientUpdate")}</span>
+                    </div>
+                    <div className="settings-row-control settings-row-control-stretch">
+                      <ClientUpdatePanel />
+                    </div>
                   </div>
-                  <div className="settings-row-control settings-row-control-stretch">
-                    <ClientUpdatePanel />
-                  </div>
-                </div>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -958,7 +972,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
       id: "software-update",
       title: t("settings.softwareUpdate"),
       description: t("settings.softwareUpdateSectionSummary"),
-      value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
+      value: model.platform.isWeb ? t("settings.serverUpdate") : t("settings.updateOneClickValue"),
       icon: <DesktopReleaseSectionIcon />
     }
   );
@@ -1565,52 +1579,63 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
     <>
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.softwareUpdate")}</h2>
-        <div className="settings-mobile-list">
-          <div className="settings-mobile-form-row">
-            <div className="settings-mobile-row-copy">
-              <span className="settings-mobile-row-title">{t("settings.releaseChannel")}</span>
-              <span className="settings-mobile-row-description">
-                {t("settings.releaseChannelDescription")}
-              </span>
-            </div>
-            <select
-              aria-label={t("settings.releaseChannel")}
-              className="settings-select settings-mobile-select"
-              value={model.runtimeConfig.releaseChannel}
-              onChange={(event) => model.updateReleaseChannel(event.target.value)}
-            >
-              <option value="stable">{t("settings.releaseStable")}</option>
-              <option value="beta">{t("settings.releaseBeta")}</option>
-            </select>
-          </div>
-        </div>
+        <p className="settings-mobile-group-note">{t("settings.softwareUpdateSectionSummary")}</p>
       </section>
 
-      <section className="settings-mobile-group-section">
-        <h2 className="settings-mobile-group-title">{t("settings.serverUpdate")}</h2>
-        <div className="settings-mobile-panel-shell settings-mobile-update-shell">
-          <ServiceUpdatePanel />
-        </div>
-      </section>
+      {model.platform.isDesktop ? (
+        <section className="settings-mobile-group-section">
+          <h2 className="settings-mobile-group-title">{t("settings.updateOneClickTitle")}</h2>
+          <div className="settings-mobile-panel-shell settings-mobile-update-shell">
+            <DesktopUnifiedUpdatePanel />
+          </div>
+        </section>
+      ) : (
+        <section className="settings-mobile-group-section">
+          <h2 className="settings-mobile-group-title">{t("settings.serverUpdate")}</h2>
+          <div className="settings-mobile-panel-shell settings-mobile-update-shell">
+            <ServiceUpdatePanel />
+          </div>
+        </section>
+      )}
 
       {!model.platform.isWeb ? (
         <section className="settings-mobile-group-section">
-          <h2 className="settings-mobile-group-title">{t("settings.clientUpdate")}</h2>
-          <div className="settings-mobile-list">
-            <div className="settings-mobile-form-row">
-              <div className="settings-mobile-row-copy">
-                <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
+          <h2 className="settings-mobile-group-title">{model.platform.isDesktop ? t("settings.updateOptions") : t("settings.clientUpdate")}</h2>
+          {model.platform.isDesktop ? (
+            <div className="settings-mobile-list">
+              <div className="settings-mobile-form-row">
+                <div className="settings-mobile-row-copy">
+                  <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
+                  <span className="settings-mobile-row-description">
+                    {t("settings.autoCheckUpdateDescription")}
+                  </span>
+                </div>
+                <SettingsSwitch
+                  checked={model.runtimeConfig.autoCheckUpdate}
+                  label={t("settings.autoCheckUpdate")}
+                  onChange={model.updateAutoCheckUpdate}
+                />
               </div>
-            <SettingsSwitch
-              checked={model.runtimeConfig.autoCheckUpdate}
-              label={t("settings.autoCheckUpdate")}
-              onChange={model.updateAutoCheckUpdate}
-            />
+              <div className="settings-mobile-form-row">
+                <div className="settings-mobile-row-copy">
+                  <span className="settings-mobile-row-title">{t("settings.autoDownloadUpdate")}</span>
+                  <span className="settings-mobile-row-description">
+                    {t("settings.autoDownloadUpdateDescription")}
+                  </span>
+                </div>
+                <SettingsSwitch
+                  checked={model.runtimeConfig.autoDownloadUpdate}
+                  label={t("settings.autoDownloadUpdate")}
+                  onChange={model.updateAutoDownloadUpdate}
+                />
+              </div>
             </div>
-          </div>
-          <div className="settings-mobile-panel-shell settings-mobile-update-shell">
-            <ClientUpdatePanel />
-          </div>
+          ) : null}
+          {!model.platform.isDesktop ? (
+            <div className="settings-mobile-panel-shell settings-mobile-update-shell">
+              <ClientUpdatePanel />
+            </div>
+          ) : null}
         </section>
       ) : null}
     </>
