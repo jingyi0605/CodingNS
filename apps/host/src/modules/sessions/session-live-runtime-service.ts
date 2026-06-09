@@ -59,6 +59,7 @@ import type {
   SessionAttachmentInput
 } from "./session-message-attachment-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
+import { buildSessionTitleFromContent } from "./session-title-utils.js";
 import {
   SessionPermissionRequestService,
   type SessionPermissionEnvelope,
@@ -2457,7 +2458,7 @@ export class SessionLiveRuntimeService {
       sessionVisibility: currentIndex?.sessionVisibility ?? input.sessionVisibility,
       isSubagent: currentIndex?.isSubagent ?? false,
       subagentLabel: currentIndex?.subagentLabel ?? null,
-      title: currentIndex?.title?.trim() || buildSessionTitle(input.initialContent),
+      title: currentIndex?.title?.trim() || buildSessionTitleFromContent(input.initialContent, "继续对话"),
       messageCount: currentIndex?.messageCount ?? 0,
       isArchived: currentIndex?.isArchived ?? false,
       lastMessageAt: currentIndex?.lastMessageAt ?? input.snapshot.lastEventAt,
@@ -3858,10 +3859,6 @@ function mapClaudeHookToRuntimeUpdate(
   return null;
 }
 
-function buildSessionTitle(content: string): string {
-  const title = content.trim().replace(/\s+/g, " ");
-  return title.slice(0, 48) || "继续对话";
-}
 
 function resolveRuntimeSessionTitle(
   provider: string,
@@ -3883,7 +3880,7 @@ function resolveRuntimeSessionTitle(
     return null;
   }
 
-  return buildSessionTitle(content);
+  return buildSessionTitleFromContent(content, "继续对话");
 }
 
 function isSyntheticRuntimeSessionTitle(provider: string, title: string): boolean {

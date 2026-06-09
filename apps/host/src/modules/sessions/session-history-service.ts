@@ -67,6 +67,7 @@ import {
 } from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
+import { buildSessionTitleFromContent, normalizeRuntimePromptTitle } from "./session-title-utils.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import { SessionForkRepository } from "../../storage/repositories/session-fork-repository.js";
@@ -6519,7 +6520,7 @@ function resolveSessionListTitle(
 ): string {
   const normalizedExistingTitle = existingTitle?.trim() ?? "";
   const normalizedParentTitle = parentTitle?.trim() ?? "";
-  const fallbackTitle = buildUserMessageTitle(
+  const fallbackTitle = buildSessionTitleFromContent(
     fallbackContent,
     normalizedExistingTitle || "继续对话"
   );
@@ -6546,20 +6547,6 @@ function resolveSessionListTitle(
   return normalizedExistingTitle || fallbackTitle;
 }
 
-function buildUserMessageTitle(content: string, fallbackTitle: string): string {
-  const title = content.trim().replace(/\s+/g, " ");
-  return title.slice(0, 48) || fallbackTitle;
-}
-
-function normalizeRuntimePromptTitle(content: string | null | undefined): string | null {
-  const normalized = (typeof content === "string" ? content : "").trim().replace(/\s+/g, " ");
-
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return normalized.slice(0, 48);
-}
 
 function buildRecoveredSessionTitle(provider: string, providerSessionId: string): string {
   if (isPendingBindingValue(providerSessionId)) {

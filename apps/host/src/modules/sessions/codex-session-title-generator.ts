@@ -4,10 +4,14 @@ import path from "node:path";
 import { AppError } from "../../shared/errors/app-error.js";
 
 const DEFAULT_CODEX_TITLE_MODEL = "gpt-5.4";
+const CODEX_GENERATED_TITLE_MAX_LENGTH = 72;
 const TITLE_SYSTEM_PROMPT = [
   "你只负责给一段代码助手会话起标题。",
-  "标题必须是中文，最多 18 个汉字或 36 个英文字符。",
-  "不要加引号，不要加句号，不要解释。",
+  "标题必须是中文，建议 16 到 28 个汉字；如果必须保留英文名词，总长度最多 72 个字符。",
+  "标题要包含具体对象、动作和范围，例如改哪个页面、修哪条链路、做哪类验证。",
+  "不要只写‘优化会话列表’、‘修复问题’这类空标题。",
+  "如果用户内容以‘你是 Agent X，负责...’开头，只提取‘负责’后面的真实任务，不要保留 Agent 编号或角色自我介绍。",
+  "不要加引号，不要加句号，不要解释，只输出一行标题。",
   "标题要概括用户真正想做的事，不能照抄第一句话。"
 ].join("\n");
 
@@ -52,6 +56,9 @@ export class CodexSessionTitleGenerator {
 
     const userPrompt = [
       `当前标题：${input.currentTitle?.trim() || "无"}`,
+      "",
+      "请生成一个比当前标题更具体的会话名。",
+      "如果内容是子 Agent 分工，请把负责范围和交付物写进标题。",
       "",
       "会话内容：",
       transcript
@@ -211,8 +218,12 @@ function renderTitleTranscript(messages: GenerateCodexSessionTitleInput["message
 }
 
 function sanitizeGeneratedTitle(value: string | null): string | null {
-  const title = value
-    ?.trim()
+  const firstLine = value
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  const title = firstLine
+    ?.replace(/^[-*\d.、\s]*(?:标题|会话名|名称)\s*[:：]\s*/i, "")
     .replace(/^["'“”‘’「」《》]+|["'“”‘’「」《》。.!！?？]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -221,7 +232,9 @@ function sanitizeGeneratedTitle(value: string | null): string | null {
     return null;
   }
 
-  return title.length > 48 ? title.slice(0, 48) : title;
+  return title.length > CODEX_GENERATED_TITLE_MAX_LENGTH
+    ? title.slice(0, CODEX_GENERATED_TITLE_MAX_LENGTH)
+    : title;
 }
 
 async function postJsonWithFallbacks(input: {
