@@ -209,6 +209,10 @@ async function advanceBackgroundTimers(ms = 200) {
   await vi.advanceTimersByTimeAsync(ms);
 }
 
+async function flushRuntimePersistence(service: SessionLiveRuntimeService, sessionId = "session-1") {
+  await ((service as any).runtimePersistenceQueues.get(sessionId) ?? Promise.resolve());
+}
+
 describe("SessionLiveRuntimeService", () => {
   afterEach(() => {
     vi.clearAllTimers();
@@ -3607,6 +3611,66 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
+  it("persistRuntimeEvent 遇到 SQLITE_BUSY 会退避重试，避免 active run listener 直接丢事件", async () => {
+    useFakeNow("2026-03-26T10:00:00.000Z");
+    const {
+      service,
+      sessionHistoryService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository
+    } = createService();
+    const busyError = new Error("database is locked") as Error & { code: string };
+    busyError.code = "SQLITE_BUSY";
+
+    sessionHistoryService.persistSessionBinding
+      .mockImplementationOnce(() => {
+        throw busyError;
+      })
+      .mockImplementationOnce(() => undefined);
+    sessionStateRepository.findBySessionAndUser.mockReturnValue({
+      sessionId: "session-1",
+      userId: "user-1",
+      runningState: "running",
+      completedAt: null,
+      lastSeenAt: null
+    });
+    sessionStatusSnapshotRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      syncCursor: "cursor-1",
+      resumedAt: null
+    });
+
+    const persistPromise = (service as any).persistRuntimeEvent("session-1", "workspace-1", "user-1", {
+      type: "status",
+      sessionId: "session-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      status: "completed",
+      detail: null,
+      timestamp: "2026-03-26T10:00:02.000Z"
+    });
+
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await persistPromise;
+
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalledTimes(2);
+    expect(sessionStateRepository.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runningState: "completed",
+        completedAt: "2026-03-26T10:00:02.000Z"
+      })
+    );
+    expect(sessionStatusSnapshotRepository.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        syncStatus: "idle",
+        lastSyncAt: "2026-03-26T10:00:02.000Z"
+      })
+    );
+  });
+
   it("Claude hook bridge 配置会导出本地脚本命令", () => {
     const { service } = createService();
 
@@ -3752,6 +3816,7 @@ describe("SessionLiveRuntimeService", () => {
         content: "hello"
       }
     });
+    await flushRuntimePersistence(service);
     let requests = await service.listPermissionRequests("session-1", "user-1");
 
     if (requests.length === 0) {
@@ -3772,7 +3837,8 @@ describe("SessionLiveRuntimeService", () => {
     expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalledWith("session-1", "workspace-1", {
       provider: "claude-code",
       providerSessionId: "claude-session-real-1",
-      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      userId: null
     });
   });
 
@@ -4480,7 +4546,8 @@ describe("SessionLiveRuntimeService", () => {
       {
         provider: "gemini",
         providerSessionId: "gemini-session-real-1",
-        rawStoreRef: "gemini://session/gemini-session-real-1"
+        rawStoreRef: "gemini://session/gemini-session-real-1",
+        userId: null
       }
     );
   });
@@ -4582,7 +4649,8 @@ describe("SessionLiveRuntimeService", () => {
         provider: "codex",
         providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
         rawStoreRef:
-          "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl"
+          "/Users/test/butler-runtime/codex-home/sessions/2026/04/15/rollout-2026-04-15T15-58-15-019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl",
+        userId: null
       }
     );
   });

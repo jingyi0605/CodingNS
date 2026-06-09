@@ -91,6 +91,7 @@ import type { WorkspaceSessionRuntimeContextService } from "./workspace-session-
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
 );
+const RUNTIME_EVENT_SQLITE_BUSY_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 1_500, 2_000] as const;
 
 interface RuntimeSendOptions {
   model?: string | null;
@@ -331,6 +332,7 @@ export class SessionLiveRuntimeService {
   private readonly queueDispatchSessions = new Set<string>();
   private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingSendDebugTracesBySessionId = new Map<string, PendingSessionSendDebugTrace[]>();
+  private readonly runtimePersistenceQueues = new Map<string, Promise<void>>();
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
@@ -2268,8 +2270,32 @@ export class SessionLiveRuntimeService {
     userId: string
   ): void {
     handle.attach(async (event) => {
-      await this.persistRuntimeEvent(sessionId, workspaceId, userId, event);
+      await this.enqueueRuntimeEventPersistence(sessionId, workspaceId, userId, event);
     });
+  }
+
+  private enqueueRuntimeEventPersistence(
+    sessionId: string,
+    workspaceId: string,
+    userId: string,
+    event: RuntimeEvent
+  ): Promise<void> {
+    const previous = this.runtimePersistenceQueues.get(sessionId) ?? Promise.resolve();
+    const task = previous
+      .catch(() => {
+        return;
+      })
+      .then(() => this.persistRuntimeEvent(sessionId, workspaceId, userId, event));
+
+    const queuedTask = task.finally(() => {
+      if (this.runtimePersistenceQueues.get(sessionId) === queuedTask) {
+        this.runtimePersistenceQueues.delete(sessionId);
+      }
+    });
+
+    this.runtimePersistenceQueues.set(sessionId, queuedTask);
+
+    return task;
   }
 
   private createRuntimeBackedSession(input: {
@@ -2663,13 +2689,17 @@ export class SessionLiveRuntimeService {
     event: RuntimeEvent
   ): Promise<void> {
     this.observePendingSendDebugTraceEvent(sessionId, event);
-    this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
-      provider: event.provider,
-      providerSessionId: event.providerSessionId,
-      rawStoreRef: event.rawStoreRef,
-      userId
+    await this.runRuntimeSqliteWrite(sessionId, "persistSessionBinding", () => {
+      this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
+        provider: event.provider,
+        providerSessionId: event.providerSessionId,
+        rawStoreRef: event.rawStoreRef,
+        userId
+      });
     });
-    const currentState = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+    const currentState = await this.runRuntimeSqliteRead(sessionId, "findSessionState", () =>
+      this.sessionStateRepository.findBySessionAndUser(sessionId, userId)
+    );
     const currentRunningState = currentState?.runningState ?? null;
     const shouldPreserveTerminalState = isTerminalSessionRunningState(currentRunningState);
 
@@ -2680,69 +2710,87 @@ export class SessionLiveRuntimeService {
       await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
         return;
       });
-      const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+      const existing = await this.runRuntimeSqliteRead(sessionId, "findSessionIndex", () =>
+        this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)
+      );
 
       if (existing) {
-        this.sessionIndexRepository.upsert({
-          ...existing,
-          messageCount: existing.messageCount + 1,
-          lastMessageAt: event.message.timestamp,
-          updatedAt: event.message.timestamp
+        await this.runRuntimeSqliteWrite(sessionId, "upsertSessionIndex", () => {
+          this.sessionIndexRepository.upsert({
+            ...existing,
+            messageCount: existing.messageCount + 1,
+            lastMessageAt: event.message.timestamp,
+            updatedAt: event.message.timestamp
+          });
         });
       }
 
-      this.sessionChangedFileService.recordMessages(
-        sessionId,
-        workspaceId,
-        workspace.path,
-        [event.message]
-      );
-
-      this.sessionStateRepository.upsert({
-        sessionId,
-        userId,
-        runningState: shouldPreserveTerminalState ? currentRunningState : "running",
-        activitySource: "runtime",
-        favorite: currentState?.favorite ?? false,
-        lastEventAt: event.message.timestamp,
-        completedAt: shouldPreserveTerminalState ? currentState?.completedAt ?? null : null,
-        lastSeenAt: currentState?.lastSeenAt ?? null,
-        updatedAt: nowIso()
+      await this.runRuntimeSqliteWrite(sessionId, "recordChangedFiles", () => {
+        this.sessionChangedFileService.recordMessages(
+          sessionId,
+          workspaceId,
+          workspace.path,
+          [event.message]
+        );
       });
 
-      this.upsertSnapshot(sessionId, {
-        syncStatus: "idle",
-        syncCursor:
-          this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
-        lastSyncAt: event.message.timestamp,
-        lastErrorCode: null,
-        lastErrorDetail: null,
-        resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+      await this.runRuntimeSqliteWrite(sessionId, "upsertSessionState", () => {
+        this.sessionStateRepository.upsert({
+          sessionId,
+          userId,
+          runningState: shouldPreserveTerminalState ? currentRunningState : "running",
+          activitySource: "runtime",
+          favorite: currentState?.favorite ?? false,
+          lastEventAt: event.message.timestamp,
+          completedAt: shouldPreserveTerminalState ? currentState?.completedAt ?? null : null,
+          lastSeenAt: currentState?.lastSeenAt ?? null,
+          updatedAt: nowIso()
+        });
+      });
+
+      const currentSnapshot = await this.runRuntimeSqliteRead(sessionId, "findStatusSnapshot", () =>
+        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)
+      );
+      await this.runRuntimeSqliteWrite(sessionId, "upsertStatusSnapshot", () => {
+        this.upsertSnapshot(sessionId, {
+          syncStatus: "idle",
+          syncCursor: currentSnapshot?.syncCursor ?? null,
+          lastSyncAt: event.message.timestamp,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: currentSnapshot?.resumedAt ?? null
+        });
       });
       return;
     }
 
     if (shouldPreserveTerminalState) {
-      this.sessionStateRepository.upsert({
-        sessionId,
-        userId,
-        runningState: currentRunningState,
-        activitySource: "runtime",
-        favorite: currentState?.favorite ?? false,
-        lastEventAt: event.timestamp,
-        completedAt: currentState?.completedAt ?? null,
-        lastSeenAt: currentState?.lastSeenAt ?? null,
-        updatedAt: nowIso()
+      await this.runRuntimeSqliteWrite(sessionId, "upsertTerminalPreservedState", () => {
+        this.sessionStateRepository.upsert({
+          sessionId,
+          userId,
+          runningState: currentRunningState,
+          activitySource: "runtime",
+          favorite: currentState?.favorite ?? false,
+          lastEventAt: event.timestamp,
+          completedAt: currentState?.completedAt ?? null,
+          lastSeenAt: currentState?.lastSeenAt ?? null,
+          updatedAt: nowIso()
+        });
       });
 
-      this.upsertSnapshot(sessionId, {
-        syncStatus: "idle",
-        syncCursor:
-          this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
-        lastSyncAt: event.timestamp,
-        lastErrorCode: null,
-        lastErrorDetail: null,
-        resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+      const currentSnapshot = await this.runRuntimeSqliteRead(sessionId, "findStatusSnapshot", () =>
+        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)
+      );
+      await this.runRuntimeSqliteWrite(sessionId, "upsertTerminalPreservedSnapshot", () => {
+        this.upsertSnapshot(sessionId, {
+          syncStatus: "idle",
+          syncCursor: currentSnapshot?.syncCursor ?? null,
+          lastSyncAt: event.timestamp,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: currentSnapshot?.resumedAt ?? null
+        });
       });
       await this.maybeEmitRuntimeHistoryFallback(sessionId, event);
       return;
@@ -2751,7 +2799,9 @@ export class SessionLiveRuntimeService {
     const completedAt =
       event.status === "completed" || event.status === "interrupted" || event.status === "failed"
         ? event.timestamp
-        : this.sessionStateRepository.findBySessionAndUser(sessionId, userId)?.completedAt ?? null;
+        : (await this.runRuntimeSqliteRead(sessionId, "findCompletedState", () =>
+          this.sessionStateRepository.findBySessionAndUser(sessionId, userId)
+        ))?.completedAt ?? null;
 
     if (completedAt) {
       await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
@@ -2759,16 +2809,18 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    this.sessionStateRepository.upsert({
-      sessionId,
-      userId,
-      runningState: toStoredRunningState(event.status),
-      activitySource: "runtime",
-      favorite: currentState?.favorite ?? false,
-      lastEventAt: event.timestamp,
-      completedAt,
-      lastSeenAt: currentState?.lastSeenAt ?? null,
-      updatedAt: nowIso()
+    await this.runRuntimeSqliteWrite(sessionId, "upsertRuntimeState", () => {
+      this.sessionStateRepository.upsert({
+        sessionId,
+        userId,
+        runningState: toStoredRunningState(event.status),
+        activitySource: "runtime",
+        favorite: currentState?.favorite ?? false,
+        lastEventAt: event.timestamp,
+        completedAt,
+        lastSeenAt: currentState?.lastSeenAt ?? null,
+        updatedAt: nowIso()
+      });
     });
 
     this.sessionActivityAuthorityService.observe(
@@ -2779,14 +2831,18 @@ export class SessionLiveRuntimeService {
       )
     );
 
-    this.upsertSnapshot(sessionId, {
-      syncStatus: event.type === "error" ? "error" : "idle",
-      syncCursor:
-        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
-      lastSyncAt: event.timestamp,
-      lastErrorCode: event.type === "error" ? event.errorCode : null,
-      lastErrorDetail: event.type === "error" ? (event.detail ?? "runtime failed") : null,
-      resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+    const currentSnapshot = await this.runRuntimeSqliteRead(sessionId, "findStatusSnapshot", () =>
+      this.sessionStatusSnapshotRepository.findBySessionId(sessionId)
+    );
+    await this.runRuntimeSqliteWrite(sessionId, "upsertRuntimeSnapshot", () => {
+      this.upsertSnapshot(sessionId, {
+        syncStatus: event.type === "error" ? "error" : "idle",
+        syncCursor: currentSnapshot?.syncCursor ?? null,
+        lastSyncAt: event.timestamp,
+        lastErrorCode: event.type === "error" ? event.errorCode : null,
+        lastErrorDetail: event.type === "error" ? (event.detail ?? "runtime failed") : null,
+        resumedAt: currentSnapshot?.resumedAt ?? null
+      });
     });
 
     await this.maybeEmitRuntimeHistoryFallback(sessionId, event);
@@ -2803,6 +2859,57 @@ export class SessionLiveRuntimeService {
       }
 
       void this.dispatchNextQueuedMessage(sessionId);
+    }
+  }
+
+  private async runRuntimeSqliteRead<TResult>(
+    sessionId: string,
+    scope: string,
+    operation: () => TResult
+  ): Promise<TResult> {
+    return await this.runRuntimeSqliteOperation(sessionId, scope, operation);
+  }
+
+  private async runRuntimeSqliteWrite(
+    sessionId: string,
+    scope: string,
+    operation: () => void
+  ): Promise<void> {
+    await this.runRuntimeSqliteOperation(sessionId, scope, operation);
+  }
+
+  private async runRuntimeSqliteOperation<TResult>(
+    sessionId: string,
+    scope: string,
+    operation: () => TResult
+  ): Promise<TResult> {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return operation();
+      } catch (error) {
+        if (!isSqliteBusyError(error) || attempt >= RUNTIME_EVENT_SQLITE_BUSY_RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+
+        const delayMs = RUNTIME_EVENT_SQLITE_BUSY_RETRY_DELAYS_MS[attempt]!;
+        attempt += 1;
+        logPerformance(
+          "session.runtime_event.sqlite_busy_retry",
+          delayMs,
+          {
+            sessionId,
+            scope,
+            attempt
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
+        await delay(delayMs);
+      }
     }
   }
 
@@ -4148,6 +4255,23 @@ function resolveClaudeHookBridgeScriptPath(): string {
 function normalizeOptionalBindingValue(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const sqliteCode = "code" in error ? error.code : null;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return sqliteCode === "SQLITE_BUSY" || message.includes("database is locked");
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function logOpenCodeOrderEnvelopeDebug(
