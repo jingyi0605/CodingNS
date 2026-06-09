@@ -126,9 +126,15 @@ const CODEX_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_PERF_DEBUG?.trim() ?? ""
 );
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 20_000;
-const CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS = 6 * 60 * 60 * 1000;
+const CODEX_APP_SERVER_SPAWN_AGENT_GRACE_MS = normalizePositiveInteger(
+  process.env.CODINGNS_CODEX_SPAWN_AGENT_GRACE_MS,
+  6 * 60 * 60 * 1000
+);
 const CODEX_SPAWN_AGENT_RAW_SCAN_BYTES = 2 * 1024 * 1024;
-const CODEX_SPAWN_AGENT_POLL_INTERVAL_MS = 2_000;
+const CODEX_SPAWN_AGENT_POLL_INTERVAL_MS = normalizePositiveInteger(
+  process.env.CODINGNS_CODEX_SPAWN_AGENT_POLL_INTERVAL_MS,
+  2_000
+);
 
 function logCodexRuntimeStep(
   scope: string,
@@ -142,6 +148,12 @@ function logCodexRuntimeStep(
   const durationMs = Math.round(performance.now() - startedAtMs);
   const suffix = formatCodexRuntimeDebugDetail(detail);
   console.info(`[perf][codex-runtime] ${scope} ${durationMs}ms${suffix ? ` ${suffix}` : ""}`);
+}
+
+function normalizePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function closeCodexTransportAfterTurn(
