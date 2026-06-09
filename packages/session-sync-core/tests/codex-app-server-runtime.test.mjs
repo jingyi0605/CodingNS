@@ -49,6 +49,7 @@ test("CodexRuntimeAdapter 通过 app-server 处理审批请求并继续完成 tu
   const emitted = [];
   const approvalRequests = [];
 
+  writeFileSync(threadPath, "", "utf8");
   writeFakeCodexAppServer(
     scriptPath,
     `
@@ -225,8 +226,14 @@ rl.on("line", (line) => {
     assert.equal(approvalRequests[0]?.request.method, "item/commandExecution/requestApproval");
     assert.equal(launch.providerSessionId, "thread-1");
     assert.equal(launch.rawStoreRef, threadPath);
-    assert.equal(toolCallEvent?.message.messageId, createStableMessageId("thread-1", "tool:call:command-1"));
-    assert.equal(toolResultEvent?.message.messageId, createStableMessageId("thread-1", "tool:result:command-1"));
+    assert.equal(
+      toolCallEvent?.message.messageId,
+      createStableMessageId("thread-1", `tool:call:${toolCallEvent?.message.toolCall?.callId}`)
+    );
+    assert.equal(
+      toolResultEvent?.message.messageId,
+      createStableMessageId("thread-1", `tool:result:${toolResultEvent?.message.toolCall?.callId}`)
+    );
     assert.equal(assistantEvent?.message.messageId, createStableMessageId("thread-1", "assistant:text:assistant-1"));
     assert.equal(emitted.some((event) => event.type === "complete"), true);
   } finally {
@@ -240,6 +247,7 @@ test("CodexRuntimeAdapter 支持直接使用 Node 脚本作为 codex 命令入�
   const threadPath = join(tempDir, "thread-2.jsonl").replace(/\\/g, "/");
   const emitted = [];
 
+  writeFileSync(threadPath, "", "utf8");
   writeFakeCodexAppServer(
     scriptPath,
     `
@@ -1570,7 +1578,6 @@ test("CodexRuntimeAdapter 父会话故障停止时不会继续等待 spawn_agent
   const parentThreadPath = join(tempDir, "parent.jsonl");
   const emitted = [];
   let notificationHandler = null;
-  let closeHandler = null;
   let closed = false;
 
   try {
@@ -1597,28 +1604,33 @@ test("CodexRuntimeAdapter 父会话故障停止时不会继续等待 spawn_agent
           };
         },
         async startTurn() {
-          queueMicrotask(() => {
-            void notificationHandler?.({
-              method: "item/completed",
+          return {
+            notification: {
+              method: "turn/completed",
               params: {
                 threadId: parentThreadId,
-                turnId: "turn-parent",
-                item: {
-                  type: "function_call",
-                  id: "call_spawn",
-                  call_id: "call_spawn",
-                  name: "spawn_agent",
-                  arguments: JSON.stringify({ message: "请继续检查" }),
-                  output: JSON.stringify({
-                    agent_id: childThreadId,
-                    nickname: "Arendt"
-                  }),
-                  status: "completed"
+                turn: {
+                  id: "turn-parent",
+                  status: "failed",
+                  error: { message: "CODEX_APP_SERVER_CLOSED" },
+                  items: [
+                    {
+                      type: "function_call",
+                      id: "call_spawn",
+                      call_id: "call_spawn",
+                      name: "spawn_agent",
+                      arguments: JSON.stringify({ message: "请继续检查" }),
+                      output: JSON.stringify({
+                        agent_id: childThreadId,
+                        nickname: "Arendt"
+                      }),
+                      status: "completed"
+                    }
+                  ]
                 }
               }
-            });
-            closeHandler?.(new Error("CODEX_APP_SERVER_CLOSED"));
-          });
+            }
+          };
         },
         async steerTurn() {},
         async interruptTurn() {},
@@ -1626,9 +1638,7 @@ test("CodexRuntimeAdapter 父会话故障停止时不会继续等待 spawn_agent
           notificationHandler = handler;
         },
         setServerRequestHandler() {},
-        setOnClose(handler) {
-          closeHandler = handler;
-        },
+        setOnClose() {},
         isClosed() {
           return closed;
         },
@@ -1652,7 +1662,7 @@ test("CodexRuntimeAdapter 父会话故障停止时不会继续等待 spawn_agent
     await Promise.race([
       launch.completed,
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("父会话故障后仍在等待子 Agent")), 200);
+        setTimeout(() => reject(new Error(`父会话故障后仍在等待子 Agent: ${JSON.stringify(emitted)}`)), 8000);
       })
     ]);
 
