@@ -51,6 +51,10 @@ export function setErrorHandler(
   const requestContext = buildHostLogContext(error, request);
 
   if (isAppError(error)) {
+    if (shouldSilenceExpectedRequestError(error, request)) {
+      return sendError(reply, error.statusCode, error.errorCode, error.message, error.field, error.data);
+    }
+
     if (shouldLogAsCompactRequestWarning(error)) {
       logCompactRequestWarning(error, request, requestContext);
 
@@ -101,6 +105,18 @@ function shouldLogAsExpectedRequestWarning(error: AppError): boolean {
 
 function shouldLogAsCompactRequestWarning(error: AppError): boolean {
   return shouldLogAsExpectedRequestWarning(error) || isAttachmentNotFoundError(error);
+}
+
+function shouldSilenceExpectedRequestError(error: AppError, request: FastifyRequest): boolean {
+  return isAffairsLibraryDisabledError(error) && isAffairsLibraryRequest(request);
+}
+
+function isAffairsLibraryDisabledError(error: AppError): boolean {
+  return error.statusCode === 409 && error.errorCode === "AFFAIRS_LIBRARY_DISABLED";
+}
+
+function isAffairsLibraryRequest(request: FastifyRequest): boolean {
+  return request.url.includes("/affairs/library-");
 }
 
 function shouldEmitExpectedRequestWarning(error: AppError, request: FastifyRequest): boolean {

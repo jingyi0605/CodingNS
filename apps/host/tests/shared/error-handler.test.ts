@@ -169,6 +169,31 @@ describe("setErrorHandler", () => {
       })
     );
   });
+
+  it("文档库未启用的预览请求不输出 host-error 和 warning", () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = createReply();
+    const request = createRequest("/api/affairs/library-preview?path=demo.html");
+    const error = new AppError({
+      statusCode: 409,
+      errorCode: "AFFAIRS_LIBRARY_DISABLED",
+      detail: "文档库功能还没有启用，启用后才会启动内置索引服务。"
+    });
+
+    setErrorHandler(error, request, reply);
+
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(request.log.warn).not.toHaveBeenCalled();
+    expect(request.log.error).not.toHaveBeenCalled();
+    expect(reply.status).toHaveBeenCalledWith(409);
+    expect(reply.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error_code: "AFFAIRS_LIBRARY_DISABLED"
+      })
+    );
+  });
 });
 
 function createReply(overrides: Partial<{
