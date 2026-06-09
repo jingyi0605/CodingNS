@@ -279,6 +279,8 @@ interface AssistantCapabilitySnapshot {
   }>;
 }
 
+type CodexAgentToolAction = "create" | "read" | "update" | "reply" | "close";
+
 type FoldedPromptKind = "rules" | "system_prompt" | "skill_context";
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
@@ -953,6 +955,198 @@ function buildAssistantCliCommandSnapshot(
     ...resolveAssistantCliSnapshotMeta(parsed),
     rows: buildAssistantCliSnapshotRows(parsed, navigationLookup)
   };
+}
+
+function buildCodexAgentToolSnapshot(
+  tool: ResolvedToolCall
+): AssistantCapabilitySnapshot | null {
+  const input = parseToolInputRecord(tool.input);
+  const normalizedName = normalizeCodexAgentToolName(tool.name);
+  const action = resolveCodexAgentToolAction(normalizedName, input);
+
+  if (!action) {
+    return null;
+  }
+
+  const output = parseToolLooseRecord(tool.output);
+
+  return {
+    ...resolveCodexAgentToolMeta(action),
+    rows: buildCodexAgentToolRows(action, input, output, tool)
+  };
+}
+
+function normalizeCodexAgentToolName(name: string): string {
+  return name.trim().split(/[.:/]/).filter(Boolean).at(-1) ?? name.trim();
+}
+
+function resolveCodexAgentToolAction(
+  name: string,
+  input: Record<string, unknown> | null
+): CodexAgentToolAction | null {
+  switch (name) {
+    case "spawn_agent":
+      return "create";
+    case "wait_agent":
+      return "read";
+    case "resume_agent":
+      return "update";
+    case "send_input":
+      return input?.interrupt === true ? "update" : "reply";
+    case "close_agent":
+      return "close";
+    case "update_agent":
+      return "update";
+    default:
+      return null;
+  }
+}
+
+function resolveCodexAgentToolMeta(
+  action: CodexAgentToolAction
+): Omit<AssistantCapabilitySnapshot, "rows"> {
+  switch (action) {
+    case "create":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+        title: t("conversation.codexAgentToolCreateTitle"),
+        summary: t("conversation.codexAgentToolCreateSummary")
+      };
+    case "read":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+        title: t("conversation.codexAgentToolReadTitle"),
+        summary: t("conversation.codexAgentToolReadSummary")
+      };
+    case "update":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+        title: t("conversation.codexAgentToolUpdateTitle"),
+        summary: t("conversation.codexAgentToolUpdateSummary")
+      };
+    case "reply":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+        title: t("conversation.codexAgentToolReplyTitle"),
+        summary: t("conversation.codexAgentToolReplySummary")
+      };
+    case "close":
+      return {
+        kind: "session",
+        badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+        title: t("conversation.codexAgentToolCloseTitle"),
+        summary: t("conversation.codexAgentToolCloseSummary")
+      };
+  }
+}
+
+function buildCodexAgentToolRows(
+  action: CodexAgentToolAction,
+  input: Record<string, unknown> | null,
+  output: Record<string, unknown> | null,
+  tool: ResolvedToolCall
+): AssistantCapabilitySnapshot["rows"] {
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+  const agentId = resolveCodexAgentId(input, output);
+
+  pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelAgent"), agentId);
+  pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelNickname"), resolveCodexAgentNickname(output));
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), resolveToolStatusLabel(tool.status));
+
+  if (action === "create") {
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelRole"), readText(input, "agent_type"));
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelModel"), readText(input, "model"));
+  }
+
+  if (action === "read") {
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelTargets"), readCodexAgentTargets(input));
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelTimeout"), readText(input, "timeout_ms"));
+  }
+
+  if (action === "reply" || action === "update") {
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelMessage"), readCodexAgentMessage(input));
+  }
+
+  if (action === "close") {
+    pushAssistantCapabilityRow(rows, t("conversation.codexAgentToolLabelReason"), readCodexAgentCloseSummary(output));
+  }
+
+  return rows.slice(0, 5);
+}
+
+function resolveCodexAgentNickname(
+  output: Record<string, unknown> | null
+): string | null {
+  return readText(output, "nickname");
+}
+
+function resolveCodexAgentId(
+  input: Record<string, unknown> | null,
+  output: Record<string, unknown> | null
+): string | null {
+  return readText(input, "target")
+    ?? readFirstTextFromArray(input, "targets")
+    ?? readText(output, "id")
+    ?? readText(output, "agent_id")
+    ?? readText(output, "target");
+}
+
+function readCodexAgentTargets(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const targets = readArray(input, "targets")
+    ?.map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean) ?? [];
+
+  if (targets.length === 0) {
+    return null;
+  }
+
+  return targets.join(", ");
+}
+
+function readCodexAgentMessage(input: Record<string, unknown> | null): string | null {
+  return readText(input, "message") ?? readText(input, "prompt") ?? readText(input, "content");
+}
+
+function readCodexAgentCloseSummary(output: Record<string, unknown> | null): string | null {
+  return readText(output, "status") ?? readText(output, "summary");
+}
+
+function readFirstTextFromArray(record: Record<string, unknown> | null, key: string): string | null {
+  const value = readArray(record, key)?.find((item) => typeof item === "string" && item.trim());
+  return typeof value === "string" ? value.trim() : null;
+}
+
+function parseToolLooseRecord(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw?.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveToolStatusLabel(status: ResolvedToolCall["status"]): string {
+  switch (status) {
+    case "running":
+      return t("conversation.toolStatusRunning");
+    case "failed":
+      return t("conversation.toolStatusFailed");
+    case "completed":
+    default:
+      return t("conversation.toolStatusCompleted");
+  }
 }
 
 function extractAssistantCliCommand(tool: ResolvedToolCall): string | null {
@@ -3861,6 +4055,10 @@ function ToolCallItem({
     () => buildAssistantCliCommandSnapshot(tool, assistantCapabilityLookup),
     [assistantCapabilityLookup, tool]
   );
+  const codexAgentToolSnapshot = useMemo(
+    () => buildCodexAgentToolSnapshot(tool),
+    [tool]
+  );
   const taskSnapshot = useMemo(
     () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
     [group.updatedAt, tool]
@@ -3907,6 +4105,22 @@ function ToolCallItem({
       <AssistantCapabilityToolItem
         tool={tool}
         snapshot={assistantCliCommandSnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        exportMode={exportMode}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
+  }
+
+  if (codexAgentToolSnapshot) {
+    return (
+      <AssistantCapabilityToolItem
+        tool={tool}
+        snapshot={codexAgentToolSnapshot}
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}

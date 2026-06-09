@@ -8,6 +8,8 @@ import {
   buildConversationTimelineSourceItems,
   type ConversationTimelineSourceItem
 } from "../timeline-source-items";
+import type { HistoryMessageDto } from "../api/conversation-api";
+import { toViewMessage } from "../runtime/session-runtime-machine";
 import { MessageTimeline as RawMessageTimeline } from "./MessageTimeline";
 
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
@@ -1213,6 +1215,198 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(t("conversation.assistantCapabilitySessionSendTitle"))).toBeInTheDocument();
     expect(screen.getByText("登录页开发")).toBeInTheDocument();
     expect(screen.getByText("继续推进登录页收尾")).toBeInTheDocument();
+  });
+
+  it("会把 Codex 子 agent 工具调用渲染成专门的会话动作卡片", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "agent-create-1",
+            callId: "agent-create-1",
+            name: "spawn_agent",
+            kind: "tool_result",
+            content: JSON.stringify({
+              id: "agent-explorer-1",
+              nickname: "探索者"
+            }),
+            toolInput: JSON.stringify({
+              agent_type: "explorer",
+              message: "请检查消息渲染入口",
+              model: "gpt-5.5"
+            }),
+            toolOutput: JSON.stringify({
+              id: "agent-explorer-1",
+              nickname: "探索者"
+            }),
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "agent-read-1",
+            callId: "agent-read-1",
+            name: "wait_agent",
+            kind: "tool_call",
+            content: JSON.stringify({
+              targets: ["agent-explorer-1"],
+              timeout_ms: 30000
+            }),
+            sequence: 2
+          }),
+          createToolMessage({
+            id: "agent-reply-1",
+            callId: "agent-reply-1",
+            name: "send_input",
+            kind: "tool_call",
+            content: JSON.stringify({
+              target: "agent-explorer-1",
+              message: "继续看样式文件"
+            }),
+            sequence: 3
+          }),
+          createToolMessage({
+            id: "agent-update-1",
+            callId: "agent-update-1",
+            name: "send_input",
+            kind: "tool_call",
+            content: JSON.stringify({
+              target: "agent-explorer-1",
+              interrupt: true,
+              message: "先停止，改查测试覆盖"
+            }),
+            sequence: 4
+          }),
+          createToolMessage({
+            id: "agent-close-1",
+            callId: "agent-close-1",
+            name: "close_agent",
+            kind: "tool_result",
+            content: JSON.stringify({
+              status: "closed"
+            }),
+            toolInput: JSON.stringify({
+              target: "agent-explorer-1"
+            }),
+            toolOutput: JSON.stringify({
+              status: "closed"
+            }),
+            sequence: 5
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getAllByText(t("conversation.assistantCapabilityBadgeSubAgent"))).toHaveLength(5);
+    expect(screen.getByText(t("conversation.codexAgentToolCreateTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.codexAgentToolReadTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.codexAgentToolReplyTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.codexAgentToolUpdateTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.codexAgentToolCloseTitle"))).toBeInTheDocument();
+    expect(screen.getAllByText("agent-explorer-1").length).toBeGreaterThan(0);
+    expect(screen.getByText("探索者")).toBeInTheDocument();
+    expect(screen.getByText("继续看样式文件")).toBeInTheDocument();
+    expect(screen.getByText("先停止，改查测试覆盖")).toBeInTheDocument();
+    expect(screen.getByText("closed")).toBeInTheDocument();
+  });
+
+  it("会用真实历史消息形态显示 Codex 子 agent 创建和查看工具", () => {
+    const historyMessages: HistoryMessageDto[] = [
+      {
+        messageId: "history-agent-create-call",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        role: "tool",
+        kind: "tool_call",
+        content: JSON.stringify({
+          agent_type: "explorer",
+          message: "请在当前仓库做只读检索"
+        }),
+        toolCall: {
+          callId: "call-spawn-agent-1",
+          name: "functions.spawn_agent",
+          input: JSON.stringify({
+            agent_type: "explorer",
+            message: "请在当前仓库做只读检索"
+          }),
+          output: null,
+          error: null,
+          status: "running"
+        },
+        timestamp: "2026-06-09T07:24:02.000Z",
+        sequence: 4,
+        rawRef: "codex://rollout#line=15"
+      },
+      {
+        messageId: "history-agent-create-result",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        role: "tool",
+        kind: "tool_result",
+        content: JSON.stringify({
+          agent_id: "019eab45-eea2-7353-8d6f-963be33a5c45",
+          nickname: "Erdos"
+        }),
+        toolCall: {
+          callId: "call-spawn-agent-1",
+          name: "functions.spawn_agent",
+          input: JSON.stringify({
+            agent_type: "explorer",
+            message: "请在当前仓库做只读检索"
+          }),
+          output: JSON.stringify({
+            agent_id: "019eab45-eea2-7353-8d6f-963be33a5c45",
+            nickname: "Erdos"
+          }),
+          error: null,
+          status: "completed"
+        },
+        timestamp: "2026-06-09T07:24:03.000Z",
+        sequence: 5,
+        rawRef: "codex://rollout#line=16"
+      },
+      {
+        messageId: "history-agent-read-call",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        role: "tool",
+        kind: "tool_call",
+        content: JSON.stringify({
+          targets: ["019eab45-eea2-7353-8d6f-963be33a5c45"],
+          timeout_ms: 120000
+        }),
+        toolCall: {
+          callId: "call-wait-agent-1",
+          name: "multi_tool_use.wait_agent",
+          input: JSON.stringify({
+            targets: ["019eab45-eea2-7353-8d6f-963be33a5c45"],
+            timeout_ms: 120000
+          }),
+          output: null,
+          error: null,
+          status: "running"
+        },
+        timestamp: "2026-06-09T07:24:04.000Z",
+        sequence: 6,
+        rawRef: "codex://rollout#line=17"
+      }
+    ];
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={historyMessages.map((message) => toViewMessage("session-1", message))}
+      />
+    );
+
+    expect(screen.getAllByText(t("conversation.assistantCapabilityBadgeSubAgent"))).toHaveLength(2);
+    expect(screen.getByText(t("conversation.codexAgentToolCreateTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.codexAgentToolReadTitle"))).toBeInTheDocument();
+    expect(screen.getAllByText("019eab45-eea2-7353-8d6f-963be33a5c45").length).toBeGreaterThan(0);
+    expect(screen.getByText("Erdos")).toBeInTheDocument();
   });
 
   it("会把 codingns assistant timers create 命令渲染成助手自动化卡片", () => {
