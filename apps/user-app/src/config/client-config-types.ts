@@ -87,6 +87,7 @@ export interface ClientRuntimeConfig {
   releaseChannel: ReleaseChannel;
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
+  autoDownloadUpdate: boolean;
   language: AppLanguage;
   defaultPermissionMode: ClientPermissionMode;
 }
@@ -99,6 +100,7 @@ export interface LegacyClientRuntimeConfigSnapshot {
   releaseChannel?: ReleaseChannel;
   autoReconnect?: boolean;
   autoCheckUpdate?: boolean;
+  autoDownloadUpdate?: boolean;
   language?: AppLanguage | "en";
   defaultPermissionMode?: ClientPermissionMode;
 }
@@ -239,6 +241,20 @@ export interface DesktopReleaseState {
   hasUpdate: boolean;
   manifest: ReleaseManifest | null;
   runtimeInfo: DesktopRuntimeInfo;
+}
+
+export interface DesktopUpdateDownloadProgress {
+  downloaded: number;
+  contentLength: number | null;
+  percent: number | null;
+}
+
+export interface DesktopUpdateDownloadResult {
+  ok: boolean;
+  errorCode?: string;
+  detail?: string;
+  version?: string | null;
+  progress?: DesktopUpdateDownloadProgress | null;
 }
 
 export interface DesktopUpdateInstallResult {

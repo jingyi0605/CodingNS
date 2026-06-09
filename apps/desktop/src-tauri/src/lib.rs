@@ -32,7 +32,10 @@ use {
         sync::{Arc, Mutex},
     },
 };
-use updater::{DesktopReleaseState, DesktopRuntimeInfo, UpdateInstallResult};
+use updater::{
+    DesktopReleaseState, DesktopRuntimeInfo, DownloadedDesktopUpdateState, UpdateDownloadResult,
+    UpdateInstallResult,
+};
 use window_manager::{
     window_manager_error, WindowBounds, WindowDescriptor, WindowKind, WindowManagerState,
     WindowMode,
@@ -204,8 +207,21 @@ async fn check_for_update(app: AppHandle, channel: String) -> Result<DesktopRele
 }
 
 #[tauri::command]
-async fn install_update(app: AppHandle, channel: String) -> UpdateInstallResult {
-    updater::install_update(&app, &channel).await
+async fn download_update(
+    app: AppHandle,
+    state: State<'_, DownloadedDesktopUpdateState>,
+    channel: String,
+) -> Result<UpdateDownloadResult, String> {
+    Ok(updater::download_update(&app, state.inner(), &channel).await)
+}
+
+#[tauri::command]
+async fn install_update(
+    app: AppHandle,
+    state: State<'_, DownloadedDesktopUpdateState>,
+    channel: String,
+) -> Result<UpdateInstallResult, String> {
+    Ok(updater::install_update(&app, state.inner(), &channel).await)
 }
 
 #[tauri::command]
@@ -1181,7 +1197,8 @@ pub fn run() {
                 .build(),
         )
         .manage(WindowManagerState::default())
-        .manage(MacosNativeSidebarState::default());
+        .manage(MacosNativeSidebarState::default())
+        .manage(DownloadedDesktopUpdateState::default());
 
     builder
         .setup(|app| {
@@ -1203,6 +1220,7 @@ pub fn run() {
             scan_local_hosts,
             get_runtime_info,
             check_for_update,
+            download_update,
             install_update,
             restart_application,
             rollback_to_previous_version,

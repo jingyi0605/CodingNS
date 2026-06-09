@@ -389,6 +389,7 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: platform === "desktop",
+    autoDownloadUpdate: false,
     language: detectBrowserLanguage(),
     defaultPermissionMode: "default"
   };
@@ -430,6 +431,7 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
       releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
       autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
       autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
+      autoDownloadUpdate: patch.autoDownloadUpdate ?? baseConfig.autoDownloadUpdate,
       language: normalizeLanguage(patch.language ?? baseConfig.language),
       defaultPermissionMode: normalizePermissionMode(
         patch.defaultPermissionMode ?? baseConfig.defaultPermissionMode
@@ -467,6 +469,7 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
     autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
+    autoDownloadUpdate: patch.autoDownloadUpdate ?? baseConfig.autoDownloadUpdate,
     language: normalizeLanguage(patch.language ?? baseConfig.language),
     defaultPermissionMode: normalizePermissionMode(
       patch.defaultPermissionMode ?? baseConfig.defaultPermissionMode
@@ -485,6 +488,7 @@ function stripRuntimeConfigForPersistence(config: ClientRuntimeConfig): Omit<
     releaseChannel: config.releaseChannel,
     autoReconnect: config.autoReconnect,
     autoCheckUpdate: config.autoCheckUpdate,
+    autoDownloadUpdate: config.autoDownloadUpdate,
     language: config.language,
     defaultPermissionMode: config.defaultPermissionMode
   };

@@ -2,6 +2,7 @@ import { createPlatformAdapter } from "../platform-adapter";
 import { clientConfigStore } from "../../config/client-config-store";
 import type {
   DesktopReleaseState,
+  DesktopUpdateDownloadResult,
   DesktopUpdateInstallResult
 } from "../../config/client-config-types";
 import {
@@ -38,6 +39,12 @@ export async function refreshDesktopUpdateState(
   await maybeNotifyDesktopUpdate(state, notifyMode);
 
   return state;
+}
+
+export async function downloadDesktopUpdate(): Promise<DesktopUpdateDownloadResult> {
+  const adapter = createPlatformAdapter();
+  const config = clientConfigStore.getState();
+  return adapter.bridge.downloadUpdate(config.releaseChannel);
 }
 
 export async function installDesktopUpdate(): Promise<DesktopUpdateInstallResult> {

@@ -9,6 +9,7 @@ import type {
   DesktopPlatformInfo,
   DesktopReleaseState,
   DesktopRuntimeInfo,
+  DesktopUpdateDownloadResult,
   DesktopUpdateInstallResult,
   ReleaseChannel,
   RuntimePlatform
@@ -69,6 +70,7 @@ export interface DesktopShellBridge {
   scanLocalHosts(): Promise<DesktopBridgeResult<DesktopLocalHostProcessHit[]>>;
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>>;
   checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>>;
+  downloadUpdate(channel: ReleaseChannel): Promise<DesktopUpdateDownloadResult>;
   installUpdate(channel: ReleaseChannel): Promise<DesktopUpdateInstallResult>;
   getAndroidRuntimeInfo(): Promise<DesktopBridgeResult<AndroidRuntimeInfo>>;
   installAndroidUpdate(manifest: AndroidApkManifest): Promise<AndroidUpdateInstallResult>;
@@ -384,6 +386,14 @@ class WebDesktopShellBridge implements DesktopShellBridge {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 
+  downloadUpdate(): Promise<DesktopUpdateDownloadResult> {
+    return Promise.resolve({
+      ok: false,
+      errorCode: "PLATFORM_NOT_SUPPORTED",
+      detail: "当前不是桌面端运行环境。"
+    });
+  }
+
   installUpdate(): Promise<DesktopUpdateInstallResult> {
     return Promise.resolve({
       ok: false,
@@ -512,6 +522,20 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
 
   checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>> {
     return invokeDesktopCommand("check_for_update", { channel });
+  }
+
+  async downloadUpdate(channel: ReleaseChannel): Promise<DesktopUpdateDownloadResult> {
+    const result = await invokeDesktopCommand<DesktopUpdateDownloadResult>("download_update", {
+      channel
+    });
+
+    return result.ok
+      ? result.value ?? { ok: true }
+      : {
+          ok: false,
+          errorCode: result.errorCode,
+          detail: result.detail
+        };
   }
 
   async installUpdate(channel: ReleaseChannel): Promise<DesktopUpdateInstallResult> {
@@ -657,6 +681,14 @@ class TauriMobileShellBridge implements DesktopShellBridge {
 
   checkForUpdate(): Promise<DesktopBridgeResult<DesktopReleaseState>> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  downloadUpdate(): Promise<DesktopUpdateDownloadResult> {
+    return Promise.resolve({
+      ok: false,
+      errorCode: "PLATFORM_NOT_SUPPORTED",
+      detail: "当前不是桌面端运行环境。"
+    });
   }
 
   installUpdate(): Promise<DesktopUpdateInstallResult> {

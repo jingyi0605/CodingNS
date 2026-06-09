@@ -19,6 +19,7 @@ describe("ReleasePanel", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: true,
+      autoDownloadUpdate: false,
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
@@ -97,7 +98,7 @@ describe("ReleasePanel", () => {
       </I18nProvider>
     );
 
-    await userEvent.click(screen.getByRole("button", { name: t("settings.releaseCheckNow") }));
+    await userEvent.click(screen.getByRole("button", { name: t("settings.updateCheckAll") }));
 
     expect(await screen.findByText("0.1.0")).toBeInTheDocument();
     expect(screen.getByText("0.2.0")).toBeInTheDocument();
@@ -124,4 +125,86 @@ describe("ReleasePanel", () => {
       });
     });
   });
+  it("勾选自动下载后，检查到新版本会先下载再提示安装", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      autoDownloadUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "check_for_update") {
+        return {
+          checkedAt: "2026-03-28T10:00:00.000Z",
+          currentVersion: "0.1.0",
+          hasUpdate: true,
+          runtimeInfo: {
+            version: "0.1.0",
+            appDataDir: "/tmp/codingns"
+          },
+          manifest: {
+            channel: "stable",
+            platform: "macos-universal",
+            version: "0.2.0",
+            tagName: "v0.2.0",
+            title: "v0.2.0",
+            notes: "",
+            signature: null,
+            htmlUrl: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0",
+            publishedAt: "2026-03-28T08:00:00.000Z"
+          }
+        };
+      }
+
+      if (command === "download_update") {
+        return {
+          ok: true,
+          version: "0.2.0",
+          progress: {
+            downloaded: 100,
+            contentLength: 100,
+            percent: 100
+          }
+        };
+      }
+
+      if (command === "install_update") {
+        return { ok: true };
+      }
+
+      return null;
+    }) as typeof window.__TAURI_INTERNALS__ extends { invoke: infer T } ? T : never;
+
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    render(
+      <I18nProvider language="zh-CN">
+        <ThemeProvider>
+          <ReleasePanel />
+        </ThemeProvider>
+      </I18nProvider>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.updateCheckAll") }));
+
+    expect(await screen.findByText(t("settings.releaseDownloadedReadyWithProgress", { percent: "100" }))).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: t("settings.releaseInstallReadyDialogTitle") })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.releaseInstallReadyConfirm") }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("download_update", {
+        channel: "stable"
+      });
+      expect(invoke).toHaveBeenCalledWith("install_update", {
+        channel: "stable"
+      });
+    });
+  });
+
 });

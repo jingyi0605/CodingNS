@@ -1,21 +1,29 @@
 import { useState } from "react";
-import { WorkbenchModal } from "../features/conversation/components/WorkbenchModal";
+
+import { DesktopModal } from "../components/DesktopModal";
+import { ModalActions, ModalSection } from "../components/ModalAtoms";
+import { useClientConfigSelector } from "../config/client-config-store";
 import { createPlatformAdapter } from "../platform/platform-adapter";
 import { t } from "../shared/i18n";
 import {
+  downloadDesktopUpdate,
   markDesktopRestartRequired,
   refreshDesktopUpdateState,
   installDesktopUpdate,
   restartDesktopApplication
 } from "../platform/desktop/release-manager";
 import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
+import { ReleaseInstallReadyModal } from "./ReleaseInstallReadyModal";
 
 export function ReleasePanel() {
   const platform = createPlatformAdapter();
   const supportsClientPackageUpdate = platform.isDesktop;
+  const autoDownloadUpdate = useClientConfigSelector((state) => state.autoDownloadUpdate);
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [openingPage, setOpeningPage] = useState(false);
+  const [downloadedVersion, setDownloadedVersion] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [dismissedRestartVersion, setDismissedRestartVersion] = useState<string | null>(null);
   const latestState = useDesktopUpdateSelector((state) => state.latestState);
@@ -25,6 +33,9 @@ export function ReleasePanel() {
   const hasUpdate = latestState?.hasUpdate ?? false;
   const restartPending = Boolean(pendingRestartVersion);
   const restartModalOpen = restartPending && dismissedRestartVersion !== pendingRestartVersion;
+  const installPromptOpen = Boolean(
+    downloadedVersion && !restartPending && downloadedVersion === manifest?.version
+  );
 
   async function handleCheckUpdate() {
     if (restartPending) {
@@ -32,15 +43,39 @@ export function ReleasePanel() {
     }
 
     setLoading(true);
+    setDownloadedVersion(null);
     setStatusText(null);
 
     try {
       const state = await refreshDesktopUpdateState({ notify: "always" });
-      setStatusText(resolveReleaseStatus(state.manifest, state.hasUpdate));
+      setStatusText(resolveReleaseStatus(state.hasUpdate));
+
+      if (autoDownloadUpdate && state.hasUpdate && state.manifest) {
+        await downloadUpdatePackage(state.manifest.version);
+      }
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseCheckFailed"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function downloadUpdatePackage(targetVersion: string): Promise<void> {
+    setDownloading(true);
+    setStatusText(t("settings.releaseDownloading"));
+
+    try {
+      const result = await downloadDesktopUpdate();
+
+      if (!result.ok) {
+        setStatusText(result.detail ?? t("settings.releaseDownloadFailed"));
+        return;
+      }
+
+      setDownloadedVersion(result.version ?? targetVersion);
+      setStatusText(resolveDownloadStatus(result.progress?.percent ?? null));
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -61,6 +96,7 @@ export function ReleasePanel() {
       }
 
       markDesktopRestartRequired(manifest.version);
+      setDownloadedVersion(null);
       setDismissedRestartVersion(null);
       setStatusText(t("settings.releaseRestartRequired"));
     } catch (error) {
@@ -90,6 +126,7 @@ export function ReleasePanel() {
     }
   }
 
+  const busy = loading || downloading || installing;
   const canInstall = Boolean(supportsClientPackageUpdate && manifest && hasUpdate && !restartPending);
   const effectiveStatusText =
     statusText ??
@@ -98,7 +135,7 @@ export function ReleasePanel() {
       : restartPending
         ? t("settings.releaseRestartRequired")
       : latestState
-        ? resolveReleaseStatus(latestState.manifest, latestState.hasUpdate)
+        ? resolveReleaseStatus(latestState.hasUpdate)
         : null);
 
   return (
@@ -119,7 +156,7 @@ export function ReleasePanel() {
         {effectiveStatusText ? (
           <p
             className="settings-update-status"
-            data-tone={resolveReleaseTone(manifest, hasUpdate, effectiveStatusText, restartPending)}
+            data-tone={resolveReleaseTone(hasUpdate, effectiveStatusText, restartPending)}
           >
             {effectiveStatusText}
           </p>
@@ -128,15 +165,15 @@ export function ReleasePanel() {
           <button
             className="secondary-button"
             type="button"
-            disabled={!supportsClientPackageUpdate || loading || installing || restartPending}
+            disabled={!supportsClientPackageUpdate || busy || restartPending}
             onClick={handleCheckUpdate}
           >
-            {loading ? t("common.loading") : t("settings.releaseCheckNow")}
+            {loading ? t("settings.updateChecking") : t("settings.updateCheckAll")}
           </button>
           <button
             className="primary-button"
             type="button"
-            disabled={!canInstall || installing}
+            disabled={!canInstall || busy}
             onClick={handleInstallUpdate}
           >
             {installing ? t("common.loading") : t("settings.releaseInstallNow")}
@@ -144,13 +181,22 @@ export function ReleasePanel() {
           <button
             className="secondary-button"
             type="button"
-            disabled={!manifest?.htmlUrl || loading || installing || openingPage}
+            disabled={!manifest?.htmlUrl || busy || openingPage}
             onClick={handleOpenReleasePage}
           >
             {openingPage ? t("common.loading") : t("settings.releaseOpenPage")}
           </button>
         </div>
       </div>
+      <ReleaseInstallReadyModal
+        open={installPromptOpen}
+        version={downloadedVersion}
+        installing={installing}
+        onClose={() => setDownloadedVersion(null)}
+        onConfirm={() => {
+          void handleInstallUpdate();
+        }}
+      />
       <ReleaseRestartModal
         open={restartModalOpen}
         version={pendingRestartVersion}
@@ -160,10 +206,7 @@ export function ReleasePanel() {
   );
 }
 
-function resolveReleaseStatus(
-  manifest: Awaited<ReturnType<typeof refreshDesktopUpdateState>>["manifest"],
-  hasUpdate: boolean
-): string {
+function resolveReleaseStatus(hasUpdate: boolean): string {
   if (!hasUpdate) {
     return t("settings.releaseUpToDate");
   }
@@ -171,8 +214,17 @@ function resolveReleaseStatus(
   return t("settings.releaseUpdateReady");
 }
 
+function resolveDownloadStatus(percent: number | null): string {
+  if (percent === null) {
+    return t("settings.releaseDownloadedReady");
+  }
+
+  return t("settings.releaseDownloadedReadyWithProgress", {
+    percent: String(percent)
+  });
+}
+
 function resolveReleaseTone(
-  manifest: Awaited<ReturnType<typeof refreshDesktopUpdateState>>["manifest"],
   hasUpdate: boolean,
   statusText: string,
   restartPending: boolean
@@ -181,15 +233,19 @@ function resolveReleaseTone(
     return "neutral";
   }
 
-  if (restartPending) {
+  if (
+    statusText === t("settings.releaseCheckFailed") ||
+    statusText === t("settings.releaseInstallFailed") ||
+    statusText === t("settings.releaseDownloadFailed")
+  ) {
+    return "danger";
+  }
+
+  if (restartPending || hasUpdate) {
     return "warning";
   }
 
-  if (!hasUpdate) {
-    return "success";
-  }
-
-  return "warning";
+  return "success";
 }
 
 interface ReleaseRestartModalProps {
@@ -215,27 +271,17 @@ function ReleaseRestartModal({ open, version, onClose }: ReleaseRestartModalProp
   }
 
   return (
-    <WorkbenchModal
+    <DesktopModal
       open={open}
       title={t("settings.releaseRestartDialogTitle")}
       description={t("settings.releaseRestartDialogDescription", {
         version: version ?? "-"
       })}
-      onClose={() => {
-        if (restarting) {
-          return;
-        }
-
-        onClose();
-      }}
-    >
-      <div className="settings-update-card">
-        {errorText ? (
-          <p className="settings-update-status" data-tone="danger">
-            {errorText}
-          </p>
-        ) : null}
-        <div className="settings-update-actions">
+      size="compact"
+      layout="confirm"
+      dismissible={!restarting}
+      footer={
+        <ModalActions>
           <button
             className="secondary-button"
             type="button"
@@ -252,8 +298,23 @@ function ReleaseRestartModal({ open, version, onClose }: ReleaseRestartModalProp
           >
             {restarting ? t("common.loading") : t("settings.releaseRestartConfirm")}
           </button>
-        </div>
-      </div>
-    </WorkbenchModal>
+        </ModalActions>
+      }
+      onClose={() => {
+        if (restarting) {
+          return;
+        }
+
+        onClose();
+      }}
+    >
+      <ModalSection className="settings-update-confirm-section">
+        {errorText ? (
+          <p className="settings-update-status" data-tone="danger">
+            {errorText}
+          </p>
+        ) : null}
+      </ModalSection>
+    </DesktopModal>
   );
 }

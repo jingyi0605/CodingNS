@@ -1,8 +1,9 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::mpsc;
-use std::process::Command;
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -66,6 +67,24 @@ pub struct DesktopReleaseState {
   pub runtime_info: DesktopRuntimeInfo,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopUpdateDownloadProgress {
+  pub downloaded: u64,
+  pub content_length: Option<u64>,
+  pub percent: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDownloadResult {
+  pub ok: bool,
+  pub error_code: Option<String>,
+  pub detail: Option<String>,
+  pub version: Option<String>,
+  pub progress: Option<DesktopUpdateDownloadProgress>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInstallResult {
@@ -73,6 +92,51 @@ pub struct UpdateInstallResult {
   pub error_code: Option<String>,
   pub detail: Option<String>,
   pub downloaded_file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DownloadedDesktopUpdateState {
+  update: Arc<Mutex<Option<DownloadedDesktopUpdate>>>,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadedDesktopUpdate {
+  channel: String,
+  version: String,
+  bytes: Vec<u8>,
+}
+
+impl DownloadedDesktopUpdateState {
+  fn replace(&self, update: DownloadedDesktopUpdate) -> Result<(), String> {
+    let mut guard = self
+      .update
+      .lock()
+      .map_err(|_| "桌面更新缓存已被占用。".to_string())?;
+    *guard = Some(update);
+    Ok(())
+  }
+
+  fn take_matching(
+    &self,
+    channel: &str,
+    version: &str,
+  ) -> Result<Option<DownloadedDesktopUpdate>, String> {
+    let mut guard = self
+      .update
+      .lock()
+      .map_err(|_| "桌面更新缓存已被占用。".to_string())?;
+
+    let matched = guard
+      .as_ref()
+      .map(|update| update.channel == channel && update.version == version)
+      .unwrap_or(false);
+
+    if !matched {
+      return Ok(None);
+    }
+
+    Ok(guard.take())
+  }
 }
 
 pub fn get_runtime_info(app: &AppHandle) -> DesktopRuntimeInfo {
@@ -187,8 +251,35 @@ pub async fn check_for_update(
   })
 }
 
-pub async fn install_update(app: &AppHandle, channel: &str) -> UpdateInstallResult {
-  match install_update_inner(app, channel).await {
+pub async fn download_update(
+  app: &AppHandle,
+  state: &DownloadedDesktopUpdateState,
+  channel: &str,
+) -> UpdateDownloadResult {
+  match download_update_inner(app, state, channel).await {
+    Ok((version, progress)) => UpdateDownloadResult {
+      ok: true,
+      error_code: None,
+      detail: None,
+      version: Some(version),
+      progress: Some(progress),
+    },
+    Err(detail) => UpdateDownloadResult {
+      ok: false,
+      error_code: Some("UPDATE_DOWNLOAD_ERROR".to_string()),
+      detail: Some(detail),
+      version: None,
+      progress: None,
+    },
+  }
+}
+
+pub async fn install_update(
+  app: &AppHandle,
+  state: &DownloadedDesktopUpdateState,
+  channel: &str,
+) -> UpdateInstallResult {
+  match install_update_inner(app, state, channel).await {
     Ok(()) => UpdateInstallResult {
       ok: true,
       error_code: None,
@@ -204,7 +295,11 @@ pub async fn install_update(app: &AppHandle, channel: &str) -> UpdateInstallResu
   }
 }
 
-async fn install_update_inner(app: &AppHandle, channel: &str) -> Result<(), String> {
+async fn download_update_inner(
+  app: &AppHandle,
+  state: &DownloadedDesktopUpdateState,
+  channel: &str,
+) -> Result<(String, DesktopUpdateDownloadProgress), String> {
   let updater = build_updater(app, channel)?;
   let Some(update) = updater
     .check()
@@ -213,6 +308,73 @@ async fn install_update_inner(app: &AppHandle, channel: &str) -> Result<(), Stri
   else {
     return Err("当前已经是最新版本。".to_string());
   };
+
+  let version = update.version.to_string();
+  let progress = Arc::new(Mutex::new(DesktopUpdateDownloadProgress::default()));
+  let progress_for_chunk = Arc::clone(&progress);
+  let progress_for_finish = Arc::clone(&progress);
+  let bytes = update
+    .download(
+      move |chunk_length, content_length| {
+        if let Ok(mut current) = progress_for_chunk.lock() {
+          current.downloaded = current.downloaded.saturating_add(chunk_length as u64);
+          current.content_length = content_length;
+          current.percent = content_length.and_then(|total| {
+            if total == 0 {
+              return None;
+            }
+
+            Some(
+              ((current.downloaded.saturating_mul(100) / total).min(100)) as u8,
+            )
+          });
+        }
+      },
+      move || {
+        if let Ok(mut current) = progress_for_finish.lock() {
+          current.percent = Some(100);
+        }
+      },
+    )
+    .await
+    .map_err(|error| format!("下载桌面更新失败: {error}"))?;
+
+  let final_progress = progress
+    .lock()
+    .map_err(|_| "读取桌面更新下载进度失败。".to_string())?
+    .clone();
+
+  state.replace(DownloadedDesktopUpdate {
+    channel: channel.to_string(),
+    version: version.clone(),
+    bytes,
+  })?;
+
+  Ok((version, final_progress))
+}
+
+async fn install_update_inner(
+  app: &AppHandle,
+  state: &DownloadedDesktopUpdateState,
+  channel: &str,
+) -> Result<(), String> {
+  let updater = build_updater(app, channel)?;
+  let Some(update) = updater
+    .check()
+    .await
+    .map_err(|error| format!("检查桌面更新失败: {error}"))?
+  else {
+    return Err("当前已经是最新版本。".to_string());
+  };
+
+  let version = update.version.to_string();
+
+  if let Some(downloaded) = state.take_matching(channel, &version)? {
+    update
+      .install(downloaded.bytes)
+      .map_err(|error| format!("安装桌面更新失败: {error}"))?;
+    return Ok(());
+  }
 
   update
     .download_and_install(
