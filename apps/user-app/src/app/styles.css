@@ -13056,6 +13056,42 @@ textarea:focus-visible {
   line-height: 1.2;
 }
 
+.workbench-closed-subagent-toggle-row {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.workbench-closed-subagent-toggle {
+  min-height: 26px;
+  margin-left: auto;
+  margin-right: 9px;
+  padding: 4px 8px;
+  gap: 5px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workbench-closed-subagent-toggle:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workbench-closed-subagent-toggle .workbench-section-counter {
+  min-width: auto;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  transform: none;
+}
+
 .workbench-session-link {
   display: flex;
   width: 100%;
