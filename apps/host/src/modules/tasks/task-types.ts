@@ -146,6 +146,12 @@ export interface TaskSnapshot<TResult = unknown> {
   readonly errorDetail?: string;
 }
 
+export interface TaskCancelFilter {
+  taskTypes?: readonly string[];
+  key?: string;
+  keyPrefix?: string;
+}
+
 export interface TaskMetricGroupSnapshot {
   readonly executionLane: TaskExecutionLane;
   readonly counters: Readonly<Record<TaskCounterMetricName, number>>;

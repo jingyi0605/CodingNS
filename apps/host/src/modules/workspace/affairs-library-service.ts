@@ -570,6 +570,8 @@ export class AffairsLibraryService {
     this.syncLightweightReconcileTimers();
     if (enabled) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
+    } else {
+      this.cleanupDisabledLibraryTasks(workspaceId, rootDir, "library_disabled");
     }
 
     return this.buildBindingFromSetting(nextSetting, AFFAIRS_GLOBAL_WORKSPACE_ID)!;
@@ -672,6 +674,8 @@ export class AffairsLibraryService {
     this.syncLightweightReconcileTimers();
     if (enabled) {
       this.scheduleAutoRefresh(workspaceId, "library_enabled");
+    } else {
+      this.cleanupDisabledLibraryTasks(workspaceId, rootDir, "library_disabled");
     }
 
     return this.buildBindingFromSetting(nextSetting, workspaceId)!;
@@ -3400,6 +3404,96 @@ export class AffairsLibraryService {
     state.timer = setTimeout(() => {
       void this.flushAutoTasks(workspaceId);
     }, delayMs);
+  }
+
+  private cleanupDisabledLibraryTasks(workspaceId: string, rootDir: string, reason: string): void {
+    const state = this.autoTaskStateByWorkspace.get(workspaceId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+    }
+    this.autoTaskStateByWorkspace.delete(workspaceId);
+    this.hotDirectoryCache.forEach((_, key) => {
+      if (key.startsWith(`${workspaceId}::`)) {
+        this.hotDirectoryCache.delete(key);
+      }
+    });
+
+    const cancelReason = `affairs_library_disabled:${reason}`;
+    const cancelledSnapshots = [
+      ...this.taskManager.cancelMatching(
+        {
+          taskTypes: [
+            HOST_TASK_TYPES.affairsLibraryApplyConfig,
+            HOST_TASK_TYPES.affairsLibraryIndex,
+            HOST_TASK_TYPES.affairsLibraryExport
+          ],
+          key: workspaceId
+        },
+        cancelReason
+      ),
+      ...this.taskManager.cancelMatching(
+        {
+          taskTypes: [
+            HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+            HOST_TASK_TYPES.affairsLibraryTagRecompute,
+            HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
+            HOST_TASK_TYPES.affairsLibraryTagExportRefresh
+          ],
+          keyPrefix: `${workspaceId}:`
+        },
+        cancelReason
+      ),
+      ...this.taskManager.cancelMatching(
+        {
+          taskTypes: [
+            HOST_TASK_TYPES.affairsLibraryDirectoryHint,
+            HOST_TASK_TYPES.affairsLibraryTagRecompute,
+            HOST_TASK_TYPES.affairsLibraryTagApplyBindings,
+            HOST_TASK_TYPES.affairsLibraryTagExportRefresh
+          ],
+          keyPrefix: `${workspaceId}::`
+        },
+        cancelReason
+      )
+    ];
+
+    if (cancelledSnapshots.length === 0) {
+      return;
+    }
+
+    this.logger.info(
+      {
+        workspaceId,
+        rootDir,
+        cancelledTaskCount: cancelledSnapshots.length,
+        cancelledTasks: cancelledSnapshots.map((snapshot) => ({
+          taskType: snapshot.taskType,
+          key: snapshot.key,
+          taskId: snapshot.taskId,
+          status: snapshot.status
+        })),
+        source: "affairs_library.disable_cleanup"
+      },
+      "事务文档库停用后已取消后台索引任务"
+    );
+    writeAffairsLibraryDebugLog({
+      event: "library_disabled_tasks_cancelled",
+      processRole: "host",
+      workspaceId,
+      rootDir,
+      source: "affairs_library.disable_cleanup",
+      reason,
+      status: "cancelled",
+      details: {
+        cancelledTaskCount: cancelledSnapshots.length,
+        cancelledTasks: cancelledSnapshots.map((snapshot) => ({
+          taskType: snapshot.taskType,
+          key: snapshot.key,
+          taskId: snapshot.taskId,
+          status: snapshot.status
+        }))
+      }
+    });
   }
 
   private reconcileOrphanedRunningTasks(

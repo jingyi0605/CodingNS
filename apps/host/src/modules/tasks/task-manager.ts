@@ -3,6 +3,7 @@ import { TaskRegistry } from "./task-registry.js";
 import { TaskScheduler } from "./task-scheduler.js";
 import type {
   TaskActivitySink,
+  TaskCancelFilter,
   TaskDefinition,
   TaskExecutionLane,
   TaskEnqueueOptions,
@@ -38,6 +39,10 @@ export class TaskManager {
 
   cancel(taskType: string, key: string, reason?: string): void {
     this.scheduler.cancel(taskType, key, reason);
+  }
+
+  cancelMatching(filter: TaskCancelFilter, reason?: string): TaskSnapshot[] {
+    return this.scheduler.cancelMatching(filter, reason);
   }
 
   recordCacheHit(taskType: string, key: string): void {

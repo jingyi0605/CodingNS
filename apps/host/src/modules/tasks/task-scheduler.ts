@@ -3,6 +3,7 @@ import { TaskMetrics } from "./task-metrics.js";
 import { TaskRegistry } from "./task-registry.js";
 import {
   TaskCancelledError,
+  type TaskCancelFilter,
   TaskQueueWaitTimeoutError,
   type TaskProgressUpdate,
   type TaskActivitySink,
@@ -96,6 +97,20 @@ export class TaskScheduler {
     }
 
     this.cancelRecord(record, reason);
+  }
+
+  cancelMatching(filter: TaskCancelFilter, reason?: string): TaskSnapshot[] {
+    const matchedRecords = [...this.activeTasks.values()].filter((record) =>
+      matchesCancelFilter(record, filter)
+    );
+    const cancelledSnapshots: TaskSnapshot[] = [];
+
+    for (const record of matchedRecords) {
+      cancelledSnapshots.push(cloneSnapshot(record.snapshot));
+      this.cancelRecord(record, reason);
+    }
+
+    return cancelledSnapshots;
   }
 
   recordCacheHit(taskType: string, key: string): void {
@@ -717,6 +732,22 @@ function cloneSnapshot(snapshot: TaskSnapshot): TaskSnapshot {
         }
       : snapshot.progress ?? null
   };
+}
+
+function matchesCancelFilter(record: TaskRecord, filter: TaskCancelFilter): boolean {
+  if (filter.taskTypes && !filter.taskTypes.includes(record.taskType)) {
+    return false;
+  }
+
+  if (filter.key !== undefined && record.key !== filter.key) {
+    return false;
+  }
+
+  if (filter.keyPrefix !== undefined && !record.key.startsWith(filter.keyPrefix)) {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizeConcurrency(value: number | undefined): number {
