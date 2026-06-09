@@ -29,6 +29,7 @@ function createService(
     readAllTextHistoryMessages: vi.fn(),
     persistSessionBinding: vi.fn(),
     syncSessionTitle: vi.fn(async () => undefined),
+    requestCodexTitleGenerationForNewSession: vi.fn(),
     readRecentHistoryEnvelope: vi.fn(),
     resolveMessageOrigin: vi.fn((_: string, message: Record<string, unknown>) => ({
       ...message,
@@ -1210,7 +1211,7 @@ describe("SessionLiveRuntimeService", () => {
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
-      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream",
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/16/019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl",
       runningState: "starting",
       attachedClients: 0,
       startedAt: "2026-04-16T10:00:00.000Z",
@@ -1260,7 +1261,7 @@ describe("SessionLiveRuntimeService", () => {
     sessionHistoryService.getBindingOrThrow.mockReturnValue({
       provider: "codex",
       providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
-      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream"
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/16/019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl"
     });
     sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
     sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
@@ -1268,7 +1269,7 @@ describe("SessionLiveRuntimeService", () => {
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
-      rawStoreRef: "/Users/test/runtime/codex/019d9025-e575-7fa1-84e2-9e797a2d61df.stream",
+      rawStoreRef: "/Users/test/.codex/sessions/2026/04/16/019d9025-e575-7fa1-84e2-9e797a2d61df.jsonl",
       messageCount: 0
     }));
 
@@ -1306,7 +1307,13 @@ describe("SessionLiveRuntimeService", () => {
       clientRequestId: null
     });
 
+    await Promise.resolve();
+
     expect(order).toEqual(["create", "attach"]);
+    expect(sessionHistoryService.requestCodexTitleGenerationForNewSession).toHaveBeenCalledWith(
+      expect.any(String),
+      "Codex 快速启动时也要先落基础记录"
+    );
   });
 
   it("startLiveSession 在首条权威 user 尚未落库时，会用请求发起时间作为 synthetic 时间锚点", async () => {

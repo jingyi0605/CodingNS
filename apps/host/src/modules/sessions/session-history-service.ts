@@ -540,13 +540,14 @@ export class SessionHistoryService {
     if (!this.taskManager.has(HOST_TASK_TYPES.sessionCodexTitleGenerate)) {
       this.taskManager.register<{
         sessionId: string;
+        firstUserMessage: string;
       }, { title: string | null }>({
         taskType: HOST_TASK_TYPES.sessionCodexTitleGenerate,
         executionLane: "external_process",
         concurrency: 1,
         timeoutMs: 45_000,
-        run: async ({ sessionId }, context) =>
-          this.runCodexSessionTitleGeneration(sessionId, context.signal)
+        run: async ({ sessionId, firstUserMessage }, context) =>
+          this.runCodexSessionTitleGeneration(sessionId, firstUserMessage, context.signal)
       });
     }
   }
@@ -913,7 +914,6 @@ export class SessionHistoryService {
   async syncSessionTitle(sessionId: string, signal?: AbortSignal): Promise<void> {
     const binding = this.getBindingOrThrow(sessionId);
     await this.syncSessionTitleFromProvider(sessionId, binding, signal);
-    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.sync_session_title");
   }
 
   async syncWorkspaceSessionTitles(
@@ -1950,7 +1950,6 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
-    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.read_recent_history");
     const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
@@ -3485,7 +3484,6 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
-    this.requestCodexTitleGenerationIfNeeded(sessionId, "session_history.publish_history_envelope");
     const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
@@ -3564,18 +3562,26 @@ export class SessionHistoryService {
     });
   }
 
-  private requestCodexTitleGenerationIfNeeded(sessionId: string, source: string): void {
-    if (!this.shouldRequestCodexTitleGeneration(sessionId)) {
+  requestCodexTitleGenerationForNewSession(sessionId: string, firstUserMessage: string): void {
+    const normalizedFirstUserMessage = firstUserMessage.trim();
+
+    if (!normalizedFirstUserMessage) {
+      return;
+    }
+
+    if (!this.shouldRequestCodexTitleGeneration(sessionId, normalizedFirstUserMessage)) {
       return;
     }
 
     const handle = this.taskManager.enqueue<{
       sessionId: string;
+      firstUserMessage: string;
     }, { title: string | null }>(HOST_TASK_TYPES.sessionCodexTitleGenerate, {
       key: sessionId,
-      source,
+      source: "session_history.new_codex_session_title",
       input: {
-        sessionId
+        sessionId,
+        firstUserMessage: normalizedFirstUserMessage
       }
     });
 
@@ -3599,7 +3605,10 @@ export class SessionHistoryService {
     });
   }
 
-  private shouldRequestCodexTitleGeneration(sessionId: string): boolean {
+  private shouldRequestCodexTitleGeneration(
+    sessionId: string,
+    firstUserMessage: string
+  ): boolean {
     const binding = this.sessionBindingRepository.findBySessionId(sessionId);
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
 
@@ -3611,15 +3620,12 @@ export class SessionHistoryService {
       return false;
     }
 
-    if (index.messageCount <= 0) {
-      return false;
-    }
-
-    return true;
+    return shouldGenerateCodexSessionTitle(index.title, firstUserMessage);
   }
 
   private async runCodexSessionTitleGeneration(
     sessionId: string,
+    firstUserMessage: string,
     signal?: AbortSignal
   ): Promise<{ title: string | null }> {
     const binding = this.sessionBindingRepository.findBySessionId(sessionId);
@@ -3633,30 +3639,18 @@ export class SessionHistoryService {
       return { title: null };
     }
 
-    const page = await this.sessionSyncService.readHistory(
-      binding.provider,
-      binding.providerSessionId,
-      binding.rawStoreRef,
-      null,
-      16,
-      "forward"
-    ).catch(() => null);
-
-    if (!page) {
-      return { title: null };
-    }
-    const firstUserMessage = page.messages.find((message) => message.role === "user")?.content ?? null;
-
     if (!shouldGenerateCodexSessionTitle(index.title, firstUserMessage)) {
       return { title: null };
     }
 
     const title = await this.codexSessionTitleGenerator.generate({
       currentTitle: index.title,
-      messages: page.messages.map((message) => ({
-        role: message.role,
-        content: message.content
-      })),
+      messages: [
+        {
+          role: "user",
+          content: firstUserMessage
+        }
+      ],
       signal
     });
 

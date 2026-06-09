@@ -621,6 +621,62 @@ describe("SessionHistoryService background tasks", () => {
     service.dispose();
   });
 
+  it("Codex 标题生成只由新建会话首条用户消息触发，历史读取不会触发", async () => {
+    const generatedTitleRequests: Array<{ sessionId: string; firstUserMessage: string }> = [];
+    const taskManager = createTaskManager(null, {
+      external_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType !== HOST_TASK_TYPES.sessionCodexTitleGenerate) {
+            return await definition.run(input, context);
+          }
+
+          generatedTitleRequests.push(input as { sessionId: string; firstUserMessage: string });
+          return { title: null };
+        }
+      }
+    });
+    const service = createSessionHistoryService(taskManager);
+    seedWorkspace(service.workspaceRepository, service.database.db, service.workspacePath);
+    seedSession(service.database.db, {
+      sessionId: "session-codex-title",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "019d9025-e575-7fa1-84e2-9e797a2d61df",
+      rawStoreRef: "codex://thread/019d9025-e575-7fa1-84e2-9e797a2d61df",
+      title: "请帮我修复工作台卡顿问题",
+      messageCount: 1,
+      lastMessageAt: "2026-04-25T10:30:00.000Z",
+      createdAt: "2026-04-25T10:30:00.000Z",
+      updatedAt: "2026-04-25T10:30:00.000Z"
+    });
+
+    await service.instance.readSessionHistory(
+      "session-codex-title",
+      null,
+      20,
+      "backward",
+      "user-1"
+    ).catch(() => null);
+    await flushMicrotasks();
+
+    expect(generatedTitleRequests).toEqual([]);
+
+    service.instance.requestCodexTitleGenerationForNewSession(
+      "session-codex-title",
+      "请帮我修复工作台卡顿问题"
+    );
+    await flushMicrotasks();
+
+    expect(generatedTitleRequests).toEqual([
+      {
+        sessionId: "session-codex-title",
+        firstUserMessage: "请帮我修复工作台卡顿问题"
+      }
+    ]);
+
+    service.dispose();
+  });
+
   it("workspace discovery 任务取消后会把 AbortSignal 传给 provider helper", async () => {
     let receivedSignal: AbortSignal | null = null;
     const taskManager = createTaskManager(null, {

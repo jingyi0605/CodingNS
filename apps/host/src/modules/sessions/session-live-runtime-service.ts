@@ -518,14 +518,21 @@ export class SessionLiveRuntimeService {
         workspace.id,
         input.provider,
         handle
-      ).catch(() => {
+      );
+      if (input.provider === "codex") {
+        void this.requestCodexTitleGenerationAfterStartBinding(sessionId, input.content, startBindingTask)
+          .catch(() => {
+            return;
+          });
+      }
+      const safeStartBindingTask = startBindingTask.catch(() => {
         return;
       });
 
       if (shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
         const bindingWaitStartedAtMs = performance.now();
         await Promise.race([
-          startBindingTask,
+          safeStartBindingTask,
           waitForAcceptedUserLookupWindow()
         ]);
         this.logSendDebugStep(debugTrace, "binding_wait", bindingWaitStartedAtMs, {
@@ -550,7 +557,7 @@ export class SessionLiveRuntimeService {
         matched: Boolean(acceptedMessage)
       });
       if (!shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
-        void startBindingTask;
+        void safeStartBindingTask;
       }
       const acceptedAt = acceptedMessage?.timestamp ?? requestStartedAt;
       const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
@@ -2707,9 +2714,6 @@ export class SessionLiveRuntimeService {
       this.runtimeMessageSeenSessions.add(sessionId);
       this.runtimeHistoryFallbackSentSessions.delete(sessionId);
       const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
-      await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
-        return;
-      });
       const existing = await this.runRuntimeSqliteRead(sessionId, "findSessionIndex", () =>
         this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)
       );
@@ -3313,6 +3317,39 @@ export class SessionLiveRuntimeService {
 
       await waitForRuntimeBindingPoll();
     }
+  }
+
+  private async requestCodexTitleGenerationAfterStartBinding(
+    sessionId: string,
+    firstUserMessage: string,
+    startBindingTask: Promise<void>
+  ): Promise<void> {
+    const normalizedFirstUserMessage = firstUserMessage.trim();
+
+    if (!normalizedFirstUserMessage) {
+      return;
+    }
+
+    try {
+      await startBindingTask;
+    } catch {
+      return;
+    }
+
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (
+      !binding
+      || binding.provider !== "codex"
+      || !hasResolvedRuntimeBinding(binding.providerSessionId, binding.rawStoreRef)
+    ) {
+      return;
+    }
+
+    this.sessionHistoryService.requestCodexTitleGenerationForNewSession(
+      sessionId,
+      normalizedFirstUserMessage
+    );
   }
 
   private persistMessageAttachments(
