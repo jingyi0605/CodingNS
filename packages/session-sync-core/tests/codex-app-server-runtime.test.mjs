@@ -1415,6 +1415,91 @@ test("CodexRuntimeAdapter 不会把 turn/completed 回放的同一批 items 再�
   }
 });
 
+test("CodexRuntimeAdapter 收到 turn/completed 后会等事件流结束再上报完成", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-complete-after-done-"));
+  const threadId = "019eab70-1111-7111-8111-111111111111";
+  const threadPath = join(tempDir, "parent.jsonl");
+  const emitted = [];
+  let notificationHandler = null;
+  let completeSeenImmediatelyAfterTurnCompleted = false;
+  let onClose = null;
+  let closed = false;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(async () => {
+            await notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId,
+                turn: { id: "turn-parent", items: [], status: "completed" }
+              }
+            });
+            completeSeenImmediatelyAfterTurnCompleted = emitted.some((event) => event.type === "complete");
+            onClose?.(null);
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          onClose = handler;
+        },
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-complete-after-done",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    assert.equal(completeSeenImmediatelyAfterTurnCompleted, false);
+    assert.equal(emitted.some((event) => event.type === "complete"), true);
+    assert.equal(emitted.at(-1)?.type, "complete");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会话完成", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-wait-"));
   const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
@@ -1428,7 +1513,9 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
   const emitted = [];
   let notificationHandler = null;
   let completeEventSeenBeforeChildDone = false;
+  let completeEventSeenBeforeChildClosed = false;
   let childDone = false;
+  const closedAgentIds = [];
   let closed = false;
 
   try {
@@ -1532,6 +1619,9 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
         },
         async steerTurn() {},
         async interruptTurn() {},
+        async closeSpawnedAgent(agentId) {
+          closedAgentIds.push(agentId);
+        },
         setNotificationHandler(handler) {
           notificationHandler = handler;
         },
@@ -1555,6 +1645,9 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
         if (event.type === "complete" && !childDone) {
           completeEventSeenBeforeChildDone = true;
         }
+        if (event.type === "complete" && !closedAgentIds.includes(childThreadId)) {
+          completeEventSeenBeforeChildClosed = true;
+        }
         emitted.push(event);
       },
       updateSessionBinding() {}
@@ -1563,7 +1656,141 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
     await launch.completed;
 
     assert.equal(completeEventSeenBeforeChildDone, false);
+    assert.equal(completeEventSeenBeforeChildClosed, false);
     assert.equal(childDone, true);
+    assert.deepEqual(closedAgentIds, [childThreadId]);
+    assert.equal(emitted.some((event) => event.type === "complete"), true);
+    assert.equal(closed, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 关闭已完成子 Agent 失败时不会阻塞父会话完成", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-close-failed-"));
+  const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
+  const childThreadId = "019eab55-1f95-7a64-89ea-6f1234567890";
+  const parentThreadPath = join(tempDir, "parent.jsonl");
+  const childSessionDir = join(tempDir, "sessions", "2026", "06", "09");
+  const childThreadPath = join(
+    childSessionDir,
+    `rollout-2026-06-09T15-45-00-${childThreadId}.jsonl`
+  );
+  const emitted = [];
+  const closeAttempts = [];
+  let notificationHandler = null;
+  let closed = false;
+
+  try {
+    mkdirSync(childSessionDir, { recursive: true });
+    writeFileSync(
+      childThreadPath,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-09T07:45:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            cwd: tempDir,
+            thread_source: "subagent"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-09T07:45:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-child"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId: parentThreadId,
+                turnId: "turn-parent",
+                item: {
+                  type: "function_call",
+                  id: "call_spawn",
+                  call_id: "call_spawn",
+                  name: "spawn_agent",
+                  output: JSON.stringify({
+                    agent_id: childThreadId
+                  }),
+                  status: "completed"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId: parentThreadId,
+                turn: { id: "turn-parent", items: [], status: "completed" }
+              }
+            });
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        async closeSpawnedAgent(agentId) {
+          closeAttempts.push(agentId);
+          throw new Error("close failed");
+        },
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-subagent-close-failed",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    assert.deepEqual(closeAttempts, [childThreadId]);
     assert.equal(emitted.some((event) => event.type === "complete"), true);
     assert.equal(closed, true);
   } finally {
