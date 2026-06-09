@@ -3191,7 +3191,8 @@ test("CodexAdapter 读取 Codex 子 Agent 时不会把昵称当标题，也不�
   const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
   const inheritedParentPrompt =
     "https://github.com/certd/certd\n请分析以上证书自动化部署的开源项目";
-  const ownPrompt = "继续补齐未完成 Spec。你只负责 028-Vue完整业务控制台";
+  const ownPrompt = "你是 Agent F，负责 macOS 端 X-File 样式迁移收尾与回归验证";
+  const expectedTitle = "macOS 端 X-File 样式迁移收尾与回归验证";
 
   try {
     mkdirSync(sessionDir, { recursive: true });
@@ -3332,7 +3333,7 @@ test("CodexAdapter 读取 Codex 子 Agent 时不会把昵称当标题，也不�
     const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
 
     assert.ok(childSession);
-    assert.equal(childSession.title, ownPrompt.slice(0, 48));
+    assert.equal(childSession.title, expectedTitle);
     assert.equal(childSession.subagentLabel, "Einstein");
 
     const page = await adapter.readSessionHistory(childThreadId, childSessionFile, null, 50);

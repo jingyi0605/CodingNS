@@ -86,7 +86,7 @@ export interface CodexThreadControlTransport {
 }
 
 type CodexMessageSource = "event_msg" | "response_item";
-const CODEX_SESSION_TITLE_MAX_LENGTH = 48;
+const CODEX_SESSION_TITLE_MAX_LENGTH = 72;
 
 interface CodexHistoryCacheEntry {
   filePath: string;
@@ -3901,9 +3901,9 @@ function hasUsableCodexTitle(title: string | null | undefined): boolean {
 }
 
 function normalizeCodexIndexedTitle(title: string | null | undefined): string | null {
-  const normalized = ensureText(title).trim();
+  const normalized = normalizeCodexTitleText(title);
 
-  if (normalized.length === 0 || looksLikeCodexRulesMessage(normalized)) {
+  if (!normalized || looksLikeCodexRulesMessage(normalized)) {
     return null;
   }
 
@@ -3913,6 +3913,27 @@ function normalizeCodexIndexedTitle(title: string | null | undefined): string | 
 function normalizeCodexMessageTitle(content: string | null | undefined): string | null {
   const normalized = normalizeCodexIndexedTitle(content);
   return normalized ? normalized.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH) : null;
+}
+
+function normalizeCodexTitleText(content: string | null | undefined): string | null {
+  const normalized = ensureText(content).trim().replace(/\s+/g, " ");
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return extractCodexSubagentTaskTitle(normalized) ?? normalized;
+}
+
+function extractCodexSubagentTaskTitle(title: string): string | null {
+  const match = title.match(/^你是\s*Agent\s*[A-Za-z0-9_-]+\s*[,，。:：；;\s]*负责\s*(.+)$/i);
+  const task = match?.[1]?.trim().replace(/^[：:，,。；;\s]+/, "").trim();
+
+  if (!task) {
+    return null;
+  }
+
+  return task;
 }
 
 function extractCodexThreadHistory(result: Record<string, unknown>): unknown[] {
