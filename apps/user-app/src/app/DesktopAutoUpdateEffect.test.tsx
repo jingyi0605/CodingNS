@@ -242,6 +242,66 @@ describe("DesktopAutoUpdateEffect", () => {
     });
   });
 
+  it("服务端和桌面端都有更新时，会等两边都检查完再发统一通知", async () => {
+    const invoke = vi.fn(async <T,>(command: string): Promise<T> => {
+      if (command === "check_for_update") {
+        return {
+          checkedAt: "2026-04-15T10:00:00.000Z",
+          currentVersion: "0.1.2",
+          hasUpdate: true,
+          manifest: {
+            channel: "stable",
+            platform: "macos-universal",
+            version: "0.1.3",
+            tagName: "v0.1.3",
+            title: "v0.1.3",
+            notes: "",
+            packageUrl: null,
+            signature: null,
+            htmlUrl: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.1.3",
+            publishedAt: "2026-04-15T09:30:00.000Z"
+          },
+          runtimeInfo: {
+            version: "0.1.2",
+            appDataDir: null
+          }
+        } as T;
+      }
+
+      if (command === "show_notification") {
+        return { ok: true } as T;
+      }
+
+      return undefined as T;
+    });
+
+    checkForServiceUpdate.mockResolvedValue(createServiceUpdateSnapshot(true));
+    window.__TAURI_INTERNALS__ = {
+      invoke: invoke as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"]
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      autoDownloadUpdate: false,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    render(<DesktopAutoUpdateEffect />);
+
+    await waitFor(() => {
+      expect(checkForServiceUpdate).toHaveBeenCalledTimes(1);
+      expect(countCommandCalls(invoke, "check_for_update")).toBe(1);
+      expect(invoke).toHaveBeenCalledWith("show_notification", {
+        title: t("settings.softwareUpdate"),
+        body: t("settings.updateBothReady")
+      });
+    });
+  });
+
 });
 
 function createServiceUpdateSnapshot(hasUpdate: boolean) {

@@ -239,4 +239,52 @@ describe("DesktopUnifiedUpdatePanel", () => {
       expect(installServiceUpdate).not.toHaveBeenCalled();
     });
   });
+
+  it("服务端检查失败时，仍会继续检查桌面端更新", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "check_for_update") {
+        return {
+          checkedAt: "2026-04-15T10:00:00.000Z",
+          currentVersion: "0.1.0",
+          hasUpdate: true,
+          runtimeInfo: {
+            version: "0.1.0",
+            appDataDir: null
+          },
+          manifest: {
+            channel: "stable",
+            platform: "macos-universal",
+            version: "0.2.0",
+            tagName: "v0.2.0",
+            title: "v0.2.0",
+            notes: "",
+            signature: null,
+            htmlUrl: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0",
+            publishedAt: "2026-04-15T09:30:00.000Z"
+          }
+        };
+      }
+
+      return null;
+    }) as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"];
+    window.__TAURI_INTERNALS__ = { invoke };
+    checkForServiceUpdate.mockRejectedValue(new Error("服务端检查失败"));
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider language="zh-CN">
+        <ThemeProvider>
+          <DesktopUnifiedUpdatePanel />
+        </ThemeProvider>
+      </I18nProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: t("settings.updateCheckAll") }));
+
+    expect(await screen.findByText(t("settings.updateClientReadyServiceCheckFailed"))).toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith("check_for_update", {
+      channel: "stable"
+    });
+    expect(screen.getByText("0.2.0")).toBeInTheDocument();
+  });
 });
