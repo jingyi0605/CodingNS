@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CodingNS",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "identifier": "com.codingns.desktop",
   "build": {
     "frontendDist": "../../user-app/dist",
