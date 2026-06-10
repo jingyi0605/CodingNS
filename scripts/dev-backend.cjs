@@ -1,10 +1,17 @@
 const { spawn } = require("node:child_process");
+const { buildNode22Env, ensureNode22ForCurrentScript } = require("./node22-runtime.cjs");
 const readline = require("node:readline");
 
 const isWindows = process.platform === "win32";
 let shuttingDown = false;
 let hostStarted = false;
 const envOverrides = parseEnvOverrides(process.argv.slice(2));
+const node22Runtime = ensureNode22ForCurrentScript({
+  rootDir: process.cwd(),
+  scriptLabel: "backend"
+});
+const forcedNodeEnv = buildNode22Env(process.env, node22Runtime);
+console.log(`[backend] 强制使用 Node ${node22Runtime.versionText} -> ${node22Runtime.nodePath}`);
 
 const children = {
   build: null,
@@ -85,7 +92,7 @@ function spawnCommand(name, args, hooks) {
   const child = spawn(command, commandArgs, {
     cwd: process.cwd(),
     env: {
-      ...process.env,
+      ...forcedNodeEnv,
       ...envOverrides
     },
     stdio: ["inherit", "pipe", "pipe"]

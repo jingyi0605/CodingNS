@@ -1,11 +1,17 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const readline = require("node:readline");
+const { buildNode22Env, ensureNode22ForCurrentScript } = require("./node22-runtime.cjs");
 
 const isWindows = process.platform === "win32";
 const rootDir = process.cwd();
 const userAppDistDir = path.join(rootDir, "apps", "user-app", "dist");
 let shuttingDown = false;
+const node22Runtime = ensureNode22ForCurrentScript({
+  rootDir,
+  scriptLabel: "tunnel-ui"
+});
+const forcedNodeEnv = buildNode22Env(process.env, node22Runtime);
 
 const children = {
   build: null,
@@ -21,6 +27,7 @@ run().catch((error) => {
 
 function run() {
   return new Promise((resolve, reject) => {
+    console.log(`[tunnel-ui] 强制使用 Node ${node22Runtime.versionText} -> ${node22Runtime.nodePath}`);
     console.log(`[tunnel-ui] 初始构建 user-app 静态产物 -> ${userAppDistDir}`);
 
     children.build = spawnCommand(
@@ -103,7 +110,7 @@ function spawnCommand(name, args, envOverrides, hooks) {
   const child = spawn(command, commandArgs, {
     cwd: rootDir,
     env: {
-      ...process.env,
+      ...forcedNodeEnv,
       ...envOverrides
     },
     stdio: ["inherit", "pipe", "pipe"]
