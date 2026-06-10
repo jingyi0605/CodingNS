@@ -366,6 +366,7 @@ interface AssistantOfficeOpsTargetParams {
 interface AssistantWorkspaceNavigationStateBody {
   collapsed?: unknown;
   backgroundColor?: unknown;
+  hidden?: unknown;
 }
 
 interface AssistantCreateWorktreeBody {
@@ -1406,6 +1407,7 @@ export class AssistantCapabilityController {
       userId: string;
       collapsed?: boolean;
       backgroundColor?: string | null;
+      hidden?: boolean;
     } = {
       workspaceId: request.params.workspaceId,
       userId: requireUserId(request)
@@ -1421,6 +1423,10 @@ export class AssistantCapabilityController {
       if (rawBackgroundColor === null || typeof rawBackgroundColor === "string") {
         input.backgroundColor = rawBackgroundColor;
       }
+    }
+
+    if (typeof request.body?.hidden === "boolean") {
+      input.hidden = request.body.hidden;
     }
 
     reply.send(this.assistantCapabilityService.updateWorkspaceNavigationState(input));

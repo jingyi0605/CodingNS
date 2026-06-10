@@ -6882,6 +6882,74 @@ describe("WorkbenchLayout", () => {
     expect(workspaceToggles.every((toggle) => toggle.getAttribute("draggable") !== "true")).toBe(true);
   });
 
+
+  it("macOS 桌面端在项目名称区域右键时会打开工作区原生菜单", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop"
+    });
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "会话一", workspaceId: "workspace-1" })],
+        collapsed: false
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [createSessionSummary({ sessionId: "session-2", title: "会话二", workspaceId: "workspace-2" })],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await findWorkspaceGroupByName("项目一");
+
+    const titleCopy = view.container.querySelector<HTMLElement>(
+      '.workbench-workspace-group .workbench-workspace-title-copy'
+    );
+
+    if (!(titleCopy instanceof HTMLElement)) {
+      throw new Error("未找到工作区标题区域");
+    }
+
+    fireEvent.contextMenu(titleCopy, { clientX: 240, clientY: 120 });
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(showDesktopContextMenuMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: t("shell.workspacePinToTopAction") }),
+        expect.objectContaining({ label: t("shell.terminalsEntry") }),
+        expect.objectContaining({ label: t("shell.parallelPaneToolsAction") }),
+        expect.objectContaining({ label: t("shell.workspaceHideAction") }),
+        expect.objectContaining({ label: t("shell.manageWorkspaceRemoveAction") })
+      ])
+    );
+  });
+
   it("重排工作区时会按目标位置生成新的顺序", () => {
     const groups = [
       {

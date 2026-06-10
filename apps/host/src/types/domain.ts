@@ -171,6 +171,7 @@ export interface Workspace {
   path: string;
   repoRoot: string | null;
   backgroundColor?: string | null;
+  hidden?: boolean;
   favorite: boolean;
   sortOrder: number;
   createdAt: string;
@@ -288,6 +289,7 @@ export interface WorkspaceNavigationStateRecord {
   userId: string;
   collapsed: boolean;
   backgroundColor: string | null;
+  hidden: boolean;
   affairsLibraryRootPath?: string | null;
   affairsLibraryEnabled?: boolean;
   affairsLibraryFavoritesJson?: string | null;

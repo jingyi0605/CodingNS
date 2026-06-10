@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   user_id TEXT NOT NULL,
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
   background_color TEXT,
+  hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
   affairs_library_root_path TEXT,
   affairs_library_enabled INTEGER NOT NULL DEFAULT 0 CHECK (affairs_library_enabled IN (0, 1)),
   affairs_library_favorites_json TEXT,

@@ -32,6 +32,7 @@ interface CloneWorkspaceBody {
 
 interface BrowseWorkspaceQuery {
   path?: string;
+  includeHidden?: string;
 }
 
 interface CreateWorkspaceDirectoryBody {
@@ -50,6 +51,7 @@ interface ReorderWorkspacesBody {
 interface UpdateWorkspaceNavigationStateBody {
   collapsed?: unknown;
   backgroundColor?: unknown;
+  hidden?: unknown;
 }
 
 export class WorkspaceController {
@@ -58,9 +60,11 @@ export class WorkspaceController {
     private readonly onWorkspaceChanged?: (workspaceId: string) => void
   ) {}
 
-  readonly list = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  readonly list = async (request: FastifyRequest<{ Querystring: BrowseWorkspaceQuery }>, reply: FastifyReply): Promise<void> => {
+    const includeHidden = ["1", "true", "yes"].includes((request.query.includeHidden ?? "").trim().toLowerCase());
+
     reply.send({
-      items: this.workspaceService.listForUser(requireUserId(request))
+      items: this.workspaceService.listForUser(requireUserId(request), { includeHidden })
     });
   };
 
@@ -165,6 +169,10 @@ export class WorkspaceController {
       if (rawBackgroundColor === null || typeof rawBackgroundColor === "string") {
         input.backgroundColor = rawBackgroundColor;
       }
+    }
+
+    if (typeof request.body?.hidden === "boolean") {
+      input.hidden = request.body.hidden;
     }
 
     reply.send(

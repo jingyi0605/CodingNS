@@ -2,7 +2,10 @@ import path from "node:path";
 
 import type { SessionListItem, Workspace, WorkspaceWorktreeRecord } from "../../types/domain.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
-import type { SessionHistoryService } from "../sessions/session-history-service.js";
+import type {
+  SessionHistoryService,
+  WorkspaceDiscoveryStatusSummary
+} from "../sessions/session-history-service.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
@@ -42,6 +45,17 @@ export interface WorkbenchSnapshotItem {
 export interface WorkbenchSnapshot {
   revision: string;
   items: WorkbenchSnapshotItem[];
+}
+
+interface WorkbenchDiscoveryCandidate {
+  workspace: Workspace;
+  maxAgeMs: number;
+  priorityBand: 0 | 1 | 2 | 3;
+  hasRunningSession: boolean;
+  hasRecentActivity: boolean;
+  isVisibleRoot: boolean;
+  sortOrder: number;
+  recentActivityAtMs: number;
 }
 
 export class WorkbenchService {
@@ -203,7 +217,7 @@ export class WorkbenchService {
       force?: boolean;
     }
   ): void {
-    this.scheduleWorkspaceRefreshes(this.listWorkbenchWorkspaces(userId), userId, options);
+    this.scheduleWorkspaceRefreshes(userId, options);
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
@@ -277,20 +291,20 @@ export class WorkbenchService {
 
     return workspaces
       .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
-      .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id));
+      .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => !hiddenWorkspaceIdSet.has(workspace.id));
   }
 
   private scheduleWorkspaceRefreshes(
-    workspaces: Workspace[],
     userId: string,
     options?: {
       force?: boolean;
     }
   ): void {
     if (typeof this.sessionHistoryService.requestWorkspaceDiscovery === "function") {
-      for (const workspace of workspaces) {
-        this.sessionHistoryService.requestWorkspaceDiscovery(workspace.id, userId, {
-          maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS,
+      for (const candidate of this.selectDiscoveryCandidates(userId, options?.force ?? false)) {
+        this.sessionHistoryService.requestWorkspaceDiscovery(candidate.workspace.id, userId, {
+          maxAgeMs: candidate.maxAgeMs,
           force: options?.force ?? false,
           refreshStateMode: "deferred"
         });
@@ -305,16 +319,104 @@ export class WorkbenchService {
       refreshStateMode?: "inline" | "deferred";
     }
   ): Promise<void> {
-    const workspaces = this.listWorkbenchWorkspaces(userId);
+    const candidates = this.selectDiscoveryCandidates(userId, options?.force ?? false);
 
     await Promise.allSettled(
-      workspaces.map((workspace) =>
-        this.sessionHistoryService.discoverWorkspaceSessions(workspace.id, userId, {
+      candidates.map((candidate) =>
+        this.sessionHistoryService.discoverWorkspaceSessions(candidate.workspace.id, userId, {
+          maxAgeMs: candidate.maxAgeMs,
           force: options?.force ?? true,
           refreshStateMode: options?.refreshStateMode ?? "deferred"
         })
       )
     );
+  }
+
+  private selectDiscoveryCandidates(
+    userId: string,
+    force: boolean
+  ): WorkbenchDiscoveryCandidate[] {
+    const selected: WorkbenchDiscoveryCandidate[] = [];
+
+    for (const candidate of this.buildDiscoveryCandidates(userId)) {
+      if (
+        !force
+        && !this.sessionHistoryService.needsWorkspaceDiscovery(candidate.workspace.id, candidate.maxAgeMs)
+      ) {
+        continue;
+      }
+
+      selected.push(candidate);
+
+      if (selected.length >= WORKBENCH_DISCOVERY_REFRESH_BUDGET) {
+        break;
+      }
+    }
+
+    return selected;
+  }
+
+  private buildDiscoveryCandidates(userId: string): WorkbenchDiscoveryCandidate[] {
+    const workspaces = this.listWorkbenchWorkspaces(userId);
+    const navigationStates = this.workspaceNavigationStateRepository.listByUserId(userId);
+    const hiddenWorkspaceIdSet = new Set(
+      navigationStates
+        .filter((item) => item.hidden)
+        .map((item) => item.workspaceId)
+    );
+    const visibleRootIds = new Set(
+      this.listVisibleWorkspaces(workspaces, hiddenWorkspaceIdSet).map((workspace) => workspace.id)
+    );
+    const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
+    const hiddenTemporaryWorkspaceIdSet = new Set(
+      this.sessionIsolatedWorkspaceRepository
+        ?.listByLifecycleStatuses(["active", "removing"])
+        .map((record) => record.workspaceId)
+        ?? []
+    );
+
+    return workspaces
+      .filter((workspace) => !hiddenWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
+      .map((workspace, index) => {
+        const sessions = this.filterButlerControlSessions(
+          this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
+        );
+        const discoveryStatus = this.sessionHistoryService.getWorkspaceDiscoveryStatusSummary?.(workspace.id) ?? null;
+        const isVisibleRoot = visibleRootIds.has(workspace.id);
+        const isChildWorkspace = childWorkspaceIdSet.has(workspace.id);
+        const hasRunningSession = sessions.some(
+          (session) =>
+            session.activityState === "running"
+            || session.runningState === "running"
+            || session.runningState === "starting"
+        );
+        const recentActivityAtMs = resolveRecentActivityAtMs(sessions);
+        const hasRecentActivity =
+          recentActivityAtMs > 0
+          && Date.now() - recentActivityAtMs <= WORKBENCH_DISCOVERY_RECENT_ACTIVITY_WINDOW_MS;
+        const isDirty = isDiscoveryStatusDirty(discoveryStatus);
+        const priorityBand = resolveDiscoveryPriorityBand({
+          isVisibleRoot,
+          isChildWorkspace,
+          hasRunningSession,
+          hasRecentActivity,
+          isDirty,
+          favorite: workspace.favorite
+        });
+
+        return {
+          workspace,
+          maxAgeMs: resolveDiscoveryMaxAgeMs(priorityBand),
+          priorityBand,
+          hasRunningSession,
+          hasRecentActivity,
+          isVisibleRoot,
+          sortOrder: index,
+          recentActivityAtMs
+        } satisfies WorkbenchDiscoveryCandidate;
+      })
+      .sort(compareDiscoveryCandidates);
   }
 
   private filterButlerControlSessions(sessions: SessionListItem[]): SessionListItem[] {
@@ -331,6 +433,7 @@ export class WorkbenchService {
     rootWorkspaceId: string,
     workspaceById: ReadonlyMap<string, Workspace>,
     navigationStateByWorkspaceId: ReadonlyMap<string, { backgroundColor: string | null }>,
+    hiddenWorkspaceIdSet: ReadonlySet<string>,
     userId: string
   ): WorkbenchWorktreeNode[] {
     if (!this.workspaceWorktreeRepository) {
@@ -344,6 +447,10 @@ export class WorkbenchService {
     const roots: WorkbenchWorktreeNode[] = [];
 
     for (const record of records) {
+      if (hiddenWorkspaceIdSet.has(record.workspaceId)) {
+        continue;
+      }
+
       const workspace = workspaceById.get(record.workspaceId);
 
       if (!workspace) {
@@ -391,7 +498,7 @@ export class WorkbenchService {
 
 function applyWorkspaceNavigationState(
   workspace: Workspace,
-  navigationState: { backgroundColor: string | null } | null | undefined
+  navigationState: { backgroundColor: string | null; hidden?: boolean } | null | undefined
 ): Workspace {
   if (!navigationState) {
     return workspace;
@@ -399,7 +506,8 @@ function applyWorkspaceNavigationState(
 
   return {
     ...workspace,
-    backgroundColor: navigationState.backgroundColor
+    backgroundColor: navigationState.backgroundColor,
+    hidden: navigationState.hidden ?? false
   };
 }
 
@@ -411,6 +519,105 @@ function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath:
 function countWorkbenchSessions(item: WorkbenchSnapshotItem): number {
   return item.sessions.length + (item.childWorktrees ?? [])
     .reduce((total, node) => total + countWorktreeNodeSessions(node), 0);
+}
+
+function resolveRecentActivityAtMs(sessions: SessionListItem[]): number {
+  let recentActivityAtMs = 0;
+
+  for (const session of sessions) {
+    const candidateMs = Math.max(
+      parseIsoTimeMs(session.lastEventAt),
+      parseIsoTimeMs(session.lastMessageAt),
+      parseIsoTimeMs(session.updatedAt)
+    );
+
+    if (candidateMs > recentActivityAtMs) {
+      recentActivityAtMs = candidateMs;
+    }
+  }
+
+  return recentActivityAtMs;
+}
+
+function parseIsoTimeMs(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : 0;
+}
+
+function isDiscoveryStatusDirty(status: WorkspaceDiscoveryStatusSummary | null): boolean {
+  if (!status) {
+    return false;
+  }
+
+  return status.dirtyReasonCount > 0 || status.phase === "failed" || status.phase === "stale";
+}
+
+function resolveDiscoveryPriorityBand(input: {
+  isVisibleRoot: boolean;
+  isChildWorkspace: boolean;
+  hasRunningSession: boolean;
+  hasRecentActivity: boolean;
+  isDirty: boolean;
+  favorite: boolean;
+}): 0 | 1 | 2 | 3 {
+  if (input.isDirty || input.isVisibleRoot) {
+    return 0;
+  }
+
+  if (input.hasRunningSession || input.hasRecentActivity) {
+    return 1;
+  }
+
+  if (input.favorite || input.isChildWorkspace) {
+    return 2;
+  }
+
+  return 3;
+}
+
+function resolveDiscoveryMaxAgeMs(priorityBand: 0 | 1 | 2 | 3): number {
+  switch (priorityBand) {
+    case 0:
+      return WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS;
+    case 1:
+      return WORKBENCH_DISCOVERY_HOT_MAX_AGE_MS;
+    case 2:
+      return WORKBENCH_DISCOVERY_WARM_MAX_AGE_MS;
+    case 3:
+    default:
+      return WORKBENCH_DISCOVERY_COLD_MAX_AGE_MS;
+  }
+}
+
+function compareDiscoveryCandidates(
+  left: WorkbenchDiscoveryCandidate,
+  right: WorkbenchDiscoveryCandidate
+): number {
+  if (left.priorityBand !== right.priorityBand) {
+    return left.priorityBand - right.priorityBand;
+  }
+
+  if (left.hasRunningSession !== right.hasRunningSession) {
+    return left.hasRunningSession ? -1 : 1;
+  }
+
+  if (left.hasRecentActivity !== right.hasRecentActivity) {
+    return left.hasRecentActivity ? -1 : 1;
+  }
+
+  if (left.recentActivityAtMs !== right.recentActivityAtMs) {
+    return right.recentActivityAtMs - left.recentActivityAtMs;
+  }
+
+  if (left.isVisibleRoot !== right.isVisibleRoot) {
+    return left.isVisibleRoot ? -1 : 1;
+  }
+
+  return left.sortOrder - right.sortOrder;
 }
 
 function countWorktreeNodeSessions(node: WorkbenchWorktreeNode): number {

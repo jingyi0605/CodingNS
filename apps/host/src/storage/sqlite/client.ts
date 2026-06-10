@@ -29,6 +29,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
+  ensureWorkspaceNavigationHiddenColumn(db);
   ensureWorkspaceNavigationAffairsLibraryColumns(db);
   ensureOpenCliProviderSchema(db);
   ensureOpenCliCatalogSchema(db);
@@ -1095,6 +1096,18 @@ function ensureWorkspaceNavigationBackgroundColorColumn(db: BetterSqliteDatabase
   }
 
   db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN background_color TEXT");
+}
+
+function ensureWorkspaceNavigationHiddenColumn(db: BetterSqliteDatabase): void {
+  const columns = db
+    .prepare("PRAGMA table_info(workspace_navigation_states)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "hidden")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1))");
 }
 
 function ensureSessionAttachmentSchema(db: BetterSqliteDatabase): void {

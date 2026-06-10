@@ -81,6 +81,7 @@ export interface WorkspaceManagementSummary {
 export interface UpdateWorkspaceNavigationStateInput {
   collapsed?: boolean;
   backgroundColor?: string | null;
+  hidden?: boolean;
 }
 
 const DIRECTORY_BROWSE_LIMIT = 200;
@@ -275,12 +276,26 @@ export class WorkspaceService {
     }
   }
 
-  list(): Workspace[] {
-    return this.listVisibleWorkspaces();
+  list(options?: { includeHidden?: boolean }): Workspace[] {
+    return this.listVisibleWorkspaces(undefined, options);
   }
 
-  listForUser(userId: string): Workspace[] {
-    return this.listVisibleWorkspaces(userId);
+  listForUser(userId: string, options?: { includeHidden?: boolean }): Workspace[] {
+    const workspaces = this.listVisibleWorkspaces(userId, options);
+    const navigationStateByWorkspaceId = new Map(
+      this.workspaceNavigationStateRepository
+        .listByUserId(userId)
+        .map((record) => [record.workspaceId, record] as const)
+    );
+
+    return workspaces.map((workspace) => {
+      const navigationState = navigationStateByWorkspaceId.get(workspace.id);
+      return {
+        ...workspace,
+        backgroundColor: navigationState?.backgroundColor ?? workspace.backgroundColor ?? null,
+        hidden: navigationState?.hidden ?? false
+      };
+    });
   }
 
   reorderWorkspaces(workspaceIds: string[]): Workspace[] {
@@ -454,7 +469,7 @@ export class WorkspaceService {
     input: UpdateWorkspaceNavigationStateInput
   ): WorkspaceNavigationStateRecord {
     this.getWorkspaceForUserOrThrow(workspaceId, userId);
-    if (input.collapsed === undefined && input.backgroundColor === undefined) {
+    if (input.collapsed === undefined && input.backgroundColor === undefined && input.hidden === undefined) {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
@@ -475,6 +490,7 @@ export class WorkspaceService {
           normalizedBackgroundColor !== undefined
             ? normalizedBackgroundColor
             : existing?.backgroundColor ?? null,
+        hidden: input.hidden ?? existing?.hidden ?? false,
         affairsLibraryRootPath: existing?.affairsLibraryRootPath ?? null,
         affairsLibraryEnabled: existing?.affairsLibraryEnabled ?? false,
         affairsLibraryFavoritesJson: existing?.affairsLibraryFavoritesJson ?? null,
@@ -492,6 +508,7 @@ export class WorkspaceService {
           userId,
           collapsed: input.collapsed ?? null,
           backgroundColor: normalizedBackgroundColor ?? null,
+          hidden: input.hidden ?? null,
           oldBinding: toWorkspaceNavigationBindingLog(existing),
           newBinding: toWorkspaceNavigationBindingLog(nextRecord),
         },
@@ -511,6 +528,7 @@ export class WorkspaceService {
           userId,
           collapsed: input.collapsed ?? null,
           backgroundColor: normalizedBackgroundColor ?? null,
+          hidden: input.hidden ?? null,
           oldBinding: toWorkspaceNavigationBindingLog(existing),
           newBinding: null,
         },
@@ -519,7 +537,7 @@ export class WorkspaceService {
     }
   }
 
-  private listVisibleWorkspaces(ownerUserId?: string): Workspace[] {
+  private listVisibleWorkspaces(ownerUserId?: string, options?: { includeHidden?: boolean }): Workspace[] {
     const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
     const hiddenTemporaryWorkspaceIdSet = new Set(
       this.sessionIsolatedWorkspaceRepository
@@ -527,6 +545,14 @@ export class WorkspaceService {
         .map((record) => record.workspaceId)
         ?? []
     );
+    const hiddenWorkspaceIdSet = ownerUserId && !options?.includeHidden
+      ? new Set(
+          this.workspaceNavigationStateRepository
+            .listByUserId(ownerUserId)
+            .filter((record) => record.hidden)
+            .map((record) => record.workspaceId)
+        )
+      : new Set<string>();
     const butlerWorkspacePath = this.butlerProfileService?.getProfile()?.workspacePath ?? null;
 
     const workspaces = ownerUserId
@@ -535,13 +561,15 @@ export class WorkspaceService {
 
     if (!butlerWorkspacePath) {
       return workspaces
-        .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
-        .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id));
+        .filter((workspace) => options?.includeHidden || !childWorkspaceIdSet.has(workspace.id))
+        .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
+        .filter((workspace) => !hiddenWorkspaceIdSet.has(workspace.id));
     }
 
     return workspaces
-      .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => options?.includeHidden || !childWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !hiddenTemporaryWorkspaceIdSet.has(workspace.id))
+      .filter((workspace) => !hiddenWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
@@ -730,12 +758,13 @@ function normalizeWorkspaceNavigationBackgroundColor(
 function toWorkspaceNavigationBindingLog(
   record: Pick<
     WorkspaceNavigationStateRecord,
-    "affairsLibraryRootPath" | "affairsLibraryEnabled" | "affairsLibraryFavoritesJson"
+    "affairsLibraryRootPath" | "affairsLibraryEnabled" | "affairsLibraryFavoritesJson" | "hidden"
   > | null | undefined
 ): {
   rootPath: string | null;
   enabled: boolean;
   favoritesJson: string | null;
+  hidden: boolean;
 } | null {
   if (!record) {
     return null;
@@ -745,6 +774,7 @@ function toWorkspaceNavigationBindingLog(
     rootPath: record.affairsLibraryRootPath ?? null,
     enabled: record.affairsLibraryEnabled === true,
     favoritesJson: record.affairsLibraryFavoritesJson ?? null,
+    hidden: record.hidden === true
   };
 }
 

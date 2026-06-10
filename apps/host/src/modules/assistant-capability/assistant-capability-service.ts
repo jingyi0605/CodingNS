@@ -416,6 +416,7 @@ interface UpdateAssistantWorkspaceNavigationStateInput {
   userId: string;
   collapsed?: boolean;
   backgroundColor?: string | null;
+  hidden?: boolean;
 }
 
 interface CreateAssistantWorktreeInput {
@@ -2579,7 +2580,8 @@ export class AssistantCapabilityService {
   }> {
     const state = this.workspaceService.updateNavigationState(input.workspaceId, input.userId, {
       collapsed: input.collapsed,
-      backgroundColor: input.backgroundColor
+      backgroundColor: input.backgroundColor,
+      hidden: input.hidden
     });
 
     return this.createReceipt("workspaces.navigation-state.update", {
