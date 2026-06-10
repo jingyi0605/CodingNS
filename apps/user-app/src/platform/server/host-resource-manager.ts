@@ -18,6 +18,14 @@ export interface HostResourceSnapshotView {
   };
 }
 
-export async function fetchHostResourceSnapshot(): Promise<HostResourceSnapshotView> {
+export async function fetchHostResourceSnapshot(targetHostId?: string | null): Promise<HostResourceSnapshotView> {
+  const normalizedTargetHostId = targetHostId?.trim();
+
+  if (normalizedTargetHostId) {
+    return await httpClient.request<HostResourceSnapshotView>("/api/system/host/resources", {
+      targetHostId: normalizedTargetHostId
+    });
+  }
+
   return await httpClient.request<HostResourceSnapshotView>("/api/system/host/resources");
 }

@@ -4,6 +4,7 @@ import { logPerfDebug } from "../shared/debug/perf-debug";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
 import { resolveHostTransportTarget } from "./host-transport-registry";
+import { buildHostWsPath } from "./host-ws-path";
 
 import type {
   WorkbenchSnapshotItemDto,
@@ -118,6 +119,7 @@ type IncomingEvent =
   | SessionErrorEvent;
 
 export interface WorkbenchRealtimeClientOptions {
+  targetHostId?: string | null;
   onConnectionChange: (state: WorkbenchConnectionState) => void;
   onSnapshot: (snapshot: WorkbenchSnapshotDto) => void;
   onFileTreeSnapshot?: (snapshot: FileTreeRealtimeSnapshotDto) => void;
@@ -443,9 +445,10 @@ export class WorkbenchRealtimeClient {
     const requestedBaseUrl = getHostBaseUrl();
     const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
     const baseUrl = transportTarget.baseUrl;
-    const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    const wsPath = buildHostWsPath(this.options.targetHostId);
+    const socketUrl = `${getHostWebSocketUrl(wsPath, baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = transportTarget.transport.createWebSocket({
-      path: "/ws",
+      path: wsPath,
       baseUrl,
       url: socketUrl
     });
@@ -460,7 +463,8 @@ export class WorkbenchRealtimeClient {
       }));
       logPerfDebug("workbench.subscribe.sent", {
         knownRevision: this.workbenchKnownRevision,
-        baseUrl
+        baseUrl,
+        targetHostId: this.options.targetHostId ?? null
       });
 
       if (this.pendingRefresh) {

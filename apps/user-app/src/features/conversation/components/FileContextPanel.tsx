@@ -61,21 +61,34 @@ interface FileContextPanelProps {
 
 export interface FileContextPanelWorkbenchShellOverrides {
   navigationGroups?: WorkspaceSessionGroup[];
+  currentTargetHostId?: string | null;
   subscribeFileTree?: (
     workspaceId: string,
     paths: string[],
-    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+    options?: {
+      knownRevisionByPath?: Record<string, string | null | undefined>;
+      targetHostId?: string | null;
+    }
   ) => void;
   requestFileTreeRefresh?: (
     workspaceId: string,
     paths?: string[],
-    options?: { knownRevisionByPath?: Record<string, string | null | undefined> }
+    options?: {
+      knownRevisionByPath?: Record<string, string | null | undefined>;
+      targetHostId?: string | null;
+    }
   ) => void;
   addFileTreeSnapshotListener?: (
     listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
   ) => () => void;
-  subscribeGitSnapshot?: (workspaceId: string) => void;
-  requestGitRefresh?: (workspaceId: string) => void;
+  subscribeGitSnapshot?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined; targetHostId?: string | null }
+  ) => void;
+  requestGitRefresh?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null | undefined; targetHostId?: string | null }
+  ) => void;
   addGitSnapshotListener?: (listener: (snapshot: GitRealtimeSnapshotDto) => void) => () => void;
 }
 
@@ -186,7 +199,8 @@ export function FileContextPanel({
     addFileTreeSnapshotListener,
     subscribeGitSnapshot,
     requestGitRefresh,
-    addGitSnapshotListener
+    addGitSnapshotListener,
+    currentTargetHostId
   } = {
     ...workbenchShell,
     ...workbenchShellOverrides
@@ -277,7 +291,9 @@ export function FileContextPanel({
       return;
     }
 
-    const sessionChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
+    const sessionChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, {
+      targetHostId: currentTargetHostId
+    });
     const visibleCount = filterVisibleEntriesByName(
       sessionChanges,
       (item) => getPathLeafName(item.path),
@@ -430,7 +446,7 @@ export function FileContextPanel({
     }
 
     return addFileTreeSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== workspaceId) {
+      if (snapshot.workspaceId !== workspaceId || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)) {
         return;
       }
 
@@ -467,10 +483,11 @@ export function FileContextPanel({
       workspaceId,
       collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
       {
-        knownRevisionByPath: treeRevisionByPathRef.current
+        knownRevisionByPath: treeRevisionByPathRef.current,
+        targetHostId: currentTargetHostId
       }
     );
-  }, [activeDirectoryPath, expandedDirectories, subscribeFileTree, workspaceId]);
+  }, [activeDirectoryPath, currentTargetHostId, expandedDirectories, subscribeFileTree, workspaceId]);
 
   useEffect(() => {
     setSelectedTargets([]);
@@ -698,7 +715,8 @@ export function FileContextPanel({
           currentWorkspaceId,
           collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
           {
-            knownRevisionByPath: treeRevisionByPathRef.current
+            knownRevisionByPath: treeRevisionByPathRef.current,
+            targetHostId: currentTargetHostId
           }
         );
         void loadRootTree({ silent: true });
@@ -758,9 +776,9 @@ export function FileContextPanel({
     }
 
     const wid = workspaceId.trim();
-    subscribeGitSnapshot(wid);
-    requestGitRefresh(wid);
-  }, [workspaceId, subscribeGitSnapshot, requestGitRefresh]);
+    subscribeGitSnapshot(wid, { targetHostId: currentTargetHostId });
+    requestGitRefresh(wid, { targetHostId: currentTargetHostId });
+  }, [currentTargetHostId, workspaceId, subscribeGitSnapshot, requestGitRefresh]);
 
   // 监听 git 快照，提取文件变更列表
   useEffect(() => {
@@ -771,7 +789,7 @@ export function FileContextPanel({
     const wid = workspaceId.trim();
 
     return addGitSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== wid) {
+      if (snapshot.workspaceId !== wid || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)) {
         return;
       }
 
@@ -1012,10 +1030,12 @@ export function FileContextPanel({
     );
 
     subscribeFileTree(workspaceId, subscribedDirectories, {
-      knownRevisionByPath: treeRevisionByPathRef.current
+      knownRevisionByPath: treeRevisionByPathRef.current,
+      targetHostId: currentTargetHostId
     });
     requestFileTreeRefresh(workspaceId, [directoryPath], {
-      knownRevisionByPath: treeRevisionByPathRef.current
+      knownRevisionByPath: treeRevisionByPathRef.current,
+      targetHostId: currentTargetHostId
     });
     const waitForRealtimeSnapshot = waitForDirectorySnapshot(
       directoryPath,
@@ -1029,7 +1049,9 @@ export function FileContextPanel({
         return [];
       }
 
-      const fallbackResponse = await getFileTree(workspaceId, directoryPath || undefined);
+      const fallbackResponse = await getFileTree(workspaceId, directoryPath || undefined, {
+        targetHostId: currentTargetHostId
+      });
       const fallbackItems = fallbackResponse.items;
 
       treeRevisionByPathRef.current = {
@@ -1215,7 +1237,7 @@ export function FileContextPanel({
     const status = gitChangeInfo.statusByPath.get(normalizedPath);
     if (workspaceId && status && status !== "?" && status !== "D") {
       try {
-        const diffResult = await getGitDiff(workspaceId, filePath, false);
+        const diffResult = await getGitDiff(workspaceId, filePath, false, { targetHostId: currentTargetHostId });
 
         if (viewerDiffRequestIdRef.current === requestId) {
           setViewerDiffContent(diffResult.content || null);
@@ -1375,7 +1397,7 @@ export function FileContextPanel({
 
     try {
       // 手动刷新时同步触发 git status 更新（通过 WebSocket）
-      requestGitRefresh(wid);
+      requestGitRefresh(wid, { targetHostId: currentTargetHostId });
       await refreshTreeCache();
 
       if (primarySelectedFilePath) {
@@ -1383,7 +1405,7 @@ export function FileContextPanel({
       }
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(wid, searchKeyword.trim());
+        const response = await searchFiles(wid, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
         setSearchResult(response.items);
       }
 
@@ -1420,7 +1442,7 @@ export function FileContextPanel({
     setSearching(true);
 
     try {
-      const response = await searchFiles(workspaceId, searchKeyword.trim());
+      const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
       setSearchResult(response.items);
     } catch (error) {
       showToast({
@@ -1482,7 +1504,7 @@ export function FileContextPanel({
         workspaceId,
         path: targetPath,
         contentBase64
-      });
+      }, { targetHostId: currentTargetHostId });
 
       await refreshTreeCache();
       await selectFile(targetPath);
@@ -1510,7 +1532,7 @@ export function FileContextPanel({
     setTransferring(true);
 
     try {
-      const payload = await downloadFile(workspaceId, explicitFilePath);
+      const payload = await downloadFile(workspaceId, explicitFilePath, { targetHostId: currentTargetHostId });
       const fileBuffer = decodeBase64ToArrayBuffer(payload.contentBase64);
 
       downloadBlob(payload.fileName, new Blob([fileBuffer], {
@@ -1629,7 +1651,7 @@ export function FileContextPanel({
           opType: "rename",
           srcPath: sourcePath,
           dstPath: nextPath
-        });
+        }, { targetHostId: currentTargetHostId });
 
         if (fileClipboard) {
           setFileClipboard({
@@ -1657,7 +1679,7 @@ export function FileContextPanel({
         }
 
         if (searchMode && searchKeyword.trim()) {
-          const response = await searchFiles(workspaceId, searchKeyword.trim());
+          const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
           setSearchResult(response.items);
         }
 
@@ -1676,7 +1698,7 @@ export function FileContextPanel({
         opType: pathOperationModal.mode,
         dstPath: nextPath,
         content: pathOperationModal.mode === "create_file" ? "" : undefined
-      });
+      }, { targetHostId: currentTargetHostId });
 
       resetPathOperationModal();
       await refreshTreeCache();
@@ -1690,7 +1712,7 @@ export function FileContextPanel({
       }
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
         setSearchResult(response.items);
       }
 
@@ -1764,7 +1786,7 @@ export function FileContextPanel({
           opType: fileClipboard.mode === "copy" ? "copy" : "move",
           srcPath: target.source.path,
           dstPath: target.destinationPath
-        });
+        }, { targetHostId: currentTargetHostId });
       }
 
       const pastedTargets = nextTargets.map((item) =>
@@ -1794,7 +1816,7 @@ export function FileContextPanel({
       });
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
         setSearchResult(response.items);
       }
 
@@ -1841,7 +1863,7 @@ export function FileContextPanel({
           workspaceId,
           opType: "delete",
           srcPath: target.path
-        });
+        }, { targetHostId: currentTargetHostId });
       }
 
       const nextActiveDirectory = resolveSafeActiveDirectoryAfterDelete(
@@ -1879,7 +1901,7 @@ export function FileContextPanel({
       });
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
         setSearchResult(response.items);
       }
 
@@ -2909,6 +2931,7 @@ export function FileContextPanel({
             <SessionChangedFilesPanel
               sessionId={sessionId}
               workspaceId={workspaceId}
+              targetHostId={currentTargetHostId}
               showSystemFiles={showSystemFiles}
               selectedPath={primarySelectedFilePath}
               refreshVersion={sessionRefreshVersion}
@@ -2925,6 +2948,15 @@ export function FileContextPanel({
       )}
     </section>
   );
+}
+
+function readSnapshotTargetHostId(snapshot: unknown): string | null {
+  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
+  return (left?.trim() || null) === (right?.trim() || null);
 }
 
 function getParentDirectory(filePath: string): string {

@@ -20,6 +20,7 @@ interface WorkspaceImportBrowserModalProps {
   readonly description?: string;
   readonly submitLabel?: string;
   readonly initialPath?: string | null;
+  readonly targetHostId?: string | null;
   readonly onSelectedPath?: (path: string) => Promise<void> | void;
 }
 
@@ -32,6 +33,7 @@ export function WorkspaceImportBrowserModal({
   description,
   submitLabel,
   initialPath,
+  targetHostId,
   onSelectedPath
 }: WorkspaceImportBrowserModalProps) {
   const { showToast } = useToast();
@@ -54,7 +56,7 @@ export function WorkspaceImportBrowserModal({
     setError(null);
 
     try {
-      const snapshot = await browseWorkspaceDirectories(targetPath);
+      const snapshot = await browseWorkspaceDirectories(targetPath, { targetHostId });
       setCurrentPath(snapshot.currentPath);
       setInputPath(snapshot.currentPath);
       setParentPath(snapshot.parentPath);
@@ -68,7 +70,7 @@ export function WorkspaceImportBrowserModal({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [targetHostId]);
 
   useEffect(() => {
     if (!open) {
@@ -130,7 +132,7 @@ export function WorkspaceImportBrowserModal({
       const createdDirectory = await createWorkspaceDirectory({
         parentPath: currentPath,
         directoryName: safeDirectoryName
-      });
+      }, { targetHostId });
 
       showToast({
         title: t("shell.importBrowserCreateDirectorySuccess"),
@@ -181,7 +183,7 @@ export function WorkspaceImportBrowserModal({
 
       const workspace = await importWorkspace({
         path: targetPath
-      });
+      }, { targetHostId });
       showToast({
         title: t("shell.importSuccess"),
         description: workspace.path,

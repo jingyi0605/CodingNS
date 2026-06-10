@@ -7,6 +7,10 @@ import type {
 } from "../../conversation/api/conversation-api";
 
 export type ButlerProviderId = "codex" | "claude-code";
+
+interface ButlerRequestOptions {
+  targetHostId?: string | null;
+}
 export type ButlerAgentsMode = "inline" | "file";
 export type ButlerToneId = "direct" | "steady" | "friendly";
 export type ButlerLanguageId = "zh-CN" | "en-US" | "bilingual";
@@ -1076,9 +1080,10 @@ export function createButlerFollowUpTask(payload: {
   completionCriteria?: string;
   maxAutoContinueCount?: number;
   checkIntervalSeconds?: number;
-}) {
+}, options?: ButlerRequestOptions) {
   return httpClient.request<{ task: ButlerFollowUpTaskDto }>("/api/butler/follow-up-tasks", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
@@ -1089,20 +1094,22 @@ export function getButlerFollowUpTask(taskId: string) {
   );
 }
 
-export function cancelButlerFollowUpTask(taskId: string) {
+export function cancelButlerFollowUpTask(taskId: string, options?: ButlerRequestOptions) {
   return httpClient.request<{ task: ButlerFollowUpTaskDto }>(
     `/api/butler/follow-up-tasks/${encodeURIComponent(taskId)}/cancel`,
     {
-      method: "POST"
+      method: "POST",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
 
-export function cancelButlerVerificationRun(projectId: string, verificationId: string) {
+export function cancelButlerVerificationRun(projectId: string, verificationId: string, options?: ButlerRequestOptions) {
   return httpClient.request<{ run: ButlerVerificationRunDto }>(
     `/api/butler/projects/${encodeURIComponent(projectId)}/verifications/${encodeURIComponent(verificationId)}/cancel`,
     {
-      method: "POST"
+      method: "POST",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
@@ -1206,21 +1213,23 @@ export function searchButlerSummaries(payload: {
   );
 }
 
-export function getButlerSessionTarget(sessionId: string) {
+export function getButlerSessionTarget(sessionId: string, options?: ButlerRequestOptions) {
   const searchParams = new URLSearchParams();
   searchParams.set("sessionId", sessionId);
 
   return httpClient.request<{ target: ButlerSessionTargetDto }>(
-    `/api/butler/session-target?${searchParams.toString()}`
+    `/api/butler/session-target?${searchParams.toString()}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function getButlerSessionActionContext(sessionId: string) {
+export function getButlerSessionActionContext(sessionId: string, options?: ButlerRequestOptions) {
   const searchParams = new URLSearchParams();
   searchParams.set("sessionId", sessionId);
 
   return httpClient.request<{ context: ButlerSessionActionContextDto }>(
-    `/api/butler/session-action-context?${searchParams.toString()}`
+    `/api/butler/session-action-context?${searchParams.toString()}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
@@ -1263,9 +1272,10 @@ export function startButlerVerificationAction(payload: {
   butlerSessionId?: string | null;
   sourcePatrolRunId?: string | null;
   spec?: Record<string, unknown>;
-}) {
+}, options?: ButlerRequestOptions) {
   return httpClient.request<{ result: { run: ButlerVerificationRunDto } }>("/api/butler/actions/start-verification", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }

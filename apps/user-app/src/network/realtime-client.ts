@@ -11,6 +11,7 @@ import { logPerfDebug } from "../shared/debug/perf-debug";
 import { ConnectionManager } from "./connection-manager";
 import type { HostTransportSocket } from "./host-transport";
 import { resolveHostTransportTarget } from "./host-transport-registry";
+import { buildHostWsPath } from "./host-ws-path";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 
@@ -146,6 +147,7 @@ type IncomingEvent =
   | SessionErrorEvent;
 
 export interface RealtimeClientOptions {
+  targetHostId?: string | null;
   sessionId: string;
   cursor: string | null;
   limit: number;
@@ -243,9 +245,10 @@ export class RealtimeClient {
     const requestedBaseUrl = getHostBaseUrl();
     const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
     const baseUrl = transportTarget.baseUrl;
-    const socketUrl = `${getHostWebSocketUrl("/ws", baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    const wsPath = buildHostWsPath(this.options.targetHostId);
+    const socketUrl = `${getHostWebSocketUrl(wsPath, baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = transportTarget.transport.createWebSocket({
-      path: "/ws",
+      path: wsPath,
       baseUrl,
       url: socketUrl
     });
@@ -273,11 +276,13 @@ export class RealtimeClient {
     });
 
     socket.addEventListener("message", (raw) => {
-      if (!(raw instanceof MessageEvent) || typeof raw.data !== "string") {
+      const data = readSocketMessageData(raw);
+
+      if (typeof data !== "string") {
         return;
       }
 
-      const payload = JSON.parse(raw.data) as IncomingEvent | { type: "system.connected" };
+      const payload = JSON.parse(data) as IncomingEvent | { type: "system.connected" };
 
       if (payload.type === "system.connected") {
         this.connectionManager.markConnected();
@@ -465,6 +470,15 @@ export class RealtimeClient {
     this.inFlightOlderRequest = null;
     this.olderRequestStartedAtMs = null;
   }
+}
+
+
+function readSocketMessageData(raw: Event): unknown {
+  if (typeof MessageEvent !== "undefined" && raw instanceof MessageEvent) {
+    return raw.data;
+  }
+
+  return (raw as { data?: unknown }).data;
 }
 
 function measureElapsedMs(startedAtMs: number | null): number | null {

@@ -85,6 +85,20 @@ export interface WorkspaceDto {
   sortOrder?: number;
 }
 
+export interface WorkspaceRef {
+  hostId: string;
+  workspaceId: string;
+}
+
+export interface ScopedWorkspaceDto {
+  hostId: string;
+  hostName?: string;
+  hostStatus?: "current" | "unknown" | "reachable" | "unreachable" | "version_mismatch" | "unauthorized";
+  workspace: WorkspaceDto;
+  lastErrorDetail?: string | null;
+}
+
+
 export interface WorkspaceGitRemoteDto {
   name: string;
   url: string;
@@ -1541,14 +1555,53 @@ export interface QuickPhraseDto {
   text: string;
 }
 
+export interface ScopedRequestOptions {
+  targetHostId?: string | null;
+}
+
 export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
+}
+
+export async function listScopedWorkspaces(targetHostId?: string): Promise<{ items: ScopedWorkspaceDto[] }> {
+  const response = await httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces", {
+    targetHostId
+  });
+  const hostId = targetHostId ?? "current";
+
+  return {
+    items: response.items.map((workspace) => ({
+      hostId,
+      hostStatus: targetHostId ? undefined : "current",
+      workspace
+    }))
+  };
 }
 
 export async function getWorkbenchSnapshot(options?: {
   refresh?: boolean;
   awaitDiscovery?: boolean;
 }) {
+  return getWorkbenchSnapshotForTarget(undefined, options);
+}
+
+export async function getScopedWorkbenchSnapshot(
+  targetHostId?: string,
+  options?: {
+    refresh?: boolean;
+    awaitDiscovery?: boolean;
+  }
+) {
+  return getWorkbenchSnapshotForTarget(targetHostId, options);
+}
+
+async function getWorkbenchSnapshotForTarget(
+  targetHostId: string | undefined,
+  options?: {
+    refresh?: boolean;
+    awaitDiscovery?: boolean;
+  }
+) {
   const headers = new Headers();
   if (options?.refresh) {
     headers.set("X-CodingNS-Workbench-Refresh", "true");
@@ -1558,18 +1611,26 @@ export async function getWorkbenchSnapshot(options?: {
   }
   try {
     return await httpClient.request<WorkbenchSnapshotDto>("/api/workbench", {
-      headers
+      headers,
+      targetHostId
     });
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) {
       throw error;
     }
 
-    const workspaceResponse = await listWorkspaces();
+    const workspaceResponse = await httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces", {
+      targetHostId
+    });
     const sessionResponses = await Promise.all(
       workspaceResponse.items.map(async (workspace) => ({
         workspace,
-        sessions: (await listWorkspaceSessions(workspace.id)).items
+        sessions: (
+          await httpClient.request<{ items: SessionSummaryDto[] }>(
+            `/api/sessions?workspaceId=${encodeURIComponent(workspace.id)}`,
+            { targetHostId }
+          )
+        ).items
       }))
     );
 
@@ -1579,9 +1640,10 @@ export async function getWorkbenchSnapshot(options?: {
   }
 }
 
-export function importWorkspace(payload: ImportWorkspacePayload) {
+export function importWorkspace(payload: ImportWorkspacePayload, options?: ScopedRequestOptions) {
   return httpClient.request<WorkspaceDto>("/api/workspaces/import", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
@@ -1593,9 +1655,10 @@ export function cloneWorkspace(payload: CloneWorkspacePayload) {
   });
 }
 
-export function getWorkspaceManagementSummary(workspaceId: string) {
+export function getWorkspaceManagementSummary(workspaceId: string, options?: ScopedRequestOptions) {
   return httpClient.request<WorkspaceManagementSummaryDto>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/management`
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/management`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
@@ -2315,7 +2378,7 @@ export function saveAffairsFolderTagsWithCreate(
   );
 }
 
-export function browseWorkspaceDirectories(targetPath?: string) {
+export function browseWorkspaceDirectories(targetPath?: string, options?: ScopedRequestOptions) {
   const search = new URLSearchParams();
 
   if (targetPath?.trim()) {
@@ -2323,70 +2386,82 @@ export function browseWorkspaceDirectories(targetPath?: string) {
   }
 
   return httpClient.request<WorkspaceDirectoryBrowseDto>(
-    `/api/workspaces/browse${search.size > 0 ? `?${search.toString()}` : ""}`
+    `/api/workspaces/browse${search.size > 0 ? `?${search.toString()}` : ""}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function createWorkspaceDirectory(payload: CreateWorkspaceDirectoryPayload) {
+export function createWorkspaceDirectory(payload: CreateWorkspaceDirectoryPayload, options?: ScopedRequestOptions) {
   return httpClient.request<WorkspaceCreatedDirectoryDto>("/api/workspaces/directories", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
 
-export function listWorkspaceSessions(workspaceId: string) {
+export function listWorkspaceSessions(workspaceId: string, options?: ScopedRequestOptions) {
   return httpClient.request<{ items: SessionSummaryDto[] }>(
-    `/api/sessions?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/sessions?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function startSession(payload: StartSessionPayload) {
+export function startSession(payload: StartSessionPayload, options?: ScopedRequestOptions) {
   return httpClient.request<SessionSummaryDto>("/api/sessions/start", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
 
-export function getSessionDetail(sessionId: string) {
-  return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}`);
-}
-
-export function getSessionChangedFiles(sessionId: string) {
-  return httpClient.request<{ items: SessionChangedFileDto[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/changed-files`
-  );
-}
-
-export function markSessionSeen(sessionId: string) {
-  return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}/seen`, {
-    method: "POST"
+export function getSessionDetail(sessionId: string, options?: ScopedRequestOptions) {
+  return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    targetHostId: options?.targetHostId ?? undefined
   });
 }
 
-export function renameSessionTitle(sessionId: string, title: string) {
+export function getSessionChangedFiles(sessionId: string, options?: ScopedRequestOptions) {
+  return httpClient.request<{ items: SessionChangedFileDto[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/changed-files`,
+    { targetHostId: options?.targetHostId ?? undefined }
+  );
+}
+
+export function markSessionSeen(sessionId: string, options?: ScopedRequestOptions) {
+  return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}/seen`, {
+    method: "POST",
+    targetHostId: options?.targetHostId ?? undefined
+  });
+}
+
+export function renameSessionTitle(sessionId: string, title: string, options?: ScopedRequestOptions) {
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
     method: "PATCH",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({ title })
   });
 }
 
-export function updateSessionArchiveState(sessionId: string, archived: boolean) {
+export function updateSessionArchiveState(sessionId: string, archived: boolean, options?: ScopedRequestOptions) {
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/archive`, {
     method: "PATCH",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({ archived })
   });
 }
 
-export function updateSessionFavoriteState(sessionId: string, favorite: boolean) {
+export function updateSessionFavoriteState(sessionId: string, favorite: boolean, options?: ScopedRequestOptions) {
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/favorite`, {
     method: "PATCH",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({ favorite })
   });
 }
 
-export function deleteSession(sessionId: string) {
+export function deleteSession(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "DELETE"
+    method: "DELETE",
+    targetHostId: options?.targetHostId ?? undefined
   });
 }
 
@@ -2503,15 +2578,17 @@ export function cleanupWorktree(workspaceId: string, payload?: { deleteBranch?: 
   );
 }
 
-export function getSessionCapabilities(sessionId: string) {
+export function getSessionCapabilities(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<ProviderCapabilitiesDto>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/capabilities`
+    `/api/sessions/${encodeURIComponent(sessionId)}/capabilities`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function getSessionPermissionRequests(sessionId: string) {
+export function getSessionPermissionRequests(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<SessionPermissionRequestListDto>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/permission-requests`
+    `/api/sessions/${encodeURIComponent(sessionId)}/permission-requests`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
@@ -2607,7 +2684,8 @@ export function getSessionMessages(
   sessionId: string,
   cursor: string | null,
   limit: number,
-  direction: HistoryDirection = "forward"
+  direction: HistoryDirection = "forward",
+  options?: ScopedRequestOptions
 ) {
   const search = new URLSearchParams();
 
@@ -2619,13 +2697,15 @@ export function getSessionMessages(
   search.set("direction", direction);
 
   return httpClient.request<HistoryPageDto>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function getSessionAttachmentBlob(sessionId: string, attachmentId: string) {
+export function getSessionAttachmentBlob(sessionId: string, attachmentId: string, options?: ScopedRequestOptions) {
   return httpClient.requestBlob(
-    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}/content`
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}/content`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
@@ -2655,12 +2735,14 @@ export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options
 
 export function sendSessionMessage(
   sessionId: string,
-  payload: SendSessionMessagePayload
+  payload: SendSessionMessagePayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<SendMessageResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );
@@ -2676,9 +2758,10 @@ export function forkSession(sessionId: string, payload: ForkSessionPayload) {
   );
 }
 
-export function startLiveSession(payload: StartLivePayload) {
+export function startLiveSession(payload: StartLivePayload, options?: ScopedRequestOptions) {
   return httpClient.request<StartLiveResponseDto>("/api/sessions/start-live", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
@@ -2818,65 +2901,74 @@ export async function sendAffairsLightweightSessionMessageStream(
 
 export function sendLiveMessage(
   sessionId: string,
-  payload: SendLiveMessagePayload
+  payload: SendLiveMessagePayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<SendMessageResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages/live`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );
 }
 
-export function getSessionQueue(sessionId: string) {
+export function getSessionQueue(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<{ items: SessionQueueItemDto[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/queue`
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
 export function enqueueSessionMessage(
   sessionId: string,
-  payload: SendLiveMessagePayload
+  payload: SendLiveMessagePayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<SessionQueueItemDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/queue`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );
 }
 
-export function deleteSessionQueueItem(sessionId: string, queueItemId: string) {
+export function deleteSessionQueueItem(sessionId: string, queueItemId: string, options?: ScopedRequestOptions) {
   return httpClient.request<void>(
     `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueItemId)}`,
     {
-      method: "DELETE"
+      method: "DELETE",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
 
-export function steerSessionQueueItem(sessionId: string, queueItemId: string) {
+export function steerSessionQueueItem(sessionId: string, queueItemId: string, options?: ScopedRequestOptions) {
   return httpClient.request<StartLiveResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueItemId)}/steer`,
     {
-      method: "POST"
+      method: "POST",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
 
-export function getSessionRuntime(sessionId: string) {
+export function getSessionRuntime(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<SessionRuntimeDto>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/runtime`
+    `/api/sessions/${encodeURIComponent(sessionId)}/runtime`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function interruptSession(sessionId: string) {
+export function interruptSession(sessionId: string, options?: ScopedRequestOptions) {
   return httpClient.request<InterruptSessionResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
     {
-      method: "POST"
+      method: "POST",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
@@ -2884,12 +2976,14 @@ export function interruptSession(sessionId: string) {
 export function replySessionPermissionRequest(
   sessionId: string,
   requestId: string,
-  payload: ReplyPermissionRequestPayload
+  payload: ReplyPermissionRequestPayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<SessionPermissionRequestDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/permission-requests/${encodeURIComponent(requestId)}/reply`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );

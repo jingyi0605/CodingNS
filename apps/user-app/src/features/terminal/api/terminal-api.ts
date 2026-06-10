@@ -1,5 +1,9 @@
 import { httpClient } from "../../../network/http-client";
 
+interface TerminalRequestOptions {
+  targetHostId?: string | null;
+}
+
 export interface TerminalDto {
   id: string;
   workspaceId: string;
@@ -75,29 +79,34 @@ export interface TerminalHistoryPageDto {
   nextBeforeSeq: number | null;
 }
 
-export function listTerminalShellOptions() {
-  return httpClient.request<{ items: TerminalShellOptionDto[] }>("/api/terminals/shells");
+export function listTerminalShellOptions(options?: TerminalRequestOptions) {
+  return httpClient.request<{ items: TerminalShellOptionDto[] }>("/api/terminals/shells", {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function listWorkspaceTerminals(workspaceId: string) {
+export function listWorkspaceTerminals(workspaceId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ items: TerminalDto[] }>(
-    `/api/terminals?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/terminals?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function listWorkspaceTemplateRuntimeStatuses(workspaceId: string) {
+export function listWorkspaceTemplateRuntimeStatuses(workspaceId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ items: TerminalTemplateRuntimeStatusDto[] }>(
-    `/api/terminals/templates/runtime-status?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/terminals/templates/runtime-status?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function stopTerminalTemplateProcess(templateId: string) {
+export function stopTerminalTemplateProcess(templateId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{
     success: true;
     processId: number | null;
     alreadyStopped: boolean;
   }>(`/api/terminals/templates/${encodeURIComponent(templateId)}/stop`, {
-    method: "POST"
+    method: "POST",
+    targetHostId: options?.targetHostId ?? undefined
   });
 }
 
@@ -107,33 +116,37 @@ export function createTerminal(payload: {
   cwd?: string;
   shell?: string;
   runtimeType?: string;
-}) {
+}, options?: TerminalRequestOptions) {
   return httpClient.request<TerminalDto>("/api/terminals", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
 
-export function closeTerminal(terminalId: string) {
+export function closeTerminal(terminalId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ success: true }>(`/api/terminals/${encodeURIComponent(terminalId)}`, {
-    method: "DELETE"
+    method: "DELETE",
+    targetHostId: options?.targetHostId ?? undefined
   });
 }
 
-export function deleteTerminalRecord(terminalId: string) {
+export function deleteTerminalRecord(terminalId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ success: true }>(
     `/api/terminals/${encodeURIComponent(terminalId)}/record`,
     {
-      method: "DELETE"
+      method: "DELETE",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
 
-export function sendTerminalInput(terminalId: string, content: string) {
+export function sendTerminalInput(terminalId: string, content: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ accepted: true }>(
     `/api/terminals/${encodeURIComponent(terminalId)}/input`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify({ content })
     }
   );
@@ -141,7 +154,7 @@ export function sendTerminalInput(terminalId: string, content: string) {
 
 export function readTerminalHistory(
   terminalId: string,
-  options: { beforeSeq?: number | null; limit?: number } = {}
+  options: { beforeSeq?: number | null; limit?: number; targetHostId?: string | null } = {}
 ) {
   const searchParams = new URLSearchParams();
 
@@ -156,13 +169,15 @@ export function readTerminalHistory(
   const suffix = searchParams.toString();
 
   return httpClient.request<TerminalHistoryPageDto>(
-    `/api/terminals/${encodeURIComponent(terminalId)}/history${suffix ? `?${suffix}` : ""}`
+    `/api/terminals/${encodeURIComponent(terminalId)}/history${suffix ? `?${suffix}` : ""}`,
+    { targetHostId: options.targetHostId ?? undefined }
   );
 }
 
-export function listWorkspaceTemplates(workspaceId: string) {
+export function listWorkspaceTemplates(workspaceId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ items: TerminalTemplateDto[] }>(
-    `/api/terminals/templates?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/terminals/templates?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
@@ -175,9 +190,10 @@ export function createTerminalTemplate(payload: {
   port?: number | null;
   proxyEnabled?: boolean;
   runtimeType?: string | null;
-}) {
+}, options?: TerminalRequestOptions) {
   return httpClient.request<TerminalTemplateDto>("/api/terminals/templates", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
@@ -193,22 +209,25 @@ export function updateTerminalTemplate(
     port?: number | null;
     proxyEnabled?: boolean;
     runtimeType?: string | null;
-  }
+  },
+  options?: TerminalRequestOptions
 ) {
   return httpClient.request<TerminalTemplateDto>(
     `/api/terminals/templates/${encodeURIComponent(templateId)}`,
     {
       method: "PUT",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );
 }
 
-export function deleteTerminalTemplate(templateId: string) {
+export function deleteTerminalTemplate(templateId: string, options?: TerminalRequestOptions) {
   return httpClient.request<{ success: true }>(
     `/api/terminals/templates/${encodeURIComponent(templateId)}`,
     {
-      method: "DELETE"
+      method: "DELETE",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
@@ -222,7 +241,8 @@ export function runTerminalTemplate(
     argsOverride?: string[];
     envPatch?: Record<string, string>;
     portOverride?: number | null;
-  }
+  },
+  options?: TerminalRequestOptions
 ) {
   return httpClient.request<{
     terminalId: string;
@@ -230,6 +250,7 @@ export function runTerminalTemplate(
     createdTerminal: boolean;
   }>(`/api/terminals/templates/${encodeURIComponent(templateId)}/run`, {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }

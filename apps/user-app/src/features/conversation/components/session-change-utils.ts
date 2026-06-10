@@ -26,11 +26,12 @@ interface MutableSessionChangeDirectoryNode {
 
 export async function loadSessionChangedGitFiles(
   sessionId: string,
-  workspaceId: string
+  workspaceId: string,
+  options: { targetHostId?: string | null } = {}
 ): Promise<GitChangeItemDto[]> {
   const [gitStatus, response] = await Promise.all([
-    getGitStatus(workspaceId),
-    getSessionChangedFiles(sessionId)
+    getGitStatus(workspaceId, { targetHostId: options.targetHostId }),
+    getSessionChangedFiles(sessionId, { targetHostId: options.targetHostId })
   ]);
 
   return filterSessionChangedGitFiles(gitStatus.changes, response.items);

@@ -1,6 +1,9 @@
-import { getHostWebSocketUrl } from "../../../config/env";
+import { getHostBaseUrl, getHostWebSocketUrl } from "../../../config/env";
 import { authStore } from "../../auth/store/auth-store";
 import { ConnectionManager } from "../../../network/connection-manager";
+import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
+import { buildHostWsPath } from "../../../network/host-ws-path";
+import type { HostTransportSocket } from "../../../network/host-transport";
 import {
   createTerminalDebugTraceId,
   isTerminalDebugEnabled,
@@ -62,6 +65,7 @@ type TerminalIncomingEvent =
   | { type: "terminal.error"; terminalId: string; error_code: string; detail: string };
 
 export interface TerminalRealtimeClientOptions {
+  targetHostId?: string | null;
   terminalId: string;
   lastCursor: string | null;
   onConnectionChange: (state: TerminalConnectionState) => void;
@@ -74,7 +78,7 @@ export interface TerminalRealtimeClientOptions {
 }
 
 export class TerminalRealtimeClient {
-  private socket: WebSocket | null = null;
+  private socket: HostTransportSocket | null = null;
   private disposed = false;
   private authRecoveryInFlight = false;
   private manuallyDisconnected = false;
@@ -245,8 +249,16 @@ export class TerminalRealtimeClient {
       return;
     }
 
-    const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
-    const socket = new WebSocket(socketUrl);
+    const requestedBaseUrl = getHostBaseUrl();
+    const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
+    const baseUrl = transportTarget.baseUrl;
+    const wsPath = buildHostWsPath(this.options.targetHostId);
+    const socketUrl = `${getHostWebSocketUrl(wsPath, baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    const socket = transportTarget.transport.createWebSocket({
+      path: wsPath,
+      baseUrl,
+      url: socketUrl
+    });
 
     this.socket = socket;
 
@@ -262,7 +274,13 @@ export class TerminalRealtimeClient {
     });
 
     socket.addEventListener("message", (raw) => {
-      const payload = JSON.parse(raw.data as string) as TerminalIncomingEvent;
+      const data = readSocketMessageData(raw);
+
+      if (typeof data !== "string") {
+        return;
+      }
+
+      const payload = JSON.parse(data) as TerminalIncomingEvent;
 
       if (payload.type === "system.connected") {
         this.connectionManager.markConnected();
@@ -516,6 +534,14 @@ export class TerminalRealtimeClient {
       });
     }
   }
+}
+
+function readSocketMessageData(raw: Event): unknown {
+  if (typeof MessageEvent !== "undefined" && raw instanceof MessageEvent) {
+    return raw.data;
+  }
+
+  return (raw as { data?: unknown }).data;
 }
 
 function summarizeTerminalDebugContent(content: string): string {

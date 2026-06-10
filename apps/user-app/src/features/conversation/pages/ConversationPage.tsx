@@ -31,7 +31,8 @@ import {
   type ProviderCapabilitiesDto,
   type ProviderId,
   type StartLiveResponseDto,
-  type SessionSummaryDto
+  type SessionSummaryDto,
+  type WorkspaceRef
 } from "../api/conversation-api";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
@@ -180,7 +181,7 @@ function LiveConversationPageGuard(props: {
   initialComposerProviderPresetId: string | null;
   initialToolPanel: MobileConversationToolPanel | null;
 }) {
-  const { shellMode, navigationGroups } = useWorkbenchShell();
+  const { shellMode, navigationGroups, currentWorkspaceRef, currentTargetHostId } = useWorkbenchShell();
   const navigate = useNavigate();
   const flattenedNavigationEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
@@ -204,9 +205,18 @@ function LiveConversationPageGuard(props: {
     return resolveMissingLiveSessionTarget({
       shellMode,
       navigationGroups,
-      flattenedNavigationEntries
+      flattenedNavigationEntries,
+      workspaceRef: currentWorkspaceRef,
+      targetHostId: currentTargetHostId
     });
-  }, [flattenedNavigationEntries, liveSessionMissingFromNavigation, navigationGroups, shellMode]);
+  }, [
+    currentTargetHostId,
+    currentWorkspaceRef,
+    flattenedNavigationEntries,
+    liveSessionMissingFromNavigation,
+    navigationGroups,
+    shellMode
+  ]);
 
   useEffect(() => {
     if (!missingSessionTarget) {
@@ -249,7 +259,9 @@ function LiveConversationPage({
     archiveSession,
     unarchiveSession,
     startDraftSession,
-    upsertNavigationSession
+    upsertNavigationSession,
+    currentWorkspaceRef,
+    currentTargetHostId
   } = useWorkbenchShell();
   const navigate = useNavigate();
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -322,6 +334,7 @@ function LiveConversationPage({
     steerQueuedMessage
   } = useLiveSessionController({
     sessionId,
+    targetHostId: currentTargetHostId,
     externalSession: navigationSession,
     bootstrapMessages,
     onSeen: (seenSessionId, seenAt) => {
@@ -330,8 +343,15 @@ function LiveConversationPage({
     onRequestNavigationRefresh: requestNavigationRefresh,
     onUpsertNavigationSession: upsertNavigationSession,
     onNavigateToSession: (workspaceId, targetSessionId) => {
-      selectWorkspace(workspaceId);
-      navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId));
+      const workspaceRef =
+        currentTargetHostId
+          ? currentWorkspaceRef
+          : {
+            hostId: "current",
+            workspaceId
+          };
+      selectWorkspace(workspaceId, workspaceRef);
+      navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId, workspaceRef));
     },
     onBindSessionWorkspace: setSessionWorkspace,
     onResolveMissingSession: handleResolveMissingSession,
@@ -528,9 +548,9 @@ function LiveConversationPage({
     sessionId
   );
 
-  function handleMobileWorkspaceSwitch(nextWorkspaceId: string) {
-    selectWorkspace(nextWorkspaceId);
-    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId));
+  function handleMobileWorkspaceSwitch(nextWorkspaceId: string, workspaceRef?: WorkspaceRef) {
+    selectWorkspace(nextWorkspaceId, workspaceRef);
+    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId, workspaceRef));
   }
 
   if (showInlineHeader && activeParallelGroupId) {
@@ -1205,9 +1225,9 @@ function DraftConversationPage({
     draft.sessionId
   );
 
-  function handleMobileWorkspaceSwitch(nextWorkspaceId: string) {
-    selectWorkspace(nextWorkspaceId);
-    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId));
+  function handleMobileWorkspaceSwitch(nextWorkspaceId: string, workspaceRef?: WorkspaceRef) {
+    selectWorkspace(nextWorkspaceId, workspaceRef);
+    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId, workspaceRef));
   }
 
   return (
@@ -3053,6 +3073,8 @@ function resolveMissingLiveSessionTarget(input: {
   shellMode: "desktop" | "mobile";
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
   flattenedNavigationEntries: WorkbenchNavigationEntry[];
+  workspaceRef?: WorkspaceRef | null;
+  targetHostId?: string | null;
 }): string {
   const fallbackWorkspaceId = input.navigationGroups[0]?.workspace.id ?? null;
   const fallbackSessionEntry =
@@ -3063,14 +3085,35 @@ function resolveMissingLiveSessionTarget(input: {
     ?? null;
 
   if (fallbackSessionEntry) {
+    const workspaceRef =
+      input.targetHostId
+        ? input.workspaceRef?.workspaceId
+          ? {
+            hostId: input.targetHostId,
+            workspaceId: input.workspaceRef.workspaceId
+          }
+          : null
+        : input.workspaceRef ?? null;
+
     return buildWorkspaceSessionPath(
       fallbackSessionEntry.workspace.id,
-      fallbackSessionEntry.session.sessionId
+      fallbackSessionEntry.session.sessionId,
+      workspaceRef
     );
   }
 
   if (fallbackWorkspaceId) {
-    return buildWorkspaceSessionIndexPath(fallbackWorkspaceId);
+    const workspaceRef =
+      input.targetHostId
+        ? input.workspaceRef?.workspaceId
+          ? {
+            hostId: input.targetHostId,
+            workspaceId: input.workspaceRef.workspaceId
+          }
+          : null
+        : input.workspaceRef ?? null;
+
+    return buildWorkspaceSessionIndexPath(fallbackWorkspaceId, workspaceRef);
   }
 
   return input.shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing";

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode, type Ref, type TouchEventHandler } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode, type Ref, type TouchEventHandler } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ModalList, ModalListItem, ModalTag } from "../../../components/ModalAtoms";
@@ -11,10 +11,17 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
   buildMobileHostSwitcherEntries,
-  type MobileHostSwitcherEntry
+  buildWorkspaceScopedKey,
+  type MobileHostSwitcherEntry,
+  type MobileHostSwitcherWorkspaceEntry
 } from "../../workbench/utils/host-workspace-switcher";
 import type { MobileWorkspaceOption } from "../../workbench/utils/mobile-workspace-tree";
 import { buildWorkspaceHomePath } from "../../workbench/utils/workbench-navigation";
+import {
+  listScopedWorkspaces,
+  type ScopedWorkspaceDto,
+  type WorkspaceRef
+} from "../../conversation/api/conversation-api";
 import { MobileTopHeaderFrame } from "./MobileTopHeaderFrame";
 
 interface WorkspaceSummary {
@@ -27,7 +34,11 @@ interface MobileWorkspaceSwitcherHeaderProps {
   readonly currentWorkspace: WorkspaceSummary | null;
   readonly workspaces: readonly WorkspaceSummary[];
   readonly workspaceOptions?: readonly MobileWorkspaceOption[];
-  readonly onSelectWorkspace?: (workspaceId: string) => void | Promise<void>;
+  readonly scopedWorkspaces?: readonly ScopedWorkspaceDto[];
+  readonly onSelectWorkspace?: (
+    workspaceId: string,
+    workspaceRef?: WorkspaceRef
+  ) => void | Promise<void>;
   readonly className?: string;
   readonly containerRef?: Ref<HTMLDivElement>;
   readonly heading?: string;
@@ -49,6 +60,7 @@ export function MobileWorkspaceSwitcherHeader({
   currentWorkspace,
   workspaces,
   workspaceOptions,
+  scopedWorkspaces,
   onSelectWorkspace,
   className,
   containerRef,
@@ -63,6 +75,7 @@ export function MobileWorkspaceSwitcherHeader({
 }: MobileWorkspaceSwitcherHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
+  const [loadedScopedWorkspaces, setLoadedScopedWorkspaces] = useState<readonly ScopedWorkspaceDto[]>([]);
   const haptics = useHaptics();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -79,19 +92,48 @@ export function MobileWorkspaceSwitcherHeader({
     kind: "workspace" as const,
     meta: null
   }));
-  const hostSwitcherItems = buildMobileHostSwitcherEntries(runtimeConfig, switcherItems);
+  const effectiveScopedWorkspaces = scopedWorkspaces ?? loadedScopedWorkspaces;
+  const hostSwitcherItems = buildMobileHostSwitcherEntries(runtimeConfig, switcherItems, effectiveScopedWorkspaces);
   const headerTitle = currentWorkspace?.name ?? activeHost?.name ?? null;
   const headerSubtitle = currentWorkspace?.path ?? activeHost?.baseUrl ?? null;
+
+  useEffect(() => {
+    if (!switcherOpen || scopedWorkspaces) {
+      return;
+    }
+
+    let disposed = false;
+
+    const inactiveHosts = runtimeConfig.hosts.filter((host) => host.id !== runtimeConfig.activeHostId);
+
+    void Promise.allSettled([
+      listScopedWorkspaces(),
+      ...inactiveHosts.map((host) => listScopedWorkspaces(host.id))
+    ]).then((results) => {
+      if (disposed) {
+        return;
+      }
+
+      setLoadedScopedWorkspaces(
+        results.flatMap((result) =>
+          result.status === "fulfilled" && Array.isArray(result.value.items)
+            ? result.value.items
+            : []
+        )
+      );
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [runtimeConfig.activeHostId, runtimeConfig.hosts, scopedWorkspaces, switcherOpen]);
 
   if (!headerTitle) {
     return null;
   }
 
   async function handleItemSelect(item: MobileHostSwitcherEntry): Promise<void> {
-    const itemKey =
-      item.kind === "host"
-        ? `host:${item.host.id}`
-        : `workspace:${item.host.id}:${item.workspace.id}`;
+    const itemKey = item.scopedKey;
 
     if (pendingSelectionKey) {
       return;
@@ -100,15 +142,26 @@ export function MobileWorkspaceSwitcherHeader({
     setPendingSelectionKey(itemKey);
 
     try {
-      if (item.host.id !== runtimeConfig.activeHostId) {
+      if (!item.available) {
+        showToast({
+          title: resolveHostUnavailableMessage(item),
+          tone: "error"
+        });
+        return;
+      }
+
+      if (
+        item.host.id !== runtimeConfig.activeHostId
+        && (item.kind === "host" || item.source !== "scoped")
+      ) {
         void haptics.trigger("selection");
         await hostSwitchCoordinator.switchHost(item.host.id);
       }
 
       if (item.kind === "host") {
         navigate(buildWorkspaceHomePath());
-      } else if (item.workspace.id !== currentWorkspace?.id || item.host.id !== runtimeConfig.activeHostId) {
-        await onSelectWorkspace?.(item.workspace.id);
+      } else if (item.scopedKey !== buildCurrentWorkspaceScopedKey(runtimeConfig.activeHostId, currentWorkspace?.id)) {
+        await onSelectWorkspace?.(item.workspace.id, item.workspaceRef);
       }
 
       setSwitcherOpen(false);
@@ -171,32 +224,29 @@ export function MobileWorkspaceSwitcherHeader({
               <ModalList className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
                 {hostSwitcherItems.map((item) => (
                   <ModalListItem
-                    key={
-                      item.kind === "host"
-                        ? `host-${item.host.id}`
-                        : `workspace-${item.host.id}-${item.workspace.id}`
-                    }
+                    key={item.scopedKey}
                     as="button"
                     className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
                     data-host-entry-kind={item.kind}
                     data-host-active={item.host.id === runtimeConfig.activeHostId}
+                    data-host-available={item.available}
                     data-worktree-kind={item.kind === "workspace" ? item.option.kind : undefined}
                     data-worktree-depth={item.kind === "workspace" ? item.option.depth + 1 : 0}
                     disabled={pendingSelectionKey !== null}
                     selected={
                       (item.kind === "host" && item.host.id === runtimeConfig.activeHostId)
                       || (item.kind === "workspace"
-                        && item.workspace.id === currentWorkspace?.id
-                        && item.host.id === runtimeConfig.activeHostId)
+                        && item.scopedKey === buildCurrentWorkspaceScopedKey(runtimeConfig.activeHostId, currentWorkspace?.id))
                     }
                     trailing={
                       <span className="mobile-workspace-home-row-trailing">
                         {item.kind === "host" && item.host.id === runtimeConfig.activeHostId ? (
                           <CheckIcon />
                         ) : item.kind === "workspace"
-                          && item.workspace.id === currentWorkspace?.id
-                          && item.host.id === runtimeConfig.activeHostId ? (
+                          && item.scopedKey === buildCurrentWorkspaceScopedKey(runtimeConfig.activeHostId, currentWorkspace?.id) ? (
                             <CheckIcon />
+                          ) : !item.available ? (
+                            <UnavailableIcon />
                           ) : (
                             <ChevronRightIcon />
                           )}
@@ -230,6 +280,16 @@ export function MobileWorkspaceSwitcherHeader({
                             {t("shell.mobileWorktreeBadge")}
                           </ModalTag>
                         ) : null}
+                        {item.kind === "workspace" && item.host.id !== runtimeConfig.activeHostId ? (
+                          <ModalTag className="mobile-host-workspace-switcher-host-badge">
+                            {item.host.name}
+                          </ModalTag>
+                        ) : null}
+                        {item.kind === "workspace" && !item.available ? (
+                          <ModalTag className="mobile-host-workspace-switcher-host-badge">
+                            {t("shell.hostSwitcherPeerUnavailableBadge")}
+                          </ModalTag>
+                        ) : null}
                         <span className="mobile-workspace-home-sheet-label-text">
                           {item.kind === "host" ? item.host.name : item.option.label}
                         </span>
@@ -239,7 +299,7 @@ export function MobileWorkspaceSwitcherHeader({
                       <span className="mobile-workspace-home-sheet-description">
                         {item.kind === "host"
                           ? formatHostSummary(item.host, item.workspaceCount)
-                          : item.option.subtitle}
+                          : formatWorkspaceSummary(item)}
                       </span>
                     }
                   />
@@ -263,6 +323,43 @@ function resolveHostSwitchErrorMessage(error: unknown, hostName: string): string
   }
 
   return t("shell.hostSwitchMissing");
+}
+
+function resolveHostUnavailableMessage(item: MobileHostSwitcherEntry): string {
+  if (item.hostStatus === "version_mismatch") {
+    return t("shell.hostSwitcherPeerVersionMismatch", { hostName: item.host.name });
+  }
+
+  if (item.hostStatus === "unauthorized") {
+    return t("shell.hostSwitcherPeerUnauthorized", { hostName: item.host.name });
+  }
+
+  return t("shell.hostSwitcherPeerUnavailable", { hostName: item.host.name });
+}
+
+function buildCurrentWorkspaceScopedKey(activeHostId: string | null, workspaceId: string | null | undefined): string {
+  if (!workspaceId) {
+    return "";
+  }
+
+  return buildWorkspaceScopedKey(activeHostId ? "current" : "current", workspaceId);
+}
+
+function formatWorkspaceSummary(item: MobileHostSwitcherWorkspaceEntry): string {
+  if (!item.available) {
+    return t("shell.hostSwitcherPeerWorkspaceUnavailableDescription", {
+      hostName: item.host.name
+    });
+  }
+
+  if (item.hostStatus === "current") {
+    return item.option.subtitle;
+  }
+
+  return t("shell.hostSwitcherPeerWorkspaceDescription", {
+    hostName: item.host.name,
+    path: item.option.subtitle
+  });
 }
 
 function formatHostSummary(
@@ -352,6 +449,21 @@ function CheckIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function UnavailableIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4.5 4.5l7 7M12.5 8A4.5 4.5 0 1 1 8 3.5 4.5 4.5 0 0 1 12.5 8Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
       />
     </svg>
   );

@@ -37,6 +37,16 @@ import {
   fetchHostResourceSnapshot,
   type HostResourceSnapshotView
 } from "../../../platform/server/host-resource-manager";
+import { normalizeHostAliasLabel, resolveHostAliasTag } from "../utils/host-alias";
+import {
+  checkPeerHost,
+  createPeerHost,
+  deletePeerHostSession,
+  listPeerHosts,
+  loginPeerHost,
+  updatePeerHost,
+  type PeerHostDto
+} from "../api/peer-hosts-api";
 
 interface WorkbenchHostSwitcherProps {
   readonly collapsed?: boolean;
@@ -87,6 +97,20 @@ interface HostResourceMetricView {
   fillTextTone: HostResourceMetricFillTextTone;
 }
 
+interface PeerLoginDraft {
+  username: string;
+  password: string;
+}
+
+interface HostResourceTarget {
+  hostId: string;
+  targetHostId?: string;
+}
+
+interface HostHandshakeView {
+  version: string;
+}
+
 export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -94,13 +118,19 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [baseUrlDraft, setBaseUrlDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
   const [passwordDraft, setPasswordDraft] = useState("");
+  const [hostAliasDraft, setHostAliasDraft] = useState("");
   const [pendingHostId, setPendingHostId] = useState<string | null>(null);
   const [pendingDeleteHostId, setPendingDeleteHostId] = useState<string | null>(null);
   const [confirmDeleteHostId, setConfirmDeleteHostId] = useState<string | null>(null);
   const [detailHostId, setDetailHostId] = useState<string | null>(null);
+  const [aliasDraftByHostId, setAliasDraftByHostId] = useState<Record<string, string>>({});
+  const [peerLoginDraftByHostId, setPeerLoginDraftByHostId] = useState<Record<string, PeerLoginDraft>>({});
+  const [peerBusyHostId, setPeerBusyHostId] = useState<string | null>(null);
+  const [peerHostById, setPeerHostById] = useState<Record<string, PeerHostDto>>({});
+  const [hostVersionById, setHostVersionById] = useState<Record<string, string | null>>({});
   const [addingHost, setAddingHost] = useState(false);
   const [relayLatency, setRelayLatency] = useState<RelayLatencyState>(INITIAL_RELAY_LATENCY_STATE);
-  const [hostResourceState, setHostResourceState] = useState<HostResourceState>(INITIAL_HOST_RESOURCE_STATE);
+  const [hostResourceStateById, setHostResourceStateById] = useState<Record<string, HostResourceState>>({});
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -114,6 +144,14 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const orderedHosts = useMemo(
     () => sortHosts(runtimeConfig.hosts, activeHostId),
     [activeHostId, runtimeConfig.hosts]
+  );
+  const activeSavedHost = useMemo(
+    () => orderedHosts.find((host) => host.id === activeHostId) ?? null,
+    [activeHostId, orderedHosts]
+  );
+  const peerCandidateHosts = useMemo(
+    () => orderedHosts.filter((host) => host.id !== activeHostId),
+    [activeHostId, orderedHosts]
   );
   const discoveredHosts = useMemo(
     () => sortHosts(getVisibleDiscoveredHosts(runtimeConfig), activeHostId),
@@ -135,7 +173,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const viewportHeight = window.innerHeight;
     const edgePadding = 16;
     const gap = 8;
-    const preferredWidth = 360;
+    const preferredWidth = 420;
     const width = Math.min(preferredWidth, Math.max(240, viewportWidth - edgePadding * 2));
     const left = collapsed
       ? Math.min(
@@ -146,7 +184,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           Math.max(edgePadding, rect.left),
           Math.max(edgePadding, viewportWidth - width - edgePadding)
         );
-    const estimatedHeight = formOpen ? 520 : detailHostId ? 600 : 320;
+    const estimatedHeight = formOpen ? 520 : detailHostId ? 680 : 320;
     const top = collapsed ? rect.top : rect.bottom + gap;
     const clampedTop = Math.min(
       Math.max(edgePadding, top),
@@ -167,7 +205,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       setMenuStyle(null);
       setDetailHostId(null);
       setRelayLatency(INITIAL_RELAY_LATENCY_STATE);
-      setHostResourceState(INITIAL_HOST_RESOURCE_STATE);
+      setHostResourceStateById({});
+      setHostVersionById({});
       return;
     }
 
@@ -251,50 +290,71 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }, [activeHostId, activeRoute?.kind, detailHostId, open]);
 
   useEffect(() => {
-    if (!detailHostId || detailHostId !== activeHostId || !open) {
-      setHostResourceState(INITIAL_HOST_RESOURCE_STATE);
+    if (!open) {
+      setHostResourceStateById({});
       return;
     }
 
     let cancelled = false;
     let timerId: number | null = null;
 
-    async function loadResources(silent: boolean): Promise<void> {
+    const resourceTargets = resolveHostResourceTargets(runtimeConfig.hosts, activeHostId);
+
+    if (resourceTargets.length === 0) {
+      setHostResourceStateById({});
+      return;
+    }
+
+    async function loadTarget(target: HostResourceTarget, silent: boolean): Promise<void> {
       if (!silent) {
-        setHostResourceState((current) =>
-          current.snapshot
-            ? { status: "refreshing", snapshot: current.snapshot }
-            : { status: "loading", snapshot: null }
-        );
+        setHostResourceStateById((current) => {
+          const previous = current[target.hostId];
+          return {
+            ...current,
+            [target.hostId]: previous?.snapshot
+              ? { status: "refreshing", snapshot: previous.snapshot }
+              : { status: "loading", snapshot: null }
+          };
+        });
       }
 
       try {
-        const snapshot = await fetchHostResourceSnapshot();
+        const snapshot = await fetchHostResourceSnapshot(target.targetHostId);
 
         if (cancelled) {
           return;
         }
 
-        setHostResourceState({
-          status: "ready",
-          snapshot
-        });
+        setHostResourceStateById((current) => ({
+          ...current,
+          [target.hostId]: {
+            status: "ready",
+            snapshot
+          }
+        }));
       } catch {
         if (cancelled) {
           return;
         }
 
-        setHostResourceState((current) =>
-          current.snapshot
-            ? current
+        setHostResourceStateById((current) => ({
+          ...current,
+          [target.hostId]: current[target.hostId]?.snapshot
+            ? current[target.hostId]
             : { status: "error", snapshot: null }
-        );
+        }));
       }
     }
 
-    void loadResources(false);
+    function loadAll(silent: boolean): void {
+      for (const target of resourceTargets) {
+        void loadTarget(target, silent);
+      }
+    }
+
+    loadAll(false);
     timerId = window.setInterval(() => {
-      void loadResources(true);
+      loadAll(true);
     }, 5_000);
 
     return () => {
@@ -303,7 +363,64 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         window.clearInterval(timerId);
       }
     };
-  }, [activeHostId, detailHostId, open]);
+  }, [activeHostId, open, runtimeConfig.hosts]);
+
+  useEffect(() => {
+    if (!open) {
+      setPeerHostById({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void listPeerHosts().then((response) => {
+      if (cancelled) {
+        return;
+      }
+
+      setPeerHostById(Object.fromEntries(response.items.map((peerHost) => [peerHost.id, peerHost])));
+    }).catch(() => {
+      if (!cancelled) {
+        setPeerHostById({});
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !activeHostId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchCurrentHostVersion().then((version) => {
+      if (cancelled) {
+        return;
+      }
+
+      setHostVersionById((current) => ({
+        ...current,
+        [activeHostId]: version
+      }));
+    }).catch(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setHostVersionById((current) => ({
+        ...current,
+        [activeHostId]: null
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeHostId, open]);
 
   async function handleSwitchHost(host: RuntimeHostProfile): Promise<void> {
     if (pendingHostId || pendingDeleteHostId || host.id === activeHostId) {
@@ -443,11 +560,18 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         savedHostName = savedHost.name;
       } else {
         const now = new Date().toISOString();
+        const hostName = trimmedName || buildHostDisplayName(normalizedBaseUrl);
+        const alias = hostAliasDraft.trim()
+          ? normalizeHostAlias(hostAliasDraft)
+          : buildHostAlias(hostName, normalizedBaseUrl);
         const nextHost: HostProfile = {
           id: createHostId(),
-          name: trimmedName || buildHostDisplayName(normalizedBaseUrl),
+          name: hostName,
           baseUrl: normalizedBaseUrl,
           kind: classifyHostKind(normalizedBaseUrl),
+          alias,
+          peerEnabled: false,
+          peerHostId: null,
           createdAt: now,
           updatedAt: now,
           lastConnectedAt: null,
@@ -461,6 +585,14 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         });
         savedHostId = nextHost.id;
         savedHostName = nextHost.name;
+      }
+
+      if (hostAliasDraft.trim()) {
+        await updateHostRecord(savedHostId, (item) => ({
+          ...item,
+          alias: normalizeHostAlias(hostAliasDraft),
+          updatedAt: new Date().toISOString()
+        }));
       }
 
       if (trimmedUsername && passwordDraft) {
@@ -491,6 +623,157 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     setBaseUrlDraft("");
     setUsernameDraft("");
     setPasswordDraft("");
+    setHostAliasDraft("");
+  }
+
+  async function updateHostRecord(hostId: string, updater: (host: HostProfile) => HostProfile): Promise<void> {
+    const latestConfig = clientConfigStore.getState();
+    await clientConfigStore.update({
+      hosts: latestConfig.hosts.map((host) => host.id === hostId ? updater(host) : host)
+    });
+  }
+
+  async function handleSaveAlias(host: HostProfile): Promise<void> {
+    const alias = normalizeHostAlias(aliasDraftByHostId[host.id] ?? host.alias);
+
+    await updateHostRecord(host.id, (item) => ({
+      ...item,
+      alias: alias || buildHostAlias(item.name, item.baseUrl),
+      updatedAt: new Date().toISOString()
+    }));
+
+    if (host.peerHostId) {
+      const updatedPeerHost = await updatePeerHost(host.peerHostId, {
+        name: host.name,
+        alias,
+        baseUrl: host.baseUrl
+      });
+      setPeerHostById((current) => ({
+        ...current,
+        [updatedPeerHost.id]: updatedPeerHost
+      }));
+    }
+
+    showToast({ title: t("shell.hostSwitcherAliasSaveSuccess") });
+  }
+
+  async function handleEnablePeerHost(host: HostProfile): Promise<void> {
+    if (peerBusyHostId || host.id === activeHostId) {
+      return;
+    }
+
+    const loginDraft = peerLoginDraftByHostId[host.id];
+    const username = loginDraft?.username.trim() || "";
+    const password = loginDraft?.password || "";
+
+    if (!username || !password) {
+      showToast({
+        title: t("shell.hostSwitcherPeerLoginRequired"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setPeerBusyHostId(host.id);
+
+    try {
+      const peerHost = await upsertPeerHostForProfile(host);
+      const checked = await checkPeerHost(peerHost.id);
+      setPeerHostById((current) => ({
+        ...current,
+        [checked.id]: checked
+      }));
+
+      if (checked.status !== "reachable") {
+        showToast({
+          title: resolvePeerCheckFailureMessage(checked),
+          tone: "error"
+        });
+        return;
+      }
+
+      await loginPeerHost(checked.id, { username, password });
+      await updateHostRecord(host.id, (item) => ({
+        ...item,
+        peerEnabled: true,
+        peerHostId: checked.id,
+        updatedAt: new Date().toISOString()
+      }));
+      setPeerLoginDraftByHostId((current) => ({
+        ...current,
+        [host.id]: { username, password: "" }
+      }));
+      showToast({ title: t("shell.hostSwitcherPeerEnableSuccess"), tone: "success" });
+    } catch (error) {
+      showToast({
+        title: readErrorMessage(error, t("shell.hostSwitcherPeerEnableFailed")),
+        tone: "error"
+      });
+    } finally {
+      setPeerBusyHostId(null);
+    }
+  }
+
+  async function handleDisablePeerHost(host: HostProfile): Promise<void> {
+    if (peerBusyHostId) {
+      return;
+    }
+
+    setPeerBusyHostId(host.id);
+
+    try {
+      if (host.peerHostId) {
+        await deletePeerHostSession(host.peerHostId).catch(() => undefined);
+      }
+
+      await updateHostRecord(host.id, (item) => ({
+        ...item,
+        peerEnabled: false,
+        updatedAt: new Date().toISOString()
+      }));
+      showToast({ title: t("shell.hostSwitcherPeerDisableSuccess") });
+    } catch {
+      showToast({
+        title: t("shell.hostSwitcherPeerDisableFailed"),
+        tone: "error"
+      });
+    } finally {
+      setPeerBusyHostId(null);
+    }
+  }
+
+  async function upsertPeerHostForProfile(host: HostProfile): Promise<PeerHostDto> {
+    if (host.peerHostId) {
+      return updatePeerHost(host.peerHostId, {
+        name: host.name,
+        alias: normalizeHostAlias(host.alias),
+        baseUrl: host.baseUrl
+      });
+    }
+
+    return createPeerHost({
+      name: host.name,
+      alias: normalizeHostAlias(host.alias),
+      baseUrl: host.baseUrl
+    });
+  }
+
+  function updateAliasDraft(hostId: string, value: string): void {
+    setAliasDraftByHostId((current) => ({
+      ...current,
+      [hostId]: normalizeHostAlias(value)
+    }));
+  }
+
+  function updatePeerLoginDraft(hostId: string, patch: Partial<PeerLoginDraft>): void {
+    setPeerLoginDraftByHostId((current) => ({
+      ...current,
+      [hostId]: {
+        username: current[hostId]?.username ?? "",
+        password: current[hostId]?.password ?? "",
+        ...patch
+      }
+    }));
   }
 
   if (!activeHost) {
@@ -514,10 +797,20 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       readonly statusText: string;
       readonly discovered?: boolean;
       readonly deletable?: boolean;
+      readonly role: "main" | "peer" | "discovered";
     }
   ) {
     const isActive = host.id === activeHostId;
-    const detailExpanded = isActive && detailHostId === host.id;
+    const savedHost = isDiscoveredHostProfile(host) ? null : host;
+    const detailExpanded = detailHostId === host.id;
+    const aliasTag = savedHost ? resolveHostAliasTag(savedHost) : null;
+    const resourceState = savedHost
+      ? hostResourceStateById[savedHost.id] ?? INITIAL_HOST_RESOURCE_STATE
+      : INITIAL_HOST_RESOURCE_STATE;
+    const hostVersion = savedHost
+      ? resolveHostVersion(savedHost, activeHostId, hostVersionById, peerHostById)
+      : null;
+    const metaText = formatHostMetaText(options.statusText, hostVersion);
 
     return (
       <div
@@ -526,6 +819,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         data-active={isActive}
         data-discovered={options.discovered ? "true" : undefined}
         data-expanded={detailExpanded}
+        data-role={options.role}
       >
         <div className="workbench-host-switcher-item-row">
           <button
@@ -538,19 +832,36 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           >
             <span className="workbench-host-switcher-item-copy">
               <span className="workbench-host-switcher-item-title">
-                {host.name}
+                {aliasTag ? (
+                  <span
+                    className="workbench-host-switcher-alias-badge host-alias-badge"
+                    style={{ "--host-alias-color": aliasTag.color } as CSSProperties}
+                  >
+                    {aliasTag.label}
+                  </span>
+                ) : null}
+                <span className="workbench-host-switcher-host-name">{host.name}</span>
+                {options.role === "main" ? (
+                  <span className="workbench-host-switcher-item-badge">
+                    {t("shell.hostSwitcherCurrentBadge")}
+                  </span>
+                ) : null}
                 {options.discovered ? (
                   <span className="workbench-host-switcher-item-badge" data-tone="discovered">
                     {t("shell.hostSwitcherDiscoveredBadge")}
                   </span>
                 ) : null}
-                {isActive ? (
-                  <span className="workbench-host-switcher-item-badge">
-                    {t("shell.hostSwitcherCurrentBadge")}
+                {savedHost && options.role === "peer" ? (
+                  <span
+                    className="workbench-host-switcher-item-badge"
+                    data-tone={savedHost.peerEnabled ? "peer" : "muted"}
+                  >
+                    {savedHost.peerEnabled ? t("shell.hostSwitcherPeerBadge") : t("common.disabled")}
                   </span>
                 ) : null}
               </span>
-              <span className="workbench-host-switcher-item-meta">{options.statusText}</span>
+              <span className="workbench-host-switcher-item-meta">{metaText}</span>
+              {savedHost ? renderResourceStrip(resourceState, savedHost.peerEnabled || isActive) : null}
             </span>
             <span className="workbench-host-switcher-item-trailing">
               {pendingHostId === host.id ? (
@@ -562,7 +873,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
               )}
             </span>
           </button>
-          {isActive ? (
+          {savedHost ? (
             <button
               type="button"
               className="workbench-host-switcher-item-action"
@@ -571,12 +882,17 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
               data-tone="detail"
               onClick={() => {
                 setDetailHostId((current) => current === host.id ? null : host.id);
+                setAliasDraftByHostId((current) => ({
+                  ...current,
+                  [host.id]: current[host.id] ?? normalizeHostAliasLabel(savedHost.alias)
+                }));
                 setConfirmDeleteHostId(null);
               }}
             >
-              {t("shell.hostSwitcherDetailAction")}
+              <MoreIcon />
             </button>
-          ) : options.deletable ? (
+          ) : null}
+          {!isActive && options.deletable && savedHost ? (
             <button
               type="button"
               className="workbench-host-switcher-item-action"
@@ -589,7 +905,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
               data-confirming={confirmDeleteHostId === host.id}
               disabled={pendingHostId !== null || pendingDeleteHostId !== null}
               onClick={() => {
-                void handleDeleteHost(host);
+                void handleDeleteHost(savedHost);
               }}
             >
               {pendingDeleteHostId === host.id
@@ -600,104 +916,165 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
             </button>
           ) : null}
         </div>
-        {detailExpanded ? (
-          <div className="workbench-host-switcher-detail-panel" role="region" aria-label={t("shell.hostSwitcherDetailTitle")}>
-            <div className="workbench-host-switcher-detail-header">
-              <strong>{t("shell.hostSwitcherDetailTitle")}</strong>
-            </div>
-            <div className="workbench-host-switcher-detail-section">
-              <div className="workbench-host-switcher-detail-grid">
-                <div className="workbench-host-switcher-detail-row">
-                  <span className="workbench-host-switcher-detail-label">
-                    {t("shell.hostSwitcherDetailStatusLabel")}
-                  </span>
-                  <span className="workbench-host-switcher-detail-value">{detailStatusLabel}</span>
-                </div>
-                <div className="workbench-host-switcher-detail-row">
-                  <span className="workbench-host-switcher-detail-label">
-                    {t("shell.hostSwitcherDetailRouteLabel")}
-                  </span>
-                  <span className="workbench-host-switcher-detail-value">{detailRouteLabel}</span>
-                </div>
-                <div className="workbench-host-switcher-detail-row">
-                  <span className="workbench-host-switcher-detail-label">
-                    {t("shell.hostSwitcherDetailAddressLabel")}
-                  </span>
-                  <span className="workbench-host-switcher-detail-value" data-multiline="true">
-                    {activeRoute?.url ?? activeHostBaseUrl}
-                  </span>
-                </div>
-                {activeRoute?.kind === "relay" ? (
-                  <>
-                    <div className="workbench-host-switcher-detail-row">
-                      <span className="workbench-host-switcher-detail-label">
-                        {t("shell.hostSwitcherDetailLatencyLabel")}
-                      </span>
-                      <span className="workbench-host-switcher-detail-value">
-                        {formatRelayLatency(relayLatency)}
-                      </span>
-                    </div>
-                    <div className="workbench-host-switcher-detail-row">
-                      <span className="workbench-host-switcher-detail-label">
-                        {t("shell.hostSwitcherDetailTrafficLabel")}
-                      </span>
-                      <span className="workbench-host-switcher-detail-value">
-                        {formatTrafficBytes(relaySessionTraffic.totalBytes)}
-                      </span>
-                    </div>
-                  </>
-                ) : null}
+        {detailExpanded && savedHost ? renderHostInspector(savedHost, isActive) : null}
+      </div>
+    );
+  }
+
+  function renderResourceStrip(state: HostResourceState, available: boolean) {
+    const metrics = buildHostResourceMetrics(available ? state : { status: "error", snapshot: null });
+
+    return (
+      <span className="workbench-host-switcher-resource-strip" aria-label={t("shell.hostSwitcherDetailResourceTitle")}>
+        {metrics.map((metric) => (
+          <span
+            key={metric.key}
+            className="workbench-host-switcher-resource-pill"
+            data-tone={metric.tone}
+          >
+            <span>{metric.label}</span>
+            <strong>{metric.progressLabel ?? metric.summary}</strong>
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  function renderHostInspector(host: HostProfile, isPrimary: boolean) {
+    const loginDraft = peerLoginDraftByHostId[host.id] ?? { username: "", password: "" };
+    const busy = peerBusyHostId === host.id;
+    const aliasDraft = aliasDraftByHostId[host.id] ?? normalizeHostAliasLabel(host.alias);
+    const resourceState = hostResourceStateById[host.id] ?? INITIAL_HOST_RESOURCE_STATE;
+
+    return (
+      <div className="workbench-host-switcher-detail-panel" role="region" aria-label={t("shell.hostSwitcherDetailTitle")}>
+        <div className="workbench-host-switcher-inspector-grid">
+          <label className="workbench-host-switcher-field" data-inline="true">
+            <span>{t("shell.hostSwitcherAliasLabel")}</span>
+            <input
+              value={aliasDraft}
+              maxLength={4}
+              onChange={(event) => updateAliasDraft(host.id, event.target.value)}
+              placeholder={t("shell.hostSwitcherAliasPlaceholder")}
+            />
+          </label>
+          <button
+            type="button"
+            className="secondary-button workbench-host-switcher-compact-button"
+            onClick={() => { void handleSaveAlias(host); }}
+          >
+            {t("shell.hostSwitcherAliasSaveAction")}
+          </button>
+        </div>
+        <p className="workbench-host-switcher-peer-note">{t("shell.hostSwitcherAliasRule")}</p>
+
+        <div className="workbench-host-switcher-detail-grid">
+          <div className="workbench-host-switcher-detail-row">
+            <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailAddressLabel")}</span>
+            <span className="workbench-host-switcher-detail-value" data-multiline="true">
+              {isPrimary ? activeRoute?.url ?? activeHostBaseUrl : host.baseUrl}
+            </span>
+          </div>
+          <div className="workbench-host-switcher-detail-row">
+            <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailStatusLabel")}</span>
+            <span className="workbench-host-switcher-detail-value">
+              {isPrimary ? detailStatusLabel : host.peerEnabled ? t("common.enabled") : t("common.disabled")}
+            </span>
+          </div>
+          {isPrimary && activeRoute?.kind === "relay" ? (
+            <>
+              <div className="workbench-host-switcher-detail-row">
+                <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailRouteLabel")}</span>
+                <span className="workbench-host-switcher-detail-value">{detailRouteLabel}</span>
+              </div>
+              <div className="workbench-host-switcher-detail-row">
+                <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailLatencyLabel")}</span>
+                <span className="workbench-host-switcher-detail-value">{formatRelayLatency(relayLatency)}</span>
+              </div>
+              <div className="workbench-host-switcher-detail-row">
+                <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailTrafficLabel")}</span>
+                <span className="workbench-host-switcher-detail-value">{formatTrafficBytes(relaySessionTraffic.totalBytes)}</span>
+              </div>
+            </>
+          ) : null}
+        </div>
+
+        <div className="workbench-host-switcher-resource-list" data-compact="true">
+          {buildHostResourceMetrics(resourceState).map((metric) => (
+            <div
+              key={metric.key}
+              className="workbench-host-switcher-resource-item"
+              data-tone={metric.tone}
+              data-contrast={metric.contrast}
+            >
+              <span className="workbench-host-switcher-resource-label">{metric.label}</span>
+              <div className="workbench-host-switcher-resource-bar">
+                <span
+                  className="workbench-host-switcher-resource-bar-fill"
+                  style={{ width: `${Math.max(0, Math.min(100, Math.round((metric.ratio ?? 0) * 100)))}%` }}
+                />
+                <span className="workbench-host-switcher-resource-bar-content">
+                  <span className="workbench-host-switcher-resource-summary">{metric.summary}</span>
+                  {metric.progressLabel ? (
+                    <span className="workbench-host-switcher-resource-percent">{metric.progressLabel}</span>
+                  ) : null}
+                </span>
               </div>
             </div>
-            <div className="workbench-host-switcher-detail-section">
-              <div className="workbench-host-switcher-detail-section-title">
-                {t("shell.hostSwitcherDetailResourceTitle")}
-              </div>
-              <div className="workbench-host-switcher-resource-list">
-                {buildHostResourceMetrics(hostResourceState).map((metric) => (
-                  <div
-                    key={metric.key}
-                    className="workbench-host-switcher-resource-item"
-                    data-tone={metric.tone}
-                    data-contrast={metric.contrast}
-                  >
-                    <span className="workbench-host-switcher-resource-label">{metric.label}</span>
-                    <div className="workbench-host-switcher-resource-bar">
-                      <span
-                        className="workbench-host-switcher-resource-bar-fill"
-                        style={{ width: `${Math.max(0, Math.min(100, Math.round((metric.ratio ?? 0) * 100)))}%` }}
-                      />
-                      <span className="workbench-host-switcher-resource-bar-content">
-                        <span className="workbench-host-switcher-resource-summary">
-                          {metric.summary}
-                        </span>
-                        {metric.progressLabel ? (
-                          <span className="workbench-host-switcher-resource-percent">
-                            {metric.progressLabel}
-                          </span>
-                        ) : null}
-                      </span>
-                      <span
-                        className="workbench-host-switcher-resource-bar-content workbench-host-switcher-resource-bar-content-overlay"
-                        data-fill-tone={metric.fillTextTone}
-                        aria-hidden="true"
-                        style={{
-                          clipPath: `inset(0 ${Math.max(0, 100 - Math.max(0, Math.min(100, Math.round((metric.ratio ?? 0) * 100))))}% 0 0)`
-                        }}
-                      >
-                        <span className="workbench-host-switcher-resource-summary">
-                          {metric.summary}
-                        </span>
-                        {metric.progressLabel ? (
-                          <span className="workbench-host-switcher-resource-percent">
-                            {metric.progressLabel}
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          ))}
+        </div>
+
+        {!isPrimary ? (
+          <div className="workbench-host-switcher-peer-box">
+            <p className="workbench-host-switcher-peer-note">{t("shell.hostSwitcherPeerDescription")}</p>
+            {!host.peerEnabled ? (
+              <>
+                <p className="workbench-host-switcher-peer-note">{t("shell.hostSwitcherPeerPasswordOneTimeHint")}</p>
+                <div className="workbench-host-switcher-peer-login" data-inline="true">
+                  <label className="workbench-host-switcher-field">
+                    <span>{t("auth.username")}</span>
+                    <input
+                      value={loginDraft.username}
+                      disabled={busy}
+                      autoComplete="username"
+                      onChange={(event) => updatePeerLoginDraft(host.id, { username: event.target.value })}
+                      placeholder={t("auth.username")}
+                    />
+                  </label>
+                  <label className="workbench-host-switcher-field">
+                    <span>{t("auth.password")}</span>
+                    <input
+                      type="password"
+                      value={loginDraft.password}
+                      disabled={busy}
+                      autoComplete="current-password"
+                      onChange={(event) => updatePeerLoginDraft(host.id, { password: event.target.value })}
+                      placeholder={t("auth.password")}
+                    />
+                  </label>
+                </div>
+              </>
+            ) : null}
+            <div className="workbench-host-switcher-form-actions">
+              {host.peerEnabled ? (
+                <button
+                  type="button"
+                  className="secondary-button workbench-host-switcher-compact-button"
+                  disabled={busy}
+                  onClick={() => { void handleDisablePeerHost(host); }}
+                >
+                  {busy ? t("common.loading") : t("shell.hostSwitcherPeerDisableAction")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button workbench-host-switcher-compact-button"
+                  disabled={busy}
+                  onClick={() => { void handleEnablePeerHost(host); }}
+                >
+                  {busy ? t("shell.hostSwitcherPeerChecking") : t("shell.hostSwitcherPeerEnableAction")}
+                </button>
+              )}
             </div>
           </div>
         ) : null}
@@ -741,19 +1118,34 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                 <strong>{t("shell.hostSwitcherTitle")}</strong>
               </div>
               <div className="workbench-host-switcher-list">
-                <section className="workbench-host-switcher-section">
-                  <div className="workbench-host-switcher-section-label">
-                    {t("shell.hostSwitcherSavedSection")}
-                  </div>
-                  <div className="workbench-host-switcher-section-card">
-                    {orderedHosts.map((host) => renderHostItem(host, {
-                      statusText: host.id === activeHostId
-                        ? session?.user.username ?? host.lastUsername ?? host.baseUrl
-                        : host.lastUsername ?? host.baseUrl,
-                      deletable: true
-                    }))}
-                  </div>
-                </section>
+                {activeSavedHost ? (
+                  <section className="workbench-host-switcher-section">
+                    <div className="workbench-host-switcher-section-label">
+                      {t("shell.hostSwitcherPrimaryHostTitle")}
+                    </div>
+                    <div className="workbench-host-switcher-section-card">
+                      {renderHostItem(activeSavedHost, {
+                        statusText: session?.user.username ?? activeSavedHost.lastUsername ?? activeSavedHost.baseUrl,
+                        deletable: false,
+                        role: "main"
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+                {peerCandidateHosts.length > 0 ? (
+                  <section className="workbench-host-switcher-section">
+                    <div className="workbench-host-switcher-section-label">
+                      {t("shell.hostSwitcherPeerSectionTitle")}
+                    </div>
+                    <div className="workbench-host-switcher-section-card">
+                      {peerCandidateHosts.map((host) => renderHostItem(host, {
+                        statusText: host.lastUsername ?? host.baseUrl,
+                        deletable: true,
+                        role: "peer"
+                      }))}
+                    </div>
+                  </section>
+                ) : null}
                 {discoveredHosts.length > 0 ? (
                   <section className="workbench-host-switcher-section">
                     <div className="workbench-host-switcher-section-label">
@@ -768,7 +1160,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
 
                         return renderHostItem(host, {
                           statusText: status,
-                          discovered: true
+                          discovered: true,
+                          role: "discovered"
                         });
                       })}
                     </div>
@@ -806,6 +1199,17 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                       placeholder={t("shell.hostSwitcherUrlPlaceholder")}
                     />
                   </label>
+                  <label className="workbench-host-switcher-field">
+                    <span>{t("shell.hostSwitcherAliasLabel")}</span>
+                    <input
+                      value={hostAliasDraft}
+                      maxLength={4}
+                      disabled={addingHost}
+                      onChange={(event) => setHostAliasDraft(normalizeHostAlias(event.target.value))}
+                      placeholder={t("shell.hostSwitcherAliasPlaceholder")}
+                    />
+                  </label>
+                  <p className="workbench-host-switcher-peer-note">{t("shell.hostSwitcherAliasRule")}</p>
                   <label className="workbench-host-switcher-field">
                     <span>{t("auth.username")}</span>
                     <input
@@ -859,7 +1263,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                   }}
                 >
                   <PlusIcon />
-                  {t("shell.hostSwitcherAddAction")}
+                  {t("shell.hostSwitcherAddPeerHostAction")}
                 </button>
               )}
             </div>,
@@ -868,6 +1272,61 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         : null}
     </div>
   );
+}
+
+async function fetchCurrentHostVersion(): Promise<string | null> {
+  const handshake = await httpClient.request<HostHandshakeView>("/api/public/host-handshake", {
+    skipAuth: true,
+    omitCompatibilityHeaders: true
+  });
+  return normalizeVersionLabel(handshake.version);
+}
+
+function resolveHostVersion(
+  host: HostProfile,
+  activeHostId: string | null,
+  hostVersionById: Record<string, string | null>,
+  peerHostById: Record<string, PeerHostDto>
+): string | null {
+  if (host.id === activeHostId) {
+    return hostVersionById[host.id] ?? null;
+  }
+
+  if (!host.peerHostId) {
+    return null;
+  }
+
+  return normalizeVersionLabel(peerHostById[host.peerHostId]?.remoteVersion);
+}
+
+function normalizeVersionLabel(version: string | null | undefined): string | null {
+  const normalized = version?.trim();
+  return normalized ? normalized : null;
+}
+
+function formatHostMetaText(text: string, version: string | null): string {
+  if (!version) {
+    return text;
+  }
+
+  return `${text} · v${version}`;
+}
+
+function resolveHostResourceTargets(
+  hosts: readonly HostProfile[],
+  activeHostId: string | null
+): HostResourceTarget[] {
+  return hosts.flatMap((host) => {
+    if (host.id === activeHostId) {
+      return [{ hostId: host.id }];
+    }
+
+    if (host.peerEnabled && host.peerHostId) {
+      return [{ hostId: host.id, targetHostId: host.peerHostId }];
+    }
+
+    return [];
+  });
 }
 
 function sortHosts<T extends Pick<HostProfile, "id" | "createdAt" | "updatedAt" | "lastConnectedAt">>(
@@ -897,6 +1356,20 @@ function buildHostDisplayName(baseUrl: string): string {
   } catch {
     return baseUrl;
   }
+}
+
+function buildHostAlias(name: string, baseUrl: string): string {
+  const fromName = normalizeHostAlias(name);
+
+  if (fromName) {
+    return fromName;
+  }
+
+  return normalizeHostAliasLabel(buildHostDisplayName(baseUrl));
+}
+
+function normalizeHostAlias(value: string | null | undefined): string {
+  return normalizeHostAliasLabel(value);
 }
 
 function classifyHostKind(baseUrl: string): HostProfile["kind"] {
@@ -960,6 +1433,34 @@ function resolveHostSwitchErrorMessage(error: unknown, hostName: string): string
   }
 
   return t("shell.hostSwitchMissing");
+}
+
+function resolvePeerCheckFailureMessage(peerHost: PeerHostDto): string {
+  switch (peerHost.status) {
+    case "version_mismatch":
+      return t("shell.hostSwitcherPeerVersionMismatch", { hostName: peerHost.name });
+    case "unauthorized":
+      return t("shell.hostSwitcherPeerUnauthorized", { hostName: peerHost.name });
+    case "unreachable":
+      return t("shell.hostSwitcherPeerUnavailable", { hostName: peerHost.name });
+    default:
+      return peerHost.lastErrorDetail || t("shell.hostSwitcherPeerEnableFailed");
+  }
+}
+
+function readErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) {
+      return detail;
+    }
+  }
+
+  return fallback;
 }
 
 function formatRelayLatency(state: RelayLatencyState): string {
@@ -1267,6 +1768,16 @@ function PlusIcon() {
         strokeLinejoin="round"
         strokeWidth="1.6"
       />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="4" cy="8" r="1.15" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.15" fill="currentColor" />
+      <circle cx="12" cy="8" r="1.15" fill="currentColor" />
     </svg>
   );
 }

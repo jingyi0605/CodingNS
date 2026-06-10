@@ -148,7 +148,11 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: hostApiTarget,
-        changeOrigin: true
+        ws: true,
+        changeOrigin: true,
+        rewriteWsOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000
       },
       "/preview": {
         target: hostApiTarget,

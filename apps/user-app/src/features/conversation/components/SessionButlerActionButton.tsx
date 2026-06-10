@@ -21,7 +21,8 @@ import { SessionProviderPicker } from "./SessionProviderPicker";
 import type {
   ProviderCatalogEntryDto,
   ProviderId,
-  SessionSummaryDto
+  SessionSummaryDto,
+  WorkbenchWorktreeNodeDto
 } from "../api/conversation-api";
 import { useProviderCatalog } from "../capability/provider-catalog-store";
 
@@ -29,6 +30,20 @@ interface SessionButlerActionButtonProps {
   session: SessionSummaryDto | null;
   showTrigger?: boolean;
   openRequestKey?: number;
+}
+
+function worktreeContainsSession(
+  nodes: readonly WorkbenchWorktreeNodeDto[] | null | undefined,
+  sessionId: string
+): boolean {
+  if (!Array.isArray(nodes)) {
+    return false;
+  }
+
+  return nodes.some((node) =>
+    node.sessions.some((item: SessionSummaryDto) => item.sessionId === sessionId)
+    || worktreeContainsSession(node.children, sessionId)
+  );
 }
 
 type ButlerActionKind = "follow-up" | "verification" | null;
@@ -107,7 +122,7 @@ export function SessionButlerActionButton({
   openRequestKey = 0
 }: SessionButlerActionButtonProps) {
   const { showToast } = useToast();
-  const { requestNavigationRefresh } = useWorkbenchShell();
+  const { requestNavigationRefresh, currentTargetHostId, navigationGroups } = useWorkbenchShell();
   const objectiveFieldId = useId();
   const completionCriteriaFieldId = useId();
   const completionCriteriaHintId = useId();
@@ -125,7 +140,36 @@ export function SessionButlerActionButton({
   const [followUpRoundLimit, setFollowUpRoundLimit] = useState(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [contextRequestSeq, setContextRequestSeq] = useState(0);
-  const { items: providerCatalog } = useProviderCatalog(Boolean(session?.sessionId));
+  const sessionBelongsToCurrentHost = useMemo(() => {
+    const sessionId = session?.sessionId;
+
+    if (!sessionId) {
+      return false;
+    }
+
+    if (!currentTargetHostId) {
+      return true;
+    }
+
+    const remoteWorkspaceId = session?.sessionIsolatedWorkspace?.workspaceId?.trim();
+    const sourceWorkspaceId = session?.sessionIsolatedWorkspace?.sourceWorkspaceId?.trim();
+
+    if (!remoteWorkspaceId || !sourceWorkspaceId || remoteWorkspaceId === sourceWorkspaceId) {
+      return false;
+    }
+
+    return navigationGroups.some((group) =>
+      group.sessions.some((item) => item.sessionId === sessionId)
+      || worktreeContainsSession(group.childWorktrees, sessionId)
+    );
+  }, [
+    currentTargetHostId,
+    navigationGroups,
+    session?.sessionId,
+    session?.sessionIsolatedWorkspace?.sourceWorkspaceId,
+    session?.sessionIsolatedWorkspace?.workspaceId
+  ]);
+  const { items: providerCatalog } = useProviderCatalog(Boolean(session?.sessionId && sessionBelongsToCurrentHost));
   const completionCriteriaPresets = buildCompletionCriteriaPresets();
   const availableFollowUpProviders = useMemo<FollowUpProviderId[]>(() => {
     if (!providerCatalog) {
@@ -179,8 +223,10 @@ export function SessionButlerActionButton({
   }, [availableFollowUpProviders, followUpProviderId, session?.provider]);
 
   useEffect(() => {
-    if (!session?.sessionId) {
+    if (!session?.sessionId || !sessionBelongsToCurrentHost) {
       setContextLoading(false);
+      setActionContext(null);
+      setContextError(null);
       return;
     }
 
@@ -188,7 +234,7 @@ export function SessionButlerActionButton({
     setContextLoading(true);
     setContextError(null);
 
-    void getButlerSessionActionContext(session.sessionId)
+    void getButlerSessionActionContext(session.sessionId, { targetHostId: currentTargetHostId })
       .then((response) => {
         if (disposed) {
           return;
@@ -213,7 +259,7 @@ export function SessionButlerActionButton({
     return () => {
       disposed = true;
     };
-  }, [contextRequestSeq, session?.sessionId]);
+  }, [contextRequestSeq, currentTargetHostId, session?.sessionId, sessionBelongsToCurrentHost]);
 
   function requestContextReload() {
     if (contextLoading) {
@@ -238,7 +284,7 @@ export function SessionButlerActionButton({
     ensureActionContext();
   }, [contextLoading, openRequestKey, showTrigger, actionContext]);
 
-  if (!session?.sessionId) {
+  if (!session?.sessionId || !sessionBelongsToCurrentHost) {
     return null;
   }
 
@@ -281,7 +327,7 @@ export function SessionButlerActionButton({
         objective,
         completionCriteria,
         maxAutoContinueCount: followUpRoundLimit
-      });
+      }, { targetHostId: currentTargetHostId });
       setActionContext((current) => (
         current
           ? {
@@ -321,7 +367,7 @@ export function SessionButlerActionButton({
     setRunningAction("follow-up");
 
     try {
-      const response = await cancelButlerFollowUpTask(latestFollowUpTask.id);
+      const response = await cancelButlerFollowUpTask(latestFollowUpTask.id, { targetHostId: currentTargetHostId });
       setActionContext((current) => (
         current
           ? {
@@ -362,7 +408,7 @@ export function SessionButlerActionButton({
         butlerSessionId: target.session.id,
         verificationType: "browser",
         targetRef: currentTitle || target.session.title || target.project.name
-      });
+      }, { targetHostId: currentTargetHostId });
       setActionContext((current) => (
         current
           ? {
@@ -401,7 +447,8 @@ export function SessionButlerActionButton({
     try {
       const response = await cancelButlerVerificationRun(
         latestVerificationRun.projectId,
-        latestVerificationRun.id
+        latestVerificationRun.id,
+        { targetHostId: currentTargetHostId }
       );
       setActionContext((current) => (
         current

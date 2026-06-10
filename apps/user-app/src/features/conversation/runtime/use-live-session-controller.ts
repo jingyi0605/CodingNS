@@ -50,6 +50,7 @@ interface ForkComposerDraft {
 
 interface UseLiveSessionControllerInput {
   sessionId: string;
+  targetHostId?: string | null;
   externalSession: SessionSummaryDto | null;
   bootstrapMessages?: HistoryMessageDto[];
   onSeen?: (sessionId: string, seenAt: string) => void;
@@ -79,6 +80,7 @@ export function focusComposerInput(): void {
 export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+  const currentTargetHostIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
   const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
@@ -98,14 +100,22 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const previousRunningStateRef = useRef<string | null>(input.externalSession?.runningState ?? null);
   const notifiedPermissionRequestIdsRef = useRef<Set<string>>(new Set());
 
-  if (!storeRef.current || currentSessionIdRef.current !== input.sessionId) {
+  const normalizedTargetHostId = input.targetHostId?.trim() || null;
+
+  if (
+    !storeRef.current
+    || currentSessionIdRef.current !== input.sessionId
+    || currentTargetHostIdRef.current !== normalizedTargetHostId
+  ) {
     storeRef.current?.destroy();
     storeRef.current = new SessionRuntimeStore(input.sessionId, {
+      targetHostId: normalizedTargetHostId,
       initialSession: input.externalSession,
       bootstrapMessages: input.bootstrapMessages ?? [],
       onSeen: input.onSeen
     });
     currentSessionIdRef.current = input.sessionId;
+    currentTargetHostIdRef.current = normalizedTargetHostId;
   }
 
   const store = storeRef.current;

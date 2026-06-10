@@ -23,6 +23,7 @@ import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibili
 interface SessionChangedFilesPanelProps {
   sessionId: string;
   workspaceId: string;
+  targetHostId?: string | null;
   showSystemFiles: boolean;
   selectedPath: string | null;
   refreshVersion: number;
@@ -45,6 +46,7 @@ const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 export function SessionChangedFilesPanel({
   sessionId,
   workspaceId,
+  targetHostId,
   showSystemFiles,
   selectedPath,
   refreshVersion,
@@ -82,7 +84,7 @@ export function SessionChangedFilesPanel({
       setLoading(true);
 
       try {
-        const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
+        const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
 
         if (!cancelled) {
           setChanges(nextChanges);
@@ -107,13 +109,13 @@ export function SessionChangedFilesPanel({
     return () => {
       cancelled = true;
     };
-  }, [refreshVersion, sessionId, showToast, workspaceId]);
+  }, [refreshVersion, sessionId, showToast, targetHostId, workspaceId]);
 
   async function handleRefresh() {
     setLoading(true);
 
     try {
-      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
+      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
       setChanges(nextChanges);
       writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
     } catch (error) {
@@ -136,9 +138,10 @@ export function SessionChangedFilesPanel({
     try {
       await stageGitTargets(
         workspaceId,
-        unstagedChanges.map((item) => item.path)
+        unstagedChanges.map((item) => item.path),
+        { targetHostId }
       );
-      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
+      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
       setChanges(nextChanges);
       writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
       showToast({

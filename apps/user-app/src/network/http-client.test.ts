@@ -39,6 +39,91 @@ describe("httpClient", () => {
     vi.unstubAllGlobals();
   });
 
+
+  it("未传 targetHostId 时请求路径保持不变", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(httpClient.request<{ ok: boolean }>("/api/demo?keyword=a%2Fb")).resolves.toEqual({
+      ok: true
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:3002/api/demo?keyword=a%2Fb",
+      expect.any(Object)
+    );
+  });
+
+  it("传 targetHostId 时会走当前 HOST 的代理入口并保留查询参数", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      })
+    );
+
+    await expect(
+      httpClient.request<{ ok: boolean }>("/api/workspaces?keyword=a%2Fb&empty=", {
+        targetHostId: "peer host/1",
+        baseUrl: "https://target-host.example"
+      })
+    ).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:3002/api/host-proxy/hosts/peer%20host%2F1/api/workspaces?keyword=a%2Fb&empty=",
+      expect.any(Object)
+    );
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("代理请求返回认证类错误时不会清空当前 HOST 登录态", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const refreshSpy = vi.spyOn(authStore, "refresh");
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "目标 HOST 登录态失效",
+          error_code: "TOKEN_EXPIRED"
+        }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(
+      httpClient.request("/api/workspaces", {
+        targetHostId: "peer-host-1"
+      })
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      status: 401,
+      errorCode: "TOKEN_EXPIRED"
+    } satisfies Partial<ApiError>);
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(authStore.getState().status).toBe("authenticated");
+    expect(authStore.getState().session).toEqual(session);
+  });
+
   it("POST 无请求体时不应发送 Content-Type", async () => {
     const fetchMock = vi.mocked(fetch);
 

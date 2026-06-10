@@ -16,6 +16,7 @@ export const DEFAULT_HOST_PROFILE_ID = "default-host";
 export interface HostProfileBase {
   id: string;
   name: string;
+  alias: string | null;
   baseUrl: string;
   kind: HostProfileKind;
   createdAt: string;
@@ -23,6 +24,8 @@ export interface HostProfileBase {
   lastConnectedAt: string | null;
   lastUserId: string | null;
   lastUsername: string | null;
+  peerEnabled: boolean;
+  peerHostId: string | null;
   relayTunnel?: HostRelayTunnelProfile | null;
 }
 

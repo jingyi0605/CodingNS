@@ -2,6 +2,7 @@ import type {
   ProviderId,
   SessionSummaryDto,
   WorkbenchWorktreeNodeDto,
+  WorkspaceRef,
   WorkspaceDto
 } from "../../conversation/api/conversation-api";
 import { resolveSessionDisplayParentSessionId } from "../../conversation/parallel-session-display";
@@ -25,20 +26,31 @@ export function buildWorkspaceHomePath(): string {
   return "/workspaces";
 }
 
-export function buildWorkspaceDetailPath(workspaceId: string): string {
+function buildWorkspaceBasePath(workspaceId: string): string {
   return `/workspaces/${encodeURIComponent(workspaceId)}`;
 }
 
-export function buildWorkspaceDebugPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/debug`;
+export function buildWorkspaceDetailPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(buildWorkspaceBasePath(workspaceId), workspaceRef);
 }
 
-export function buildWorkspaceSessionIndexPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/sessions`;
+export function buildWorkspaceDebugPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/debug`, workspaceRef);
 }
 
-export function buildWorkspaceSessionPath(workspaceId: string, sessionId: string): string {
-  return `${buildWorkspaceSessionIndexPath(workspaceId)}/${encodeURIComponent(sessionId)}`;
+export function buildWorkspaceSessionIndexPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/sessions`, workspaceRef);
+}
+
+export function buildWorkspaceSessionPath(
+  workspaceId: string,
+  sessionId: string,
+  workspaceRef?: WorkspaceRef | null
+): string {
+  return appendTargetHostId(
+    `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+    workspaceRef
+  );
 }
 
 export function buildAffairsPath(): string {
@@ -49,59 +61,70 @@ export function buildWorkspaceAffairsPath(_workspaceId: string): string {
   return buildAffairsPath();
 }
 
-export function buildWorkspaceToolsPath(workspaceId: string, tab?: "files" | "git"): string {
-  const basePath = `${buildWorkspaceDetailPath(workspaceId)}/tools`;
+export function buildWorkspaceToolsPath(workspaceId: string, tab?: "files" | "git", workspaceRef?: WorkspaceRef | null): string {
+  const basePath = `${buildWorkspaceBasePath(workspaceId)}/tools`;
 
   if (!tab) {
-    return basePath;
+    return appendTargetHostId(basePath, workspaceRef);
   }
 
   const search = new URLSearchParams({
     tab
   });
-  return `${basePath}?${search.toString()}`;
+  return appendTargetHostId(`${basePath}?${search.toString()}`, workspaceRef);
 }
 
-export function buildWorkspaceToolFilesPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/tools/files`;
+export function buildWorkspaceToolFilesPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/tools/files`, workspaceRef);
 }
 
-export function buildWorkspaceToolGitPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/tools/git`;
+export function buildWorkspaceToolGitPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/tools/git`, workspaceRef);
 }
 
-export function buildWorkspaceToolProcessesPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/tools/processes`;
+function appendTargetHostId(path: string, workspaceRef?: WorkspaceRef | null): string {
+  const targetHostId = workspaceRef?.hostId === "current" ? null : workspaceRef?.hostId;
+
+  if (!targetHostId) {
+    return path;
+  }
+
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}targetHostId=${encodeURIComponent(targetHostId)}`;
+}
+
+export function buildWorkspaceToolProcessesPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/tools/processes`, workspaceRef);
 }
 
 
-export function buildWorkspacePluginsPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/plugins`;
+export function buildWorkspacePluginsPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/plugins`, workspaceRef);
 }
 
-export function buildWorkspacePluginDetailPath(workspaceId: string, pluginId: string): string {
-  return `${buildWorkspacePluginsPath(workspaceId)}/${encodeURIComponent(pluginId)}`;
+export function buildWorkspacePluginDetailPath(workspaceId: string, pluginId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/plugins/${encodeURIComponent(pluginId)}`, workspaceRef);
 }
 
-export function buildWorkspacePluginContainerPath(workspaceId: string, pluginId: string): string {
-  return `${buildWorkspacePluginDetailPath(workspaceId, pluginId)}/run`;
+export function buildWorkspacePluginContainerPath(workspaceId: string, pluginId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/plugins/${encodeURIComponent(pluginId)}/run`, workspaceRef);
 }
-export function buildWorkspaceTerminalsPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
+export function buildWorkspaceTerminalsPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/terminals`, workspaceRef);
 }
 
-export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "automation" | "settings"): string {
-  const basePath = `${buildWorkspaceDetailPath(workspaceId)}/butler`;
+export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "automation" | "settings", workspaceRef?: WorkspaceRef | null): string {
+  const basePath = `${buildWorkspaceBasePath(workspaceId)}/butler`;
 
   if (!tab) {
-    return basePath;
+    return appendTargetHostId(basePath, workspaceRef);
   }
 
   const search = new URLSearchParams({
     tab
   });
 
-  return `${basePath}?${search.toString()}`;
+  return appendTargetHostId(`${basePath}?${search.toString()}`, workspaceRef);
 }
 
 export function flattenNavigationSessions(
@@ -151,13 +174,19 @@ export function resolveNavigationSessionParentId(
   return resolveSessionDisplayParentSessionId(session);
 }
 
-export function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
+export function buildDraftSessionPath(
+  workspaceId: string,
+  provider: ProviderId,
+  workspaceRef?: WorkspaceRef | null
+): string {
   const draftId = createDraftSessionId();
+  const basePath = buildWorkspaceSessionPath(workspaceId, draftId, workspaceRef);
   const search = new URLSearchParams({
     provider
   });
 
-  return `${buildWorkspaceSessionPath(workspaceId, draftId)}?${search.toString()}`;
+  const separator = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${separator}${search.toString()}`;
 }
 
 function createDraftSessionId(): string {

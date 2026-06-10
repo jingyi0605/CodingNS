@@ -32,6 +32,7 @@ import {
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import type { WorkspaceRef } from "../../conversation/api/conversation-api";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
@@ -158,6 +159,7 @@ interface TerminalWorkspacePaneProps {
   pendingCreation: boolean;
   zoomScale: number;
   active: boolean;
+  targetHostId?: string | null;
   ownsTerminalSize: boolean;
   isMobileLayout?: boolean;
   canCreateTerminal?: boolean;
@@ -238,7 +240,9 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 export interface TerminalPageWorkbenchShellOverrides {
   navigationGroups?: WorkspaceSessionGroup[];
   currentWorkspaceId?: string | null;
-  selectWorkspace?: (workspaceId: string) => void;
+  currentWorkspaceRef?: WorkspaceRef | null;
+  currentTargetHostId?: string | null;
+  selectWorkspace?: (workspaceId: string, workspaceRef?: WorkspaceRef | null) => void;
   subscribeTerminalManagerSnapshot?: (
     workspaceId: string,
     options?: { knownRevision?: string | null | undefined }
@@ -312,6 +316,8 @@ export function TerminalPage({
   const {
     navigationGroups,
     currentWorkspaceId: shellCurrentWorkspaceId,
+    currentWorkspaceRef: shellCurrentWorkspaceRef,
+    currentTargetHostId,
     selectWorkspace,
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
@@ -319,6 +325,8 @@ export function TerminalPage({
   } = {
     navigationGroups: workbenchShellOverrides?.navigationGroups ?? shell.navigationGroups,
     currentWorkspaceId: workbenchShellOverrides?.currentWorkspaceId ?? shell.currentWorkspaceId,
+    currentWorkspaceRef: workbenchShellOverrides?.currentWorkspaceRef ?? shell.currentWorkspaceRef,
+    currentTargetHostId: workbenchShellOverrides?.currentTargetHostId ?? shell.currentTargetHostId,
     selectWorkspace: workbenchShellOverrides?.selectWorkspace ?? shell.selectWorkspace,
     subscribeTerminalManagerSnapshot:
       workbenchShellOverrides?.subscribeTerminalManagerSnapshot ?? shell.subscribeTerminalManagerSnapshot,
@@ -430,6 +438,20 @@ export function TerminalPage({
       workspaces
     ]
   );
+  const requestWorkspaceId = useMemo(() => {
+    if (!currentTargetHostId) {
+      return resolvedWorkspaceId;
+    }
+
+    // Peer HOST 下，路由和左侧列表仍使用主 HOST 的本地 workspaceId；
+    // 真正发给 Peer 的终端接口必须使用远端 workspaceId。
+    if (shellCurrentWorkspaceRef?.hostId === currentTargetHostId) {
+      return shellCurrentWorkspaceRef.workspaceId?.trim() || resolvedWorkspaceId;
+    }
+
+    return resolvedWorkspaceId;
+  }, [currentTargetHostId, resolvedWorkspaceId, shellCurrentWorkspaceRef]);
+
   const mobileHeaderWorkspace = useMemo(
     () =>
       currentWorkspace ??
@@ -695,7 +717,7 @@ export function TerminalPage({
       terminalReloadRequestIdRef.current = requestId;
 
       try {
-        const terminalResponse = await listWorkspaceTerminals(workspaceId);
+        const terminalResponse = await listWorkspaceTerminals(requestWorkspaceId, { targetHostId: currentTargetHostId });
 
         if (
           requestId !== terminalReloadRequestIdRef.current ||
@@ -852,11 +874,11 @@ export function TerminalPage({
     }
 
     return addTerminalManagerSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== selectedWorkspaceId) {
+      if (snapshot.workspaceId !== requestWorkspaceId) {
         return;
       }
 
-      writeViewSnapshot(buildTerminalManagerSnapshotKey(selectedWorkspaceId), {
+      writeViewSnapshot(buildTerminalManagerSnapshotKey(selectedWorkspaceId, currentTargetHostId), {
         revision: snapshot.revision ?? null,
         terminals: snapshot.terminals,
         templates: snapshot.templates,
@@ -864,9 +886,15 @@ export function TerminalPage({
         shellOptions: snapshot.shellOptions
       });
       setShellOptions(snapshot.shellOptions ?? []);
-      applyWorkspaceTerminalCollection(snapshot.workspaceId, snapshot.terminals);
+      applyWorkspaceTerminalCollection(selectedWorkspaceId, snapshot.terminals);
     });
-  }, [addTerminalManagerSnapshotListener, applyWorkspaceTerminalCollection, selectedWorkspaceId]);
+  }, [
+    addTerminalManagerSnapshotListener,
+    applyWorkspaceTerminalCollection,
+    currentTargetHostId,
+    requestWorkspaceId,
+    selectedWorkspaceId
+  ]);
 
   useEffect(() => {
     if (!actionMenu) {
@@ -958,7 +986,7 @@ export function TerminalPage({
       templateStatuses: Array<{ occupied: boolean }>;
       shellOptions?: unknown[];
     }>(
-      buildTerminalManagerSnapshotKey(selectedWorkspaceId),
+      buildTerminalManagerSnapshotKey(selectedWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
 
@@ -975,14 +1003,16 @@ export function TerminalPage({
       setPendingTerminalCreationPaneId(null);
     }
 
-    subscribeTerminalManagerSnapshot(selectedWorkspaceId, {
-      knownRevision: cachedSnapshot?.revision ?? null
+    subscribeTerminalManagerSnapshot(requestWorkspaceId, {
+      knownRevision: cachedSnapshot?.revision ?? null,
+      targetHostId: currentTargetHostId
     });
 
     if (cachedSnapshot) {
       const timer = window.setTimeout(() => {
-        requestTerminalManagerRefresh(selectedWorkspaceId, {
-          knownRevision: cachedSnapshot.revision ?? null
+        requestTerminalManagerRefresh(requestWorkspaceId, {
+          knownRevision: cachedSnapshot.revision ?? null,
+          targetHostId: currentTargetHostId
         });
       }, 1500);
 
@@ -991,15 +1021,16 @@ export function TerminalPage({
       };
     }
 
-    requestTerminalManagerRefresh(selectedWorkspaceId, {
-      knownRevision: null
+    requestTerminalManagerRefresh(requestWorkspaceId, {
+      knownRevision: null,
+      targetHostId: currentTargetHostId
     });
 
     if (externalWindowMode) {
       void reloadWorkspaceResources(selectedWorkspaceId);
 
       if (shellOptions.length === 0) {
-        void listTerminalShellOptions()
+        void listTerminalShellOptions({ targetHostId: currentTargetHostId })
           .then((response) => {
             setShellOptions(response.items ?? []);
           })
@@ -1011,6 +1042,7 @@ export function TerminalPage({
     externalWindowMode,
     requestTerminalManagerRefresh,
     reloadWorkspaceResources,
+    requestWorkspaceId,
     selectedWorkspaceId,
     shellOptions.length,
     subscribeTerminalManagerSnapshot
@@ -1181,7 +1213,7 @@ export function TerminalPage({
     options: { allowFallbackPrompt?: boolean } = {}
   ): Promise<TerminalDto | null> {
     try {
-      return await createTerminal(request);
+      return await createTerminal(request, { targetHostId: currentTargetHostId });
     } catch (error) {
       if (
         options.allowFallbackPrompt !== false &&
@@ -1208,7 +1240,7 @@ export function TerminalPage({
     setLoadingShellOptions(true);
 
     try {
-      const response = await listTerminalShellOptions();
+      const response = await listTerminalShellOptions({ targetHostId: currentTargetHostId });
       const nextOptions = response.items ?? [];
       setShellOptions(nextOptions);
       return nextOptions;
@@ -1249,7 +1281,7 @@ export function TerminalPage({
       applyCreatedTerminalLocally(terminal, targetPaneId);
       clearPendingTerminalCreation(targetPaneId);
       options.onCreated?.();
-      await reloadWorkspaceResources(request.workspaceId, {
+      await reloadWorkspaceResources(selectedWorkspaceId || request.workspaceId, {
         preferredTerminalId: terminal.id,
         preferredPaneId: targetPaneId
       });
@@ -1300,7 +1332,7 @@ export function TerminalPage({
   }
 
   async function handleCreateTerminal(): Promise<void> {
-    const workspaceId = resolvedWorkspaceId;
+    const workspaceId = requestWorkspaceId;
 
     if (!workspaceId || creatingTerminal) {
       return;
@@ -1324,7 +1356,7 @@ export function TerminalPage({
   }
 
   async function handleCreateTerminalEntry(): Promise<void> {
-    const workspaceId = resolvedWorkspaceId;
+    const workspaceId = requestWorkspaceId;
 
     if (!workspaceId || creatingTerminal) {
       return;
@@ -1350,7 +1382,7 @@ export function TerminalPage({
   }
 
   async function handleCreateTerminalFromDesktopSheet(): Promise<void> {
-    const workspaceId = resolvedWorkspaceId;
+    const workspaceId = requestWorkspaceId;
 
     if (!workspaceId || creatingTerminal) {
       return;
@@ -1378,7 +1410,7 @@ export function TerminalPage({
   }
 
   async function handleCreateTerminalFromMobileSheet(): Promise<void> {
-    const workspaceId = resolvedWorkspaceId;
+    const workspaceId = requestWorkspaceId;
 
     if (!workspaceId || creatingTerminal) {
       return;
@@ -1412,7 +1444,7 @@ export function TerminalPage({
   ): Promise<"settled" | "timeout" | "workspace_changed"> {
     markTerminalMutation(terminalId, "deleting");
     showTerminalMutationToast(terminalId, "deleting");
-    await deleteTerminalRecord(terminalId);
+    await deleteTerminalRecord(terminalId, { targetHostId: currentTargetHostId });
     return waitForTerminalMutationSettlement(workspaceId, terminalId, "deleting");
   }
 
@@ -1429,7 +1461,7 @@ export function TerminalPage({
 
     void (async () => {
       try {
-        await closeTerminal(terminalId);
+        await closeTerminal(terminalId, { targetHostId: currentTargetHostId });
         const closeSettlement = await waitForTerminalMutationSettlement(
           workspaceId,
           terminalId,
@@ -1550,7 +1582,7 @@ export function TerminalPage({
 
     try {
       const duplicatedTerminal = await submitTerminalCreation({
-        workspaceId: selectedWorkspaceId,
+        workspaceId: requestWorkspaceId,
         cwd: terminal.cwd,
         shell: terminal.shell,
         runtimeType: terminal.runtimeType
@@ -1934,6 +1966,7 @@ export function TerminalPage({
                   pendingCreation={!activeTerminal && pendingTerminalCreationPaneId === "primary"}
                   zoomScale={zoomScale}
                   active
+                  targetHostId={currentTargetHostId}
                   ownsTerminalSize={ownsTerminalSize}
                   isMobileLayout
                   onActivate={activatePane}
@@ -2381,6 +2414,7 @@ export function TerminalPage({
                       pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
                       zoomScale={zoomScale}
                       active={effectiveActivePaneId === paneId}
+                      targetHostId={currentTargetHostId}
                       ownsTerminalSize={ownsTerminalSize}
                       onActivate={activatePane}
                       onConnectionChange={handlePaneConnectionChange}
@@ -3309,6 +3343,7 @@ function TerminalWorkspacePane({
   pendingCreation,
   zoomScale,
   active,
+  targetHostId,
   ownsTerminalSize,
   isMobileLayout = false,
   canCreateTerminal = true,
@@ -3468,7 +3503,8 @@ function TerminalWorkspacePane({
       while (nextBeforeSeq !== null && remainingPages > 0) {
         const payload = await readTerminalHistory(terminal.id, {
           beforeSeq: nextBeforeSeq,
-          limit: TERMINAL_HISTORY_PAGE_LIMIT
+          limit: TERMINAL_HISTORY_PAGE_LIMIT,
+          targetHostId
         });
 
         await handleOlderHistoryPage(payload);
@@ -3692,6 +3728,7 @@ function TerminalWorkspacePane({
     pendingLiveOutputRef.current = [];
 
     const client = new TerminalRealtimeClient({
+      targetHostId,
       terminalId: terminal.id,
       lastCursor: resumeCursor,
       onConnectionChange: (state: TerminalConnectionState) => {
@@ -5745,8 +5782,9 @@ function buildTerminalMutationToastId(terminalId: string): string {
   return `terminal-mutation-${terminalId}`;
 }
 
-function buildTerminalManagerSnapshotKey(workspaceId: string) {
-  return `terminal-manager.snapshot.${workspaceId}`;
+function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
+  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
 }
 
 function waitForNextMutationPoll(): Promise<void> {

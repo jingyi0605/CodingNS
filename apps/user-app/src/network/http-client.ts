@@ -5,8 +5,9 @@ import { authStore } from "../features/auth/store/auth-store";
 import { markAuthExpiredFlag } from "./auth-expired-flag";
 import { resolveHostTransportTarget } from "./host-transport-registry";
 
-interface RequestOptions extends RequestInit {
+export interface RequestOptions extends RequestInit {
   baseUrl?: string;
+  targetHostId?: string;
   skipAuth?: boolean;
   retryAfterRefresh?: boolean;
   omitCompatibilityHeaders?: boolean;
@@ -49,10 +50,11 @@ class HttpClient {
   private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
-    const requestedBaseUrl = options.baseUrl ?? getHostBaseUrl();
+    const proxyPath = buildTargetHostProxyPath(path, options.targetHostId);
+    const requestedBaseUrl = options.targetHostId ? getHostBaseUrl() : options.baseUrl ?? getHostBaseUrl();
     const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
     const baseUrl = transportTarget.baseUrl;
-    const requestUrl = getHostRequestUrl(path, baseUrl);
+    const requestUrl = getHostRequestUrl(proxyPath, baseUrl);
     const transport = transportTarget.transport;
     const shouldOmitCompatibilityHeaders =
       options.omitCompatibilityHeaders || shouldUseLegacyCorsCompatibility(requestedBaseUrl);
@@ -109,7 +111,7 @@ class HttpClient {
 
     try {
       response = await transport.fetch({
-        path,
+        path: proxyPath,
         baseUrl,
         url: requestUrl,
         init: {
@@ -145,6 +147,7 @@ class HttpClient {
 
       if (
         shouldAttemptRefresh(response.status, payload.error_code) &&
+        !options.targetHostId &&
         !options.skipAuth &&
         !options.retryAfterRefresh
       ) {
@@ -172,7 +175,7 @@ class HttpClient {
 
       // Host 被重置、数据库被替换，或者 bootstrap 状态回退时，
       // 本地残留的旧登录态已经不可信，继续待在工作台里只会无限打 401/403。
-      if (!options.skipAuth && shouldClearAuthState(response.status, payload.error_code)) {
+      if (!options.skipAuth && !options.targetHostId && shouldClearAuthState(response.status, payload.error_code)) {
         markAuthExpiredFlag();
         authStore.clear();
       }
@@ -185,6 +188,26 @@ class HttpClient {
 }
 
 export const httpClient = new HttpClient();
+
+function buildTargetHostProxyPath(path: string, targetHostId?: string): string {
+  if (!targetHostId) {
+    return path;
+  }
+
+  const trimmedTargetHostId = targetHostId.trim();
+
+  if (!trimmedTargetHostId) {
+    return path;
+  }
+
+  const pathPrefix = `/api/host-proxy/hosts/${encodeURIComponent(trimmedTargetHostId)}`;
+  const queryStartIndex = path.indexOf("?");
+  const pathname = queryStartIndex >= 0 ? path.slice(0, queryStartIndex) : path;
+  const query = queryStartIndex >= 0 ? path.slice(queryStartIndex) : "";
+  const normalizedPathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
+
+  return `${pathPrefix}${normalizedPathname}${query}`;
+}
 
 const legacyCorsCompatibilityHosts = new Set<string>();
 

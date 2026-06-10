@@ -1,5 +1,9 @@
 import { httpClient } from "../../../network/http-client";
 
+interface FileRequestOptions {
+  targetHostId?: string | null;
+}
+
 export type FileNodeKind = "file" | "directory";
 export type FileOperationType =
   | "create_file"
@@ -169,33 +173,39 @@ export interface UploadFilePayload {
   contentBase64: string;
 }
 
-export function getFileTree(workspaceId: string, filePath?: string) {
+export function getFileTree(workspaceId: string, filePath?: string, options?: FileRequestOptions) {
   const search = new URLSearchParams({ workspaceId });
 
   if (filePath) {
     search.set("path", filePath);
   }
 
-  return httpClient.request<{ items: FileNodeDto[] }>(`/api/files/tree?${search.toString()}`);
+  return httpClient.request<{ items: FileNodeDto[] }>(`/api/files/tree?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function getFileContent(workspaceId: string, filePath: string) {
+export function getFileContent(workspaceId: string, filePath: string, options?: FileRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     path: filePath
   });
 
-  return httpClient.request<FileSnapshotDto>(`/api/files/content?${search.toString()}`);
+  return httpClient.request<FileSnapshotDto>(`/api/files/content?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
 export function saveFileContent(
   workspaceId: string,
   filePath: string,
   content: string,
-  expectedVersion?: string | null
+  expectedVersion?: string | null,
+  options?: FileRequestOptions
 ) {
   return httpClient.request<FileSaveResponseDto>("/api/files/content", {
     method: "PUT",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       path: filePath,
@@ -205,34 +215,39 @@ export function saveFileContent(
   });
 }
 
-export function operateFile(payload: OperateFilePayload) {
+export function operateFile(payload: OperateFilePayload, options?: FileRequestOptions) {
   return httpClient.request<{ success: true; opType: FileOperationType }>("/api/files/ops", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
 
-export function uploadFile(payload: UploadFilePayload) {
+export function uploadFile(payload: UploadFilePayload, options?: FileRequestOptions) {
   return httpClient.request<FileTransferDto>("/api/files/upload", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
 
-export function downloadFile(workspaceId: string, filePath: string) {
+export function downloadFile(workspaceId: string, filePath: string, options?: FileRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     path: filePath
   });
 
-  return httpClient.request<FileDownloadDto>(`/api/files/download?${search.toString()}`);
+  return httpClient.request<FileDownloadDto>(`/api/files/download?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
 export function searchFiles(
   workspaceId: string,
   keyword: string,
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  options?: FileRequestOptions
 ) {
   const search = new URLSearchParams({
     workspaceId,
@@ -241,16 +256,20 @@ export function searchFiles(
     pageSize: String(pageSize)
   });
 
-  return httpClient.request<FileSearchResultDto>(`/api/files/search?${search.toString()}`);
+  return httpClient.request<FileSearchResultDto>(`/api/files/search?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function getRecentFiles(workspaceId: string, limit = 10) {
+export function getRecentFiles(workspaceId: string, limit = 10, options?: FileRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     limit: String(limit)
   });
 
-  return httpClient.request<{ items: RecentFileRecordDto[] }>(`/api/files/recent?${search.toString()}`);
+  return httpClient.request<{ items: RecentFileRecordDto[] }>(`/api/files/recent?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
 export function getRecentModifiedFiles(
@@ -258,7 +277,8 @@ export function getRecentModifiedFiles(
   input?: {
     limit?: number;
     keyword?: string;
-  }
+  },
+  options?: FileRequestOptions
 ) {
   const search = new URLSearchParams({
     workspaceId,
@@ -270,14 +290,15 @@ export function getRecentModifiedFiles(
   }
 
   return httpClient.request<{ items: RecentModifiedFileRecordDto[] }>(
-    `/api/files/recent-modified?${search.toString()}`
+    `/api/files/recent-modified?${search.toString()}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
 export function getFilePreview(
   workspaceId: string,
   filePath: string,
-  options?: FilePreviewRequestOptions
+  options?: FilePreviewRequestOptions & FileRequestOptions
 ) {
   const search = new URLSearchParams({
     workspaceId,
@@ -288,42 +309,50 @@ export function getFilePreview(
     search.set("displayMode", "reading");
   }
 
-  return httpClient.request<FilePreviewDto>(`/api/files/preview?${search.toString()}`);
+  return httpClient.request<FilePreviewDto>(`/api/files/preview?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function getFilePreviewLink(workspaceId: string, filePath: string) {
+export function getFilePreviewLink(workspaceId: string, filePath: string, options?: FileRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     path: filePath
   });
 
-  return httpClient.request<FilePreviewLinkDto>(`/api/files/preview-link?${search.toString()}`);
+  return httpClient.request<FilePreviewLinkDto>(`/api/files/preview-link?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function listFileContextBindings(sessionId: string) {
+export function listFileContextBindings(sessionId: string, options?: FileRequestOptions) {
   return httpClient.request<{ items: FileContextBindingDto[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/contexts/files`
+    `/api/sessions/${encodeURIComponent(sessionId)}/contexts/files`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
 export function attachFileContext(
   sessionId: string,
-  payload: AttachFileContextPayload
+  payload: AttachFileContextPayload,
+  options?: FileRequestOptions
 ) {
   return httpClient.request<FileContextBindingDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/contexts/files`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );
 }
 
-export function detachFileContext(sessionId: string, bindingId: string) {
+export function detachFileContext(sessionId: string, bindingId: string, options?: FileRequestOptions) {
   return httpClient.request<{ success: true }>(
     `/api/sessions/${encodeURIComponent(sessionId)}/contexts/files/${encodeURIComponent(bindingId)}`,
     {
-      method: "DELETE"
+      method: "DELETE",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }

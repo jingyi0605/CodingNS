@@ -201,13 +201,14 @@ export class SessionRuntimeStore {
   constructor(
     private readonly sessionId: string,
     private readonly options: {
+      targetHostId?: string | null;
       bootstrapMessages?: HistoryMessageDto[];
       initialSession?: SessionSummaryDto | null;
       onSeen?: (sessionId: string, seenAt: string) => void;
     } = {}
   ) {
     const cachedSnapshot = readViewSnapshot<SessionRuntimeSnapshot>(
-      buildSessionRuntimeSnapshotKey(sessionId),
+      buildSessionRuntimeSnapshotKey(sessionId, options.targetHostId),
       SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS
     );
     this.hasAuthoritativeBootstrapMessages = (options.bootstrapMessages?.length ?? 0) > 0;
@@ -326,7 +327,7 @@ export class SessionRuntimeStore {
     this.realtimeClient?.close();
     this.realtimeClient = null;
     const cachedSnapshot = readViewSnapshot<SessionRuntimeSnapshot>(
-      buildSessionRuntimeSnapshotKey(this.sessionId),
+      buildSessionRuntimeSnapshotKey(this.sessionId, this.options.targetHostId),
       SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS
     );
     const reloadedTimeline = this.applyTimelineEvent({
@@ -529,7 +530,7 @@ export class SessionRuntimeStore {
         attachments: options?.attachments ?? [],
         providerConfigMode: options?.providerConfigMode,
         providerPresetId: options?.providerPresetId ?? null
-      });
+      }, { targetHostId: this.options.targetHostId });
 
       this.patch({
         queuedMessages: upsertQueuedMessage(this.state.queuedMessages, queuedItem)
@@ -541,17 +542,17 @@ export class SessionRuntimeStore {
   }
 
   async deleteQueuedMessage(queueItemId: string): Promise<void> {
-    await deleteSessionQueueItem(this.sessionId, queueItemId);
+    await deleteSessionQueueItem(this.sessionId, queueItemId, { targetHostId: this.options.targetHostId });
     await this.refreshQueue();
   }
 
   async steerQueuedMessage(queueItemId: string): Promise<void> {
-    await steerSessionQueueItem(this.sessionId, queueItemId);
+    await steerSessionQueueItem(this.sessionId, queueItemId, { targetHostId: this.options.targetHostId });
     await this.refreshRuntimeSnapshot("queue_steer");
   }
 
   async interrupt(): Promise<void> {
-    await interruptSession(this.sessionId);
+    await interruptSession(this.sessionId, { targetHostId: this.options.targetHostId });
     this.patch({
       session: withRunningState(this.state.session, "interrupted"),
       runtimeHasActiveRun: false,
@@ -572,7 +573,9 @@ export class SessionRuntimeStore {
       return;
     }
 
-    const updated = await replySessionPermissionRequest(this.sessionId, requestId, payload);
+    const updated = await replySessionPermissionRequest(this.sessionId, requestId, payload, {
+      targetHostId: this.options.targetHostId
+    });
 
     this.patch({
       permissionRequests: upsertPermissionRequest(this.state.permissionRequests, updated)
@@ -654,6 +657,7 @@ export class SessionRuntimeStore {
     }
 
     this.realtimeClient = new RealtimeClient({
+      targetHostId: this.options.targetHostId,
       sessionId: this.sessionId,
       cursor: this.state.lastCursor,
       limit: REALTIME_LIMIT,
@@ -1007,7 +1011,7 @@ export class SessionRuntimeStore {
 
       this.markSeenInFlight = true;
       this.lastMarkSeenRequestAt = Date.now();
-      void markSessionSeen(this.sessionId)
+      void markSessionSeen(this.sessionId, { targetHostId: this.options.targetHostId })
         .then(() => {
           this.bumpSeenWatermark(nextTargetSeenAt);
           this.patch({
@@ -1086,7 +1090,8 @@ export class SessionRuntimeStore {
         this.sessionId,
         null,
         fallbackLimit,
-        "backward"
+        "backward",
+        { targetHostId: this.options.targetHostId }
       );
 
       if (this.historyBootstrapEnvelopeReceived) {
@@ -1217,7 +1222,8 @@ export class SessionRuntimeStore {
       this.sessionId,
       requestedCursor,
       OLDER_HISTORY_PAGE_LIMIT,
-      "backward"
+      "backward",
+      { targetHostId: this.options.targetHostId }
     )
       .then((page) => {
         if (this.state.olderCursor === requestedCursor) {
@@ -1341,7 +1347,7 @@ export class SessionRuntimeStore {
     });
 
     try {
-      const runtime = await getSessionRuntime(this.sessionId);
+      const runtime = await getSessionRuntime(this.sessionId, { targetHostId: this.options.targetHostId });
       const resolvedRuntimeHasActiveRun = resolveNextRuntimeHasActiveRun(
         this.state.runtimeHasActiveRun,
         runtime.runningState,
@@ -1404,7 +1410,7 @@ export class SessionRuntimeStore {
 
     if (this.state.session === null) {
       tasks.push(
-        getSessionDetail(this.sessionId)
+        getSessionDetail(this.sessionId, { targetHostId: this.options.targetHostId })
           .then((session) => {
             this.patch({
               session: pickFreshestSessionSummary(session, this.state.session)
@@ -1418,7 +1424,7 @@ export class SessionRuntimeStore {
 
     if (shouldRefreshCapabilities(this.state.capabilities)) {
       tasks.push(
-        getSessionCapabilities(this.sessionId)
+        getSessionCapabilities(this.sessionId, { targetHostId: this.options.targetHostId })
           .then((capabilities) => {
             this.patch({
               capabilities
@@ -1439,7 +1445,9 @@ export class SessionRuntimeStore {
 
   private async refreshPermissionRequests(): Promise<void> {
     try {
-      const response = await getSessionPermissionRequests(this.sessionId);
+      const response = await getSessionPermissionRequests(this.sessionId, {
+        targetHostId: this.options.targetHostId
+      });
 
       this.patch({
         permissionRequests: response.items
@@ -1473,7 +1481,7 @@ export class SessionRuntimeStore {
     });
 
     try {
-      const runtime = await getSessionRuntime(this.sessionId);
+      const runtime = await getSessionRuntime(this.sessionId, { targetHostId: this.options.targetHostId });
       const resolvedRuntimeHasActiveRun = resolveNextRuntimeHasActiveRun(
         this.state.runtimeHasActiveRun,
         runtime.runningState,
@@ -1511,7 +1519,7 @@ export class SessionRuntimeStore {
 
   async refreshQueue(): Promise<void> {
     try {
-      const response = await getSessionQueue(this.sessionId);
+      const response = await getSessionQueue(this.sessionId, { targetHostId: this.options.targetHostId });
       this.patch({
         queuedMessages: response.items
       });
@@ -1542,7 +1550,7 @@ export class SessionRuntimeStore {
         attachments: options?.attachments ?? [],
         providerConfigMode: options?.providerConfigMode,
         providerPresetId: options?.providerPresetId ?? null
-      });
+      }, { targetHostId: this.options.targetHostId });
     } catch (error) {
       if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 405)) {
         throw error;
@@ -1562,7 +1570,7 @@ export class SessionRuntimeStore {
         content,
         clientRequestId,
         permissionMode: getDefaultSessionPermissionMode()
-      });
+      }, { targetHostId: this.options.targetHostId });
     }
   }
 
@@ -1787,7 +1795,7 @@ export class SessionRuntimeStore {
   }
 
   private persistSnapshot(): void {
-    writeViewSnapshot<SessionRuntimeSnapshot>(buildSessionRuntimeSnapshotKey(this.sessionId), {
+    writeViewSnapshot<SessionRuntimeSnapshot>(buildSessionRuntimeSnapshotKey(this.sessionId, this.options.targetHostId), {
       session: this.state.session,
       capabilities: this.state.capabilities,
       runtimeHasActiveRun: this.state.runtimeHasActiveRun,
@@ -4717,8 +4725,11 @@ function resolveNextRuntimeCanInterrupt(
   );
 }
 
-function buildSessionRuntimeSnapshotKey(sessionId: string) {
-  return `session-runtime.snapshot.${sessionId}`;
+function buildSessionRuntimeSnapshotKey(sessionId: string, targetHostId?: string | null) {
+  const normalizedTargetHostId = targetHostId?.trim();
+  return normalizedTargetHostId
+    ? `session-runtime.snapshot.host.${encodeURIComponent(normalizedTargetHostId)}.${sessionId}`
+    : `session-runtime.snapshot.${sessionId}`;
 }
 
 function buildSnapshotMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {

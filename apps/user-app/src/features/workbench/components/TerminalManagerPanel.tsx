@@ -45,8 +45,9 @@ interface TerminalManagerPanelProps {
 }
 
 export interface TerminalManagerPanelWorkbenchShellOverrides {
-  subscribeTerminalManagerSnapshot?: (workspaceId: string) => void;
-  requestTerminalManagerRefresh?: (workspaceId: string) => void;
+  currentTargetHostId?: string | null;
+  subscribeTerminalManagerSnapshot?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
+  requestTerminalManagerRefresh?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
   addTerminalManagerSnapshotListener?: (
     listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
   ) => () => void;
@@ -512,7 +513,8 @@ export function TerminalManagerPanel({
   const {
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
-    addTerminalManagerSnapshotListener
+    addTerminalManagerSnapshotListener,
+    currentTargetHostId
   } = {
     ...workbenchShell,
     ...workbenchShellOverrides
@@ -641,7 +643,7 @@ export function TerminalManagerPanel({
     }
 
     const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
-      buildTerminalManagerSnapshotKey(activeWorkspaceId),
+      buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
 
@@ -675,7 +677,7 @@ export function TerminalManagerPanel({
     }
 
     return addTerminalManagerSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== activeWorkspaceId) {
+      if (snapshot.workspaceId !== activeWorkspaceId || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)) {
         return;
       }
 
@@ -688,7 +690,7 @@ export function TerminalManagerPanel({
       applyTerminalManagerSnapshot(snapshot);
       setLoading(false);
     });
-  }, [activeWorkspaceId, addTerminalManagerSnapshotListener]);
+  }, [activeWorkspaceId, addTerminalManagerSnapshotListener, currentTargetHostId]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -696,25 +698,26 @@ export function TerminalManagerPanel({
     }
 
     const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
-      buildTerminalManagerSnapshotKey(activeWorkspaceId),
+      buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
 
     subscribeTerminalManagerSnapshot(activeWorkspaceId, {
-      knownRevision: cachedSnapshot?.revision ?? null
+      knownRevision: cachedSnapshot?.revision ?? null,
+      targetHostId: currentTargetHostId
     });
 
     if (!cachedSnapshot) {
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
     }
-  }, [activeWorkspaceId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
+  }, [activeWorkspaceId, currentTargetHostId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
       return;
     }
 
-    writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId), {
+    writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId), {
       revision,
       terminals,
       templates,
@@ -736,7 +739,8 @@ export function TerminalManagerPanel({
       workspaceId
     });
     requestTerminalManagerRefresh(workspaceId, {
-      knownRevision: revision
+      knownRevision: revision,
+      targetHostId: currentTargetHostId
     });
   }
 
@@ -770,7 +774,7 @@ export function TerminalManagerPanel({
     setStoppingTemplateId(templateId);
 
     try {
-      await stopTerminalTemplateProcess(templateId);
+      await stopTerminalTemplateProcess(templateId, { targetHostId: currentTargetHostId });
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.stopProcessSuccess"),
@@ -824,12 +828,14 @@ export function TerminalManagerPanel({
       };
 
       if (editingTemplateMode && editingTemplateId) {
-        const updatedTemplate = await updateTerminalTemplate(editingTemplateId, payload);
+        const updatedTemplate = await updateTerminalTemplate(editingTemplateId, payload, {
+          targetHostId: currentTargetHostId
+        });
         setTemplates((current) =>
           current.map((template) => (template.id === updatedTemplate.id ? updatedTemplate : template))
         );
       } else {
-        await createTerminalTemplate(payload);
+        await createTerminalTemplate(payload, { targetHostId: currentTargetHostId });
       }
 
       closeTemplateEditor();
@@ -877,7 +883,7 @@ export function TerminalManagerPanel({
     setRemovingTemplateId(template.id);
 
     try {
-      await deleteTerminalTemplate(template.id);
+      await deleteTerminalTemplate(template.id, { targetHostId: currentTargetHostId });
       setTemplates((current) => current.filter((item) => item.id !== template.id));
       setTemplateStatuses((current) => current.filter((item) => item.templateId !== template.id));
       setExpandedTemplateIds((current) => current.filter((item) => item !== template.id));
@@ -913,7 +919,7 @@ export function TerminalManagerPanel({
     try {
       await runTerminalTemplate(templateId, {
         shell
-      });
+      }, { targetHostId: currentTargetHostId });
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.templateRunSuccess"),
@@ -948,7 +954,7 @@ export function TerminalManagerPanel({
       await runTerminalTemplate(runtimeFallbackDraft.templateId, {
         shell: runtimeFallbackDraft.shell,
         runtimeType: "embedded-pty"
-      });
+      }, { targetHostId: currentTargetHostId });
       setRuntimeFallbackDraft(null);
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
@@ -1634,8 +1640,18 @@ export function TerminalManagerPanel({
   );
 }
 
-function buildTerminalManagerSnapshotKey(workspaceId: string) {
-  return `terminal-manager.snapshot.${workspaceId}`;
+function readSnapshotTargetHostId(snapshot: unknown): string | null {
+  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
+  return (left?.trim() || null) === (right?.trim() || null);
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
+  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
 }
 
 function readError(error: unknown, fallback: string): string {

@@ -18,6 +18,8 @@ import { createPlatformAdapter } from "../platform/platform-adapter";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
 const STORAGE_KEY = "codingns.client.runtime-config";
+const HOST_ALIAS_MAX_LENGTH = 4;
+const HOST_ALIAS_FALLBACK = "HOST";
 
 type RuntimeConfigPatchInput =
   | (Partial<ClientRuntimeConfig> & LegacyClientRuntimeConfigSnapshot)
@@ -137,6 +139,7 @@ function normalizeTimestamp(value: unknown, fallback: string): string {
   return normalizeString(value) ?? fallback;
 }
 
+
 function classifyHostKind(baseUrl: string): HostProfileKind {
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();
@@ -174,14 +177,47 @@ function buildDefaultHostName(baseUrl: string): string {
   }
 }
 
+export function normalizeHostAlias(value: unknown): string | null {
+  const normalized = typeof value === "string"
+    ? value.match(/[A-Za-z]/g)?.join("").toUpperCase().slice(0, HOST_ALIAS_MAX_LENGTH)
+    : null;
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function buildDefaultHostAlias(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+    const segments = hostname.split(".").filter(Boolean);
+    const candidate =
+      segments.length > 0
+        ? segments[segments.length - 1] === "localhost"
+          ? HOST_ALIAS_FALLBACK
+          : segments[segments.length - 1]
+        : url.host;
+
+    return normalizeHostAlias(candidate) ?? HOST_ALIAS_FALLBACK;
+  } catch {
+    return normalizeHostAlias(baseUrl) ?? HOST_ALIAS_FALLBACK;
+  }
+}
+
 function createHostProfile(baseUrl: string, now: string, overrides: Partial<HostProfile> = {}): HostProfile {
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
 
   return {
     id: normalizeString(overrides.id) ?? DEFAULT_HOST_PROFILE_ID,
     name: normalizeString(overrides.name) ?? buildDefaultHostName(normalizedBaseUrl),
+    alias: normalizeHostAlias(overrides.alias) ?? buildDefaultHostAlias(normalizedBaseUrl),
     baseUrl: normalizedBaseUrl,
     kind: overrides.kind ?? classifyHostKind(normalizedBaseUrl),
+    peerEnabled: overrides.peerEnabled === true,
+    peerHostId: normalizeString(overrides.peerHostId) ?? null,
     createdAt: normalizeTimestamp(overrides.createdAt, now),
     updatedAt: normalizeTimestamp(overrides.updatedAt, now),
     lastConnectedAt: normalizeString(overrides.lastConnectedAt) ?? null,

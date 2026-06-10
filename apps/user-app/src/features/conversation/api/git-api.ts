@@ -1,5 +1,9 @@
 import { httpClient } from "../../../network/http-client";
 
+interface GitRequestOptions {
+  targetHostId?: string | null;
+}
+
 export interface GitRepoSnapshotDto {
   workspaceId: string;
   repoRoot: string;
@@ -180,34 +184,39 @@ export type GitRemoteAuthDto =
       token?: string;
     };
 
-export function getGitStatus(workspaceId: string) {
+export function getGitStatus(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitStatusDto>(
-    `/api/git/status?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/git/status?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function initializeGitRepository(workspaceId: string) {
+export function initializeGitRepository(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitStatusDto>("/api/git/init", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId
     })
   });
 }
 
-export function getGitDiff(workspaceId: string, filePath: string, staged: boolean) {
+export function getGitDiff(workspaceId: string, filePath: string, staged: boolean, options?: GitRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     path: filePath,
     staged: String(staged)
   });
 
-  return httpClient.request<GitDiffDto>(`/api/git/diff?${search.toString()}`);
+  return httpClient.request<GitDiffDto>(`/api/git/diff?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function stageGitTargets(workspaceId: string, targets: string[]) {
+export function stageGitTargets(workspaceId: string, targets: string[], options?: GitRequestOptions) {
   return httpClient.request<GitStatusDto>("/api/git/stage", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       targets
@@ -215,9 +224,10 @@ export function stageGitTargets(workspaceId: string, targets: string[]) {
   });
 }
 
-export function unstageGitTargets(workspaceId: string, targets: string[]) {
+export function unstageGitTargets(workspaceId: string, targets: string[], options?: GitRequestOptions) {
   return httpClient.request<GitStatusDto>("/api/git/unstage", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       targets
@@ -225,9 +235,10 @@ export function unstageGitTargets(workspaceId: string, targets: string[]) {
   });
 }
 
-export function discardGitTargets(workspaceId: string, targets: string[]) {
+export function discardGitTargets(workspaceId: string, targets: string[], options?: GitRequestOptions) {
   return httpClient.request<GitStatusDto>("/api/git/discard", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       targets
@@ -243,10 +254,12 @@ export function getCommitRules(workspaceId: string) {
 
 export function createCommitDraft(
   workspaceId: string,
-  mode: "manual" | "ai"
+  mode: "manual" | "ai",
+  options?: GitRequestOptions
 ) {
   return httpClient.request<CommitDraftResponseDto>("/api/git/commit/draft", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       mode
@@ -254,9 +267,10 @@ export function createCommitDraft(
   });
 }
 
-export function validateCommitDraft(workspaceId: string, draft: CommitDraftDto) {
+export function validateCommitDraft(workspaceId: string, draft: CommitDraftDto, options?: GitRequestOptions) {
   return httpClient.request<CommitValidateResponseDto>("/api/git/commit/validate", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       draft
@@ -264,11 +278,12 @@ export function validateCommitDraft(workspaceId: string, draft: CommitDraftDto) 
   });
 }
 
-export function commitDraft(workspaceId: string, draft: CommitDraftDto) {
+export function commitDraft(workspaceId: string, draft: CommitDraftDto, options?: GitRequestOptions) {
   return httpClient.request<{ commitHash: string; ruleProfile: CommitRuleProfileDto; validation: CommitValidationResultDto }>(
     "/api/git/commit",
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify({
         workspaceId,
         draft
@@ -277,16 +292,22 @@ export function commitDraft(workspaceId: string, draft: CommitDraftDto) {
   );
 }
 
-export function undoLastCommit(workspaceId: string) {
+export function undoLastCommit(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitUndoCommitResultDto>("/api/git/commit/undo", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId
     })
   });
 }
 
-export function getGitHistory(workspaceId: string, limit = 5, cursor: string | null = null) {
+export function getGitHistory(
+  workspaceId: string,
+  limit = 5,
+  cursor: string | null = null,
+  options?: GitRequestOptions
+) {
   const search = new URLSearchParams({
     workspaceId,
     limit: String(limit)
@@ -296,33 +317,40 @@ export function getGitHistory(workspaceId: string, limit = 5, cursor: string | n
     search.set("cursor", cursor);
   }
 
-  return httpClient.request<GitHistoryPageDto>(`/api/git/history?${search.toString()}`);
+  return httpClient.request<GitHistoryPageDto>(`/api/git/history?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function getGitCommitDetail(workspaceId: string, commitHash: string) {
+export function getGitCommitDetail(workspaceId: string, commitHash: string, options?: GitRequestOptions) {
   const search = new URLSearchParams({
     workspaceId,
     commitHash
   });
 
-  return httpClient.request<GitCommitDetailDto>(`/api/git/commit-detail?${search.toString()}`);
+  return httpClient.request<GitCommitDetailDto>(`/api/git/commit-detail?${search.toString()}`, {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
-export function getGitBranches(workspaceId: string) {
+export function getGitBranches(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitBranchSnapshotDto>(
-    `/api/git/branches?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/git/branches?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function getGitTags(workspaceId: string) {
+export function getGitTags(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitTagItemDto[]>(
-    `/api/git/tags?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/git/tags?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }
 
-export function switchGitBranch(workspaceId: string, branchName: string, create: boolean) {
+export function switchGitBranch(workspaceId: string, branchName: string, create: boolean, options?: GitRequestOptions) {
   return httpClient.request<GitBranchSnapshotDto>("/api/git/branches/switch", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       branchName,
@@ -336,10 +364,12 @@ export function syncGitRemote(
   action: GitRemoteSyncResultDto["action"],
   remote?: string,
   auth?: GitRemoteAuthDto | null,
-  remember?: boolean
+  remember?: boolean,
+  options?: GitRequestOptions
 ) {
   return httpClient.request<GitRemoteSyncResultDto>("/api/git/remote/sync", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({
       workspaceId,
       action,
@@ -350,8 +380,9 @@ export function syncGitRemote(
   });
 }
 
-export function getGitRemotes(workspaceId: string) {
+export function getGitRemotes(workspaceId: string, options?: GitRequestOptions) {
   return httpClient.request<GitRemoteItemDto[]>(
-    `/api/git/remotes?workspaceId=${encodeURIComponent(workspaceId)}`
+    `/api/git/remotes?workspaceId=${encodeURIComponent(workspaceId)}`,
+    { targetHostId: options?.targetHostId ?? undefined }
   );
 }

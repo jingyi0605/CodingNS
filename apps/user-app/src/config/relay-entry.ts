@@ -61,8 +61,11 @@ export function buildRelayEntryConfigPatch(
   const nextHost: HostProfile = {
     id: existingHost?.id ?? buildRelayEntryHostId(input.bindingId ?? null, normalizedTunnelDomain),
     name: displayName,
+    alias: existingHost?.alias ?? buildRelayHostAlias(displayName, normalizedTunnelDomain),
     baseUrl: relayBaseUrl,
     kind: "remote",
+    peerEnabled: existingHost?.peerEnabled ?? false,
+    peerHostId: existingHost?.peerHostId ?? null,
     createdAt: existingHost?.createdAt ?? now,
     updatedAt: now,
     lastConnectedAt: existingHost?.lastConnectedAt ?? null,
@@ -264,4 +267,9 @@ function isCandidateEndpointKind(value: string | null): value is HostCandidateEn
 
 function isCandidateEndpointSource(value: string | null): value is HostCandidateEndpoint["source"] {
   return value === "host_reported" || value === "desktop_scan" || value === "user_saved";
+}
+
+function buildRelayHostAlias(displayName: string, tunnelDomain: string): string {
+  const source = displayName.trim() || tunnelDomain.trim() || "HOST";
+  return Array.from(source).slice(0, 4).join("");
 }

@@ -525,6 +525,14 @@ class AuthStore {
         RUNTIME_CONFIG_SYNC_TIMEOUT_MS,
         "runtime_config_sync_timeout"
       );
+      const { syncPeerHostsIntoClientConfig } = await import(
+        "../../workbench/utils/peer-host-config-sync"
+      );
+      await withTimeout(
+        syncPeerHostsIntoClientConfig(),
+        RUNTIME_CONFIG_SYNC_TIMEOUT_MS,
+        "peer_host_config_sync_timeout"
+      );
     } catch {
       if (this.lastRuntimeConfigSyncKey === syncKey) {
         this.lastRuntimeConfigSyncKey = null;
