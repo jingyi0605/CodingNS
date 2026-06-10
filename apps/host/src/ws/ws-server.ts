@@ -18,6 +18,7 @@ import type { ButlerActionContextService } from "../modules/butler/butler-action
 import type { TerminalWsHub } from "./terminal-ws-hub.js";
 import type { WorkbenchWsHub } from "./workbench-ws-hub.js";
 import type { WsAuthGuard } from "./ws-auth-guard.js";
+import type { HostWsProxyService } from "../modules/peer-host/host-ws-proxy-service.js";
 
 interface SessionSubscribeMessage {
   type: "session.subscribe";
@@ -72,7 +73,8 @@ export function createWsServer(
   sessionLiveRuntimeService: Pick<SessionLiveRuntimeService, "subscribeRuntime">,
   terminalWsHub: TerminalWsHub,
   workbenchWsHub: WorkbenchWsHub,
-  butlerActionContextService?: Pick<ButlerActionContextService, "preloadSessionActionContext">
+  butlerActionContextService?: Pick<ButlerActionContextService, "preloadSessionActionContext">,
+  hostWsProxyService?: HostWsProxyService
 ) {
   const wss = new WebSocketServer({
     noServer: true
@@ -80,6 +82,11 @@ export function createWsServer(
 
   server.on("upgrade", (request, socket, head) => {
     const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+
+    if (hostWsProxyService?.canHandleUpgrade(request)) {
+      hostWsProxyService.handleUpgrade(request, socket, head);
+      return;
+    }
 
     if (pathname !== "/ws") {
       if (!pathname.startsWith("/proxy/")) {

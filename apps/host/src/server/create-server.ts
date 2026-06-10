@@ -45,6 +45,12 @@ import { SessionSummaryScheduler } from "../modules/butler/session-summary-sched
 import { VerificationRunService } from "../modules/butler/verification-run-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
+import { HostHandshakeService } from "../modules/peer-host/host-handshake.js";
+import { HostHandshakeController } from "../modules/peer-host/host-handshake-controller.js";
+import { HostApiProxyService } from "../modules/peer-host/host-api-proxy-service.js";
+import { HostWsProxyService } from "../modules/peer-host/host-ws-proxy-service.js";
+import { HostApiProxyController, PeerHostController } from "../modules/peer-host/peer-host-controller.js";
+import { PeerHostService } from "../modules/peer-host/peer-host-service.js";
 import { NpmGlobalPackageService } from "../modules/client/npm-global-package-service.js";
 import { ServiceUpdateTaskService } from "../modules/client/service-update-task-service.js";
 import { ChannelBridgeService } from "../modules/channels/channel-bridge-service.js";
@@ -217,6 +223,7 @@ import { registerOfficeRoutes } from "../routes/office.js";
 import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
+import { registerPeerHostRoutes } from "../routes/peer-hosts.js";
 import { registerPluginRoutes } from "../routes/plugins.js";
 import { registerPluginPublicRoutes } from "../routes/plugins-public.js";
 import { registerPresentationRoutes } from "../routes/presentation.js";
@@ -258,6 +265,11 @@ import { ButlerProjectRepository } from "../storage/repositories/butler-project-
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
 import { ButlerSessionSummaryStateRepository } from "../storage/repositories/butler-session-summary-state-repository.js";
 import { BrowserProfileRepository } from "../storage/repositories/browser-profile-repository.js";
+import {
+  PeerHostRepository,
+  PeerHostSessionRepository,
+  PeerHostWorkspaceBindingRepository,
+} from "../storage/repositories/peer-host-repository.js";
 import { DocumentCommentRepository } from "../storage/repositories/document-comment-repository.js";
 import { DocumentRepository } from "../storage/repositories/document-repository.js";
 import { DocumentRevisionRepository } from "../storage/repositories/document-revision-repository.js";
@@ -387,6 +399,9 @@ export function createServer(config: HostConfig) {
     authDeviceSessionRepository: new AuthDeviceSessionRepository(database.db),
     authLoginEventRepository: new AuthLoginEventRepository(database.db),
     authLoginAttemptRepository: new AuthLoginAttemptRepository(database.db),
+    peerHostRepository: new PeerHostRepository(database.db),
+    peerHostSessionRepository: new PeerHostSessionRepository(database.db),
+    peerHostWorkspaceBindingRepository: new PeerHostWorkspaceBindingRepository(database.db),
     assistantAutomationTaskRepository: new AssistantAutomationTaskRepository(database.db),
     assistantAutomationRunRepository: new AssistantAutomationRunRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
@@ -695,6 +710,16 @@ export function createServer(config: HostConfig) {
     serviceUpdateTaskService,
     relayTunnelService
   );
+  const hostHandshakeService = new HostHandshakeService(
+    repositories.instanceRelayTunnelIdentityRepository
+  );
+  const peerHostService = new PeerHostService(
+    repositories.peerHostRepository,
+    repositories.peerHostSessionRepository,
+    repositories.peerHostWorkspaceBindingRepository,
+    config.gitCredentialSecret
+  );
+  const hostApiProxyService = new HostApiProxyService(peerHostService);
   const wechatClawRuntimeManager = enableWechatClawHelper
     ? new WechatClawRuntimeManager(
         path.join(path.dirname(config.databasePath), "wechat-claw-helper")
@@ -1739,6 +1764,9 @@ export function createServer(config: HostConfig) {
       opsRuntimeService
     )
   );
+  const hostHandshakeController = new HostHandshakeController(hostHandshakeService);
+  const peerHostController = new PeerHostController(peerHostService);
+  const hostApiProxyController = new HostApiProxyController(hostApiProxyService);
   const presentationController = new PresentationController(presentationExportTaskService);
   const fileController = new FileController(
     fileTreeService,
@@ -1794,7 +1822,8 @@ export function createServer(config: HostConfig) {
     routedSessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
     workbenchWsHub,
-    butlerActionContextService
+    butlerActionContextService,
+    new HostWsProxyService(new WsAuthGuard(authService), peerHostService)
   );
   const workbenchRuntimeTerminalSync = registerWorkbenchRuntimeTerminalSync({
     authUserRepository: repositories.authUserRepository,
@@ -1884,10 +1913,11 @@ export function createServer(config: HostConfig) {
     }
   }
 
-  void registerPublicRoutes(app, bootstrapController, channelGatewayController);
+  void registerPublicRoutes(app, bootstrapController, channelGatewayController, hostHandshakeController);
   void registerPluginPublicRoutes(app, pluginController);
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
+  void registerPeerHostRoutes(app, peerHostController, hostApiProxyController);
   void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
   void registerChannelRoutes(app, channelController);
   void registerClientRoutes(app, clientController);

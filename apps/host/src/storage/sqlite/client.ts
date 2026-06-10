@@ -25,6 +25,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureAuthDeviceSchema(db);
   ensureAuthLoginAttemptSchema(db);
   ensureWorkspaceOwnerSchema(db);
+  ensurePeerHostSchema(db);
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
@@ -97,12 +98,97 @@ function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceOwnerColumn(db);
+  ensurePeerHostSchema(db);
   ensureSessionBindingUserSchema(db);
   ensureButlerOwnershipPreSchemaCompatibility(db);
   ensureUserTeableFormBindingsPreSchemaCompatibility(db);
   ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
   ensureAuthTokenCallerKindSchema(db);
+}
+
+
+function ensurePeerHostSchema(db: BetterSqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS peer_hosts (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      alias TEXT,
+      base_url TEXT NOT NULL,
+      normalized_base_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('unknown', 'reachable', 'unreachable', 'version_mismatch', 'unauthorized')),
+      remote_version TEXT,
+      remote_api_compatibility TEXT,
+      remote_host_fingerprint TEXT,
+      last_checked_at TEXT,
+      last_error_code TEXT,
+      last_error_detail TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      removed_at TEXT,
+      FOREIGN KEY (owner_user_id) REFERENCES auth_users(id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_peer_hosts_owner_base_url_active
+      ON peer_hosts(owner_user_id, normalized_base_url)
+      WHERE removed_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_peer_hosts_owner_status
+      ON peer_hosts(owner_user_id, status, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS peer_host_workspace_bindings (
+      owner_user_id TEXT NOT NULL,
+      active_host_id TEXT NOT NULL,
+      workspace_key TEXT NOT NULL,
+      selected_host_id TEXT NOT NULL,
+      remote_workspace_id TEXT,
+      remote_workspace_path TEXT,
+      remote_workspace_name TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (owner_user_id, active_host_id, workspace_key),
+      FOREIGN KEY (owner_user_id) REFERENCES auth_users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_peer_host_workspace_bindings_owner_updated_at
+      ON peer_host_workspace_bindings(owner_user_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS peer_host_sessions (
+      peer_host_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT NOT NULL,
+      expires_at TEXT,
+      remote_user_id TEXT NOT NULL,
+      remote_username TEXT NOT NULL,
+      remote_host_fingerprint TEXT,
+      saved_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (peer_host_id, owner_user_id),
+      FOREIGN KEY (peer_host_id) REFERENCES peer_hosts(id) ON DELETE CASCADE,
+      FOREIGN KEY (owner_user_id) REFERENCES auth_users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_peer_host_sessions_owner_updated_at
+      ON peer_host_sessions(owner_user_id, updated_at DESC);
+  `);
+
+  if (!tableHasColumn(db, "peer_hosts", "alias")) {
+    db.exec("ALTER TABLE peer_hosts ADD COLUMN alias TEXT");
+  }
+
+  if (!tableHasColumn(db, "peer_host_workspace_bindings", "remote_workspace_id")) {
+    db.exec("ALTER TABLE peer_host_workspace_bindings ADD COLUMN remote_workspace_id TEXT");
+  }
+
+  if (!tableHasColumn(db, "peer_host_workspace_bindings", "remote_workspace_path")) {
+    db.exec("ALTER TABLE peer_host_workspace_bindings ADD COLUMN remote_workspace_path TEXT");
+  }
+
+  if (!tableHasColumn(db, "peer_host_workspace_bindings", "remote_workspace_name")) {
+    db.exec("ALTER TABLE peer_host_workspace_bindings ADD COLUMN remote_workspace_name TEXT");
+  }
 }
 
 function ensureAuthUserStatusSchema(db: BetterSqliteDatabase): void {
@@ -595,6 +681,7 @@ function ensureButlerControlSessionOwnershipSchema(
 
 function ensureWorkspaceOwnerSchema(db: BetterSqliteDatabase): void {
   ensureWorkspaceOwnerColumn(db);
+  ensurePeerHostSchema(db);
 
   const legacyOwnerUserId = readLegacyDefaultUserId(db);
   if (legacyOwnerUserId) {

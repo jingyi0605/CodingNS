@@ -5,6 +5,7 @@ import type { AuthCallerKind, AuthService } from "../modules/auth/auth-service.j
 
 const PUBLIC_ROUTE_RULES = new Set([
   "GET:/api/public/bootstrap-status",
+  "GET:/api/public/host-handshake",
   "POST:/api/public/setup",
   "POST:/api/auth/login",
   "POST:/api/auth/refresh",

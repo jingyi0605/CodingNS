@@ -107,6 +107,54 @@ export interface AuthLoginAttemptRecord {
   updatedAt: string;
 }
 
+
+export type PeerHostStatus = "unknown" | "reachable" | "unreachable" | "version_mismatch" | "unauthorized";
+
+export interface PeerHostRecord {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  alias: string | null;
+  baseUrl: string;
+  normalizedBaseUrl: string;
+  status: PeerHostStatus;
+  remoteVersion: string | null;
+  remoteApiCompatibility: string | null;
+  remoteHostFingerprint: string | null;
+  lastCheckedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorDetail: string | null;
+  createdAt: string;
+  updatedAt: string;
+  removedAt: string | null;
+}
+
+export interface PeerHostWorkspaceBindingRecord {
+  ownerUserId: string;
+  activeHostId: string;
+  workspaceKey: string;
+  selectedHostId: string;
+  remoteWorkspaceId: string | null;
+  remoteWorkspacePath: string | null;
+  remoteWorkspaceName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PeerHostSessionRecord {
+  peerHostId: string;
+  ownerUserId: string;
+  username: string;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted: string;
+  expiresAt: string | null;
+  remoteUserId: string;
+  remoteUsername: string;
+  remoteHostFingerprint: string | null;
+  savedAt: string;
+  updatedAt: string;
+}
+
 export type ProviderInstallState = "ready" | "missing" | "unknown";
 
 export interface ProviderRuntimeStateRecord {
