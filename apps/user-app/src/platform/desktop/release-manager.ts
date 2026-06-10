@@ -36,9 +36,16 @@ export async function refreshDesktopUpdateState(
   const state = await checkForDesktopUpdate();
 
   recordDesktopUpdateState(state);
-  await maybeNotifyDesktopUpdate(state, notifyMode);
+  await notifyDesktopUpdate(state, notifyMode);
 
   return state;
+}
+
+export async function notifyDesktopUpdate(
+  state: DesktopReleaseState,
+  notifyMode: NonNullable<RefreshDesktopUpdateStateOptions["notify"]>
+): Promise<void> {
+  await maybeNotifyDesktopUpdate(state, notifyMode);
 }
 
 export async function downloadDesktopUpdate(): Promise<DesktopUpdateDownloadResult> {

@@ -5,15 +5,14 @@ import { useClientConfigSelector } from "../config/client-config-store";
 import {
   downloadDesktopUpdate,
   installDesktopUpdate,
-  markDesktopRestartRequired,
-  refreshDesktopUpdateState
+  markDesktopRestartRequired
 } from "../platform/desktop/release-manager";
 import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
 import {
-  checkForServiceUpdate,
   getServiceUpdateTask,
   installServiceUpdate
 } from "../platform/server/service-update-manager";
+import { checkCombinedUpdates } from "../platform/update/unified-update-manager";
 import { createPlatformAdapter } from "../platform/platform-adapter";
 import { t } from "../shared/i18n";
 import { ReleaseInstallReadyModal } from "./ReleaseInstallReadyModal";
@@ -52,21 +51,28 @@ export function DesktopUnifiedUpdatePanel() {
     setDownloadedVersion(null);
 
     try {
-      const serviceSnapshot = await checkForServiceUpdate();
-      const nextServicePackage = serviceSnapshot.packages[0] ?? null;
+      const result = await checkCombinedUpdates({ notify: "never" });
+      const nextServicePackage = result.servicePackage;
       setServicePackage(nextServicePackage);
       setServiceTask(nextServicePackage?.installTask ?? null);
 
-      const clientState = await refreshDesktopUpdateState({ notify: "always" });
+      const clientState = result.clientState;
 
-      if (autoDownloadUpdate && clientState.hasUpdate && clientState.manifest) {
+      if (autoDownloadUpdate && clientState?.hasUpdate && clientState.manifest) {
         const downloadResult = await downloadDesktopUpdate();
         if (downloadResult.ok) {
           setDownloadedVersion(downloadResult.version ?? clientState.manifest.version);
         }
       }
 
-      setStatusText(resolveCombinedCheckStatus(nextServicePackage, clientState.hasUpdate));
+      setStatusText(
+        resolveCombinedCheckStatus(
+          nextServicePackage,
+          Boolean(clientState?.hasUpdate),
+          result.serviceError,
+          result.clientError
+        )
+      );
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.updateCheckFailed"));
     } finally {
@@ -262,12 +268,26 @@ function isPendingServiceTask(status: ServiceUpdateTaskInfo["status"]): boolean 
 
 function resolveCombinedCheckStatus(
   servicePackage: ManagedServicePackageInfo | null,
-  clientHasUpdate: boolean
+  clientHasUpdate: boolean,
+  serviceError: string | null,
+  clientError: string | null
 ): string {
   const serviceHasUpdate = Boolean(servicePackage?.hasUpdate);
 
-  if (servicePackage?.checkStatus === "check_failed") {
-    return servicePackage.checkError ?? t("settings.serverCheckFailed");
+  if (servicePackage?.checkStatus === "check_failed" || serviceError) {
+    if (clientHasUpdate) {
+      return t("settings.updateClientReadyServiceCheckFailed");
+    }
+
+    return servicePackage?.checkError ?? serviceError ?? t("settings.serverCheckFailed");
+  }
+
+  if (clientError) {
+    if (serviceHasUpdate) {
+      return t("settings.updateServerReadyClientCheckFailed");
+    }
+
+    return t("settings.updateCheckIncomplete");
   }
 
   if (serviceHasUpdate && clientHasUpdate) {
