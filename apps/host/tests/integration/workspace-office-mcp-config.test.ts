@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildCodexAppServerArgsWithWorkspaceOfficeMcp,
   buildCodexWorkspaceOfficeMcpConfigOverrides,
+  buildWorkspaceOfficeMcpCommandArgs,
   CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV,
-  CODINGNS_OFFICE_MCP_AUTH_FILE_ENV
+  CODINGNS_OFFICE_MCP_AUTH_FILE_ENV,
+  resolveCodingnsPackageRootDir
 } from "../../src/modules/sessions/workspace-office-mcp-config.js";
 
 describe("workspace-office-mcp-config", () => {
@@ -54,5 +59,23 @@ describe("workspace-office-mcp-config", () => {
       "mcp_servers.codingns-workspace-office.startup_timeout_sec=90",
       "model_instructions_file=" + JSON.stringify("/tmp/WORKSPACE_SESSION_COMPOSED.md")
     ]);
+  });
+
+  it("打包安装后会从 dist 目录向上找到 npm 包根目录", () => {
+    const packageRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-package-root-"));
+    const nestedModuleDir = path.join(packageRootDir, "dist", "server", "modules", "sessions");
+
+    fs.mkdirSync(path.join(packageRootDir, "bin"), { recursive: true });
+    fs.mkdirSync(nestedModuleDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(packageRootDir, "package.json"),
+      `${JSON.stringify({ name: "@jingyi0605/codingns" }, null, 2)}\n`,
+      "utf8"
+    );
+    fs.writeFileSync(path.join(packageRootDir, "bin", "codingns.mjs"), "", "utf8");
+
+    expect(resolveCodingnsPackageRootDir(nestedModuleDir)).toBe(packageRootDir);
+    expect(buildWorkspaceOfficeMcpCommandArgs("C:\\Users\\jackson\\.codingns\\auth.json", packageRootDir)[0])
+      .toBe(path.join(packageRootDir, "bin", "codingns.mjs"));
   });
 });

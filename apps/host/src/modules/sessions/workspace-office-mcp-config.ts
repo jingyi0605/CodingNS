@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 
 export const WORKSPACE_OFFICE_MCP_NAME = "codingns-workspace-office";
 export const CODINGNS_OFFICE_MCP_AUTH_FILE_ENV = "CODINGNS_OFFICE_MCP_AUTH_FILE";
@@ -7,12 +8,15 @@ export const DEFAULT_CODEX_WORKSPACE_OFFICE_MCP_STARTUP_TIMEOUT_SEC = 90;
 
 const REPO_ROOT_DIR = path.resolve(import.meta.dirname, "../../../../../");
 
+const PACKAGE_JSON_FILE_NAME = "package.json";
+const CODINGNS_PACKAGE_NAME = "@jingyi0605/codingns";
+
 export function buildWorkspaceOfficeMcpCommandArgs(
   authFilePath: string,
-  repoRootDir = REPO_ROOT_DIR
+  packageRootDir = resolveCodingnsPackageRootDir()
 ): string[] {
   return [
-    path.join(repoRootDir, "packages", "codingns", "bin", "codingns.mjs"),
+    path.join(packageRootDir, "bin", "codingns.mjs"),
     "mcp",
     "workspace-office",
     "serve",
@@ -30,7 +34,7 @@ export function buildCodexWorkspaceOfficeMcpConfigOverrides(input: {
 }): string[] {
   const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(
     input.authFilePath,
-    input.repoRootDir ?? REPO_ROOT_DIR
+    input.repoRootDir ? path.join(input.repoRootDir, "packages", "codingns") : resolveCodingnsPackageRootDir()
   );
   const startupTimeoutSec = Math.max(
     1,
@@ -51,6 +55,57 @@ export function buildCodexWorkspaceOfficeMcpConfigOverrides(input: {
   }
 
   return overrides;
+}
+
+export function resolveCodingnsPackageRootDir(startDir = import.meta.dirname): string {
+  const packageRootDir = findPackageRootDir(startDir);
+
+  if (packageRootDir) {
+    return packageRootDir;
+  }
+
+  const sourcePackageRootDir = path.join(REPO_ROOT_DIR, "packages", "codingns");
+
+  if (isCodingnsPackageRootDir(sourcePackageRootDir)) {
+    return sourcePackageRootDir;
+  }
+
+  return sourcePackageRootDir;
+}
+
+function findPackageRootDir(startDir: string): string | null {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    if (isCodingnsPackageRootDir(currentDir)) {
+      return currentDir;
+    }
+
+    const parentDir = path.dirname(currentDir);
+
+    if (parentDir === currentDir) {
+      return null;
+    }
+
+    currentDir = parentDir;
+  }
+}
+
+function isCodingnsPackageRootDir(candidateDir: string): boolean {
+  const packageJsonPath = path.join(candidateDir, PACKAGE_JSON_FILE_NAME);
+
+  if (!fs.existsSync(packageJsonPath) || !fs.statSync(packageJsonPath).isFile()) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { name?: unknown };
+
+    return parsed.name === CODINGNS_PACKAGE_NAME
+      && fs.existsSync(path.join(candidateDir, "bin", "codingns.mjs"));
+  } catch {
+    return false;
+  }
 }
 
 export function shouldEnableCodexWorkspaceOfficeMcp(env: NodeJS.ProcessEnv): boolean {
