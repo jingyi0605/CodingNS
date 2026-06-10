@@ -1,6 +1,6 @@
 # 任务清单 - spec001.3.2 当前HOST代理访问其他HOST仓库（人话版）
 
-状态：Draft
+状态：IN_REVIEW
 
 ## 2026-06-09 进展补记
 
@@ -9,6 +9,68 @@
 - 已明确目标 HOST 必须局域网可达、版本一致、API 兼容
 - 已明确前端不保存目标 HOST token，只传 `targetHostId`
 - 已明确工作区视图必须使用 `hostId + workspaceId`，不能再假设 `workspaceId` 全局唯一
+
+
+## 2026-06-09 实现补记
+
+- 后端已新增 Peer HOST 配置、握手检查、目标 HOST 登录态保存和受控 HTTP 代理。
+- 代理白名单已按“请求方法 + 路径”检查，不再只靠路径放行。
+- 前端 `httpClient` 已支持 `targetHostId`，代理请求仍只连当前 HOST。
+- 工作区引用已开始使用 `hostId + workspaceId`，缓存 key 和列表 key 避免跨 HOST 冲突。
+- 移动端工作区切换入口已有最小接入：能显示 HOST/工作区来源，不可用或暂不支持直接打开的远端项会给提示。
+- WebSocket 代理已补上，并已放开远程终端流；完整远端工作区实时刷新已通过 Workbench 实时客户端的 `targetHostId` 链路接入，仍建议真实双 HOST 环境做手动验收。
+
+本轮最小验证：
+
+```bash
+pnpm --dir apps/host exec tsc --noEmit --pretty false
+pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json
+pnpm --dir apps/host test -- tests/integration/peer-host-routes.test.ts
+pnpm --dir apps/user-app test -- src/network/http-client.test.ts src/features/workbench/utils/workbench-navigation-snapshot.test.ts
+NODE_ENV=test pnpm --dir apps/user-app test src/features/mobile-shell/components/MobileWorkspaceSwitcherHeader.test.tsx
+pnpm check:sqlite-runtime
+```
+
+说明：`MobileWorkspaceSwitcherHeader.test.tsx` 普通环境之前出现过 React production act 报错；加 `NODE_ENV=test` 后通过。
+
+
+## 2026-06-09 第二轮实现补记
+
+- 第二轮曾新增设置页 Peer HOST 管理面板；第三轮已按最新要求取消该入口，Peer HOST 管理迁移到顶部 HOST 连接列表。
+- 移动端工作区切换会真实拉取其他 HOST 的工作区，不再只靠旧缓存。
+- 点击 Peer HOST 工作区会携带 `hostId + workspaceId`，URL 通过 `targetHostId` 保留目标 HOST。
+- Workbench 实时客户端和会话实时客户端都支持 `targetHostId`，通过当前 HOST 的窄口 WS 代理连接目标 HOST。
+- 后端新增 `/api/host-proxy/hosts/:peerHostId/ws`，现在会转发工作台、文件树、Git、工作区管理、终端管理、会话实时消息和远程终端流。
+- 仍需真实双 HOST 环境做手动验收，确认局域网可达、版本一致和目标登录态实际可用。
+
+本轮最小验证：
+
+```bash
+pnpm --dir apps/host exec tsc --noEmit --pretty false
+pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json
+NODE_ENV=test pnpm --dir apps/user-app test src/features/mobile-shell/components/MobileWorkspaceSwitcherHeader.test.tsx src/network/workbench-realtime-client.test.ts src/network/realtime-client.test.ts
+```
+
+## 2026-06-09 第三轮实现补记
+
+- 已按最新要求取消“设置页 Peer HOST 管理”方向，Peer HOST 开关迁移到顶部 HOST 连接列表。
+- 顶部 HOST 列表现在以当前 HOST 为主 HOST，其他已保存 HOST 可编辑 4 字以内别名，并在通过检查和登录后启用为 Peer HOST。
+- 启用 Peer HOST 前会走当前主 HOST 的后端检查：网络可达、版本/API 兼容、目标账号登录可用；目标 HOST 密码只用于本次登录检查，不保存到主 HOST，也不再复用前端本地记住的密码。
+- WebSocket 代理已放开远程终端流：`terminal.subscribe`、`terminal.input`、`terminal.resize` 和对应输出/状态消息可以通过 Peer HOST 代理转发。
+- 项目管理窗口已支持为项目选择使用的 HOST，只列当前主 HOST 和已启用 Peer HOST；项目名旁边显示 HOST 别名标签。
+- 工作区侧栏和项目管理窗口都显示 HOST 标签，标签颜色按 HOST 稳定分配，标签文字来自 HOST 连接记录里的别名。
+
+本轮最小验证：
+
+```bash
+pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json --pretty false
+pnpm --dir apps/host exec tsc --noEmit --pretty false
+pnpm --dir apps/host test tests/integration/peer-host-ws-proxy.test.ts
+pnpm check:sqlite-runtime
+```
+
+说明：按“不要一直卡在测试阶段”的要求，本轮只跑类型检查、SQLite 禁用检查和 WS 终端代理最小测试，没有跑全量测试。
+
 
 ## 这份文档是干什么的
 
@@ -79,8 +141,8 @@
 
 ## 阶段 1：后端先有 Peer HOST 真相
 
-- [ ] 1.1 建 Peer HOST 存储和基础接口
-  - 状态：TODO
+- [x] 1.1 建 Peer HOST 存储和基础接口
+  - 状态：DONE
   - 这一步到底做什么：在 Host 数据库里保存当前用户的 Peer HOST 配置，并提供增删改查接口
   - 做完以后能看到什么结果：当前 HOST 可以保存其他 HOST 地址，但还不代理业务 API
   - 依赖什么：0.2
@@ -103,8 +165,8 @@
   - 对应需求：`requirements.md` 需求 1、需求 6
   - 对应设计：`design.md` §3.1、§4.2、§6.1
 
-- [ ] 1.2 增加 HOST 握手和版本一致检查
-  - 状态：TODO
+- [x] 1.2 增加 HOST 握手和版本一致检查
+  - 状态：DONE
   - 这一步到底做什么：给每个 HOST 暴露轻量握手接口，并在检查 Peer HOST 时确认产品、版本和 API 兼容标识一致
   - 做完以后能看到什么结果：不可达或版本不一致的 Peer HOST 会被明确标记，不能进入可代理状态
   - 依赖什么：1.1
@@ -126,8 +188,8 @@
   - 对应需求：`requirements.md` 需求 2
   - 对应设计：`design.md` §4.1、§6.2、§7.3
 
-- [ ] 1.3 保存和刷新目标 HOST 登录态
-  - 状态：TODO
+- [x] 1.3 保存和刷新目标 HOST 登录态
+  - 状态：DONE
   - 这一步到底做什么：当前 HOST 代用户登录目标 HOST，并把目标 HOST token 安全保存在后端
   - 做完以后能看到什么结果：前端不拿目标 HOST token，当前 HOST 能用目标 HOST 会话发起后端请求
   - 依赖什么：1.2
@@ -153,8 +215,8 @@
 
 ## 阶段 2：做受控 API 代理，不做任意转发器
 
-- [ ] 2.1 实现 HTTP 代理服务和路径白名单
-  - 状态：TODO
+- [x] 2.1 实现 HTTP 代理服务和路径白名单
+  - 状态：DONE
   - 这一步到底做什么：新增当前 HOST 到 Peer HOST 的受控 HTTP 代理，只允许仓库操作主链路
   - 做完以后能看到什么结果：通过当前 HOST 可以请求目标 HOST 的 `/api/workspaces`、Git、文件、会话等白名单 API
   - 依赖什么：1.3
@@ -175,8 +237,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 6、需求 7
   - 对应设计：`design.md` §4.3、§4.4、§6.3、§7.4
 
-- [ ] 2.2 前端 API 客户端支持 `targetHostId`
-  - 状态：TODO
+- [x] 2.2 前端 API 客户端支持 `targetHostId`
+  - 状态：DONE
   - 这一步到底做什么：改造 `httpClient`，调用方传 `targetHostId` 时自动走当前 HOST 代理入口
   - 做完以后能看到什么结果：页面 API 不需要知道目标 HOST `baseUrl`，只传目标 HOST ID
   - 依赖什么：2.1
@@ -200,8 +262,8 @@
 
 ## 阶段 3：工作区视图接入 HOST 作用域
 
-- [ ] 3.1 建立 `WorkspaceRef` 和 scoped workspace API
-  - 状态：TODO
+- [x] 3.1 建立 `WorkspaceRef` 和 scoped workspace API
+  - 状态：DONE
   - 这一步到底做什么：给工作区 API 增加带 HOST 归属的封装，避免页面直接拼代理参数
   - 做完以后能看到什么结果：代码里能用 `hostId + workspaceId` 表达一个工作区
   - 依赖什么：2.2
@@ -222,8 +284,8 @@
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §3.3、§3.4、§5.2、§7.2
 
-- [ ] 3.2 工作区视图展示 Peer HOST 仓库
-  - 状态：TODO
+- [x] 3.2 工作区视图展示 Peer HOST 仓库
+  - 状态：DONE
   - 这一步到底做什么：在工作区视图里展示 Peer HOST 分组和远端仓库，并把点击后的操作目标落到对应 HOST
   - 做完以后能看到什么结果：用户能看到某个仓库来自哪台 HOST，也能切换不同 HOST 下的同类仓库
   - 依赖什么：3.1
@@ -249,8 +311,8 @@
 
 ## 阶段 4：必要实时链路和验收
 
-- [ ] 4.1 评估并接入必要 WebSocket 代理
-  - 状态：TODO
+- [x] 4.1 评估并接入必要 WebSocket 代理
+  - 状态：DONE
   - 这一步到底做什么：只给确实需要实时能力的远端仓库场景接 WebSocket 代理
   - 做完以后能看到什么结果：远端会话或工作台需要实时刷新时，不再只能靠手动刷新
   - 依赖什么：3.2
@@ -272,7 +334,7 @@
   - 对应设计：`design.md` §4.5
 
 - [ ] 4.2 主流程验收
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：验证从添加 Peer HOST 到操作远端仓库的完整流程
   - 做完以后能看到什么结果：这套机制不是纸面设计，能跑通真实主链路
   - 依赖什么：4.1
