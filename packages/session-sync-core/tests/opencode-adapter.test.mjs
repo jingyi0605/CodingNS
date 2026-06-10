@@ -415,6 +415,71 @@ test("OpenCodeAdapter 会复用短 TTL discovery 缓存，避免重复请求 ser
   assert.equal(requestCount, 1);
 });
 
+test("OpenCodeAdapter 在 sqlite 兜底时会按 workspace 定向查询，不再全表扫描后再过滤", async (context) => {
+  const fixture = createOpenCodeFixture();
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_input, init = {}) => {
+    return await new Promise((_resolve, reject) => {
+      const signal = init.signal;
+
+      const abort = () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  try {
+    const adapter = new OpenCodeAdapter({
+      baseUrl: "http://127.0.0.1:41827",
+      dbPath: fixture.dbPath,
+      requestTimeoutMs: 5
+    });
+    const statements = [];
+    const originalWithReadonlyDb = adapter.withReadonlyDb.bind(adapter);
+
+    adapter.withReadonlyDb = (reader) => originalWithReadonlyDb((db) => {
+      const originalPrepare = db.prepare.bind(db);
+
+      db.prepare = (sql) => {
+        statements.push(String(sql));
+        return originalPrepare(sql);
+      };
+
+      try {
+        return reader(db);
+      } finally {
+        db.prepare = originalPrepare;
+      }
+    });
+
+    const discovery = await adapter.detectSessionsDetailed("/workspace/demo");
+
+    assert.equal(discovery.isComplete, true);
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.providerSessionId, "ses_demo");
+    assert.equal(
+      statements.some((sql) => sql.includes("WHERE s.directory = ?")),
+      true
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
 test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 body", async (context) => {
   const originalFetch = globalThis.fetch;
   const requests = [];

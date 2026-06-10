@@ -6,14 +6,13 @@ describe("WorkbenchService", () => {
   it("快照会过滤掉 Butler 控制会话", () => {
     const requestWorkspaceDiscovery = vi.fn();
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -45,22 +44,23 @@ describe("WorkbenchService", () => {
 
   it("快照会过滤 Butler 工作目录及其子目录工作区", () => {
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          },
-          {
-            id: "workspace-butler-root",
-            path: "/repo/data/host/butler-workspace"
-          },
-          {
-            id: "workspace-butler-child",
-            path: "/repo/data/host/butler-workspace/.butler-follow-up-evaluator"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        },
+        {
+          id: "workspace-butler-root",
+          path: "/repo/data/host/butler-workspace",
+          favorite: false
+        },
+        {
+          id: "workspace-butler-child",
+          path: "/repo/data/host/butler-workspace/.butler-follow-up-evaluator",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -85,22 +85,23 @@ describe("WorkbenchService", () => {
 
   it("快照会把子工作树挂到根工作区下面，并保留各自会话", () => {
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-root",
-            path: "/repo/root"
-          },
-          {
-            id: "workspace-child",
-            path: "/repo/root.worktrees/child"
-          },
-          {
-            id: "workspace-grand-child",
-            path: "/repo/root.worktrees/grand-child"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-root",
+          path: "/repo/root",
+          favorite: false
+        },
+        {
+          id: "workspace-child",
+          path: "/repo/root.worktrees/child",
+          favorite: false
+        },
+        {
+          id: "workspace-grand-child",
+          path: "/repo/root.worktrees/grand-child",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -202,14 +203,13 @@ describe("WorkbenchService", () => {
 
   it("快照会直接使用 sessionHistoryService 过滤后的会话列表", () => {
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -244,14 +244,13 @@ describe("WorkbenchService", () => {
   it("标题同步任务取消后会把 AbortSignal 传给 sessionHistoryService", async () => {
     let receivedSignal: AbortSignal | null = null;
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -296,14 +295,13 @@ describe("WorkbenchService", () => {
   it("显式刷新才会调度工作区 discovery", async () => {
     const requestWorkspaceDiscovery = vi.fn();
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -335,14 +333,13 @@ describe("WorkbenchService", () => {
     const requestWorkspaceDiscovery = vi.fn();
     const discoverWorkspaceSessions = vi.fn(async () => []);
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [
-          {
-            id: "workspace-1",
-            path: "/repo/workspace-1"
-          }
-        ])
-      } as never,
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -365,6 +362,7 @@ describe("WorkbenchService", () => {
     });
 
     expect(discoverWorkspaceSessions).toHaveBeenCalledWith("workspace-1", "user-1", {
+      maxAgeMs: 15_000,
       force: true,
       refreshStateMode: "deferred"
     });
@@ -377,9 +375,7 @@ describe("WorkbenchService", () => {
       throw new Error("不应该同步等待刷新任务");
     });
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [])
-      } as never,
+      createWorkspaceRepositoryStub([]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -451,9 +447,7 @@ describe("WorkbenchService", () => {
       updatedAt: "2026-06-06T10:00:10.000Z"
     }));
     const service = new WorkbenchService(
-      {
-        list: vi.fn(() => [])
-      } as never,
+      createWorkspaceRepositoryStub([]),
       {
         listByUserId: vi.fn(() => [])
       } as never,
@@ -495,9 +489,149 @@ describe("WorkbenchService", () => {
     });
     expect(scheduleRefresh).not.toHaveBeenCalled();
   });
+
+  it("workbench 刷新会优先调度可见根工作区，并限制单轮 discovery 数量", async () => {
+    const requestWorkspaceDiscovery = vi.fn();
+    const workspaces = Array.from({ length: 8 }, (_, index) => ({
+      id: `workspace-${index + 1}`,
+      path: `/repo/workspace-${index + 1}`,
+      favorite: false
+    }));
+    const service = new WorkbenchService(
+      createWorkspaceRepositoryStub(workspaces),
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery,
+        needsWorkspaceDiscovery: vi.fn(() => true),
+        getWorkspaceDiscoveryStatusSummary: vi.fn(() => null)
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    await service.refreshSnapshot("user-1", {
+      force: true
+    });
+
+    expect(requestWorkspaceDiscovery).toHaveBeenCalledTimes(6);
+    expect(requestWorkspaceDiscovery.mock.calls.map((call) => call[0])).toEqual([
+      "workspace-1",
+      "workspace-2",
+      "workspace-3",
+      "workspace-4",
+      "workspace-5",
+      "workspace-6"
+    ]);
+  });
+
+  it("冷工作区会用更大的 maxAgeMs，热工作树会优先刷新", async () => {
+    const requestWorkspaceDiscovery = vi.fn();
+    const service = new WorkbenchService(
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-root",
+          path: "/repo/root",
+          favorite: false
+        },
+        {
+          id: "workspace-child-hot",
+          path: "/repo/root.worktrees/hot",
+          favorite: false
+        },
+        {
+          id: "workspace-child-cold",
+          path: "/repo/root.worktrees/cold",
+          favorite: false
+        }
+      ]),
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn((workspaceId: string) => {
+          if (workspaceId === "workspace-child-hot") {
+            return [{
+              sessionId: "session-hot",
+              activityState: "running",
+              runningState: "running",
+              updatedAt: "2026-06-10T10:00:00.000Z"
+            }];
+          }
+
+          return [];
+        }),
+        requestWorkspaceDiscovery,
+        needsWorkspaceDiscovery: vi.fn(() => true),
+        getWorkspaceDiscoveryStatusSummary: vi.fn(() => null)
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceIds: vi.fn(() => ["workspace-child-hot", "workspace-child-cold"]),
+        listByRootWorkspaceId: vi.fn(() => [])
+      } as never
+    );
+
+    await service.refreshSnapshot("user-1", {
+      force: false
+    });
+
+    expect(requestWorkspaceDiscovery.mock.calls).toEqual([
+      [
+        "workspace-root",
+        "user-1",
+        {
+          maxAgeMs: 15_000,
+          force: false,
+          refreshStateMode: "deferred"
+        }
+      ],
+      [
+        "workspace-child-hot",
+        "user-1",
+        {
+          maxAgeMs: 60_000,
+          force: false,
+          refreshStateMode: "deferred"
+        }
+      ],
+      [
+        "workspace-child-cold",
+        "user-1",
+        {
+          maxAgeMs: 120_000,
+          force: false,
+          refreshStateMode: "deferred"
+        }
+      ]
+    ]);
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function createWorkspaceRepositoryStub(
+  workspaces: Array<{
+    id: string;
+    path: string;
+    favorite: boolean;
+  }>
+) {
+  return {
+    listByOwnerUserId: vi.fn(() => workspaces)
+  } as never;
 }

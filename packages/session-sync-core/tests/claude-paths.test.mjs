@@ -1241,3 +1241,76 @@ test("ClaudeCodeAdapter discovery 第二轮会复用文件摘要缓存", async (
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("ClaudeCodeAdapter 在精确项目目录已有真实 transcript 时，不会再扫整个 projects 根目录", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-exact-project-only-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const exactProjectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const otherProjectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-Other");
+  const exactSessionId = "exact-session-1";
+  const otherSessionId = "other-session-1";
+
+  try {
+    mkdirSync(exactProjectDir, { recursive: true });
+    mkdirSync(otherProjectDir, { recursive: true });
+    writeFileSync(
+      join(exactProjectDir, `${exactSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: exactSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-06-10T10:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "精确目录会话" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: exactSessionId,
+          aiTitle: "精确目录会话"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(otherProjectDir, `${otherSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: otherSessionId,
+          cwd: "/Users/jackson/Documents/Code/Other",
+          timestamp: "2026-06-10T10:05:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "不该被扫描的其他项目" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: otherSessionId,
+          aiTitle: "其他项目"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const parsedFiles = [];
+    const originalParseMessages = adapter.parseMessages.bind(adapter);
+
+    adapter.parseMessages = (...args) => {
+      parsedFiles.push(args[0]);
+      return originalParseMessages(...args);
+    };
+
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, exactSessionId);
+    assert.deepEqual(parsedFiles, [join(exactProjectDir, `${exactSessionId}.jsonl`)]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

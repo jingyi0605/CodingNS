@@ -17,7 +17,12 @@ import type {
   AffairsAssistantSessionSnapshotService
 } from "./affairs-assistant-session-snapshot-service.js";
 
-const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
+const WORKBENCH_DISCOVERY_REFRESH_BUDGET = 6;
+const WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS = 15_000;
+const WORKBENCH_DISCOVERY_HOT_MAX_AGE_MS = 60_000;
+const WORKBENCH_DISCOVERY_WARM_MAX_AGE_MS = 120_000;
+const WORKBENCH_DISCOVERY_COLD_MAX_AGE_MS = 300_000;
+const WORKBENCH_DISCOVERY_RECENT_ACTIVITY_WINDOW_MS = 30 * 60_000;
 const SESSION_TITLE_SYNC_CONCURRENCY = 4;
 
 export interface WorkbenchWorktreeNode {
@@ -68,11 +73,20 @@ export class WorkbenchService {
 
   getSnapshot(userId: string): WorkbenchSnapshot {
     const allWorkspaces = this.listWorkbenchWorkspaces(userId);
-    const workspaces = this.listVisibleWorkspaces(allWorkspaces);
-    const workspaceById = new Map(allWorkspaces.map((workspace) => [workspace.id, workspace] as const));
     const navigationStates = this.workspaceNavigationStateRepository.listByUserId(userId);
     const navigationStateByWorkspaceId = new Map(
       navigationStates.map((item) => [item.workspaceId, item] as const)
+    );
+    const hiddenWorkspaceIdSet = new Set(
+      navigationStates
+        .filter((item) => item.hidden)
+        .map((item) => item.workspaceId)
+    );
+    const workspaces = this.listVisibleWorkspaces(allWorkspaces, hiddenWorkspaceIdSet);
+    const workspaceById = new Map(
+      allWorkspaces
+        .filter((workspace) => !hiddenWorkspaceIdSet.has(workspace.id))
+        .map((workspace) => [workspace.id, workspace] as const)
     );
 
     const collapsedWorkspaceIdSet = new Set(
@@ -92,6 +106,7 @@ export class WorkbenchService {
           workspace.id,
           workspaceById,
           navigationStateByWorkspaceId,
+          hiddenWorkspaceIdSet,
           userId
           ),
           collapsed: collapsedWorkspaceIdSet.has(workspace.id)
@@ -136,13 +151,7 @@ export class WorkbenchService {
   }
 
   shouldRefreshSnapshot(userId: string): boolean {
-    return this.listWorkbenchWorkspaces(userId)
-      .some((workspace) => {
-        return this.sessionHistoryService.needsWorkspaceDiscovery(
-          workspace.id,
-          WORKBENCH_REFRESH_MAX_AGE_MS
-        );
-      });
+    return this.selectDiscoveryCandidates(userId, false).length > 0;
   }
 
   async refreshSnapshot(
@@ -257,7 +266,7 @@ export class WorkbenchService {
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
-  private listVisibleWorkspaces(workspaces: Workspace[]): Workspace[] {
+  private listVisibleWorkspaces(workspaces: Workspace[], hiddenWorkspaceIdSet: ReadonlySet<string> = new Set()): Workspace[] {
     const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
     const hiddenTemporaryWorkspaceIdSet = new Set(
       this.sessionIsolatedWorkspaceRepository

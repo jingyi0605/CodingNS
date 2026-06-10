@@ -1026,6 +1026,65 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("初始化数据库时会创建 session_source_index 和 session_discovery_diagnostics 表", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-source-index-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+
+    const client = createDatabaseClient(databasePath);
+    const sourceIndexColumns = client.db
+      .prepare("PRAGMA table_info(session_source_index)")
+      .all() as Array<{ name: string }>;
+    const diagnosticsColumns = client.db
+      .prepare("PRAGMA table_info(session_discovery_diagnostics)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(sourceIndexColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "source_key",
+        "provider",
+        "source_kind",
+        "workspace_id",
+        "provider_session_id",
+        "raw_store_ref",
+        "workspace_path",
+        "fingerprint_mtime_ms",
+        "fingerprint_size_bytes",
+        "fingerprint_inode",
+        "fingerprint_version",
+        "title",
+        "message_count",
+        "last_message_at",
+        "is_archived_hint",
+        "last_parsed_at",
+        "last_verified_at",
+        "sample_due_at",
+        "deleted_at",
+        "created_at",
+        "updated_at"
+      ])
+    );
+    expect(diagnosticsColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "workspace_id",
+        "trigger_source",
+        "provider",
+        "is_complete",
+        "status",
+        "duration_ms",
+        "session_count",
+        "scanned_files",
+        "skipped_by_fingerprint",
+        "parsed_files",
+        "bytes_read",
+        "created_at"
+      ])
+    );
+  });
+
   it("事务助手会话快照允许使用全局事务工作台 ID，不再要求真实 workspace 外键", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-affairs-assistant-session-snapshot-bootstrap-"));
     tempDirs.push(tempDir);

@@ -1,6 +1,7 @@
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import type { SessionDiscoveryDiagnosticRecord } from "../../types/domain.js";
 import type { TaskDefinition, TaskMetricsSnapshot } from "./task-types.js";
 import type { SchedulerMetricsSnapshot } from "./scheduler-metrics.js";
 import type { EventLoopDelaySnapshot, EventLoopMonitor } from "./event-loop-monitor.js";
@@ -22,8 +23,17 @@ export interface RuntimeObservabilitySnapshot {
   readonly backgroundTasks: TaskMetricsSnapshot;
   readonly registeredTasks: RuntimeObservabilityRegisteredTaskSummary[];
   readonly recentTaskActivities: TaskActivityRecord[];
+  readonly workspaceDiscoveryDiagnostics: SessionDiscoveryDiagnosticRecord[];
   readonly schedulers: SchedulerMetricsSnapshot;
   readonly eventLoop: EventLoopDelaySnapshot;
+}
+
+export interface RuntimeObservabilityQueryInput {
+  readonly sessionId: string;
+  readonly userId: string;
+  readonly activityLimit?: number;
+  readonly workspaceId?: string;
+  readonly discoveryLimit?: number;
 }
 
 
@@ -49,7 +59,12 @@ export class RuntimeObservabilityService {
     private readonly getRegisteredTaskDefinitions: () => TaskDefinition<unknown, unknown>[],
     private readonly getSchedulerMetrics: () => SchedulerMetricsSnapshot,
     private readonly eventLoopMonitor: EventLoopMonitor,
-    private readonly taskActivityLog: TaskActivityLog
+    private readonly taskActivityLog: TaskActivityLog,
+    private readonly getWorkspaceDiscoveryDiagnostics?: (
+      workspaceId: string,
+      userId: string,
+      limit: number
+    ) => SessionDiscoveryDiagnosticRecord[]
   ) {}
 
   hasActiveSession(): boolean {
@@ -99,8 +114,10 @@ export class RuntimeObservabilityService {
     this.syncCollectors();
   }
 
-  observe(sessionId: string, activityLimit = 100): RuntimeObservabilitySnapshot {
-    const session = this.touchSession(sessionId);
+  observe(input: RuntimeObservabilityQueryInput): RuntimeObservabilitySnapshot {
+    const session = this.touchSession(input.sessionId);
+    const activityLimit = normalizeListLimit(input.activityLimit, 100, 500);
+    const discoveryLimit = normalizeListLimit(input.discoveryLimit, 20, 200);
 
     return {
       observedAt: nowIso(),
@@ -117,6 +134,10 @@ export class RuntimeObservabilityService {
         }))
         .sort((left, right) => left.taskType.localeCompare(right.taskType)),
       recentTaskActivities: this.taskActivityLog.list(activityLimit),
+      workspaceDiscoveryDiagnostics:
+        input.workspaceId && this.getWorkspaceDiscoveryDiagnostics
+          ? this.getWorkspaceDiscoveryDiagnostics(input.workspaceId, input.userId, discoveryLimit)
+          : [],
       schedulers: this.getSchedulerMetrics(),
       eventLoop: this.eventLoopMonitor.observe()
     };
@@ -157,6 +178,18 @@ function normalizeSessionTtlMs(value: number | undefined): number {
   }
 
   return Math.min(MAX_SESSION_TTL_MS, Math.max(MIN_SESSION_TTL_MS, Math.floor(value)));
+}
+
+function normalizeListLimit(
+  value: number | undefined,
+  defaultValue: number,
+  maxValue: number
+): number {
+  if (!value || !Number.isFinite(value)) {
+    return defaultValue;
+  }
+
+  return Math.min(maxValue, Math.max(1, Math.floor(value)));
 }
 
 function buildLease(

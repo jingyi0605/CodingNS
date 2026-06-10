@@ -6,6 +6,8 @@ import type { RuntimeObservabilityService } from "./observability-service.js";
 interface RuntimeObservabilityQuery {
   sessionId?: string;
   activityLimit?: string;
+  workspaceId?: string;
+  discoveryLimit?: string;
 }
 
 interface RuntimeObservabilitySessionBody {
@@ -59,6 +61,15 @@ export class ObservabilityController {
     assertAuthenticated(request);
 
     const sessionId = request.query.sessionId?.trim();
+    const userId = request.auth?.user.userId;
+
+    if (!userId) {
+      throw new AppError({
+        statusCode: 401,
+        errorCode: "UNAUTHORIZED",
+        detail: "当前请求缺少有效登录态"
+      });
+    }
 
     if (!sessionId) {
       throw new AppError({
@@ -70,7 +81,16 @@ export class ObservabilityController {
     }
 
     const activityLimit = Number.parseInt(request.query.activityLimit ?? "100", 10);
-    reply.send(this.runtimeObservabilityService.observe(sessionId, activityLimit));
+    const discoveryLimit = Number.parseInt(request.query.discoveryLimit ?? "20", 10);
+    reply.send(
+      this.runtimeObservabilityService.observe({
+        sessionId,
+        userId,
+        activityLimit,
+        workspaceId: request.query.workspaceId?.trim() || undefined,
+        discoveryLimit
+      })
+    );
   };
 }
 

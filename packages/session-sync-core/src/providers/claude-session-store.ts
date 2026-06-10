@@ -19,13 +19,19 @@ export const CLAUDE_CODE_SESSION_STORE_PROFILE: ClaudeSessionStoreProfile = {
   resolveWorkspaceFiles(homeDir, workspacePath) {
     const projectsRoot = join(homeDir, "projects");
     const exactProjectDir = join(projectsRoot, workspaceSlug(workspacePath));
-    const files = new Set<string>();
+    const exactFiles = new Set<string>();
 
     if (existsSync(exactProjectDir)) {
       for (const filePath of walkJsonlFiles(exactProjectDir)) {
-        files.add(filePath);
+        exactFiles.add(filePath);
       }
     }
+
+    if (hasNonEmptyJsonlFiles(exactFiles)) {
+      return Array.from(exactFiles);
+    }
+
+    const files = new Set<string>(exactFiles);
 
     // Claude CLI 对非 ASCII 工作区路径会使用自己的目录命名规则。
     // 如果我们只扫自己算出的 exact 目录，中文路径下会被一个空的占位目录挡住，
@@ -62,6 +68,20 @@ export const CLAUDE_CODE_SESSION_STORE_PROFILE: ClaudeSessionStoreProfile = {
     return selectBestSessionFile(Array.from(candidates));
   }
 };
+
+function hasNonEmptyJsonlFiles(files: Iterable<string>): boolean {
+  for (const filePath of files) {
+    try {
+      if (statSync(filePath).size > 0) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
 
 export function createLegnaSessionStoreProfile(
   options: LegnaSessionStoreProfileOptions = {}

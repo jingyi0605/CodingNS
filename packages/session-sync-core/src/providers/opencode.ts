@@ -220,7 +220,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
     }
 
     const rows = this.withReadonlyDb((db) => {
-      return db.prepare(
+      const query =
         `SELECT
            s.id AS id,
            s.parent_id AS parent_id,
@@ -240,8 +240,13 @@ export class OpenCodeAdapter implements ProviderAdapter {
            FROM message
            GROUP BY session_id
          ) AS stats
-           ON stats.session_id = s.id`
-      ).all() as SessionSummaryRow[];
+           ON stats.session_id = s.id`;
+
+      if (targetPath) {
+        return db.prepare(`${query} WHERE s.directory = ?`).all(targetPath) as SessionSummaryRow[];
+      }
+
+      return db.prepare(query).all() as SessionSummaryRow[];
     });
 
     const sessions = rows
@@ -1573,7 +1578,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
     return this.withReadonlyDb((db) => {
       const placeholders = sessionIds.map(() => "?").join(", ");
-      const rows = db.prepare(
+      const baseQuery =
         `SELECT
            s.id AS id,
            s.parent_id AS parent_id,
@@ -1594,8 +1599,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
            GROUP BY session_id
          ) AS stats
            ON stats.session_id = s.id
-         WHERE s.id IN (${placeholders})`
-      ).all(...sessionIds) as SessionSummaryRow[];
+         WHERE s.id IN (${placeholders})`;
+      const rows = targetPath
+        ? db.prepare(`${baseQuery} AND s.directory = ?`).all(...sessionIds, targetPath) as SessionSummaryRow[]
+        : db.prepare(baseQuery).all(...sessionIds) as SessionSummaryRow[];
 
       return rows
         .map((row) => this.normalizeSqliteSessionSummaryRow(row))

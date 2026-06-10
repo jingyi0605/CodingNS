@@ -785,6 +785,48 @@ export interface SessionStatusSnapshot {
   updatedAt: string;
 }
 
+export type SessionSourceKind = "jsonl" | "sqlite_row" | "server_session" | "index_entry";
+
+export interface SessionSourceIndexRecord {
+  sourceKey: string;
+  provider: ProviderId;
+  sourceKind: SessionSourceKind;
+  workspaceId: string | null;
+  providerSessionId: string | null;
+  rawStoreRef: string | null;
+  workspacePath: string | null;
+  fingerprintMtimeMs: number | null;
+  fingerprintSizeBytes: number | null;
+  fingerprintInode: string | null;
+  fingerprintVersion: string | null;
+  title: string | null;
+  messageCount: number | null;
+  lastMessageAt: string | null;
+  isArchivedHint: boolean | null;
+  lastParsedAt: string | null;
+  lastVerifiedAt: string | null;
+  sampleDueAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionDiscoveryDiagnosticRecord {
+  id: string;
+  workspaceId: string;
+  triggerSource: string;
+  provider: ProviderId;
+  isComplete: boolean;
+  status: string;
+  durationMs: number;
+  sessionCount: number;
+  scannedFiles: number;
+  skippedByFingerprint: number;
+  parsedFiles: number;
+  bytesRead: number;
+  createdAt: string;
+}
+
 export interface AffairsAssistantSessionSnapshotRecord {
   workspaceId: string;
   userId: string;

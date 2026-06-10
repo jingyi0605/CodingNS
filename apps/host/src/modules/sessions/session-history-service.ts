@@ -44,15 +44,20 @@ import type {
   SessionActivityResolutionSource,
   SessionBinding,
   SessionChangedFileRecord,
+  SessionDiscoveryDiagnosticRecord,
   SessionIndexRecord,
   SessionListItem,
   SessionProviderConfigMode,
   SessionResolvedRunningState,
+  SessionSourceIndexRecord,
+  SessionSourceKind,
   SessionStateRecord,
   SessionStatusSnapshot
 } from "../../types/domain.js";
 import type { SessionBindingRepository } from "../../storage/repositories/session-binding-repository.js";
+import { SessionDiscoveryDiagnosticsRepository } from "../../storage/repositories/session-discovery-diagnostics-repository.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
+import { SessionSourceIndexRepository } from "../../storage/repositories/session-source-index-repository.js";
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
@@ -192,9 +197,52 @@ const SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS = 120_000;
 const GEMINI_RUNTIME_CHAT_DISCOVERY_GRACE_MS = 30_000;
 
 interface WorkspaceDiscoveryStatus {
+  phase: WorkspaceStateRefreshPhase;
+  dirtyReasons: Set<string>;
   refreshedAt: number;
   isComplete: boolean;
   partialCooldownUntil: number | null;
+  lastRequestedAt: number | null;
+  lastStartedAt: number | null;
+  lastCompletedAt: number | null;
+  lastFailedAt: number | null;
+  nextAllowedAt: number | null;
+  runningTaskId: string | null;
+}
+
+export interface WorkspaceDiscoveryStatusSummary {
+  phase: WorkspaceStateRefreshPhase;
+  dirtyReasonCount: number;
+  isComplete: boolean;
+  lastRequestedAt: number | null;
+  lastStartedAt: number | null;
+  lastCompletedAt: number | null;
+  lastFailedAt: number | null;
+  nextAllowedAt: number | null;
+}
+
+interface SessionSourceIndexRepairScope {
+  provider: string | null;
+  sourceKeys: Set<string>;
+  rawStoreRefs: Set<string>;
+}
+
+export interface SessionSourceIndexRepairRequest {
+  workspaceId: string;
+  userId: string;
+  provider?: string | null;
+  sourceKeys?: string[];
+  rawStoreRefs?: string[];
+  awaitDiscovery?: boolean;
+}
+
+export interface SessionSourceIndexRepairResult {
+  workspaceId: string;
+  provider: string | null;
+  sourceKeyCount: number;
+  rawStoreRefCount: number;
+  clearedSourceCount: number;
+  awaitDiscovery: boolean;
 }
 
 type WorkspaceStateRefreshPhase = "fresh" | "stale" | "running" | "cooldown" | "failed";
@@ -301,6 +349,8 @@ export class SessionHistoryService {
   private readonly capabilityService: CapabilityService;
   private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
   private readonly sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId">;
+  private readonly sessionSourceIndexRepository: SessionSourceIndexRepository;
+  private readonly sessionDiscoveryDiagnosticsRepository: SessionDiscoveryDiagnosticsRepository;
   private readonly providerSessionDeleteCli: ProviderSessionDeleteCli;
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
@@ -325,6 +375,7 @@ export class SessionHistoryService {
   private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
   private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
+  private readonly sessionSourceIndexRepairScopes = new Map<string, SessionSourceIndexRepairScope>();
   private readonly workspaceStateRefreshStatuses = new Map<string, WorkspaceStateRefreshStatus>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
   private readonly codexDirtyBindingRepairStates = new Map<string, CodexDirtyBindingRepairState>();
@@ -371,6 +422,8 @@ export class SessionHistoryService {
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
+    this.sessionSourceIndexRepository = new SessionSourceIndexRepository(db);
+    this.sessionDiscoveryDiagnosticsRepository = new SessionDiscoveryDiagnosticsRepository(db);
     this.providerSessionDeleteCli =
       adapterOverrides.providerSessionDeleteCli ?? new CodingnsProviderSessionDeleteCli(config);
     this.taskManager = taskManager;
@@ -454,6 +507,91 @@ export class SessionHistoryService {
     return this.taskManager.observe();
   }
 
+  listWorkspaceDiscoveryDiagnostics(
+    workspaceId: string,
+    userId: string,
+    limit = 20
+  ): SessionDiscoveryDiagnosticRecord[] {
+    this.getDiscoverableWorkspaceForUserOrThrow(workspaceId, userId);
+    const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 20;
+    return this.sessionDiscoveryDiagnosticsRepository.listByWorkspaceId(workspaceId, normalizedLimit);
+  }
+
+  getWorkspaceDiscoveryStatusSummary(workspaceId: string): WorkspaceDiscoveryStatusSummary | null {
+    const status = this.workspaceDiscoveryStatuses.get(workspaceId);
+
+    if (!status) {
+      return null;
+    }
+
+    return {
+      phase: status.phase,
+      dirtyReasonCount: status.dirtyReasons.size,
+      isComplete: status.isComplete,
+      lastRequestedAt: status.lastRequestedAt,
+      lastStartedAt: status.lastStartedAt,
+      lastCompletedAt: status.lastCompletedAt,
+      lastFailedAt: status.lastFailedAt,
+      nextAllowedAt: status.nextAllowedAt
+    };
+  }
+
+  async repairSessionSourceIndex(
+    input: SessionSourceIndexRepairRequest
+  ): Promise<SessionSourceIndexRepairResult> {
+    const workspaceId = input.workspaceId.trim();
+    const userId = input.userId.trim();
+    this.getDiscoverableWorkspaceForUserOrThrow(workspaceId, userId);
+
+    const provider = normalizeOptionalText(input.provider);
+    if (provider && !this.providerRegistry.list().some((adapter) => adapter.providerId === provider)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "provider 不存在或当前不受支持",
+        field: "provider"
+      });
+    }
+
+    const sourceKeys = normalizeDistinctTexts(input.sourceKeys);
+    const rawStoreRefs = normalizeDistinctTexts(input.rawStoreRefs);
+    const existingRecords = this.sessionSourceIndexRepository.listByWorkspaceId(workspaceId);
+    const matchedRecords = existingRecords.filter((record) =>
+      matchesSessionSourceIndexRepairScope(record, provider, sourceKeys, rawStoreRefs)
+    );
+    const deletedSourceKeys = matchedRecords.map((record) => record.sourceKey);
+    const clearedSourceCount = this.sessionSourceIndexRepository.deleteBySourceKeys(deletedSourceKeys);
+
+    this.sessionSourceIndexRepairScopes.set(workspaceId, {
+      provider,
+      sourceKeys: new Set(sourceKeys),
+      rawStoreRefs: new Set(rawStoreRefs)
+    });
+
+    const awaitDiscovery = input.awaitDiscovery === true;
+
+    if (awaitDiscovery) {
+      await this.discoverWorkspaceSessions(workspaceId, userId, {
+        force: true,
+        refreshStateMode: "deferred"
+      });
+    } else {
+      this.requestWorkspaceDiscovery(workspaceId, userId, {
+        force: true,
+        refreshStateMode: "deferred"
+      });
+    }
+
+    return {
+      workspaceId,
+      provider,
+      sourceKeyCount: sourceKeys.length,
+      rawStoreRefCount: rawStoreRefs.length,
+      clearedSourceCount,
+      awaitDiscovery
+    };
+  }
+
   registerLiveActivityObservationResolver(
     resolver: LiveActivityObservationResolver
   ): { close(): void } {
@@ -510,7 +648,8 @@ export class SessionHistoryService {
             workspaceId,
             userId,
             refreshStateMode,
-            context.signal
+            context.signal,
+            context.taskId
           )
       });
     }
@@ -581,19 +720,18 @@ export class SessionHistoryService {
       refreshStateMode?: "inline" | "deferred";
     }
   ): Promise<SessionListItem[]> {
+    this.getDiscoverableWorkspaceForUserOrThrow(workspaceId, userId);
+    this.markWorkspaceDiscoveryRequested(workspaceId, "session_history.discover_workspace_sessions");
     const maxAgeMs = options?.maxAgeMs ?? 0;
     const force = options?.force ?? false;
     const discoveryStatus = this.workspaceDiscoveryStatuses.get(workspaceId);
-    const lastRefreshedAt = discoveryStatus?.refreshedAt ?? 0;
     const now = Date.now();
-    const isPartialCoolingDown =
-      discoveryStatus?.isComplete === false &&
-      discoveryStatus.partialCooldownUntil !== null &&
-      now < discoveryStatus.partialCooldownUntil;
-    const isCompleteAndFresh =
-      discoveryStatus?.isComplete === true &&
-      maxAgeMs > 0 &&
-      now - lastRefreshedAt <= maxAgeMs;
+    const isPartialCoolingDown = this.isWorkspaceDiscoveryPartialCoolingDown(discoveryStatus, now);
+    const isCompleteAndFresh = this.isWorkspaceDiscoveryCompleteAndFresh(
+      discoveryStatus,
+      maxAgeMs,
+      now
+    );
 
     if (
       !force &&
@@ -630,6 +768,19 @@ export class SessionHistoryService {
   ): void {
     const maxAgeMs = options?.maxAgeMs ?? WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS;
     const force = options?.force ?? false;
+
+    if (!this.isWorkspaceDiscoverableForUser(workspaceId, userId)) {
+      return;
+    }
+
+    const discoveryStatus = this.markWorkspaceDiscoveryRequested(
+      workspaceId,
+      "session_history.request_workspace_discovery"
+    );
+
+    if (!force && discoveryStatus.phase === "running") {
+      return;
+    }
 
     if (!force && !this.needsWorkspaceDiscovery(workspaceId, maxAgeMs)) {
       return;
@@ -671,27 +822,36 @@ export class SessionHistoryService {
   }
 
   needsWorkspaceDiscovery(workspaceId: string, maxAgeMs: number): boolean {
-    if (maxAgeMs <= 0) {
-      return true;
-    }
-
     const discoveryStatus = this.workspaceDiscoveryStatuses.get(workspaceId);
 
     if (!discoveryStatus) {
       return true;
     }
 
+    if (discoveryStatus.phase === "running") {
+      return false;
+    }
+
+    if (discoveryStatus.phase === "failed") {
+      return true;
+    }
+
+    if (discoveryStatus.dirtyReasons.size > 0) {
+      return true;
+    }
+
     if (
       !discoveryStatus.isComplete &&
-      (
-        discoveryStatus.partialCooldownUntil === null ||
-        Date.now() >= discoveryStatus.partialCooldownUntil
-      )
+      !this.isWorkspaceDiscoveryPartialCoolingDown(discoveryStatus, Date.now())
     ) {
       return true;
     }
 
-    return Date.now() - discoveryStatus.refreshedAt > maxAgeMs;
+    if (maxAgeMs <= 0) {
+      return true;
+    }
+
+    return !this.isWorkspaceDiscoveryCompleteAndFresh(discoveryStatus, maxAgeMs, Date.now());
   }
 
   async readSessionHistory(
@@ -2322,11 +2482,16 @@ export class SessionHistoryService {
     workspaceId: string,
     userId: string,
     refreshStateMode: "inline" | "deferred" = "inline",
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    taskId?: string
   ): Promise<SessionListItem[]> {
     const startedAt = Date.now();
     const debugStartedAtMs = terminalDebugNowMs();
-    const workspace = this.getWorkspaceForUserOrThrow(workspaceId, userId);
+    const workspace = this.getDiscoverableWorkspaceForUserOrThrow(workspaceId, userId);
+    const discoveryStatus = this.getOrCreateWorkspaceDiscoveryStatus(workspaceId);
+    discoveryStatus.phase = "running";
+    discoveryStatus.lastStartedAt = startedAt;
+    discoveryStatus.runningTaskId = taskId ?? `workspace.discovery:${workspaceId}:${startedAt}`;
     let discoverDurationMs = 0;
     let persistDurationMs = 0;
     let persistPass1DurationMs = 0;
@@ -2340,17 +2505,21 @@ export class SessionHistoryService {
     let listItemsDurationMs = 0;
     let refreshStateDurationMs = 0;
     const refreshStateCount = 10;
+    const activeRepairScope = this.sessionSourceIndexRepairScopes.get(workspaceId) ?? null;
 
     try {
       const discoverStartedAt = Date.now();
       const existingWorkspaceSessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+      const existingWorkspaceSourceIndexes = this.sessionSourceIndexRepository.listByWorkspaceId(workspaceId);
       const enabledProviders = this.providerRegistry
         .list()
         .map((adapter) => adapter.providerId)
         .filter((providerId) => this.isProviderEnabled(providerId));
       const knownSessions = this.buildKnownSessionSummaries(
         existingWorkspaceSessions.filter((session) => enabledProviders.includes(session.provider)),
-        workspace.path
+        existingWorkspaceSourceIndexes.filter((record) => enabledProviders.includes(record.provider)),
+        workspace.path,
+        activeRepairScope
       );
       const discoveryHandle = this.taskManager.enqueue<{
         config: ProviderSessionDiscoveryHelperConfig;
@@ -2373,6 +2542,12 @@ export class SessionHistoryService {
       const sessions = discovery.sessions;
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
+      this.persistDiscoveryDiagnostics(
+        workspaceId,
+        "session_history.workspace_discovery.scan",
+        discovery,
+        timestamp
+      );
       const discoveredSessionIds = new Map<string, string>();
       const persistedSessions: PersistedSessionDescriptor[] = [];
       const claimedPendingSessionIds = new Set<string>();
@@ -2610,6 +2785,13 @@ export class SessionHistoryService {
       persistPass2DurationMs = Date.now() - persistPass2StartedAt;
       persistPass2BatchCount = persistPass2Stats.batchCount;
       persistPass2MaxBatchMs = persistPass2Stats.maxBatchMs;
+      this.persistSessionSourceIndexRecords(
+        workspaceId,
+        workspace.path,
+        sessions,
+        existingWorkspaceSourceIndexes,
+        timestamp
+      );
       persistDurationMs = persistPass1DurationMs + relationMapDurationMs + persistPass2DurationMs;
       if (discovery.isComplete) {
         const cleanupStartedAt = Date.now();
@@ -2632,11 +2814,19 @@ export class SessionHistoryService {
       listItemsDurationMs = Date.now() - listItemsStartedAt;
       const refreshCandidates = buildSessionStateRefreshCandidates(items, refreshStateCount);
       this.workspaceDiscoveryStatuses.set(workspaceId, {
+        ...discoveryStatus,
+        phase: discovery.isComplete ? "fresh" : "cooldown",
+        dirtyReasons: new Set<string>(),
         refreshedAt: Date.now(),
         isComplete: discovery.isComplete,
         partialCooldownUntil: discovery.isComplete
           ? null
-          : Date.now() + WORKSPACE_DISCOVERY_PARTIAL_COOLDOWN_MS
+          : Date.now() + WORKSPACE_DISCOVERY_PARTIAL_COOLDOWN_MS,
+        lastCompletedAt: Date.now(),
+        nextAllowedAt: discovery.isComplete
+          ? null
+          : Date.now() + WORKSPACE_DISCOVERY_PARTIAL_COOLDOWN_MS,
+        runningTaskId: null
       });
 
       const refreshStateStartedAt = Date.now();
@@ -2720,6 +2910,13 @@ export class SessionHistoryService {
 
       return nextItems;
     } catch (error) {
+      const failedAt = Date.now();
+      this.workspaceDiscoveryStatuses.set(workspaceId, {
+        ...discoveryStatus,
+        phase: "failed",
+        lastFailedAt: failedAt,
+        runningTaskId: null
+      });
       logPerformance(
         "workspace.discover_sessions.failed",
         Date.now() - startedAt,
@@ -2747,6 +2944,10 @@ export class SessionHistoryService {
         }
       );
       throw error;
+    } finally {
+      if (activeRepairScope) {
+        this.sessionSourceIndexRepairScopes.delete(workspaceId);
+      }
     }
   }
 
@@ -3854,6 +4055,93 @@ export class SessionHistoryService {
     return workspace;
   }
 
+  private getOrCreateWorkspaceDiscoveryStatus(workspaceId: string): WorkspaceDiscoveryStatus {
+    const existing = this.workspaceDiscoveryStatuses.get(workspaceId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created: WorkspaceDiscoveryStatus = {
+      phase: "fresh",
+      dirtyReasons: new Set<string>(),
+      refreshedAt: 0,
+      isComplete: false,
+      partialCooldownUntil: null,
+      lastRequestedAt: null,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastFailedAt: null,
+      nextAllowedAt: null,
+      runningTaskId: null
+    };
+
+    this.workspaceDiscoveryStatuses.set(workspaceId, created);
+    return created;
+  }
+
+  private markWorkspaceDiscoveryRequested(
+    workspaceId: string,
+    reason: string
+  ): WorkspaceDiscoveryStatus {
+    const status = this.getOrCreateWorkspaceDiscoveryStatus(workspaceId);
+    status.lastRequestedAt = Date.now();
+
+    if (status.phase === "running") {
+      status.dirtyReasons.add(reason);
+    }
+
+    return status;
+  }
+
+  private isWorkspaceDiscoveryPartialCoolingDown(
+    status: WorkspaceDiscoveryStatus | undefined,
+    now: number
+  ): boolean {
+    return Boolean(
+      status
+      && status.isComplete === false
+      && status.partialCooldownUntil !== null
+      && now < status.partialCooldownUntil
+    );
+  }
+
+  private isWorkspaceDiscoveryCompleteAndFresh(
+    status: WorkspaceDiscoveryStatus | undefined,
+    maxAgeMs: number,
+    now: number
+  ): boolean {
+    if (!status || !status.isComplete || maxAgeMs <= 0) {
+      return false;
+    }
+
+    return now - status.refreshedAt <= maxAgeMs;
+  }
+
+  private isWorkspaceDiscoverableForUser(workspaceId: string, userId: string): boolean {
+    const workspace = this.workspaceRepository.findById(workspaceId);
+
+    if (!workspace || workspace.removedAt || workspace.ownerUserId !== userId) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private getDiscoverableWorkspaceForUserOrThrow(workspaceId: string, userId: string) {
+    const workspace = this.getWorkspaceForUserOrThrow(workspaceId, userId);
+
+    if (workspace.removedAt) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "WORKSPACE_NOT_FOUND",
+        detail: "工作区不存在"
+      });
+    }
+
+    return workspace;
+  }
+
   private getBindingForUserOrThrow(sessionId: string, userId: string): SessionBinding {
     const binding = this.sessionBindingRepository.findBySessionIdForUser(sessionId, userId);
 
@@ -4902,26 +5190,165 @@ export class SessionHistoryService {
 
   private buildKnownSessionSummaries(
     sessions: SessionListItem[],
-    workspacePath: string
+    sourceIndexes: SessionSourceIndexRecord[],
+    workspacePath: string,
+    repairScope: SessionSourceIndexRepairScope | null = null
   ) {
-    return sessions
-      .filter((session) => !this.isPendingSessionAlias(session))
-      .filter((session) => !shouldSkipClaudePendingBinding(session))
-      .map((session) => {
-      const stats = safeStat(session.rawStoreRef);
+    const merged = new Map<string, import("@codingns/session-sync-core").ProviderSessionSummary>();
 
-      return {
+    for (const session of sessions) {
+      if (this.isPendingSessionAlias(session) || shouldSkipClaudePendingBinding(session)) {
+        continue;
+      }
+
+      const sourceKey = buildSessionSourceKey(
+        session.provider,
+        session.providerSessionId,
+        session.rawStoreRef
+      );
+      if (shouldExcludeKnownSessionFromRepairScope(repairScope, session.provider, sourceKey, session.rawStoreRef)) {
+        continue;
+      }
+
+      const stats = safeStat(session.rawStoreRef);
+      const summary = {
         provider: session.provider,
         providerSessionId: session.providerSessionId,
         title: session.title,
         workspacePath,
         rawStoreRef: session.rawStoreRef,
+        isArchived: session.isArchived,
         lastMessageAt: session.lastMessageAt,
         messageCount: session.messageCount,
         sourceMtimeMs: stats?.mtimeMs,
         sourceSizeBytes: stats?.size
-      };
+      } satisfies import("@codingns/session-sync-core").ProviderSessionSummary;
+
+      merged.set(buildKnownSessionSummaryKey(summary.provider, summary.providerSessionId, summary.rawStoreRef), summary);
+    }
+
+    for (const record of sourceIndexes) {
+      if (record.deletedAt) {
+        continue;
+      }
+
+      if (!record.providerSessionId || !record.rawStoreRef) {
+        continue;
+      }
+
+       if (
+        shouldExcludeKnownSessionFromRepairScope(
+          repairScope,
+          record.provider,
+          record.sourceKey,
+          record.rawStoreRef
+        )
+      ) {
+        continue;
+      }
+
+      const key = buildKnownSessionSummaryKey(
+        record.provider,
+        record.providerSessionId,
+        record.rawStoreRef
+      );
+
+      if (merged.has(key)) {
+        continue;
+      }
+
+      merged.set(key, {
+        provider: record.provider,
+        providerSessionId: record.providerSessionId,
+        title: record.title?.trim() || record.providerSessionId,
+        workspacePath: record.workspacePath?.trim() || workspacePath,
+        rawStoreRef: record.rawStoreRef,
+        isArchived: record.isArchivedHint ?? undefined,
+        lastMessageAt: record.lastMessageAt,
+        messageCount: Math.max(0, record.messageCount ?? 0),
+        sourceMtimeMs: record.fingerprintMtimeMs ?? undefined,
+        sourceSizeBytes: record.fingerprintSizeBytes ?? undefined
       });
+    }
+
+    return [...merged.values()];
+  }
+
+  private persistSessionSourceIndexRecords(
+    workspaceId: string,
+    workspacePath: string,
+    sessions: ProviderSessionDiscovery["sessions"],
+    existingSourceIndexes: SessionSourceIndexRecord[],
+    timestamp: string
+  ): void {
+    const existingByKey = new Map(existingSourceIndexes.map((record) => [record.sourceKey, record]));
+
+    for (const session of sessions) {
+      const sourceKind = inferSessionSourceKind(session.rawStoreRef);
+      const sourceKey = buildSessionSourceKey(session.provider, session.providerSessionId, session.rawStoreRef);
+      const stats = safeStat(session.rawStoreRef);
+      const existing = existingByKey.get(sourceKey);
+
+      this.sessionSourceIndexRepository.upsert({
+        sourceKey,
+        provider: session.provider,
+        sourceKind,
+        workspaceId,
+        providerSessionId: session.providerSessionId,
+        rawStoreRef: session.rawStoreRef,
+        workspacePath,
+        fingerprintMtimeMs: stats?.mtimeMs ?? existing?.fingerprintMtimeMs ?? null,
+        fingerprintSizeBytes: stats?.size ?? existing?.fingerprintSizeBytes ?? null,
+        fingerprintInode: existing?.fingerprintInode ?? null,
+        fingerprintVersion: existing?.fingerprintVersion ?? null,
+        title: session.title,
+        messageCount: session.messageCount,
+        lastMessageAt: session.lastMessageAt,
+        isArchivedHint: session.isArchived ?? existing?.isArchivedHint ?? null,
+        lastParsedAt: timestamp,
+        lastVerifiedAt: timestamp,
+        sampleDueAt: existing?.sampleDueAt ?? null,
+        deletedAt: null,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp
+      });
+    }
+  }
+
+  private persistDiscoveryDiagnostics(
+    workspaceId: string,
+    triggerSource: string,
+    discovery: ProviderSessionDiscovery,
+    timestamp: string
+  ): void {
+    try {
+      for (const entry of discovery.providerDiagnostics ?? []) {
+        const record: SessionDiscoveryDiagnosticRecord = {
+          id: createId(),
+          workspaceId,
+          triggerSource,
+          provider: entry.provider,
+          isComplete: entry.isComplete,
+          status: entry.status,
+          durationMs: Math.max(0, Math.round(entry.durationMs)),
+          sessionCount: Math.max(0, entry.sessionCount),
+          scannedFiles: Math.max(0, entry.scannedFiles ?? 0),
+          skippedByFingerprint: Math.max(0, entry.skippedByMtimeSize ?? 0),
+          parsedFiles: Math.max(0, entry.parsedFiles ?? 0),
+          bytesRead: Math.max(0, entry.bytesRead ?? 0),
+          createdAt: timestamp
+        };
+
+        this.sessionDiscoveryDiagnosticsRepository.insert(record);
+      }
+    } catch (error) {
+      console.warn("[session-discovery-diagnostics-persist-failed]", {
+        workspaceId,
+        triggerSource,
+        providerCount: discovery.providerDiagnostics?.length ?? 0,
+        error
+      });
+    }
   }
 
   private async refreshSessionState(
@@ -5739,6 +6166,106 @@ function pickLaterIso(left: string | null, right: string | null): string | null 
 
 function buildProviderSessionKey(provider: string, providerSessionId: string): string {
   return `${provider}::${providerSessionId}`;
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeDistinctTexts(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+
+  for (const value of values) {
+    const normalized = value?.trim();
+
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+
+  return [...unique];
+}
+
+function matchesSessionSourceIndexRepairScope(
+  record: SessionSourceIndexRecord,
+  provider: string | null,
+  sourceKeys: readonly string[],
+  rawStoreRefs: readonly string[]
+): boolean {
+  if (provider && record.provider !== provider) {
+    return false;
+  }
+
+  if (sourceKeys.length === 0 && rawStoreRefs.length === 0) {
+    return true;
+  }
+
+  return sourceKeys.includes(record.sourceKey)
+    || (record.rawStoreRef ? rawStoreRefs.includes(record.rawStoreRef) : false);
+}
+
+function shouldExcludeKnownSessionFromRepairScope(
+  scope: SessionSourceIndexRepairScope | null,
+  provider: string,
+  sourceKey: string,
+  rawStoreRef: string
+): boolean {
+  if (!scope) {
+    return false;
+  }
+
+  if (scope.provider && scope.provider !== provider) {
+    return false;
+  }
+
+  if (scope.sourceKeys.size === 0 && scope.rawStoreRefs.size === 0) {
+    return true;
+  }
+
+  return scope.sourceKeys.has(sourceKey) || scope.rawStoreRefs.has(rawStoreRef);
+}
+
+function buildKnownSessionSummaryKey(
+  provider: string,
+  providerSessionId: string,
+  rawStoreRef: string
+): string {
+  return `${provider}::${providerSessionId}::${rawStoreRef}`;
+}
+
+function buildSessionSourceKey(
+  provider: string,
+  providerSessionId: string,
+  rawStoreRef: string
+): string {
+  const normalizedRawStoreRef = rawStoreRef.trim();
+
+  if (normalizedRawStoreRef.length > 0) {
+    return `${provider}:raw:${normalizedRawStoreRef}`;
+  }
+
+  return `${provider}:session:${providerSessionId}`;
+}
+
+function inferSessionSourceKind(rawStoreRef: string): SessionSourceKind {
+  if (rawStoreRef.endsWith(".jsonl")) {
+    return "jsonl";
+  }
+
+  if (rawStoreRef.startsWith("opencode://") || rawStoreRef.startsWith("server://")) {
+    return "server_session";
+  }
+
+  if (rawStoreRef.endsWith(".sqlite") || rawStoreRef.includes(".sqlite:")) {
+    return "sqlite_row";
+  }
+
+  return "index_entry";
 }
 
 function normalizeSessionBindingSnapshot(

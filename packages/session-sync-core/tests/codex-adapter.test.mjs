@@ -4087,6 +4087,117 @@ test("CodexAdapter 会纠正 knownSessions 里已经缓存错的子 Agent 关系
   }
 });
 
+test("CodexAdapter 在 metadata 已经给出当前工作区 active transcript 时，不会再扫无关 sessions 文件", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-targeted-files-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "10");
+  const targetThreadId = "target-thread";
+  const targetFile = join(sessionDir, "rollout-target-thread.jsonl");
+  const unrelatedFile = join(sessionDir, "rollout-unrelated-thread.jsonl");
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      targetFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: targetThreadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "目标会话"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      unrelatedFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "unrelated-thread",
+            cwd: "/Users/jackson/Code/OtherProject"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-10T08:05:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "不该被扫到"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      targetThreadId,
+      "目标会话",
+      workspacePath,
+      Math.floor(Date.parse("2026-06-10T08:00:01.000Z") / 1000),
+      0,
+      "目标会话",
+      null,
+      null,
+      targetFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const parsedFiles = [];
+    const originalReadJsonLines = adapter.parseMessagesFromEntries.bind(adapter);
+
+    adapter.parseMessagesFromEntries = (...args) => {
+      parsedFiles.push(args[0]);
+      return originalReadJsonLines(...args);
+    };
+
+    const sessions = await adapter.detectSessionsDetailed(workspacePath);
+
+    assert.equal(sessions.sessions.length, 1);
+    assert.equal(sessions.sessions[0]?.providerSessionId, targetThreadId);
+    assert.deepEqual(parsedFiles, [targetFile]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 不会把只有 forked_from_id 的普通分支会话误判成子 Agent", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-thread-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

@@ -1521,13 +1521,83 @@ export class CodexAdapter implements ProviderAdapter {
     threadMetadataIndex: Map<string, CodexThreadMetadata>,
     knownSessions: ProviderSessionSummary[]
   ): string[] {
-    const activeFiles = walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    const activeFiles = this.listActiveSessionFiles(targetPath, threadMetadataIndex, knownSessions);
     const archivedFiles = this.listArchivedSessionFiles(
       targetPath,
       threadMetadataIndex,
       knownSessions
     );
     return [...activeFiles, ...archivedFiles];
+  }
+
+  private listActiveSessionFiles(
+    targetPath: string,
+    threadMetadataIndex: Map<string, CodexThreadMetadata>,
+    knownSessions: ProviderSessionSummary[]
+  ): string[] {
+    const activeFiles = new Set<string>();
+    let hasWorkspaceMetadataWithoutPath = false;
+    const targetKnownSessions = knownSessions.filter(
+      (session) =>
+        session.isArchived !== true
+        && normalizeWorkspacePath(session.workspacePath) === targetPath
+    );
+
+    for (const metadata of threadMetadataIndex.values()) {
+      if (metadata.isArchived === true) {
+        continue;
+      }
+
+      if (
+        targetPath.length > 0
+        && normalizeWorkspacePath(metadata.cwd ?? "") !== targetPath
+      ) {
+        continue;
+      }
+
+      const rolloutPath = ensureText(metadata.rolloutPath).trim();
+
+      if (!rolloutPath) {
+        hasWorkspaceMetadataWithoutPath = true;
+        continue;
+      }
+
+      if (!isCodexArchivedFilePath(rolloutPath)) {
+        activeFiles.add(rolloutPath);
+      }
+    }
+
+    for (const session of knownSessions) {
+      if (
+        session.isArchived === true
+        || normalizeWorkspacePath(session.workspacePath) !== targetPath
+        || isCodexArchivedFilePath(session.rawStoreRef)
+      ) {
+        continue;
+      }
+
+      activeFiles.add(session.rawStoreRef);
+    }
+
+    const existingFiles = [...activeFiles].filter((filePath) => existsSync(filePath));
+    const hasSuspiciousKnownSessions =
+      new Set(targetKnownSessions.map((session) => session.rawStoreRef)).size
+      < targetKnownSessions.length;
+
+    if (
+      existingFiles.length > 0
+      && threadMetadataIndex.size > 0
+      && !hasWorkspaceMetadataWithoutPath
+      && !hasSuspiciousKnownSessions
+    ) {
+      return existingFiles;
+    }
+
+    if (threadMetadataIndex.size === 0 || hasWorkspaceMetadataWithoutPath || hasSuspiciousKnownSessions) {
+      return walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    }
+
+    return existingFiles;
   }
 
   private listArchivedSessionFiles(

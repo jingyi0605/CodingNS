@@ -95,6 +95,14 @@ interface FavoriteSessionBody {
   favorite?: boolean;
 }
 
+interface RepairSourceIndexBody {
+  workspaceId?: string;
+  provider?: string | null;
+  sourceKeys?: string[];
+  rawStoreRefs?: string[];
+  awaitDiscovery?: boolean;
+}
+
 interface ForkSessionBody {
   sourceType?: "session" | "message";
   sourceMessageId?: string | null;
@@ -472,6 +480,28 @@ export class SessionController {
         sessionId: request.params.sessionId,
         userId: requireUserId(request),
         isFavorite: request.body.favorite === true
+      })
+    );
+  };
+
+  readonly repairSourceIndex = async (
+    request: FastifyRequest<{ Body: RepairSourceIndexBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspaceId = requireNonEmptyText(
+      request.body.workspaceId,
+      "workspaceId",
+      "修复来源索引必须提供 workspaceId"
+    );
+
+    reply.send(
+      await this.sessionHistoryService.repairSessionSourceIndex({
+        workspaceId,
+        userId: requireUserId(request),
+        provider: request.body.provider?.trim() || null,
+        sourceKeys: Array.isArray(request.body.sourceKeys) ? request.body.sourceKeys : [],
+        rawStoreRefs: Array.isArray(request.body.rawStoreRefs) ? request.body.rawStoreRefs : [],
+        awaitDiscovery: request.body.awaitDiscovery === true
       })
     );
   };

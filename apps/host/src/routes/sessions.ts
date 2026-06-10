@@ -46,6 +46,8 @@ export async function registerSessionRoutes(
   app.post("/api/sessions/:sessionId/interrupt", sessionController.interrupt);
   app.post("/api/sessions/:sessionId/seen", sessionController.markSeen);
   app.post("/api/sessions/:sessionId/resume", sessionController.resume);
+  app.post("/api/sessions/source-index/repair", sessionController.repairSourceIndex);
+  app.post("/api/sessions/source-index/rebuild", sessionController.repairSourceIndex);
   app.post("/api/sessions/start", sessionController.start);
   app.post(
     "/api/sessions/start-live",

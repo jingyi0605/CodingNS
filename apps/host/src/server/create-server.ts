@@ -904,7 +904,9 @@ export function createServer(config: HostConfig) {
     () => taskManager.listDefinitions(),
     () => schedulerMetrics.observe(),
     eventLoopMonitor,
-    taskActivityLog
+    taskActivityLog,
+    (workspaceId, userId, limit) =>
+      sessionHistoryService.listWorkspaceDiscoveryDiagnostics(workspaceId, userId, limit)
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,

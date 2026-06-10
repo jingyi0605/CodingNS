@@ -879,6 +879,60 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
+CREATE TABLE IF NOT EXISTS session_source_index (
+  source_key TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('jsonl', 'sqlite_row', 'server_session', 'index_entry')),
+  workspace_id TEXT,
+  provider_session_id TEXT,
+  raw_store_ref TEXT,
+  workspace_path TEXT,
+  fingerprint_mtime_ms INTEGER,
+  fingerprint_size_bytes INTEGER,
+  fingerprint_inode TEXT,
+  fingerprint_version TEXT,
+  title TEXT,
+  message_count INTEGER,
+  last_message_at TEXT,
+  is_archived_hint INTEGER CHECK (is_archived_hint IN (0, 1)),
+  last_parsed_at TEXT,
+  last_verified_at TEXT,
+  sample_due_at TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_source_index_workspace_id
+  ON session_source_index(workspace_id, provider, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_source_index_provider_session_id
+  ON session_source_index(provider, provider_session_id);
+CREATE INDEX IF NOT EXISTS idx_session_source_index_workspace_path
+  ON session_source_index(workspace_path, provider, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_discovery_diagnostics (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  trigger_source TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  is_complete INTEGER NOT NULL CHECK (is_complete IN (0, 1)),
+  status TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  session_count INTEGER NOT NULL,
+  scanned_files INTEGER NOT NULL,
+  skipped_by_fingerprint INTEGER NOT NULL,
+  parsed_files INTEGER NOT NULL,
+  bytes_read INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_workspace_id
+  ON session_discovery_diagnostics(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_provider
+  ON session_discovery_diagnostics(provider, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS affairs_assistant_session_snapshots (
   workspace_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
