@@ -82,6 +82,7 @@ export interface WorkspaceDto {
   path: string;
   repoRoot: string | null;
   backgroundColor?: string | null;
+  hidden?: boolean;
   sortOrder?: number;
 }
 
@@ -939,6 +940,7 @@ export interface WorkspaceNavigationStateDto {
   userId: string;
   collapsed: boolean;
   backgroundColor: string | null;
+  hidden: boolean;
   updatedAt: string;
 }
 
@@ -1559,8 +1561,16 @@ export interface ScopedRequestOptions {
   targetHostId?: string | null;
 }
 
-export function listWorkspaces() {
-  return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
+export function listWorkspaces(options?: { includeHidden?: boolean }) {
+  const search = new URLSearchParams();
+
+  if (options?.includeHidden) {
+    search.set("includeHidden", "1");
+  }
+
+  return httpClient.request<{ items: WorkspaceDto[] }>(
+    `/api/workspaces${search.size > 0 ? `?${search.toString()}` : ""}`
+  );
 }
 
 export async function listScopedWorkspaces(targetHostId?: string): Promise<{ items: ScopedWorkspaceDto[] }> {
@@ -1729,6 +1739,7 @@ export function updateWorkspaceNavigationState(
   payload: {
     collapsed?: boolean;
     backgroundColor?: string | null;
+    hidden?: boolean;
   }
 ) {
   return httpClient.request<WorkspaceNavigationStateDto>(
@@ -2609,7 +2620,8 @@ export function getProviderCapabilities(
   providerConfig?: {
     providerConfigMode?: SessionProviderConfigMode;
     providerPresetId?: string | null;
-  }
+  },
+  options?: ScopedRequestOptions
 ) {
   const search = new URLSearchParams();
 
@@ -2625,7 +2637,10 @@ export function getProviderCapabilities(
   return httpClient.request<ProviderCapabilitiesDto>(
     `/api/providers/${encodeURIComponent(provider)}/capabilities${
       search.size > 0 ? `?${search.toString()}` : ""
-    }`
+    }`,
+    {
+      targetHostId: options?.targetHostId ?? undefined
+    }
   );
 }
 
@@ -2661,10 +2676,14 @@ export async function updateProviderCatalogEntry(
 
 export async function listProviderCapabilities(
   providers: readonly ProviderId[],
-  workspaceId?: string
+  workspaceId?: string,
+  options?: ScopedRequestOptions
 ): Promise<Partial<Record<ProviderId, ProviderCapabilitiesDto>>> {
   const results = await Promise.allSettled(
-    providers.map(async (provider) => [provider, await getProviderCapabilities(provider, workspaceId)] as const)
+    providers.map(async (provider) => [
+      provider,
+      await getProviderCapabilities(provider, workspaceId, undefined, options)
+    ] as const)
   );
   const entries: Array<[ProviderId, ProviderCapabilitiesDto]> = [];
 
@@ -2748,11 +2767,12 @@ export function sendSessionMessage(
   );
 }
 
-export function forkSession(sessionId: string, payload: ForkSessionPayload) {
+export function forkSession(sessionId: string, payload: ForkSessionPayload, options?: ScopedRequestOptions) {
   return httpClient.request<SessionSummaryDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/forks`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload)
     }
   );

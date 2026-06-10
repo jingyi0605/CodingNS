@@ -630,7 +630,7 @@ export function ComposerPanel({
   const mentionRequestIdRef = useRef(0);
   const { showToast } = useToast();
   const haptics = useHaptics();
-  const { revealWorkspaceFile } = useWorkbenchShell();
+  const { revealWorkspaceFile, currentTargetHostId } = useWorkbenchShell();
 
   const clearCompositionCommitLock = useCallback(() => {
     if (compositionCommitUnlockTimerRef.current !== null) {
@@ -801,6 +801,8 @@ export function ComposerPanel({
     void getProviderCapabilities(provider, workspaceId, {
       providerConfigMode: "cc-switch-preset",
       providerPresetId: selectedProviderPresetId
+    }, {
+      targetHostId: currentTargetHostId
     })
       .then((nextCapabilities) => {
         if (!cancelled) {
@@ -821,7 +823,7 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [provider, selectedProviderConfigMode, selectedProviderPresetId, workspaceId]);
+  }, [currentTargetHostId, provider, selectedProviderConfigMode, selectedProviderPresetId, workspaceId]);
 
   useEffect(() => {
     if (
@@ -1337,7 +1339,8 @@ export function ComposerPanel({
         workspaceId,
         provider: providerForMention,
         keyword: rawKeyword,
-        limit: 5
+        limit: 5,
+        targetHostId: currentTargetHostId
       });
 
       if (mentionRequestIdRef.current !== requestId) {
@@ -1360,7 +1363,7 @@ export function ComposerPanel({
         setMentionLoading(false);
       }
     }
-  }, [providerForMention, workspaceId]);
+  }, [currentTargetHostId, providerForMention, workspaceId]);
 
   const applyMentionItem = useCallback((item: ComposerMentionItem) => {
     setMentionSelections((current) => [
@@ -1850,6 +1853,8 @@ export function ComposerPanel({
         forkProviderSelection.providerConfigMode === "cc-switch-preset"
           ? forkProviderSelection.providerPresetId
           : null
+    }, {
+      targetHostId: currentTargetHostId
     })
       .then((nextCapabilities) => {
         if (cancelled) {
@@ -1875,6 +1880,7 @@ export function ComposerPanel({
       cancelled = true;
     };
   }, [
+    currentTargetHostId,
     forkDraft,
     forkProviderSelection.providerConfigMode,
     forkProviderSelection.providerPresetId,
@@ -1889,7 +1895,9 @@ export function ComposerPanel({
 
     let cancelled = false;
 
-    void listProviderCapabilities(visibleCatalogForkProviders, forkDraft.workspaceId).then((nextCapabilities) => {
+    void listProviderCapabilities(visibleCatalogForkProviders, forkDraft.workspaceId, {
+      targetHostId: currentTargetHostId
+    }).then((nextCapabilities) => {
       if (!cancelled) {
         setForkProviderCapabilities(nextCapabilities);
       }
@@ -1898,7 +1906,7 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [forkDraft?.workspaceId, visibleCatalogForkProviders]);
+  }, [currentTargetHostId, forkDraft?.workspaceId, visibleCatalogForkProviders]);
 
   useEffect(() => {
     if (!forkDraft || !onForkDraftChange) {

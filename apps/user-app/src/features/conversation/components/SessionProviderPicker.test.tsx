@@ -118,6 +118,57 @@ describe("SessionProviderPicker", () => {
     });
   });
 
+  it("不同 targetHostId 不会复用同一份 provider 能力缓存", async () => {
+    mockListProviderCapabilities
+      .mockResolvedValueOnce({
+        gemini: createUnavailableCapabilities("gemini", "主 HOST 不可用")
+      })
+      .mockResolvedValueOnce({
+        gemini: createUnavailableCapabilities("gemini", "Peer HOST 不可用")
+      });
+
+    const firstRender = render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-host-split"
+        targetHostId={null}
+        providers={["gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("主 HOST 不可用")).toBeInTheDocument();
+    });
+
+    firstRender.unmount();
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-host-split"
+        targetHostId="peer-host-1"
+        providers={["gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Peer HOST 不可用")).toBeInTheDocument();
+    });
+    expect(mockListProviderCapabilities).toHaveBeenCalledTimes(2);
+    expect(mockListProviderCapabilities).toHaveBeenNthCalledWith(
+      1,
+      ["gemini"],
+      "workspace-picker-host-split",
+      { targetHostId: null }
+    );
+    expect(mockListProviderCapabilities).toHaveBeenNthCalledWith(
+      2,
+      ["gemini"],
+      "workspace-picker-host-split",
+      { targetHostId: "peer-host-1" }
+    );
+  });
+
   it("会把 catalog 中已禁用的 provider 从创建入口里隐藏", async () => {
     mockListProviderCatalog.mockResolvedValueOnce([
       { provider: "codex", enabled: true },

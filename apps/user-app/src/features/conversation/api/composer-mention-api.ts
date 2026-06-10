@@ -23,6 +23,7 @@ export async function searchComposerMentionItems(input: {
   provider?: string | null;
   keyword?: string;
   limit?: number;
+  targetHostId?: string | null;
 }): Promise<ComposerMentionSearchResultDto> {
   const limit = Number.isFinite(input.limit) ? Math.max(1, Math.floor(input.limit!)) : DEFAULT_LIMIT;
   const keyword = input.keyword?.trim() ?? "";
@@ -31,7 +32,16 @@ export async function searchComposerMentionItems(input: {
   const [skillOverview, recentModified] = await Promise.all([
     fetchSkillOverview(),
     input.workspaceId?.trim()
-      ? getRecentModifiedFiles(input.workspaceId.trim(), { limit, keyword })
+      ? getRecentModifiedFiles(
+        input.workspaceId.trim(),
+        {
+          limit,
+          keyword
+        },
+        {
+          targetHostId: input.targetHostId ?? undefined
+        }
+      )
       : Promise.resolve({ items: [] as ComposerMentionFileItemDto[] })
   ]);
 

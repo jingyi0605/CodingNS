@@ -3,22 +3,31 @@ import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import { clearProviderCatalogStore } from "../capability/provider-catalog-store";
 import { ConversationSelectionActions } from "./ConversationSelectionActions";
 
 const {
   mockGetProviderCapabilities,
   mockListProviderCapabilities,
   mockFetchModelManagementSnapshot,
-  mockListProviderCatalog
+  mockListProviderCatalog,
+  mockStartLiveSession,
+  mockGetSessionDetail,
+  mockNavigate,
+  mockSelectWorkspace
 } = vi.hoisted(() => ({
   mockGetProviderCapabilities: vi.fn(),
   mockListProviderCapabilities: vi.fn(),
   mockFetchModelManagementSnapshot: vi.fn(),
-  mockListProviderCatalog: vi.fn()
+  mockListProviderCatalog: vi.fn(),
+  mockStartLiveSession: vi.fn(),
+  mockGetSessionDetail: vi.fn(),
+  mockNavigate: vi.fn(),
+  mockSelectWorkspace: vi.fn()
 }));
 
 vi.mock("react-router-dom", () => ({
-  useNavigate: () => vi.fn()
+  useNavigate: () => mockNavigate
 }));
 
 vi.mock("../../../preferences/preferences-store", () => ({
@@ -56,8 +65,8 @@ vi.mock("../api/conversation-api", () => ({
   getProviderCapabilities: mockGetProviderCapabilities,
   listProviderCatalog: mockListProviderCatalog,
   listProviderCapabilities: mockListProviderCapabilities,
-  getSessionDetail: vi.fn(),
-  startLiveSession: vi.fn(),
+  getSessionDetail: mockGetSessionDetail,
+  startLiveSession: mockStartLiveSession,
   sendLiveMessage: vi.fn()
 }));
 
@@ -94,8 +103,13 @@ vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
     shellMode: "desktop",
     requestNavigationRefresh: vi.fn(),
-    selectWorkspace: vi.fn(),
-    upsertNavigationSession: vi.fn()
+    selectWorkspace: mockSelectWorkspace,
+    upsertNavigationSession: vi.fn(),
+    currentTargetHostId: "peer-host-1",
+    currentWorkspaceRef: {
+      hostId: "peer-host-1",
+      workspaceId: "remote-workspace-1"
+    }
   })
 }));
 
@@ -108,6 +122,7 @@ describe("ConversationSelectionActions", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    clearProviderCatalogStore();
     currentSelection = null;
     mockGetProviderCapabilities.mockResolvedValue({
       canStartSession: true,
@@ -172,6 +187,19 @@ describe("ConversationSelectionActions", () => {
         }
       ]
     });
+    mockStartLiveSession.mockResolvedValue({
+      sessionId: "session-selection-action",
+      session: {
+        sessionId: "session-selection-action",
+        workspaceId: "workspace-1",
+        provider: "codex"
+      }
+    });
+    mockGetSessionDetail.mockResolvedValue({
+      sessionId: "session-selection-action",
+      workspaceId: "workspace-1",
+      provider: "codex"
+    });
     Object.defineProperty(window, "getSelection", {
       configurable: true,
       value: vi.fn(() => currentSelection)
@@ -181,7 +209,8 @@ describe("ConversationSelectionActions", () => {
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
-    vi.restoreAllMocks();
+    clearProviderCatalogStore();
+    vi.clearAllMocks();
   });
 
   it("拖拽过程中不会提前弹出选区工具条，松手后才显示", () => {
@@ -457,6 +486,62 @@ describe("ConversationSelectionActions", () => {
 
     expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
     expect(within(providerSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
+  });
+
+  it("PeerHOST 下执行选区动作会带 targetHostId，并跳回 PeerHOST 会话路径", async () => {
+    render(<TestHarness />);
+
+    const messageText = screen.getByTestId("message-text");
+    const textNode = messageText.firstChild;
+
+    expect(textNode).not.toBeNull();
+
+    currentSelection = createSelection(textNode!, "PeerHOST 选区动作", {
+      left: 160,
+      top: 220,
+      width: 112,
+      height: 22
+    });
+
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      vi.advanceTimersByTime(60);
+    });
+
+    const actionButton = screen.getByRole("button", {
+      name: t("conversation.selectionActionButton")
+    });
+    fireEvent.mouseDown(actionButton);
+    fireEvent.click(actionButton);
+
+    const dialog = screen.getByRole("dialog", { name: t("conversation.selectionActionButton") });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("conversation.selectionActionSubmit") }));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockStartLiveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        provider: "codex"
+      }),
+      { targetHostId: "peer-host-1" }
+    );
+
+    expect(mockSelectWorkspace).toHaveBeenCalledWith("workspace-1", {
+      hostId: "peer-host-1",
+      workspaceId: "remote-workspace-1"
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/workspaces/workspace-1/sessions/session-selection-action?targetHostId=peer-host-1"
+    );
   });
 });
 

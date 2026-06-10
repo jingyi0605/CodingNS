@@ -773,7 +773,8 @@ describe("ConversationPage", () => {
           model: "gpt-5.4",
           providerConfigMode: "cc-switch-preset",
           providerPresetId: "preset-x"
-        })
+        }),
+        { targetHostId: undefined }
       );
     });
 
@@ -796,7 +797,8 @@ describe("ConversationPage", () => {
           model: null,
           providerConfigMode: "cc-switch-preset",
           providerPresetId: "preset-deepseek"
-        })
+        }),
+        { targetHostId: undefined }
       );
     });
 
@@ -822,6 +824,59 @@ describe("ConversationPage", () => {
     });
 
     expect(view.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-1/sessions/session-live-1");
+  });
+
+  it("PeerHOST 草稿会话发送消息时，会把 start-live 和跳转都锁到 PeerHOST", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      }
+    }));
+    mockStartLiveSession.mockResolvedValueOnce({
+      sessionId: "session-peer-1",
+      provider: "codex",
+      session: {
+        ...createBaseLiveSession(),
+        sessionId: "session-peer-1",
+        workspaceId: "workspace-1"
+      },
+      message: {
+        messageId: "message-peer-1",
+        provider: "codex",
+        providerSessionId: "provider-session-peer-1",
+        role: "assistant",
+        content: "已创建 PeerHOST 会话",
+        timestamp: "2026-04-25T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "store://session-peer-1#1"
+      }
+    });
+
+    renderDraftConversationPage({
+      initialEntry:
+        "/workspaces/workspace-1/sessions/draft-codex-1?provider=codex&workspaceId=workspace-1&targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    fireEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          provider: "codex"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
+      );
+    });
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
@@ -1356,7 +1411,10 @@ describe("ConversationPage", () => {
     );
 
     await waitFor(() => {
-      expect(selectWorkspace).toHaveBeenCalledWith("workspace-2");
+      expect(selectWorkspace).toHaveBeenCalledWith("workspace-2", {
+        hostId: "current",
+        workspaceId: "workspace-2"
+      });
       expect(screen.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-2/sessions");
     });
   });

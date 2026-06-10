@@ -26,6 +26,7 @@ export function clearSessionProviderPickerCapabilityCache(): void {
 interface SessionProviderPickerProps {
   disabled?: boolean;
   workspaceId?: string | null;
+  targetHostId?: string | null;
   pendingProvider?: ProviderId | null;
   selectedProvider?: ProviderId | null;
   providers?: ProviderId[];
@@ -38,6 +39,7 @@ interface SessionProviderPickerProps {
 export function SessionProviderPicker({
   disabled = false,
   workspaceId = null,
+  targetHostId = null,
   pendingProvider = null,
   selectedProvider = null,
   providers = SESSION_PROVIDER_PICKER_IDS,
@@ -51,7 +53,7 @@ export function SessionProviderPicker({
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
-  >(() => readCachedCapabilities(visibleProviders, workspaceId));
+  >(() => readCachedCapabilities(visibleProviders, workspaceId, targetHostId));
   const sessionProviderDefinitions: SessionProviderDefinition[] = visibleProviders.map((provider) => ({ provider }));
 
   useEffect(() => {
@@ -69,7 +71,7 @@ export function SessionProviderPicker({
       return;
     }
 
-    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId);
+    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId, targetHostId);
     setCapabilitiesByProvider(cachedCapabilities);
 
     const missingProviders = visibleProviders.filter((provider) => !cachedCapabilities[provider]);
@@ -80,8 +82,10 @@ export function SessionProviderPicker({
 
     let cancelled = false;
 
-    void listProviderCapabilities(missingProviders, workspaceId).then((nextCapabilities) => {
-      writeCachedCapabilities(workspaceId, nextCapabilities);
+    void listProviderCapabilities(missingProviders, workspaceId, {
+      targetHostId
+    }).then((nextCapabilities) => {
+      writeCachedCapabilities(workspaceId, targetHostId, nextCapabilities);
 
       if (!cancelled) {
         setCapabilitiesByProvider((current) => ({
@@ -94,7 +98,7 @@ export function SessionProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [providerCatalogReady, visibleProviders, workspaceId]);
+  }, [providerCatalogReady, targetHostId, visibleProviders, workspaceId]);
 
   if (!providerCatalogReady) {
     return (
@@ -171,9 +175,11 @@ function resolveProviderDisabledReason(capabilities: ProviderCapabilitiesDto | n
 
 function readCachedCapabilities(
   providers: readonly ProviderId[],
-  workspaceId: string | null | undefined
+  workspaceId: string | null | undefined,
+  targetHostId: string | null | undefined
 ): Partial<Record<ProviderId, ProviderCapabilitiesDto>> {
   const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
 
   if (!normalizedWorkspaceId) {
     return {};
@@ -182,7 +188,9 @@ function readCachedCapabilities(
   const entries: Array<[ProviderId, ProviderCapabilitiesDto]> = [];
 
   for (const provider of providers) {
-    const cached = providerCapabilitiesCache.get(buildCapabilityCacheKey(normalizedWorkspaceId, provider));
+    const cached = providerCapabilitiesCache.get(
+      buildCapabilityCacheKey(normalizedWorkspaceId, normalizedTargetHostId, provider)
+    );
 
     if (cached) {
       entries.push([provider, cached]);
@@ -194,9 +202,11 @@ function readCachedCapabilities(
 
 function writeCachedCapabilities(
   workspaceId: string,
+  targetHostId: string | null | undefined,
   capabilitiesByProvider: Partial<Record<ProviderId, ProviderCapabilitiesDto>>
 ): void {
   const normalizedWorkspaceId = workspaceId.trim();
+  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
 
   if (!normalizedWorkspaceId) {
     return;
@@ -208,12 +218,12 @@ function writeCachedCapabilities(
     }
 
     providerCapabilitiesCache.set(
-      buildCapabilityCacheKey(normalizedWorkspaceId, provider as ProviderId),
+      buildCapabilityCacheKey(normalizedWorkspaceId, normalizedTargetHostId, provider as ProviderId),
       capabilities
     );
   }
 }
 
-function buildCapabilityCacheKey(workspaceId: string, provider: ProviderId): string {
-  return `${workspaceId}::${provider}`;
+function buildCapabilityCacheKey(workspaceId: string, targetHostId: string, provider: ProviderId): string {
+  return `${targetHostId}::${workspaceId}::${provider}`;
 }

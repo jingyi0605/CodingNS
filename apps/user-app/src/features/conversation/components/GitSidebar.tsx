@@ -189,7 +189,8 @@ export function GitSidebar({
     requestNavigationRefresh,
     selectWorkspace,
     upsertNavigationSession,
-    currentTargetHostId
+    currentTargetHostId,
+    currentWorkspaceRef
   } = {
     ...workbenchShell,
     ...workbenchShellOverrides
@@ -1271,13 +1272,24 @@ export function GitSidebar({
           globalThis.crypto?.randomUUID?.()
           ?? `git-explain-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         permissionMode: getDefaultSessionPermissionMode()
+      }, {
+        targetHostId: currentTargetHostId
       });
-      const nextSession = response.session ?? await getSessionDetail(response.sessionId);
+      const nextSession = response.session ?? await getSessionDetail(response.sessionId, {
+        targetHostId: currentTargetHostId
+      });
 
       upsertNavigationSession(nextSession);
       requestNavigationRefresh();
-      selectWorkspace(nextSession.workspaceId);
-      navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId));
+      const nextWorkspaceRef =
+        currentTargetHostId && currentWorkspaceRef
+          ? {
+            hostId: currentTargetHostId,
+            workspaceId: currentWorkspaceRef.workspaceId
+          }
+          : currentWorkspaceRef;
+      selectWorkspace(nextSession.workspaceId, nextWorkspaceRef);
+      navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId, nextWorkspaceRef));
       setExplainProviderModalOpen(false);
       setExplainCommitHash(null);
       setExplainProvider(null);

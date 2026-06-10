@@ -10,6 +10,7 @@ import {
   recordRelaySessionWireBytes,
   resetRelaySessionTrafficStoreForTesting
 } from "../../../network/relay-session-traffic-store";
+import { ApiError } from "../../../shared/network/api-error";
 import { readRememberedLoginCredentials } from "../../auth/store/remembered-login";
 import { ToastProvider } from "../../../shared/toast";
 import { WorkbenchHostSwitcher } from "./WorkbenchHostSwitcher";
@@ -136,7 +137,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /新增 HOST/ }));
+    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "演示机房");
     await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.8:3002");
     await user.click(screen.getByRole("button", { name: "保存 HOST" }));
@@ -157,7 +158,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /新增 HOST/ }));
+    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "机房 Host");
     await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.9:3002");
     await user.type(screen.getByLabelText("用户名"), "root");
@@ -191,7 +192,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /新增 HOST/ }));
+    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "远程机房");
     await user.type(screen.getByLabelText("HOST 地址"), "https://demo.channel.codingns.com:1443");
     await user.click(screen.getByRole("button", { name: "保存 HOST" }));
@@ -253,6 +254,147 @@ describe("WorkbenchHostSwitcher", () => {
     await waitFor(() => {
       expect(clientConfigStore.getState().hosts.some((host) => host.id === "host-2")).toBe(false);
       expect(readRememberedLoginCredentials("host-2")).toBeNull();
+    });
+  });
+
+  it("删除带 peerHostId 的 HOST 时会顺手删除后端 Peer HOST 记录", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      hosts: clientConfigStore.getState().hosts.map((host) =>
+        host.id === "host-2"
+          ? { ...host, peerHostId: "peer-2", peerEnabled: true }
+          : host
+      )
+    });
+
+    const requestSpy = vi.spyOn(httpClient, "request").mockImplementation(async (path: string, options?: any) => {
+      if (path === "/api/peer-hosts") {
+        return { items: [] } as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-2" && options?.method === "DELETE") {
+        return { success: true, peerHostId: "peer-2" } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "删除 HOST 办公室 Host" }));
+    await user.click(screen.getByRole("button", { name: "删除 HOST 办公室 Host" }));
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith("/api/peer-hosts/peer-2", { method: "DELETE" });
+      expect(clientConfigStore.getState().hosts.some((host) => host.id === "host-2")).toBe(false);
+    });
+  });
+
+  it("Peer HOST 状态异常时会显示手动重连按钮", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      hosts: clientConfigStore.getState().hosts.map((host) =>
+        host.id === "host-2"
+          ? { ...host, peerHostId: "peer-2", peerEnabled: false }
+          : host
+      )
+    });
+
+    vi.spyOn(httpClient, "request").mockImplementation(async (path: string) => {
+      if (path === "/api/peer-hosts") {
+        return {
+          items: [buildPeerHostDto({ id: "peer-2", status: "unreachable" })]
+        } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await waitFor(() => {
+      expect(screen.getByText("不可用")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "查看 HOST 办公室 Host 连接详情" }));
+
+    expect(await screen.findByRole("button", { name: "手动重连" })).toBeInTheDocument();
+  });
+
+  it("后端残留旧 Peer HOST 记录时，会复用旧记录继续启用", async () => {
+    const user = userEvent.setup();
+    let listCount = 0;
+
+    vi.spyOn(httpClient, "request").mockImplementation(async (path: string, options?: any) => {
+      if (path === "/api/peer-hosts" && options?.method === "POST") {
+        throw new ApiError(409, {
+          detail: "这个 HOST 地址已经保存过了",
+          error_code: "PEER_HOST_BASE_URL_EXISTS",
+          field: "baseUrl"
+        });
+      }
+
+      if (path === "/api/peer-hosts") {
+        listCount += 1;
+        return {
+          items: listCount >= 2
+            ? [buildPeerHostDto({ id: "peer-stale", status: "unknown" })]
+            : []
+        } as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-stale" && options?.method === "PUT") {
+        return buildPeerHostDto({ id: "peer-stale", status: "unknown" }) as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-stale/check" && options?.method === "POST") {
+        return buildPeerHostDto({ id: "peer-stale", status: "reachable" }) as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-stale/login" && options?.method === "POST") {
+        return {
+          exists: true,
+          username: "admin",
+          remoteUserId: "remote-user-1",
+          remoteUsername: "admin",
+          expiresAt: "2026-06-10T01:00:00.000Z",
+          savedAt: "2026-06-10T00:00:00.000Z",
+          updatedAt: "2026-06-10T00:00:00.000Z"
+        } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 办公室 Host 连接详情" }));
+    await user.type(screen.getByLabelText("用户名"), "admin");
+    await user.type(screen.getByLabelText("密码"), "Secret123!");
+    await user.click(screen.getByRole("button", { name: "启用 Peer" }));
+
+    await waitFor(() => {
+      const nextHost = clientConfigStore.getState().hosts.find((host) => host.id === "host-2");
+      expect(nextHost).toMatchObject({
+        peerEnabled: true,
+        peerHostId: "peer-stale"
+      });
     });
   });
 
@@ -421,3 +563,25 @@ describe("WorkbenchHostSwitcher", () => {
     });
   });
 });
+
+function buildPeerHostDto(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "peer-1",
+    ownerUserId: "user-1",
+    name: "办公室 Host",
+    alias: "HOST",
+    baseUrl: "http://10.10.1.8:3002",
+    normalizedBaseUrl: "http://10.10.1.8:3002",
+    status: "reachable",
+    remoteVersion: "0.9.8",
+    remoteApiCompatibility: "peer-host-v1",
+    remoteHostFingerprint: "fingerprint-1",
+    lastCheckedAt: "2026-06-10T00:00:00.000Z",
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    createdAt: "2026-06-10T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+    removedAt: null,
+    ...overrides
+  };
+}

@@ -592,8 +592,9 @@ function LiveConversationPage({
                 anchorMember.session,
                 anchorMember.sessionIsolatedWorkspace
               );
-              selectWorkspace(navigationWorkspaceId);
-              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              selectWorkspace(navigationWorkspaceId, workspaceRef);
+              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId, workspaceRef));
             }
 
             setParallelCreateOpen(false);
@@ -723,8 +724,9 @@ function LiveConversationPage({
             }}
             onActivate={(entry) => {
               mobilePreview.closePreview();
-              selectWorkspace(entry.workspace.id);
-              navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
+              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              selectWorkspace(entry.workspace.id, workspaceRef);
+              navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
             }}
           />
         ) : null}
@@ -856,9 +858,10 @@ function LiveConversationPage({
         onClose={() => setBranchTreeOpen(false)}
         onOpenSession={(targetSession) => {
           setBranchTreeOpen(false);
-          selectWorkspace(targetSession.workspaceId);
+          const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+          selectWorkspace(targetSession.workspaceId, workspaceRef);
           writeMobileConversationPreviewMode("preview");
-          navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId));
+          navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId, workspaceRef));
         }}
       />
       <ConversationArchiveConfirmModal
@@ -887,19 +890,29 @@ function LiveConversationPage({
             });
 
             if (mobileNavigationWorkspaceId) {
-              selectWorkspace(mobileNavigationWorkspaceId);
+              selectWorkspace(
+                mobileNavigationWorkspaceId,
+                buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+              );
               writeMobileConversationPreviewMode("preview");
               if (nextMobileSessionEntry) {
+                const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
                 navigate(
                   buildWorkspaceSessionPath(
                     nextMobileSessionEntry.workspace.id,
-                    nextMobileSessionEntry.session.sessionId
+                    nextMobileSessionEntry.session.sessionId,
+                    workspaceRef
                   )
                 );
                 return;
               }
 
-              navigate(buildWorkspaceSessionIndexPath(mobileNavigationWorkspaceId));
+              navigate(
+                buildWorkspaceSessionIndexPath(
+                  mobileNavigationWorkspaceId,
+                  buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                )
+              );
               return;
             }
 
@@ -978,8 +991,9 @@ function LiveConversationPage({
                 anchorMember.session,
                 anchorMember.sessionIsolatedWorkspace
               );
-              selectWorkspace(navigationWorkspaceId);
-              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId));
+              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              selectWorkspace(navigationWorkspaceId, workspaceRef);
+              navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId, workspaceRef));
             }
 
             setParallelCreateOpen(false);
@@ -1062,7 +1076,9 @@ function DraftConversationPage({
     upsertNavigationSession,
     favoriteSessions,
     unarchiveSession,
-    startDraftSession
+    startDraftSession,
+    currentTargetHostId,
+    currentWorkspaceRef
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
@@ -1197,7 +1213,9 @@ function DraftConversationPage({
     // 草稿页先用本地兜底能力，随后再按 provider + workspace 拉真实模型列表。
     setCapabilities(fallbackCapabilities);
 
-    void getProviderCapabilities(draft.provider, draft.workspaceId)
+    void getProviderCapabilities(draft.provider, draft.workspaceId, undefined, {
+      targetHostId: currentTargetHostId
+    })
       .then((nextCapabilities) => {
         if (!disposed) {
           setCapabilities(nextCapabilities);
@@ -1210,7 +1228,7 @@ function DraftConversationPage({
     return () => {
       disposed = true;
     };
-  }, [draft.provider, draft.workspaceId, fallbackCapabilities]);
+  }, [currentTargetHostId, draft.provider, draft.workspaceId, fallbackCapabilities]);
 
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,
@@ -1309,8 +1327,9 @@ function DraftConversationPage({
           }}
           onActivate={(entry) => {
             mobilePreview.closePreview();
-            selectWorkspace(entry.workspace.id);
-            navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
+            const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+            selectWorkspace(entry.workspace.id, workspaceRef);
+            navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
           }}
         />
       ) : null}
@@ -1378,6 +1397,8 @@ function DraftConversationPage({
                     attachments: options?.attachments ?? [],
                     providerConfigMode: options?.providerConfigMode ?? "global-default",
                     providerPresetId: options?.providerPresetId ?? null
+                  }, {
+                    targetHostId: currentTargetHostId
                   });
                   logPerfDebug("session_send.start_live.client_response", {
                     draftSessionId: draft.sessionId,
@@ -1394,10 +1415,11 @@ function DraftConversationPage({
                   }
 
                   const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draft.workspaceId;
+                  const resolvedWorkspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
 
                   setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
                   writeMobileConversationPreviewMode("preview");
-                  navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId), {
+                  navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId, resolvedWorkspaceRef), {
                     replace: true,
                     state: {
                       composer: {
@@ -3117,6 +3139,24 @@ function resolveMissingLiveSessionTarget(input: {
   }
 
   return input.shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing";
+}
+
+function buildTargetWorkspaceRef(
+  currentTargetHostId?: string | null,
+  workspaceRef?: WorkspaceRef | null
+): WorkspaceRef | null {
+  if (!currentTargetHostId) {
+    return null;
+  }
+
+  if (!workspaceRef?.workspaceId) {
+    return null;
+  }
+
+  return {
+    hostId: currentTargetHostId,
+    workspaceId: workspaceRef.workspaceId
+  };
 }
 
 function createDraftLiveBootstrapMessage(input: {

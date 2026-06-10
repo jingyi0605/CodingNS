@@ -37,7 +37,9 @@ const workbenchShellMock = vi.hoisted(() => ({
   addGitSnapshotListener: vi.fn(),
   requestNavigationRefresh: vi.fn(),
   selectWorkspace: vi.fn(),
-  upsertNavigationSession: vi.fn()
+  upsertNavigationSession: vi.fn(),
+  currentTargetHostId: null,
+  currentWorkspaceRef: null
 }));
 const hapticsMock = vi.hoisted(() => ({
   trigger: vi.fn()
@@ -146,6 +148,8 @@ vi.mock("../../../shared/haptics", () => ({
 describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    workbenchShellMock.currentTargetHostId = null;
+    workbenchShellMock.currentWorkspaceRef = null;
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     setViewportWidth(430);
     hapticsMock.trigger.mockReset();
@@ -360,7 +364,7 @@ describe("GitSidebar", () => {
       expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", [
         "apps/user-app/src/app/App.tsx",
         "apps/user-app/src/app/router.tsx"
-      ]);
+      ], { targetHostId: null });
     });
 
     await waitFor(() => {
@@ -375,10 +379,12 @@ describe("GitSidebar", () => {
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
     expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
-      knownRevision: "git-rev-1"
+      knownRevision: "git-rev-1",
+      targetHostId: null
     });
     expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1", {
-      knownRevision: null
+      knownRevision: null,
+      targetHostId: null
     });
   });
 
@@ -404,7 +410,8 @@ describe("GitSidebar", () => {
       expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(1);
     });
     expect(workbenchShellMock.requestGitRefresh).toHaveBeenNthCalledWith(1, "workspace-1", {
-      knownRevision: null
+      knownRevision: null,
+      targetHostId: null
     });
   });
 
@@ -416,7 +423,9 @@ describe("GitSidebar", () => {
     await userEvent.click(await screen.findByRole("button", { name: "撤销上次提交" }));
 
     await waitFor(() => {
-      expect(gitApiMock.undoLastCommit).toHaveBeenCalledWith("workspace-1");
+      expect(gitApiMock.undoLastCommit).toHaveBeenCalledWith("workspace-1", {
+        targetHostId: null
+      });
     });
 
     expect(await screen.findByDisplayValue("feat: restore message")).toBeInTheDocument();
@@ -465,7 +474,9 @@ describe("GitSidebar", () => {
     await userEvent.click(screen.getByRole("button", { name: "初始化 Git 工作区" }));
 
     await waitFor(() => {
-      expect(gitApiMock.initializeGitRepository).toHaveBeenCalledWith("workspace-1");
+      expect(gitApiMock.initializeGitRepository).toHaveBeenCalledWith("workspace-1", {
+        targetHostId: null
+      });
     });
   });
 
@@ -553,9 +564,15 @@ describe("GitSidebar", () => {
     fireEvent.click(refreshButton);
 
     await waitFor(() => {
-      expect(gitApiMock.getGitStatus).toHaveBeenCalledWith("workspace-1");
-      expect(gitApiMock.getGitHistory).toHaveBeenCalledWith("workspace-1", 20, null);
-      expect(gitApiMock.getGitBranches).toHaveBeenCalledWith("workspace-1");
+      expect(gitApiMock.getGitStatus).toHaveBeenCalledWith("workspace-1", {
+        targetHostId: null
+      });
+      expect(gitApiMock.getGitHistory).toHaveBeenCalledWith("workspace-1", 20, null, {
+        targetHostId: null
+      });
+      expect(gitApiMock.getGitBranches).toHaveBeenCalledWith("workspace-1", {
+        targetHostId: null
+      });
     });
 
     await waitFor(() => {
@@ -565,7 +582,9 @@ describe("GitSidebar", () => {
     expect(await screen.findByText("refresh-target.md")).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
     expect(await screen.findByText("feat: refreshed snapshot")).toBeInTheDocument();
-    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1", {
+      targetHostId: null
+    });
   });
 
   it("移动端未提交记录的放弃改动操作会二次确认", async () => {
@@ -582,7 +601,7 @@ describe("GitSidebar", () => {
       expect(confirmMock).toHaveBeenCalledWith("确认放弃这些改动吗？apps/user-app/src/app/App.tsx");
       expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", [
         "apps/user-app/src/app/App.tsx"
-      ]);
+      ], { targetHostId: null });
     });
 
     confirmMock.mockRestore();
@@ -686,10 +705,35 @@ describe("GitSidebar", () => {
       await screen.findByText("apps/user-app/src/features/conversation/components/GitSidebar.tsx")
     ).toBeInTheDocument();
     expect(screen.getByText(/提交 DIFF|Commit DIFF/)).toBeInTheDocument();
-    expect(gitApiMock.getGitCommitDetail).toHaveBeenCalledWith("workspace-1", "33333333");
+    expect(gitApiMock.getGitCommitDetail).toHaveBeenCalledWith("workspace-1", "33333333", {
+      targetHostId: null
+    });
   });
 
   it("解释更改会先弹供应商选择，再新建会话", async () => {
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+    workbenchShellMock.currentWorkspaceRef = {
+      hostId: "peer-host-1",
+      workspaceId: "remote-workspace-1"
+    };
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+    });
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      gitSnapshotListener = listener;
+      listener({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+      return () => {
+        if (gitSnapshotListener === listener) {
+          gitSnapshotListener = null;
+        }
+      };
+    });
     renderSidebar();
 
     fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
@@ -705,13 +749,14 @@ describe("GitSidebar", () => {
         expect.objectContaining({
           workspaceId: "workspace-1",
           provider: "codex"
-        })
+        }),
+        { targetHostId: "peer-host-1" }
       );
     });
 
     await waitFor(() => {
       expect(navigateMock).toHaveBeenCalledWith(
-        "/workspaces/workspace-1/sessions/session-commit-explain"
+        "/workspaces/workspace-1/sessions/session-commit-explain?targetHostId=peer-host-1"
       );
     });
   });
@@ -760,7 +805,8 @@ describe("GitSidebar", () => {
           username: "git",
           token: "secret-token"
         },
-        true
+        true,
+        { targetHostId: null }
       );
     });
   });
@@ -848,7 +894,8 @@ describe("GitSidebar", () => {
           username: "git",
           token: "github-secret-token"
         },
-        false
+        false,
+        { targetHostId: null }
       );
     });
   });
@@ -1026,7 +1073,9 @@ describe("GitSidebar", () => {
     await userEvent.click(within(unstagedGroup).getByRole("button", { name: "暂存全部" }));
 
     await waitFor(() => {
-      expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", allPaths);
+      expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", allPaths, {
+        targetHostId: null
+      });
     });
   });
 
@@ -1051,7 +1100,9 @@ describe("GitSidebar", () => {
     );
 
     await waitFor(() => {
-      expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", appPaths);
+      expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", appPaths, {
+        targetHostId: null
+      });
     });
   });
   it("不再显示按钮式开新窗口入口", () => {

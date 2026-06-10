@@ -37,10 +37,12 @@ import {
   fetchHostResourceSnapshot,
   type HostResourceSnapshotView
 } from "../../../platform/server/host-resource-manager";
+import { ApiError } from "../../../shared/network/api-error";
 import { normalizeHostAliasLabel, resolveHostAliasTag } from "../utils/host-alias";
 import {
   checkPeerHost,
   createPeerHost,
+  deletePeerHost,
   deletePeerHostSession,
   listPeerHosts,
   loginPeerHost,
@@ -110,6 +112,14 @@ interface HostResourceTarget {
 interface HostHandshakeView {
   version: string;
 }
+
+type PeerConnectionState =
+  | "disabled"
+  | "reachable"
+  | "unknown"
+  | "unreachable"
+  | "version_mismatch"
+  | "unauthorized";
 
 export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -459,11 +469,30 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     setPendingDeleteHostId(host.id);
 
     try {
+      if (host.peerHostId) {
+        try {
+          await deletePeerHost(host.peerHostId);
+        } catch (error) {
+          if (!isPeerHostNotFoundError(error)) {
+            throw error;
+          }
+        }
+      }
+
       await clientConfigStore.update({
         hosts: runtimeConfig.hosts.filter((item) => item.id !== host.id)
       });
       clearRememberedLoginCredentials(host.id);
       authStore.clearHostSession(host.id);
+      setPeerHostById((current) => {
+        if (!host.peerHostId || !current[host.peerHostId]) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[host.peerHostId];
+        return next;
+      });
       setConfirmDeleteHostId(null);
       showToast({
         title: t("shell.hostDeleteSuccess", { name: host.name })
@@ -665,8 +694,9 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const loginDraft = peerLoginDraftByHostId[host.id];
     const username = loginDraft?.username.trim() || "";
     const password = loginDraft?.password || "";
+    const hasSavedPeerHost = Boolean(host.peerHostId);
 
-    if (!username || !password) {
+    if (!hasSavedPeerHost && (!username || !password)) {
       showToast({
         title: t("shell.hostSwitcherPeerLoginRequired"),
         tone: "error"
@@ -692,7 +722,9 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         return;
       }
 
-      await loginPeerHost(checked.id, { username, password });
+      if (username && password) {
+        await loginPeerHost(checked.id, { username, password });
+      }
       await updateHostRecord(host.id, (item) => ({
         ...item,
         peerEnabled: true,
@@ -703,10 +735,20 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         ...current,
         [host.id]: { username, password: "" }
       }));
-      showToast({ title: t("shell.hostSwitcherPeerEnableSuccess"), tone: "success" });
+      showToast({
+        title: hasSavedPeerHost
+          ? t("shell.hostSwitcherPeerReconnectSuccess")
+          : t("shell.hostSwitcherPeerEnableSuccess"),
+        tone: "success"
+      });
     } catch (error) {
       showToast({
-        title: readErrorMessage(error, t("shell.hostSwitcherPeerEnableFailed")),
+        title: readErrorMessage(
+          error,
+          hasSavedPeerHost
+            ? t("shell.hostSwitcherPeerReconnectFailed")
+            : t("shell.hostSwitcherPeerEnableFailed")
+        ),
         tone: "error"
       });
     } finally {
@@ -743,19 +785,36 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   }
 
   async function upsertPeerHostForProfile(host: HostProfile): Promise<PeerHostDto> {
-    if (host.peerHostId) {
-      return updatePeerHost(host.peerHostId, {
-        name: host.name,
-        alias: normalizeHostAlias(host.alias),
-        baseUrl: host.baseUrl
-      });
-    }
-
-    return createPeerHost({
+    const payload = {
       name: host.name,
       alias: normalizeHostAlias(host.alias),
       baseUrl: host.baseUrl
-    });
+    };
+
+    if (host.peerHostId) {
+      try {
+        return await updatePeerHost(host.peerHostId, payload);
+      } catch (error) {
+        if (!isPeerHostNotFoundError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    try {
+      return await createPeerHost(payload);
+    } catch (error) {
+      if (!isPeerHostBaseUrlExistsError(error)) {
+        throw error;
+      }
+
+      const existing = await findPeerHostByBaseUrl(host.baseUrl);
+      if (!existing) {
+        throw error;
+      }
+
+      return await updatePeerHost(existing.id, payload);
+    }
   }
 
   function updateAliasDraft(hostId: string, value: string): void {
@@ -807,6 +866,9 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const resourceState = savedHost
       ? hostResourceStateById[savedHost.id] ?? INITIAL_HOST_RESOURCE_STATE
       : INITIAL_HOST_RESOURCE_STATE;
+    const peerState = savedHost
+      ? resolvePeerConnectionState(savedHost, peerHostById)
+      : "disabled";
     const hostVersion = savedHost
       ? resolveHostVersion(savedHost, activeHostId, hostVersionById, peerHostById)
       : null;
@@ -854,9 +916,9 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                 {savedHost && options.role === "peer" ? (
                   <span
                     className="workbench-host-switcher-item-badge"
-                    data-tone={savedHost.peerEnabled ? "peer" : "muted"}
+                    data-tone={resolvePeerBadgeTone(peerState)}
                   >
-                    {savedHost.peerEnabled ? t("shell.hostSwitcherPeerBadge") : t("common.disabled")}
+                    {resolvePeerBadgeLabel(peerState)}
                   </span>
                 ) : null}
               </span>
@@ -945,6 +1007,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const busy = peerBusyHostId === host.id;
     const aliasDraft = aliasDraftByHostId[host.id] ?? normalizeHostAliasLabel(host.alias);
     const resourceState = hostResourceStateById[host.id] ?? INITIAL_HOST_RESOURCE_STATE;
+    const peerState = resolvePeerConnectionState(host, peerHostById);
+    const reconnecting = host.peerHostId && peerState !== "disabled" && peerState !== "reachable";
 
     return (
       <div className="workbench-host-switcher-detail-panel" role="region" aria-label={t("shell.hostSwitcherDetailTitle")}>
@@ -978,7 +1042,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           <div className="workbench-host-switcher-detail-row">
             <span className="workbench-host-switcher-detail-label">{t("shell.hostSwitcherDetailStatusLabel")}</span>
             <span className="workbench-host-switcher-detail-value">
-              {isPrimary ? detailStatusLabel : host.peerEnabled ? t("common.enabled") : t("common.disabled")}
+              {isPrimary ? detailStatusLabel : resolvePeerDetailStatusLabel(peerState)}
             </span>
           </div>
           {isPrimary && activeRoute?.kind === "relay" ? (
@@ -1072,7 +1136,11 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                   disabled={busy}
                   onClick={() => { void handleEnablePeerHost(host); }}
                 >
-                  {busy ? t("shell.hostSwitcherPeerChecking") : t("shell.hostSwitcherPeerEnableAction")}
+                  {busy
+                    ? t("shell.hostSwitcherPeerChecking")
+                    : reconnecting
+                      ? t("shell.hostSwitcherPeerReconnectAction")
+                      : t("shell.hostSwitcherPeerEnableAction")}
                 </button>
               )}
             </div>
@@ -1461,6 +1529,84 @@ function readErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function isPeerHostBaseUrlExistsError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.errorCode === "PEER_HOST_BASE_URL_EXISTS";
+}
+
+function isPeerHostNotFoundError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.errorCode === "PEER_HOST_NOT_FOUND";
+}
+
+async function findPeerHostByBaseUrl(baseUrl: string): Promise<PeerHostDto | null> {
+  const normalized = normalizeServerBaseUrl(baseUrl);
+  const response = await listPeerHosts();
+  return response.items.find((item) => normalizeServerBaseUrl(item.baseUrl) === normalized) ?? null;
+}
+
+function resolvePeerConnectionState(
+  host: Pick<HostProfile, "peerEnabled" | "peerHostId">,
+  peerHostById: Record<string, PeerHostDto>
+): PeerConnectionState {
+  if (!host.peerHostId) {
+    return host.peerEnabled ? "reachable" : "disabled";
+  }
+
+  const peerHost = peerHostById[host.peerHostId];
+
+  if (!peerHost) {
+    return host.peerEnabled ? "reachable" : "unknown";
+  }
+
+  return peerHost.status;
+}
+
+function resolvePeerBadgeTone(state: PeerConnectionState): "peer" | "muted" | "warning" | "danger" {
+  switch (state) {
+    case "reachable":
+      return "peer";
+    case "version_mismatch":
+    case "unauthorized":
+      return "warning";
+    case "unknown":
+    case "unreachable":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
+
+function resolvePeerBadgeLabel(state: PeerConnectionState): string {
+  switch (state) {
+    case "reachable":
+      return t("shell.hostSwitcherPeerBadge");
+    case "version_mismatch":
+      return t("shell.hostSwitcherPeerVersionMismatchBadge");
+    case "unauthorized":
+      return t("shell.hostSwitcherPeerUnauthorizedBadge");
+    case "unknown":
+    case "unreachable":
+      return t("shell.hostSwitcherPeerUnavailableBadge");
+    default:
+      return t("common.disabled");
+  }
+}
+
+function resolvePeerDetailStatusLabel(state: PeerConnectionState): string {
+  switch (state) {
+    case "reachable":
+      return t("common.enabled");
+    case "version_mismatch":
+      return t("shell.hostSwitcherPeerVersionMismatchBadge");
+    case "unauthorized":
+      return t("shell.hostSwitcherPeerUnauthorizedBadge");
+    case "unknown":
+    case "unreachable":
+      return t("shell.hostSwitcherPeerUnavailableBadge");
+    default:
+      return t("common.disabled");
+  }
 }
 
 function formatRelayLatency(state: RelayLatencyState): string {

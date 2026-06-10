@@ -249,7 +249,9 @@ export function ConversationSelectionActions({
     shellMode,
     requestNavigationRefresh,
     selectWorkspace,
-    upsertNavigationSession
+    upsertNavigationSession,
+    currentTargetHostId,
+    currentWorkspaceRef
   } = useWorkbenchShell();
   const providerPreferences = usePreferencesSelector((state) => state.profile.providers);
   const sessionProviderSelection = useMemo(
@@ -713,7 +715,10 @@ export function ConversationSelectionActions({
             providerConfigMode: selectedProviderSelection.providerConfigMode,
             providerPresetId: selectedProviderSelection.providerPresetId
           }
-        : undefined
+        : undefined,
+      {
+        targetHostId: currentTargetHostId
+      }
     )
       .then((result) => {
         if (!cancelled) {
@@ -736,6 +741,7 @@ export function ConversationSelectionActions({
     };
   }, [
     actionDialogOpen,
+    currentTargetHostId,
     currentCapabilities,
     selectedModelSwitchApp,
     selectedProvider,
@@ -754,7 +760,9 @@ export function ConversationSelectionActions({
 
     let cancelled = false;
 
-    void listProviderCapabilities(visibleSelectionProviders, session.workspaceId).then((nextCapabilities) => {
+    void listProviderCapabilities(visibleSelectionProviders, session.workspaceId, {
+      targetHostId: currentTargetHostId
+    }).then((nextCapabilities) => {
       if (!cancelled) {
         setProviderCapabilitiesMap(nextCapabilities);
       }
@@ -763,7 +771,7 @@ export function ConversationSelectionActions({
     return () => {
       cancelled = true;
     };
-  }, [actionDialogOpen, session, visibleSelectionProviders]);
+  }, [actionDialogOpen, currentTargetHostId, session, visibleSelectionProviders]);
 
   useEffect(() => {
     if (!actionDialogOpen || !session) {
@@ -957,6 +965,8 @@ export function ConversationSelectionActions({
           sessionKind: "annotation",
           annotationSourceMessageId: dialogSelection.sourceMessageId,
           annotationSourceText: dialogSelection.text
+        }, {
+          targetHostId: currentTargetHostId
         });
         upsertNavigationSession(nextSession);
 
@@ -968,6 +978,8 @@ export function ConversationSelectionActions({
           permissionMode: getDefaultSessionPermissionMode(),
           providerConfigMode: selectedProviderSelection.providerConfigMode,
           providerPresetId: selectedProviderSelection.providerPresetId
+        }, {
+          targetHostId: currentTargetHostId
         });
       } else {
         const response = await startLiveSession({
@@ -984,15 +996,26 @@ export function ConversationSelectionActions({
           sessionKind: "annotation",
           annotationSourceMessageId: dialogSelection.sourceMessageId ?? null,
           annotationSourceText: dialogSelection.text
+        }, {
+          targetHostId: currentTargetHostId
         });
 
-        nextSession = response.session ?? await getSessionDetail(response.sessionId);
+        nextSession = response.session ?? await getSessionDetail(response.sessionId, {
+          targetHostId: currentTargetHostId
+        });
       }
 
       upsertNavigationSession(nextSession);
       requestNavigationRefresh();
-      selectWorkspace(nextSession.workspaceId);
-      navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId));
+      const nextWorkspaceRef =
+        currentTargetHostId && currentWorkspaceRef
+          ? {
+            hostId: currentTargetHostId,
+            workspaceId: currentWorkspaceRef.workspaceId
+          }
+          : currentWorkspaceRef;
+      selectWorkspace(nextSession.workspaceId, nextWorkspaceRef);
+      navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId, nextWorkspaceRef));
       setActionDialogOpen(false);
       setDialogSelection(null);
       setSelection(null);
