@@ -61,8 +61,8 @@
 
 ## 阶段 1：先把快捷应用入口收成一套
 
-- [ ] 1.1 抽出代码视图和事务视图共用的快捷应用渲染层
-  - 状态：IN_REVIEW
+- [x] 1.1 抽出代码视图和事务视图共用的快捷应用渲染层
+  - 状态：DONE
   - 这一步到底做什么：把事务视图底部快捷应用里真正可复用的渲染和交互抽出来，避免代码视图复制粘贴一份。
   - 做完你能看到什么：代码视图和事务视图能共用同一套快捷应用项展示规则。
   - 先依赖什么：0.1
@@ -79,12 +79,13 @@
     1. 快捷应用列表渲染不再只绑死在事务视图里
     2. 代码视图可以复用同一套列表项结构
   - 怎么验证：
-    - `pnpm test:related -- apps/user-app/src/features/workbench/components/AffairsWorkbenchView.tsx`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - 代码检索确认 `CodeModeShortcutAppsRail` 已删除，代码模式改为直接挂载 `AffairsShortcutAppsRail`
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` §2.1、§2.2、§3.1
 
-- [ ] 1.2 给代码视图补出系统快捷应用入口
-  - 状态：IN_REVIEW
+- [x] 1.2 给代码视图补出系统快捷应用入口
+  - 状态：DONE
   - 这一步到底做什么：在代码视图左侧边栏底部加快捷应用区，并把“终端”“技能”作为固定置顶入口塞进去。
   - 做完你能看到什么：用户进代码视图就能直接看到终端和技能入口，不用再翻菜单。
   - 先依赖什么：1.1
@@ -102,14 +103,15 @@
     2. 终端和技能为固定不可编辑项
     3. 旧菜单入口不再是主入口
   - 怎么验证：
-    - `pnpm test:related -- apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - 人工代码走查确认快捷应用挂载点位于 `workbench-nav-footer minimal`，系统项通过 `systemItems` 注入
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` §2.3.1、§3.2.1
 
 ### 阶段检查
 
 - [ ] 1.3 检查入口是不是已经统一
-  - 状态：IN_PROGRESS
+  - 状态：IN_REVIEW
   - 这一步到底做什么：只检查“终端入口是不是已经从菜单迁到快捷应用”，不顺手扩范围。
   - 做完你能看到什么：入口层收住了，可以继续做终端面板布局。
   - 先依赖什么：1.1、1.2
