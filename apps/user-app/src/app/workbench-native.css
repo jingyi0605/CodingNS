@@ -9109,6 +9109,24 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .affairs-shortcut-rail[data-collapsed="true"] .affairs-sidebar-block-header {
   margin-bottom: 0;
 }
+.affairs-shortcut-rail-footer {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.affairs-shortcut-rail-footer .affairs-sidebar-block-header {
+  margin-bottom: 10px;
+}
+
+.affairs-shortcut-rail-footer .affairs-shortcut-rail-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 12px;
+}
+
 
 @media (max-width: 1024px) {
   .affairs-dashboard-canvas-grid {

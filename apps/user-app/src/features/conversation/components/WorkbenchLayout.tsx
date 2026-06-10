@@ -241,10 +241,11 @@ import {
   SessionProviderPicker
 } from "./SessionProviderPicker";
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
+import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import {
   AffairsAuxiliaryPanel,
-  CodeModeShortcutAppsRail,
   AffairsSectionMenu,
+  AffairsShortcutAppsRail,
   AffairsSidebarPanel,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
@@ -9482,14 +9483,35 @@ function SidebarContent({
 
       <div className="workbench-nav-footer minimal">
         {activeWorkbenchMode === "code" ? (
-          <CodeModeShortcutAppsRail
-            workspaceId={activeWorkspaceId}
-            sessionId={activeSessionId}
-            navigationGroups={workspaceGroups}
-            terminalOpen={terminalDockOpen}
-            onOpenTerminal={() => {
-              onOpenTerminalDock();
-            }}
+          <AffairsShortcutAppsRail
+            systemItems={[
+              {
+                id: "terminal",
+                title: t("shell.codeShortcutTerminalTitle"),
+                iconText: ">_",
+                active: terminalDockOpen,
+                actionLabel: t("shell.codeShortcutTerminalAction"),
+                onClick: onOpenTerminalDock
+              },
+              {
+                id: "skills",
+                title: t("shell.codeShortcutSkillsTitle"),
+                iconText: "技",
+                actionLabel: t("settings.skillManageAction"),
+                renderTrigger: ({ className, icon, title }) => (
+                  <SkillManagementPanel
+                    triggerClassName={className}
+                    triggerLabel={title}
+                    triggerLeading={icon}
+                    workspaceId={activeWorkspaceId}
+                    sessionId={activeSessionId}
+                  />
+                )
+              }
+            ]}
+            defaultCollapsed={false}
+            mountMode="footer"
+            emptyText={t("shell.affairsShortcutRailEmpty")}
           />
         ) : null}
         <div className="workbench-nav-footer-actions">
