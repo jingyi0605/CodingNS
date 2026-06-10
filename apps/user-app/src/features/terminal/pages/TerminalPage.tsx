@@ -2020,186 +2020,23 @@ export function TerminalPage({
           </>
         ) : (
           <>
-            <header
-              className="terminal-tabbar"
-              data-window-drag-handle="terminal-tabbar"
-              data-tauri-drag-region={macOsNativeTitlebarDragRegion}
-            >
-              <div
-                ref={terminalTabbarMainRef}
-                className="terminal-tabbar-main"
-                data-tauri-drag-region={macOsNativeTitlebarDragRegion}
-              >
-                <div
-                  ref={terminalTabbarScrollRef}
-                  className="terminal-tabbar-scroll"
-                  role="tablist"
-                  aria-label={t("terminal.title")}
-                  data-window-drag="ignore"
+            <div className="terminal-desktop-shell">
+              <section className="terminal-desktop-stage">
+                <header
+                  className="terminal-tabbar"
+                  data-window-drag-handle="terminal-tabbar"
+                  data-tauri-drag-region={macOsNativeTitlebarDragRegion}
                 >
-                  {orderedTerminals.map((terminal) => {
-                    const isActive = terminal.id === activeTerminalId;
-                    const isPinned = pinnedTerminalIdSet.has(terminal.id);
-                    const menuOpen = actionMenu?.terminalId === terminal.id;
-                    const pendingMutation = terminalMutations[terminal.id] ?? null;
-                    const indicatorStatus = pendingMutation
-                      ? "creating"
-                      : resolveTerminalIndicatorStatus({
-                          terminal,
-                          paneBindings: effectivePaneBindings,
-                          paneConnectionStates: effectivePaneConnectionStates,
-                          manuallyDisconnectedTerminalIdSet
-                        });
-
-                    return (
-                      <div
-                        key={terminal.id}
-                        className="terminal-tab-shell"
-                        data-active={isActive}
-                        data-assigned={isTerminalAssigned(
-                          terminal.id,
-                          effectivePaneBindings,
-                          effectiveSplitDirection
-                        )}
-                      >
-                        <button
-                          className="terminal-tab"
-                          data-active={isActive}
-                          type="button"
-                          role="tab"
-                          aria-selected={isActive}
-                          aria-busy={pendingMutation !== null}
-                          onClick={() => {
-                            if (!isActive) {
-                              void haptics.trigger("selection");
-                            }
-                            bindTerminalToActivePane(terminal.id);
-                          }}
-                          onAuxClick={(event) => {
-                            if (event.button !== 1 || pendingMutation !== null) {
-                              return;
-                            }
-
-                            event.preventDefault();
-                            void handleCloseTerminal(terminal.id);
-                          }}
-                        >
-                          <span className="terminal-tab-name">
-                            <>
-                              <span
-                                className="terminal-tab-status-dot"
-                                data-status={indicatorStatus}
-                                aria-hidden="true"
-                              />
-                              {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
-                              <span className="terminal-tab-name-text">{terminal.name}</span>
-                              <span
-                                className="terminal-tab-runtime"
-                                title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
-                              >
-                                {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
-                              </span>
-                              {pendingMutation ? (
-                                <span
-                                  className="terminal-tab-operation"
-                                  data-operation={pendingMutation}
-                                >
-                                  <span
-                                    className="terminal-tab-operation-spinner"
-                                    aria-hidden="true"
-                                  />
-                                  {pendingMutation === "closing"
-                                    ? t("terminal.closePendingBadge")
-                                    : t("terminal.deletePendingBadge")}
-                                </span>
-                              ) : null}
-                            </>
-                          </span>
-                        </button>
-                        <button
-                          ref={(node) => {
-                            terminalActionMenuTriggerRef.current[terminal.id] = node;
-                          }}
-                          className="terminal-tab-inline-action"
-                          type="button"
-                          data-open={menuOpen}
-                          disabled={pendingMutation !== null}
-                          aria-haspopup="menu"
-                          aria-label={t("terminal.moreActions")}
-                          aria-expanded={menuOpen}
-                          onClick={(event) => {
-                            event.stopPropagation();
-
-                            if (menuOpen) {
-                              setActionMenu(null);
-                              return;
-                            }
-
-                            setActionMenu(
-                              buildActionMenuState(terminal.id, event.currentTarget) ?? {
-                                terminalId: terminal.id,
-                                top: 0,
-                                left: 0
-                              }
-                            );
-                          }}
-                        >
-                          ⋯
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {pendingTerminalCreationPaneId ? (
-                    <div
-                      className="terminal-tab-shell"
-                      role="presentation"
-                      data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
-                      data-assigned="false"
-                      data-pending="true"
-                    >
-                      <div className="terminal-tab" aria-hidden="true">
-                        <span className="terminal-tab-name">
-                          <span
-                            className="terminal-tab-status-dot"
-                            data-status="creating"
-                            aria-hidden="true"
-                          />
-                          <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
-                          <span
-                            className="terminal-tab-runtime"
-                      title={getTerminalRuntimeLabel(
-                        selectedRuntimeType || undefined,
-                        platform.ui.osFamily
-                      )}
-                          >
-                      {getTerminalRuntimeShortLabel(
-                        selectedRuntimeType || undefined,
-                        platform.ui.osFamily
-                      )}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-                  ) : null}
-                  <button
-                    className="terminal-tab-control"
-                    type="button"
-                    aria-label={t("terminal.createButton")}
-                    title={t("terminal.createButton")}
-                    disabled={!selectedWorkspaceId || creatingTerminal}
-                    onClick={() => {
-                      void handleCreateTerminalEntry();
-                    }}
+                  <div
+                    ref={terminalTabbarMainRef}
+                    className="terminal-tabbar-main"
+                    data-tauri-drag-region={macOsNativeTitlebarDragRegion}
                   >
-                    <span className="terminal-toolbar-icon" aria-hidden="true">
-                      <svg viewBox="0 0 16 16" focusable="false">
-                        <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
-                      </svg>
-                    </span>
-                  </button>
-                </div>
-
-                <div className="terminal-tabbar-inline-actions">
+                    <div className="terminal-tabbar-title" data-window-drag="ignore">
+                      <strong>{t("terminal.title")}</strong>
+                      <span>{currentWorkspace?.name ?? t("terminal.workspaceField")}</span>
+                    </div>
+                    <div className="terminal-tabbar-inline-actions">
                   <div className="terminal-toolbar-anchor" data-window-drag="ignore">
                     <div
                       ref={toolbarRef}
@@ -2370,7 +2207,210 @@ export function TerminalPage({
                       </span>
                     </button>
                   </div>
+                    </div>
+                  </div>
+                </header>
+
+                <div className="terminal-stage-surface">
+                  <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile="false">
+                    {visiblePaneIds.map((paneId) => {
+                      const terminalId = effectivePaneBindings[paneId];
+                      const terminal = terminals.find((item) => item.id === terminalId) ?? null;
+
+                      return (
+                        <TerminalWorkspacePane
+                          key={`${paneId}-${terminal?.id ?? "empty"}`}
+                          paneId={paneId}
+                          paneLabel={paneId === "primary" ? t("terminal.panePrimary") : t("terminal.paneSecondary")}
+                          terminal={terminal}
+                          pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
+                          zoomScale={zoomScale}
+                          active={effectiveActivePaneId === paneId}
+                          targetHostId={currentTargetHostId}
+                          ownsTerminalSize={ownsTerminalSize}
+                          onActivate={activatePane}
+                          onConnectionChange={handlePaneConnectionChange}
+                          onTerminalStatus={handleTerminalStatus}
+                          onRequireReload={requestReload}
+                          onUnauthorized={handleUnauthorized}
+                          registerApi={registerPaneApi}
+                          notifyTerminal={notifyTerminal}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
+              </section>
+
+              <aside className="terminal-desktop-rail">
+                <div
+                  ref={terminalTabbarScrollRef}
+                  className="terminal-tabbar-scroll terminal-tabbar-scroll-rail"
+                  role="tablist"
+                  aria-label={t("terminal.title")}
+                  data-window-drag="ignore"
+                >
+                  {orderedTerminals.map((terminal) => {
+                    const isActive = terminal.id === activeTerminalId;
+                    const isPinned = pinnedTerminalIdSet.has(terminal.id);
+                    const menuOpen = actionMenu?.terminalId === terminal.id;
+                    const pendingMutation = terminalMutations[terminal.id] ?? null;
+                    const indicatorStatus = pendingMutation
+                      ? "creating"
+                      : resolveTerminalIndicatorStatus({
+                          terminal,
+                          paneBindings: effectivePaneBindings,
+                          paneConnectionStates: effectivePaneConnectionStates,
+                          manuallyDisconnectedTerminalIdSet
+                        });
+
+                    return (
+                      <div
+                        key={terminal.id}
+                        className="terminal-tab-shell"
+                        data-active={isActive}
+                        data-assigned={isTerminalAssigned(
+                          terminal.id,
+                          effectivePaneBindings,
+                          effectiveSplitDirection
+                        )}
+                      >
+                        <button
+                          className="terminal-tab"
+                          data-active={isActive}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          aria-busy={pendingMutation !== null}
+                          onClick={() => {
+                            if (!isActive) {
+                              void haptics.trigger("selection");
+                            }
+                            bindTerminalToActivePane(terminal.id);
+                          }}
+                          onAuxClick={(event) => {
+                            if (event.button !== 1 || pendingMutation !== null) {
+                              return;
+                            }
+
+                            event.preventDefault();
+                            void handleCloseTerminal(terminal.id);
+                          }}
+                        >
+                          <span className="terminal-tab-name">
+                            <>
+                              <span
+                                className="terminal-tab-status-dot"
+                                data-status={indicatorStatus}
+                                aria-hidden="true"
+                              />
+                              {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                              <span className="terminal-tab-name-text">{terminal.name}</span>
+                              <span
+                                className="terminal-tab-runtime"
+                                title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
+                              >
+                                {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
+                              </span>
+                              {pendingMutation ? (
+                                <span
+                                  className="terminal-tab-operation"
+                                  data-operation={pendingMutation}
+                                >
+                                  <span
+                                    className="terminal-tab-operation-spinner"
+                                    aria-hidden="true"
+                                  />
+                                  {pendingMutation === "closing"
+                                    ? t("terminal.closePendingBadge")
+                                    : t("terminal.deletePendingBadge")}
+                                </span>
+                              ) : null}
+                            </>
+                          </span>
+                        </button>
+                        <button
+                          ref={(node) => {
+                            terminalActionMenuTriggerRef.current[terminal.id] = node;
+                          }}
+                          className="terminal-tab-inline-action"
+                          type="button"
+                          data-open={menuOpen}
+                          disabled={pendingMutation !== null}
+                          aria-haspopup="menu"
+                          aria-label={t("terminal.moreActions")}
+                          aria-expanded={menuOpen}
+                          onClick={(event) => {
+                            event.stopPropagation();
+
+                            if (menuOpen) {
+                              setActionMenu(null);
+                              return;
+                            }
+
+                            setActionMenu(
+                              buildActionMenuState(terminal.id, event.currentTarget) ?? {
+                                terminalId: terminal.id,
+                                top: 0,
+                                left: 0
+                              }
+                            );
+                          }}
+                        >
+                          ⋯
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {pendingTerminalCreationPaneId ? (
+                    <div
+                      className="terminal-tab-shell"
+                      role="presentation"
+                      data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
+                      data-assigned="false"
+                      data-pending="true"
+                    >
+                      <div className="terminal-tab" aria-hidden="true">
+                        <span className="terminal-tab-name">
+                          <span
+                            className="terminal-tab-status-dot"
+                            data-status="creating"
+                            aria-hidden="true"
+                          />
+                          <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
+                          <span
+                            className="terminal-tab-runtime"
+                            title={getTerminalRuntimeLabel(
+                              selectedRuntimeType || undefined,
+                              platform.ui.osFamily
+                            )}
+                          >
+                            {getTerminalRuntimeShortLabel(
+                              selectedRuntimeType || undefined,
+                              platform.ui.osFamily
+                            )}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  className="terminal-tab-control terminal-tab-control-rail"
+                  type="button"
+                  aria-label={t("terminal.createButton")}
+                  title={t("terminal.createButton")}
+                  disabled={!selectedWorkspaceId || creatingTerminal}
+                  onClick={() => {
+                    void handleCreateTerminalEntry();
+                  }}
+                >
+                  <span className="terminal-toolbar-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" focusable="false">
+                      <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
+                    </svg>
+                  </span>
+                </button>
                 {actionMenu && actionMenuTerminal ? (
                   <TerminalActionMenu
                     ref={terminalActionMenuRef}
@@ -2396,37 +2436,7 @@ export function TerminalPage({
                     }}
                   />
                 ) : null}
-              </div>
-            </header>
-
-            <div className="terminal-stage-surface">
-              <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile="false">
-                {visiblePaneIds.map((paneId) => {
-                  const terminalId = effectivePaneBindings[paneId];
-                  const terminal = terminals.find((item) => item.id === terminalId) ?? null;
-
-                  return (
-                    <TerminalWorkspacePane
-                      key={`${paneId}-${terminal?.id ?? "empty"}`}
-                      paneId={paneId}
-                      paneLabel={paneId === "primary" ? t("terminal.panePrimary") : t("terminal.paneSecondary")}
-                      terminal={terminal}
-                      pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
-                      zoomScale={zoomScale}
-                      active={effectiveActivePaneId === paneId}
-                      targetHostId={currentTargetHostId}
-                      ownsTerminalSize={ownsTerminalSize}
-                      onActivate={activatePane}
-                      onConnectionChange={handlePaneConnectionChange}
-                      onTerminalStatus={handleTerminalStatus}
-                      onRequireReload={requestReload}
-                      onUnauthorized={handleUnauthorized}
-                      registerApi={registerPaneApi}
-                      notifyTerminal={notifyTerminal}
-                    />
-                  );
-                })}
-              </div>
+              </aside>
             </div>
           </>
         )}

@@ -9008,6 +9008,15 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-width: 0;
 }
 
+.affairs-shortcut-rail-item-system .affairs-shortcut-rail-icon[data-system="true"] {
+  background: color-mix(in srgb, var(--panel-separator) 60%, var(--panel-bg));
+}
+
+.affairs-shortcut-rail-item-system .affairs-shortcut-rail-icon[data-system="true"][data-active="true"] {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-bg));
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
+
 .affairs-shortcut-rail-launcher {
   display: flex;
   flex-direction: column;

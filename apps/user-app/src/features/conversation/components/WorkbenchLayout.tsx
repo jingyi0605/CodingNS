@@ -64,7 +64,10 @@ import {
   openGitExternalWindow,
   openProcessesExternalWindow
 } from "../../../platform/desktop/window-openers";
-import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
+import {
+  showDesktopContextMenu,
+  type DesktopContextMenuItem
+} from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
@@ -83,7 +86,6 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useTheme } from "../../../shared/theme/theme";
 import { useToast } from "../../../shared/toast";
-import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { authStore } from "../../auth/store/auth-store";
 import {
   deleteSession,
@@ -241,12 +243,20 @@ import {
 import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
 import {
   AffairsAuxiliaryPanel,
+  CodeModeShortcutAppsRail,
   AffairsSectionMenu,
   AffairsSidebarPanel,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
 } from "../../workbench/components/AffairsWorkbenchView";
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
+import {
+  createDefaultCodeTerminalDockState,
+  readCodeTerminalDockState,
+  writeCodeTerminalDockState,
+  type CodeTerminalDockOrientation,
+  type CodeTerminalDockState
+} from "../../workbench/utils/code-terminal-dock-state";
 import {
   createDefaultAffairsViewState,
   createDefaultAffairsLibraryLandingState,
@@ -3871,16 +3881,6 @@ function ConversationIcon() {
   );
 }
 
-function TerminalIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
-      <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
-      <path d="m8 10 2.5 2.5L8 15" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M13.5 15h3.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ButlerIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
@@ -3889,16 +3889,6 @@ function ButlerIcon() {
       <circle cx="15" cy="11" r="1" />
       <path d="M8 15h8" />
       <path d="M12 5V3" />
-    </svg>
-  );
-}
-
-function SkillIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
-      <path d="M12 5.5 13.5 10l4.5 1.5-4.5 1.5-1.5 4.5-1.5-4.5L6 11.5 10.5 10 12 5.5Z" strokeLinejoin="round" />
-      <path d="M18.5 5.5v3" strokeLinecap="round" />
-      <path d="M17 7h3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -5729,6 +5719,7 @@ function SidebarContent({
   isConversationActive,
   isTerminalActive,
   isButlerActive,
+  terminalDockOpen,
   isSearchOpen,
   navigationLoading,
   navigationError,
@@ -5738,6 +5729,7 @@ function SidebarContent({
   onNavigateConversation,
   onSelectWorkbenchMode,
   onNavigateTerminals,
+  onOpenTerminalDock,
   onNavigateButler,
   onOpenSearch,
   onOpenSettings,
@@ -5774,6 +5766,7 @@ function SidebarContent({
   isConversationActive: boolean;
   isTerminalActive: boolean;
   isButlerActive: boolean;
+  terminalDockOpen: boolean;
   isSearchOpen: boolean;
   navigationLoading: boolean;
   navigationError: string | null;
@@ -5783,6 +5776,7 @@ function SidebarContent({
   onNavigateConversation: () => void;
   onSelectWorkbenchMode: (mode: WorkbenchMode) => void;
   onNavigateTerminals: () => void;
+  onOpenTerminalDock: () => void;
   onNavigateButler: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
@@ -6168,6 +6162,11 @@ function SidebarContent({
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [openSessionMenuAnchorPoint, setOpenSessionMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
+  const [openWorkspaceMenuState, setOpenWorkspaceMenuState] = useState<{
+    workspace: WorkspaceDto;
+    anchorPoint: ContextMenuAnchorPoint;
+    pinDisabled: boolean;
+  } | null>(null);
   const [exportingSessionId, setExportingSessionId] = useState<string | null>(null);
   const [exportRenderJob, setExportRenderJob] = useState<{
     session: SessionSummaryDto;
@@ -6189,6 +6188,7 @@ function SidebarContent({
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [batchArchiving, setBatchArchiving] = useState(false);
   const [workspaceNavigationSavingById, setWorkspaceNavigationSavingById] = useState<Record<string, boolean>>({});
+  const [managedWorkspaceCatalog, setManagedWorkspaceCatalog] = useState<WorkspaceDto[]>([]);
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
   const createWorktreeBaseRefPickerRef = useRef<HTMLDivElement | null>(null);
   const createWorktreeBaseRefPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -6198,6 +6198,9 @@ function SidebarContent({
   const workspacePointerGestureRef = useRef<WorkspacePointerReorderGesture | null>(null);
   const workspacePointerGestureCleanupRef = useRef<(() => void) | null>(null);
   const suppressWorkspaceToggleClickRef = useRef<string | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [workspaceMenuPositionStyle, setWorkspaceMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [openWorkspaceMenuSubmenuId, setOpenWorkspaceMenuSubmenuId] = useState<string | null>(null);
   const expandedWorktreeNodeIdSet = useMemo(
     () => new Set(worktreeNodeExpansionState.expandedWorkspaceIds),
     [worktreeNodeExpansionState.expandedWorkspaceIds]
@@ -6245,6 +6248,10 @@ function SidebarContent({
   const openSessionMenu = useCallback((menuKey: string, anchorPoint: ContextMenuAnchorPoint) => {
     setOpenSessionMenuKey(menuKey);
     setOpenSessionMenuAnchorPoint(anchorPoint);
+  }, []);
+  const closeWorkspaceMenu = useCallback(() => {
+    setOpenWorkspaceMenuState(null);
+    setOpenWorkspaceMenuSubmenuId(null);
   }, []);
 
   const createSessionWorkspace =
@@ -6424,6 +6431,34 @@ function SidebarContent({
     [onRefreshNavigation, platform.bridge]
   );
 
+  useEffect(() => {
+    if (!workspaceManagerOpen) {
+      return;
+    }
+
+    let disposed = false;
+
+    void listWorkspaces({ includeHidden: true })
+      .then((response) => {
+        if (disposed) {
+          return;
+        }
+
+        setManagedWorkspaceCatalog(Array.isArray(response.items) ? response.items : []);
+      })
+      .catch(() => {
+        if (disposed) {
+          return;
+        }
+
+        setManagedWorkspaceCatalog([]);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [workspaceGroups, workspaceManagerOpen]);
+
   function handleToggleManagedWorkspace(workspaceId: string) {
     const isExpanded = expandedManagedWorkspaceIds.includes(workspaceId);
 
@@ -6447,6 +6482,176 @@ function SidebarContent({
     requestGitRefresh(workspaceRef.workspaceId, { targetHostId });
     subscribeWorkspaceManagementSnapshot(workspaceRef.workspaceId, { targetHostId });
     requestWorkspaceManagementRefresh(workspaceRef.workspaceId, { targetHostId });
+  }
+
+  async function handlePinWorkspaceToTop(workspaceId: string) {
+    const workspaceIds = workspaceGroups.map((group) => group.workspace.id);
+
+    if (workspaceIds.length <= 1 || workspaceIds[0] === workspaceId) {
+      return;
+    }
+
+    try {
+      await reorderWorkspaces({
+        workspaceIds: [workspaceId, ...workspaceIds.filter((item) => item !== workspaceId)]
+      });
+      await onRefreshNavigation();
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.workspaceReorderFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  async function handleOpenWorkspaceTerminals(workspace: WorkspaceDto) {
+    const workspaceRef = resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace));
+    navigate(buildWorkspaceTerminalsPath(workspace.id, workspaceRef));
+    onClose?.();
+  }
+
+  async function handleOpenWorkspaceFiles(workspace: WorkspaceDto) {
+    const workspaceRef = resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace));
+    navigate(buildWorkspaceToolFilesPath(workspace.id, workspaceRef));
+    onClose?.();
+  }
+
+  async function handleOpenWorkspaceGit(workspace: WorkspaceDto) {
+    const workspaceRef = resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace));
+    navigate(buildWorkspaceToolGitPath(workspace.id, workspaceRef));
+    onClose?.();
+  }
+
+  async function handleOpenWorkspaceProcesses(workspace: WorkspaceDto) {
+    const workspaceRef = resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace));
+    navigate(buildWorkspaceToolProcessesPath(workspace.id, workspaceRef));
+    onClose?.();
+  }
+
+  async function handleUpdateWorkspaceHiddenState(workspace: WorkspaceDto, hidden: boolean) {
+    if (workspaceNavigationSavingById[workspace.id]) {
+      return;
+    }
+
+    setWorkspaceNavigationSavingById((current) => ({
+      ...current,
+      [workspace.id]: true
+    }));
+
+    try {
+      await updateWorkspaceNavigationState(workspace.id, { hidden });
+      setExpandedManagedWorkspaceIds((current) => current.filter((item) => item !== workspace.id));
+      await onRefreshNavigation();
+      const response = await listWorkspaces({ includeHidden: true });
+      setManagedWorkspaceCatalog(Array.isArray(response.items) ? response.items : []);
+      showToast({
+        title: hidden ? t("shell.workspaceHideSuccess") : t("shell.workspaceUnhideSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error
+          ? error.message
+          : hidden
+            ? t("shell.workspaceHideFailed")
+            : t("shell.workspaceUnhideFailed"),
+        tone: "error"
+      });
+    } finally {
+      setWorkspaceNavigationSavingById((current) => ({
+        ...current,
+        [workspace.id]: false
+      }));
+    }
+  }
+
+  function buildWorkspaceContextMenuItems(
+    workspace: WorkspaceDto,
+    options?: { pinDisabled?: boolean }
+  ): DesktopContextMenuItem[] {
+    const currentHostId = resolveWorkspaceHostId(workspace);
+    const hostMenuItems = selectableWorkspaceHosts.length > 1
+      ? selectableWorkspaceHosts.map((item) => ({
+          id: `switch-host:${workspace.id}:${item.id}`,
+          label: item.id === "current"
+            ? t("shell.manageWorkspaceHostCurrentOption", { alias: getHostAlias(item.host) })
+            : t("shell.manageWorkspaceHostPeerOption", { alias: getHostAlias(item.host) }),
+          disabled: item.id === currentHostId,
+          onSelect: () => {
+            void handleChangeWorkspaceHost(workspace, item.id);
+          }
+        }))
+      : [];
+
+    return [
+      {
+        id: `pin:${workspace.id}`,
+        label: t("shell.workspacePinToTopAction"),
+        disabled: options?.pinDisabled === true,
+        onSelect: () => {
+          void handlePinWorkspaceToTop(workspace.id);
+        }
+      },
+      ...(hostMenuItems.length > 0
+        ? [{
+            id: `switch:${workspace.id}`,
+            label: t("shell.workspaceSwitchHostAction"),
+            items: hostMenuItems
+          }]
+        : []),
+      {
+        id: `terminals:${workspace.id}`,
+        label: t("shell.terminalsEntry"),
+        onSelect: () => {
+          void handleOpenWorkspaceTerminals(workspace);
+        }
+      },
+      {
+        id: `tools:${workspace.id}`,
+        label: t("shell.parallelPaneToolsAction"),
+        onSelect: () => {
+          void handleOpenWorkspaceFiles(workspace);
+        }
+      },
+      {
+        id: `hide:${workspace.id}`,
+        label: t("shell.workspaceHideAction"),
+        disabled: workspaceNavigationSavingById[workspace.id] === true,
+        onSelect: () => {
+          void handleUpdateWorkspaceHiddenState(workspace, true);
+        }
+      },
+      {
+        id: `remove:${workspace.id}`,
+        label: t("shell.manageWorkspaceRemoveAction"),
+        disabled: Boolean(removingWorkspaceId),
+        onSelect: () => setWorkspaceRemovalTarget(workspace)
+      }
+    ];
+  }
+
+  async function openWorkspaceContextMenu(
+    workspace: WorkspaceDto,
+    options?: { pinDisabled?: boolean },
+    anchorPoint?: ContextMenuAnchorPoint
+  ) {
+    const items = buildWorkspaceContextMenuItems(workspace, options);
+
+    if (platform.isDesktop) {
+      await showDesktopContextMenu(items);
+      return;
+    }
+
+    if (!anchorPoint) {
+      return;
+    }
+
+    setOpenWorkspaceMenuSubmenuId(null);
+    setOpenWorkspaceMenuState({
+      workspace,
+      anchorPoint,
+      pinDisabled: options?.pinDisabled === true
+    });
   }
 
   async function handleUpdateWorkspaceBackgroundColor(workspaceId: string, backgroundColor: string | null) {
@@ -6533,6 +6738,162 @@ function SidebarContent({
       window.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [closeSessionMenu, openSessionMenuKey]);
+
+  useLayoutEffect(() => {
+    if (platform.isDesktop || !openWorkspaceMenuState || typeof window === "undefined") {
+      setWorkspaceMenuPositionStyle(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const nextPosition = resolveContextMenuPosition(
+        openWorkspaceMenuState.anchorPoint,
+        {
+          width: workspaceMenuRef.current?.offsetWidth ?? 0,
+          height: workspaceMenuRef.current?.offsetHeight ?? 0
+        },
+        {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        {
+          estimatedHeightPx: 280
+        }
+      );
+
+      setWorkspaceMenuPositionStyle({
+        position: "fixed",
+        top: `${Math.round(nextPosition.top)}px`,
+        left: `${Math.round(nextPosition.left)}px`,
+        width: `${Math.round(nextPosition.width)}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: `${Math.round(nextPosition.maxHeight)}px`,
+        transformOrigin: nextPosition.transformOrigin
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [openWorkspaceMenuState, platform.isDesktop]);
+
+  useEffect(() => {
+    if (!openWorkspaceMenuState) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (target instanceof HTMLElement && target.closest(".workbench-workspace-menu")) {
+        return;
+      }
+
+      closeWorkspaceMenu();
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [closeWorkspaceMenu, openWorkspaceMenuState]);
+
+  const workspaceMenu =
+    !platform.isDesktop && openWorkspaceMenuState && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={workspaceMenuRef}
+            className="workbench-session-menu workbench-workspace-menu"
+            role="menu"
+            aria-label={t("shell.manageWorkspaceTitle")}
+            onClick={(event) => event.stopPropagation()}
+            style={
+              workspaceMenuPositionStyle ?? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                visibility: "hidden"
+              }
+            }
+          >
+            {buildWorkspaceContextMenuItems(openWorkspaceMenuState.workspace, {
+              pinDisabled: openWorkspaceMenuState.pinDisabled
+            }).map((item) => {
+              if ("items" in item) {
+                const submenuOpen = openWorkspaceMenuSubmenuId === item.id;
+
+                return (
+                  <div key={item.id} className="workbench-session-submenu" data-open={submenuOpen}>
+                    <button
+                      type="button"
+                      className="workbench-session-menu-item"
+                      aria-haspopup="menu"
+                      aria-expanded={submenuOpen}
+                      disabled={item.disabled}
+                      onClick={() => {
+                        setOpenWorkspaceMenuSubmenuId((current) => current === item.id ? null : item.id);
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      <span className="workbench-session-submenu-caret" aria-hidden="true">
+                        <ChevronIcon expanded={submenuOpen} />
+                      </span>
+                    </button>
+                    {submenuOpen ? (
+                      <div className="workbench-session-submenu-panel" role="menu" aria-label={item.label}>
+                        {item.items.map((child) => {
+                          if ("items" in child) {
+                            return null;
+                          }
+
+                          return (
+                            <button
+                              key={child.id}
+                              type="button"
+                              className="workbench-session-menu-item"
+                              role="menuitem"
+                              disabled={child.disabled}
+                              onClick={() => {
+                                void child.onSelect();
+                                closeWorkspaceMenu();
+                              }}
+                            >
+                              <span>{child.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="workbench-session-menu-item"
+                  role="menuitem"
+                  disabled={item.disabled}
+                  onClick={() => {
+                    void item.onSelect();
+                    closeWorkspaceMenu();
+                  }}
+                >
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )
+      : null;
 
   useEffect(() => {
     if (!batchWorkspaceId) {
@@ -7646,7 +8007,18 @@ function SidebarContent({
             <span className="workbench-workspace-toggle-icon" aria-hidden="true">
               <ChevronIcon expanded={!isCollapsed} />
             </span>
-            <span className="workbench-workspace-title-copy">
+              <span
+                className="workbench-workspace-title-copy"
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void openWorkspaceContextMenu(
+                    node.workspace,
+                    { pinDisabled: true },
+                    { x: event.clientX, y: event.clientY }
+                  );
+                }}
+              >
               <span className="workbench-workspace-title-line">
                 <strong>{node.meta.displayName || node.workspace.name}</strong>
                 {renderWorkspaceHostBadge(node.workspace)}
@@ -8880,32 +9252,10 @@ function SidebarContent({
                   <ConversationIcon />
                   <span>{t("shell.conversationEntry")}</span>
                 </button>
-                <button
-                  type="button"
-                  className={
-                    isTerminalActive
-                      ? "workbench-nav-segment-button active"
-                      : "workbench-nav-segment-button"
-                  }
-                  role="tab"
-                  aria-selected={isTerminalActive}
-                  onClick={onNavigateTerminals}
-                >
-                  <TerminalIcon />
-                  <span>{t("shell.terminalsEntry")}</span>
-                </button>
               </div>
             ) : null}
           </div>
-          {activeWorkbenchMode === "code" ? (
-            <SkillManagementPanel
-              triggerClassName="workbench-nav-segment-button"
-              triggerLabel={t("shell.skillsEntry")}
-              triggerLeading={<SkillIcon />}
-              workspaceId={activeWorkspaceId}
-              sessionId={activeSessionId}
-            />
-          ) : activeWorkbenchMode === "affairs" ? (
+          {activeWorkbenchMode === "affairs" ? (
             affairsMenuSlot ?? <div className="affairs-sidebar-empty">{t("common.loading")}</div>
           ) : null}
         </div>
@@ -9053,9 +9403,23 @@ function SidebarContent({
                   <span className="workbench-workspace-toggle-icon" aria-hidden="true">
                     <ChevronIcon expanded={!isWorkspaceCollapsed} />
                   </span>
-                  <span className="workbench-workspace-title-line">
-                    <strong>{group.workspace.name}</strong>
-                    {renderWorkspaceHostBadge(group.workspace)}
+                  <span
+                    className="workbench-workspace-title-copy"
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void openWorkspaceContextMenu(group.workspace, {
+                        pinDisabled: workspaceGroups[0]?.workspace.id === group.workspace.id
+                      }, {
+                        x: event.clientX,
+                        y: event.clientY
+                      });
+                    }}
+                  >
+                    <span className="workbench-workspace-title-line">
+                      <strong>{group.workspace.name}</strong>
+                      {renderWorkspaceHostBadge(group.workspace)}
+                    </span>
                   </span>
                 </button>
 
@@ -9117,6 +9481,17 @@ function SidebarContent({
       </div>
 
       <div className="workbench-nav-footer minimal">
+        {activeWorkbenchMode === "code" ? (
+          <CodeModeShortcutAppsRail
+            workspaceId={activeWorkspaceId}
+            sessionId={activeSessionId}
+            navigationGroups={workspaceGroups}
+            terminalOpen={terminalDockOpen}
+            onOpenTerminal={() => {
+              onOpenTerminalDock();
+            }}
+          />
+        ) : null}
         <div className="workbench-nav-footer-actions">
           <button
             className="settings-entry-button workbench-nav-settings-button"
@@ -9181,6 +9556,53 @@ function SidebarContent({
         ) : (
           <p className="workbench-section-empty">{t("shell.manageWorkspaceEmpty")}</p>
         )}
+        {managedWorkspaceCatalog.filter((workspace) => workspace.hidden).length > 0 ? (
+          <div className="workbench-manage-list">
+            <div className="workbench-section-heading">
+              <div className="workbench-section-heading-main">
+                <span>{t("shell.manageWorkspaceHiddenSectionTitle")}</span>
+              </div>
+              <span className="workbench-section-counter">{managedWorkspaceCatalog.filter((workspace) => workspace.hidden).length}</span>
+            </div>
+            {managedWorkspaceCatalog
+              .filter((workspace) => workspace.hidden)
+              .map((workspace) => {
+                const workspaceContext = createFallbackWorkspaceVisualContext(workspace);
+                const saving = workspaceNavigationSavingById[workspace.id] === true;
+
+                return (
+                  <article
+                    key={`hidden:${workspace.id}`}
+                    className="workbench-manage-item workbench-manage-item--hidden"
+                    data-workspace-tone={workspaceContext.tone}
+                    style={createWorkspaceToneStyle(workspaceContext)}
+                  >
+                    <div className="workbench-manage-item-body">
+                      <div className="workbench-manage-detail-block">
+                        <div className="workbench-manage-detail-header">
+                          <span className="workbench-manage-detail-label">{workspace.name}</span>
+                          {renderWorkspaceHostBadge(workspace, "workspace-host-badge--inline")}
+                        </div>
+                        <p className="workbench-manage-detail-value">{workspace.path}</p>
+                      </div>
+                      <div className="workbench-manage-hidden-action-row">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={() => {
+                            void handleUpdateWorkspaceHiddenState(workspace, false);
+                          }}
+                        >
+                          {t("shell.workspaceUnhideAction")}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+          </div>
+        ) : null}
       </SidebarModal>
 
       <SidebarModal
@@ -9312,6 +9734,8 @@ function SidebarContent({
         onCloned={handleWorkspaceCloned}
       />
 
+      {workspaceMenu}
+
       <WorkspaceImportBrowserModal
         open={importBrowserOpen}
         onClose={() => setImportBrowserOpen(false)}
@@ -9411,6 +9835,11 @@ function SidebarContent({
           <SessionProviderPicker
             disabled={Boolean(actionWorkspaceId) || creatingWorktree}
             workspaceId={createSessionWorkspace?.id ?? null}
+            targetHostId={
+              createSessionWorkspace
+                ? resolveRemoteSelectedHostId(resolveWorkspaceHostId(createSessionWorkspace))
+                : null
+            }
             pendingProvider={
               actionWorkspaceId === createSessionWorkspace?.id ? actionProvider ?? null : null
             }
@@ -11088,6 +11517,7 @@ export function WorkbenchLayout({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
+  const [codeTerminalDockState, setCodeTerminalDockState] = useState<CodeTerminalDockState | null>(null);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -12803,7 +13233,7 @@ export function WorkbenchLayout({
       ? selectedWorkspaceId
       : null;
   const explicitWorkspaceId =
-    sessionWorkspaceId ?? validatedRouteWorkspaceId ?? validatedSelectedWorkspaceId ?? null;
+    validatedRouteWorkspaceId ?? sessionWorkspaceId ?? validatedSelectedWorkspaceId ?? null;
   const currentWorkspaceId =
     explicitWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
   const currentWorkspaceRef = useMemo<WorkspaceRef | null>(() => {
@@ -12873,6 +13303,87 @@ export function WorkbenchLayout({
     currentWorkspaceRef && currentWorkspaceRef.hostId !== "current"
       ? currentWorkspaceRef.hostId
       : activeTargetHostId;
+  const currentWorkspaceName = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name ?? null,
+    [currentWorkspaceId, navigationGroups]
+  );
+
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      setCodeTerminalDockState(null);
+      return;
+    }
+
+    setCodeTerminalDockState(
+      readCodeTerminalDockState(currentWorkspaceId)
+      ?? createDefaultCodeTerminalDockState(currentWorkspaceId)
+    );
+  }, [currentWorkspaceId]);
+
+  const updateCodeTerminalDockState = useCallback((
+    updater: (current: CodeTerminalDockState) => CodeTerminalDockState
+  ) => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    setCodeTerminalDockState((current) => {
+      const baseState = current?.workspaceId === currentWorkspaceId
+        ? current
+        : readCodeTerminalDockState(currentWorkspaceId)
+          ?? createDefaultCodeTerminalDockState(currentWorkspaceId);
+      const nextState = updater(baseState);
+      writeCodeTerminalDockState(nextState);
+      return nextState;
+    });
+  }, [currentWorkspaceId]);
+
+  const openCodeTerminalDock = useCallback(() => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    if (!isSessionDetailRoute(location.pathname) && !isSessionsRoute(location.pathname)) {
+      goToConversationTab();
+    }
+
+    updateCodeTerminalDockState((current) => ({
+      ...current,
+      open: true,
+      lastManualClosed: false,
+      updatedAt: new Date().toISOString()
+    }));
+  }, [currentWorkspaceId, location.pathname, updateCodeTerminalDockState]);
+
+  const closeCodeTerminalDock = useCallback(() => {
+    updateCodeTerminalDockState((current) => ({
+      ...current,
+      open: false,
+      lastManualClosed: true,
+      updatedAt: new Date().toISOString()
+    }));
+  }, [updateCodeTerminalDockState]);
+
+  const changeCodeTerminalDockOrientation = useCallback((orientation: CodeTerminalDockOrientation) => {
+    updateCodeTerminalDockState((current) => ({
+      ...current,
+      open: true,
+      lastManualClosed: false,
+      orientation,
+      updatedAt: new Date().toISOString()
+    }));
+  }, [updateCodeTerminalDockState]);
+
+  const resizeCodeTerminalDock = useCallback((ratio: number) => {
+    updateCodeTerminalDockState((current) => ({
+      ...current,
+      open: true,
+      lastManualClosed: false,
+      verticalRatio: current.orientation === "vertical" ? ratio : current.verticalRatio,
+      horizontalRatio: current.orientation === "horizontal" ? ratio : current.horizontalRatio,
+      updatedAt: new Date().toISOString()
+    }));
+  }, [updateCodeTerminalDockState]);
   const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {
     if (preferredWorkspaceId) {
       const preferredEntry =
@@ -14062,11 +14573,13 @@ export function WorkbenchLayout({
       void assertProviderCanStartDraftSession(workspaceId, provider)
         .then(() => {
           const workspace = navigationGroups.find((item) => item.workspace.id === workspaceId)?.workspace ?? null;
+          const workspaceRef =
+            workspace ? resolveWorkspaceRefForTargetHost(workspace, activeTargetHostId ?? "current") : currentWorkspaceRef;
           navigate(
             buildDraftSessionPath(
               workspaceId,
               provider,
-              workspace ? resolveWorkspaceRefForTargetHost(workspace, activeTargetHostId ?? "current") : currentWorkspaceRef
+              workspaceRef
             )
           );
         })
@@ -14989,6 +15502,7 @@ export function WorkbenchLayout({
       isConversationActive={activeCenterTab === "conversation"}
       isTerminalActive={activeCenterTab === "terminals"}
       isButlerActive={activeCenterTab === "butler"}
+      terminalDockOpen={codeTerminalDockState?.open === true}
       isSearchOpen={searchModalOpen}
       navigationLoading={navigationLoading}
       navigationError={navigationError}
@@ -15004,6 +15518,10 @@ export function WorkbenchLayout({
             ? buildWorkspaceTerminalsPath(currentWorkspaceId, currentWorkspaceRef)
             : buildWorkspaceHomePath()
         );
+      }}
+      onOpenTerminalDock={() => {
+        setMobileNavOpen(false);
+        openCodeTerminalDock();
       }}
       onNavigateButler={() => {
         setMobileNavOpen(false);
@@ -15176,6 +15694,7 @@ export function WorkbenchLayout({
                     isConversationActive={activeCenterTab === "conversation"}
                     isTerminalActive={activeCenterTab === "terminals"}
                     isButlerActive={activeCenterTab === "butler"}
+                    terminalDockOpen={codeTerminalDockState?.open === true}
                     isSearchOpen={searchModalOpen}
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
@@ -15191,6 +15710,7 @@ export function WorkbenchLayout({
                           : buildWorkspaceHomePath()
                       )
                     }
+                    onOpenTerminalDock={openCodeTerminalDock}
                     onNavigateButler={() =>
                       navigate(
                         currentWorkspaceId
@@ -15295,7 +15815,24 @@ export function WorkbenchLayout({
                   {shouldRenderAffairsWorkbench ? (
                     <AffairsWorkbenchView workspaceId={AFFAIRS_GLOBAL_WORKSPACE_ID} />
                   ) : (
-                    <CodeWorkbenchView>
+                    <CodeWorkbenchView
+                      workspaceId={currentWorkspaceId}
+                      workspaceName={currentWorkspaceName}
+                      terminalDockState={codeTerminalDockState}
+                      onCloseTerminalDock={closeCodeTerminalDock}
+                      onChangeTerminalDockOrientation={changeCodeTerminalDockOrientation}
+                      onResizeTerminalDock={resizeCodeTerminalDock}
+                      terminalWorkbenchShellOverrides={{
+                        navigationGroups,
+                        currentWorkspaceId,
+                        currentWorkspaceRef,
+                        currentTargetHostId,
+                        selectWorkspace: handleSelectWorkspace,
+                        subscribeTerminalManagerSnapshot,
+                        requestTerminalManagerRefresh,
+                        addTerminalManagerSnapshotListener
+                      }}
+                    >
                       <Outlet />
                     </CodeWorkbenchView>
                   )}
@@ -15342,6 +15879,7 @@ export function WorkbenchLayout({
                     isConversationActive={activeCenterTab === "conversation"}
                     isTerminalActive={activeCenterTab === "terminals"}
                     isButlerActive={activeCenterTab === "butler"}
+                    terminalDockOpen={codeTerminalDockState?.open === true}
                     isSearchOpen={searchModalOpen}
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
@@ -15357,6 +15895,7 @@ export function WorkbenchLayout({
                           : buildWorkspaceHomePath()
                       )
                     }
+                    onOpenTerminalDock={openCodeTerminalDock}
                     onNavigateButler={() =>
                       navigate(
                         currentWorkspaceId
@@ -15456,7 +15995,24 @@ export function WorkbenchLayout({
                     ) : null}
                   </div>
 
-                  <CodeWorkbenchView>
+                  <CodeWorkbenchView
+                    workspaceId={currentWorkspaceId}
+                    workspaceName={currentWorkspaceName}
+                    terminalDockState={codeTerminalDockState}
+                    onCloseTerminalDock={closeCodeTerminalDock}
+                    onChangeTerminalDockOrientation={changeCodeTerminalDockOrientation}
+                    onResizeTerminalDock={resizeCodeTerminalDock}
+                    terminalWorkbenchShellOverrides={{
+                      navigationGroups,
+                      currentWorkspaceId,
+                      currentWorkspaceRef,
+                      currentTargetHostId,
+                      selectWorkspace: handleSelectWorkspace,
+                      subscribeTerminalManagerSnapshot,
+                      requestTerminalManagerRefresh,
+                      addTerminalManagerSnapshotListener
+                    }}
+                  >
                     <Outlet />
                   </CodeWorkbenchView>
                 </div>

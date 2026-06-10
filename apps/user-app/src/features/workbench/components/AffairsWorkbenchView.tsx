@@ -32,10 +32,13 @@ import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import { resolveHostTransportTarget } from "../../../network/host-transport-registry";
 import { t } from "../../../shared/i18n";
 import { SettingsSwitch } from "../../../settings/SettingsSwitch";
+import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
+  AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID,
+  AFFAIRS_DASHBOARD_STATE_UPDATED_EVENT,
   createDefaultAffairsDashboardState,
   createAffairsDashboardWidgetState,
   createAffairsShortcutAppState,
@@ -253,6 +256,37 @@ interface AffairsAuxiliaryPanelProps {
   onToggleCollapse?: () => void;
 }
 
+interface AffairsShortcutRailSystemItem {
+  id: string;
+  title: string;
+  iconText: ReactNode;
+  actionLabel: string;
+  active?: boolean;
+  onClick?: () => void;
+  renderTrigger?: (content: {
+    className: string;
+    icon: ReactNode;
+    title: string;
+  }) => ReactNode;
+}
+
+interface SharedAffairsShortcutRailProps {
+  standalone?: boolean;
+  shortcutApps: ShortcutAppState[];
+  editing: boolean;
+  addingShortcut: boolean;
+  collapsed: boolean;
+  shortcutCount?: number;
+  systemItems?: AffairsShortcutRailSystemItem[];
+  onToggleEditing?: () => void;
+  onToggleAddingShortcut?: () => void;
+  onToggleCollapsed?: () => void;
+  onRemoveShortcutApp?: (shortcutId: string) => void;
+  onOpenShortcutApp: (shortcut: ShortcutAppState) => void;
+  shortcutEditor?: ReactNode;
+  emptyText?: string;
+}
+
 type TagApplyOperation = "attach" | "remove" | "update";
 
 interface FolderTagApplyTaskMonitorState {
@@ -332,7 +366,6 @@ const AFFAIRS_TAG_SAVE_SNAPSHOT_TIMEOUT_MS = 8_000;
 const AFFAIRS_LIBRARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const AFFAIRS_CONVERSATION_SESSION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const AFFAIRS_DASHBOARD_REMOTE_SYNC_DEBOUNCE_MS = 600;
-const AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID = "affairs-global";
 const AFFAIRS_LIBRARY_PRESET_EXTENSIONS = [
   ".md", ".mdx", ".txt", ".rtf", ".html", ".htm", ".xml", ".json", ".yaml", ".yml", ".tsv",
   ".pdf", ".doc", ".docx", ".odt", ".wps",
@@ -4565,180 +4598,94 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
   }, [previewingShortcut, showToast]);
 
   return (
-    <section
-      className={standalone
-        ? "workbench-section-block affairs-shortcut-rail affairs-shortcut-rail-standalone"
-        : "workbench-section-block affairs-shortcut-rail"}
-      data-collapsed={!standalone && collapsed ? "true" : undefined}
-      aria-label={t("shell.affairsShortcutRailTitle")}
-    >
-      <div className="affairs-sidebar-block-header affairs-shortcut-rail-header">
-        <div>
-          <h2>{t("shell.affairsShortcutRailTitle")}</h2>
-        </div>
-        <div className="affairs-shortcut-rail-header-actions">
-          <span className="affairs-sidebar-block-count">{dashboardState.shortcutApps.length}</span>
-          {(standalone || !collapsed) && editing ? (
-            <button
-              type="button"
-              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
-              aria-label={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
-              title={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
-              onClick={() => {
-                setAddingShortcut((current) => {
-                  const nextOpen = !current;
-                  if (nextOpen) {
-                    setEditingShortcutId(null);
-                    setSourceWorkspaceId(defaultSourceWorkspaceId);
-                    setEntryPath("");
-                    setTitle("");
-                  }
-                  return nextOpen;
-                });
-              }}
-            >
-              {addingShortcut ? <AffairsDashboardRemoveIcon /> : <AffairsDashboardAddTabIcon />}
-            </button>
-          ) : null}
-          {standalone || !collapsed ? (
-            <button
-              type="button"
-              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
-              aria-label={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
-              title={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
-              onClick={() => {
-                setEditing((current) => {
-                  const nextEditing = !current;
-                  if (!nextEditing) {
-                    setAddingShortcut(false);
-                  }
-                  return nextEditing;
-                });
-              }}
-            >
-              {editing ? <AffairsShortcutDoneIcon /> : <AffairsShortcutEditIcon />}
-            </button>
-          ) : null}
-          {!standalone ? (
-            <button
-              type="button"
-              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
-              aria-expanded={!collapsed}
-              aria-label={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
-              title={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
-              onClick={() => setCollapsed((current) => !current)}
-            >
-              <CollapsePreviewIcon collapsed={collapsed} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {!collapsed && editing && addingShortcut ? (
-        <form className="affairs-shortcut-rail-editor" onSubmit={handleSubmit}>
-          <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-source-workspace">
-            <span>{t("shell.affairsWorkbenchHtmlSourceWorkspaceField")}</span>
-            <select
-              id="affairs-shortcut-source-workspace"
-              className="affairs-dashboard-inline-select"
-              value={sourceWorkspaceId}
-              onChange={(event) => {
-                setSourceWorkspaceId(event.currentTarget.value);
-                setEntryPath("");
-              }}
-            >
-              {sourceWorkspaceOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          {selectedSourceWorkspaceOption?.kind === "affairs_library" ? (
-            <p className="affairs-dashboard-inline-help">
-              {t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryHelper", {
-                path: selectedSourceWorkspaceOption.rootDir
-              })}
-            </p>
-          ) : null}
-          <WorkspaceShortcutFilePicker
-            sourceOption={selectedSourceWorkspaceOption}
-            workspaceLabel={selectedSourceWorkspaceLabel}
-            inputId="affairs-shortcut-entry-path"
-            value={entryPath}
-            onChange={setEntryPath}
-            label={t("shell.affairsShortcutRailSourceSelectField")}
-            placeholder={t("shell.affairsShortcutRailSourceSelectPlaceholder")}
-            helpText={t("shell.affairsShortcutRailSourceHelper")}
-            listFailedMessage={t("shell.affairsShortcutRailSourceListFailed")}
-          />
-          <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-title">
-            <span>{t("shell.affairsShortcutRailTitleField")}</span>
-            <input
-              id="affairs-shortcut-title"
-              className="affairs-dashboard-inline-input"
-              value={title}
-              onChange={(event) => setTitle(event.currentTarget.value)}
-              placeholder={t("shell.affairsShortcutRailTitlePlaceholder")}
+    <>
+      <SharedAffairsShortcutRail
+        standalone={standalone}
+        shortcutApps={dashboardState.shortcutApps}
+        editing={editing}
+        addingShortcut={addingShortcut}
+        collapsed={collapsed}
+        shortcutCount={dashboardState.shortcutApps.length}
+        onToggleAddingShortcut={() => {
+          setAddingShortcut((current) => {
+            const nextOpen = !current;
+            if (nextOpen) {
+              setEditingShortcutId(null);
+              setSourceWorkspaceId(defaultSourceWorkspaceId);
+              setEntryPath("");
+              setTitle("");
+            }
+            return nextOpen;
+          });
+        }}
+        onToggleEditing={() => {
+          setEditing((current) => {
+            const nextEditing = !current;
+            if (!nextEditing) {
+              setAddingShortcut(false);
+            }
+            return nextEditing;
+          });
+        }}
+        onToggleCollapsed={() => setCollapsed((current) => !current)}
+        onRemoveShortcutApp={removeShortcutApp}
+        onOpenShortcutApp={openShortcutApp}
+        shortcutEditor={!collapsed && editing && addingShortcut ? (
+          <form className="affairs-shortcut-rail-editor" onSubmit={handleSubmit}>
+            <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-source-workspace">
+              <span>{t("shell.affairsWorkbenchHtmlSourceWorkspaceField")}</span>
+              <select
+                id="affairs-shortcut-source-workspace"
+                className="affairs-dashboard-inline-select"
+                value={sourceWorkspaceId}
+                onChange={(event) => {
+                  setSourceWorkspaceId(event.currentTarget.value);
+                  setEntryPath("");
+                }}
+              >
+                {sourceWorkspaceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            {selectedSourceWorkspaceOption?.kind === "affairs_library" ? (
+              <p className="affairs-dashboard-inline-help">
+                {t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryHelper", {
+                  path: selectedSourceWorkspaceOption.rootDir
+                })}
+              </p>
+            ) : null}
+            <WorkspaceShortcutFilePicker
+              sourceOption={selectedSourceWorkspaceOption}
+              workspaceLabel={selectedSourceWorkspaceLabel}
+              inputId="affairs-shortcut-entry-path"
+              value={entryPath}
+              onChange={setEntryPath}
+              label={t("shell.affairsShortcutRailSourceSelectField")}
+              placeholder={t("shell.affairsShortcutRailSourceSelectPlaceholder")}
+              helpText={t("shell.affairsShortcutRailSourceHelper")}
+              listFailedMessage={t("shell.affairsShortcutRailSourceListFailed")}
             />
-          </label>
-          <div className="affairs-dashboard-inline-actions">
-            <button type="submit" className="secondary-button" disabled={submitting}>
-              {submitting
-                ? t("common.loading")
-                : (editingShortcutId ? t("shell.affairsShortcutRailConfirmEditAction") : t("shell.affairsShortcutRailConfirmAddAction"))}
-            </button>
-          </div>
-        </form>
-      ) : null}
-
-      {!collapsed ? (
-        dashboardState.shortcutApps.length === 0 ? (
-          <div className="affairs-shortcut-rail-empty">{t("shell.affairsShortcutRailEmpty")}</div>
-        ) : (
-          <div className="affairs-shortcut-rail-list" data-editing={editing ? "true" : undefined}>
-            {dashboardState.shortcutApps.map((shortcut) => {
-              const smartIcon = resolveShortcutAppSmartIcon({
-                title: shortcut.title,
-                entryPath: shortcut.entryPath,
-                sourceKind: shortcut.sourceKind
-              });
-
-              return (
-                <div key={shortcut.id} className="affairs-shortcut-rail-item">
-                  {editing ? (
-                    <button
-                      type="button"
-                      className="affairs-shortcut-rail-remove-button"
-                      aria-label={t("shell.affairsShortcutRailRemoveAction")}
-                      onClick={() => removeShortcutApp(shortcut.id)}
-                    >
-                      <span aria-hidden="true">×</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="affairs-shortcut-rail-launcher"
-                    aria-label={editing
-                      ? t("shell.affairsShortcutRailEditEntryAction", { title: shortcut.title })
-                      : t("shell.affairsShortcutRailLaunchAction", { title: shortcut.title })}
-                    onClick={() => openShortcutApp(shortcut)}
-                  >
-                    <span
-                      className="affairs-shortcut-rail-icon"
-                      style={smartIcon.style}
-                      aria-hidden="true"
-                    >
-                      {smartIcon.text}
-                    </span>
-                    <span className="affairs-shortcut-rail-copy">
-                      <strong>{shortcut.title}</strong>
-                    </span>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )
-      ) : null}
+            <label className="affairs-dashboard-inline-field" htmlFor="affairs-shortcut-title">
+              <span>{t("shell.affairsShortcutRailTitleField")}</span>
+              <input
+                id="affairs-shortcut-title"
+                className="affairs-dashboard-inline-input"
+                value={title}
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                placeholder={t("shell.affairsShortcutRailTitlePlaceholder")}
+              />
+            </label>
+            <div className="affairs-dashboard-inline-actions">
+              <button type="submit" className="secondary-button" disabled={submitting}>
+                {submitting
+                  ? t("common.loading")
+                  : (editingShortcutId ? t("shell.affairsShortcutRailConfirmEditAction") : t("shell.affairsShortcutRailConfirmAddAction"))}
+              </button>
+            </div>
+          </form>
+        ) : null}
+      />
 
       {previewingShortcut ? (
         <FileViewerPanel
@@ -4765,7 +4712,613 @@ function AffairsShortcutAppsRail({ standalone = false }: { standalone?: boolean 
           onDetach={() => void handleDetachShortcutPreview()}
         />
       ) : null}
+    </>
+  );
+}
+
+function SharedAffairsShortcutRail({
+  standalone = false,
+  shortcutApps,
+  editing,
+  addingShortcut,
+  collapsed,
+  shortcutCount,
+  systemItems = [],
+  onToggleEditing,
+  onToggleAddingShortcut,
+  onToggleCollapsed,
+  onRemoveShortcutApp,
+  onOpenShortcutApp,
+  shortcutEditor,
+  emptyText
+}: SharedAffairsShortcutRailProps) {
+  const visibleShortcutCount = shortcutCount ?? shortcutApps.length;
+
+  return (
+    <section
+      className={standalone
+        ? "workbench-section-block affairs-shortcut-rail affairs-shortcut-rail-standalone"
+        : "workbench-section-block affairs-shortcut-rail"}
+      data-collapsed={!standalone && collapsed ? "true" : undefined}
+      aria-label={t("shell.affairsShortcutRailTitle")}
+    >
+      <div className="affairs-sidebar-block-header affairs-shortcut-rail-header">
+        <div>
+          <h2>{t("shell.affairsShortcutRailTitle")}</h2>
+        </div>
+        <div className="affairs-shortcut-rail-header-actions">
+          <span className="affairs-sidebar-block-count">{visibleShortcutCount}</span>
+          {(standalone || !collapsed) && editing && onToggleAddingShortcut ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-label={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
+              title={addingShortcut ? t("shell.affairsWorkbenchCancelAction") : t("shell.affairsShortcutRailAddAction")}
+              onClick={onToggleAddingShortcut}
+            >
+              {addingShortcut ? <AffairsDashboardRemoveIcon /> : <AffairsDashboardAddTabIcon />}
+            </button>
+          ) : null}
+          {(standalone || !collapsed) && onToggleEditing ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-label={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
+              title={editing ? t("shell.affairsShortcutRailDoneAction") : t("shell.affairsShortcutRailEditAction")}
+              onClick={onToggleEditing}
+            >
+              {editing ? <AffairsShortcutDoneIcon /> : <AffairsShortcutEditIcon />}
+            </button>
+          ) : null}
+          {!standalone && onToggleCollapsed ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
+              title={collapsed ? t("shell.affairsShortcutRailExpandAction") : t("shell.affairsShortcutRailCollapseAction")}
+              onClick={onToggleCollapsed}
+            >
+              <CollapsePreviewIcon collapsed={collapsed} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {shortcutEditor}
+
+      {!collapsed ? (
+        systemItems.length + shortcutApps.length === 0 ? (
+          <div className="affairs-shortcut-rail-empty">{emptyText ?? t("shell.affairsShortcutRailEmpty")}</div>
+        ) : (
+          <div className="affairs-shortcut-rail-list" data-editing={editing ? "true" : undefined}>
+            {systemItems.map((item) => {
+              const content = {
+                className: "affairs-shortcut-rail-launcher",
+                icon: (
+                  <span
+                    className="affairs-shortcut-rail-icon"
+                    aria-hidden="true"
+                    data-system="true"
+                    data-active={item.active ? "true" : undefined}
+                  >
+                    {item.iconText}
+                  </span>
+                ),
+                title: item.title
+              };
+
+              return (
+                <div key={item.id} className="affairs-shortcut-rail-item affairs-shortcut-rail-item-system">
+                  {item.renderTrigger ? item.renderTrigger(content) : (
+                    <button
+                      type="button"
+                      className={content.className}
+                      aria-label={item.actionLabel}
+                      onClick={item.onClick}
+                    >
+                      {content.icon}
+                      <span className="affairs-shortcut-rail-copy">
+                        <strong>{content.title}</strong>
+                      </span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {shortcutApps.map((shortcut) => {
+              const smartIcon = resolveShortcutAppSmartIcon({
+                title: shortcut.title,
+                entryPath: shortcut.entryPath,
+                sourceKind: shortcut.sourceKind
+              });
+
+              return (
+                <div key={shortcut.id} className="affairs-shortcut-rail-item">
+                  {editing && onRemoveShortcutApp ? (
+                    <button
+                      type="button"
+                      className="affairs-shortcut-rail-remove-button"
+                      aria-label={t("shell.affairsShortcutRailRemoveAction")}
+                      onClick={() => onRemoveShortcutApp(shortcut.id)}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="affairs-shortcut-rail-launcher"
+                    aria-label={editing
+                      ? t("shell.affairsShortcutRailEditEntryAction", { title: shortcut.title })
+                      : t("shell.affairsShortcutRailLaunchAction", { title: shortcut.title })}
+                    onClick={() => onOpenShortcutApp(shortcut)}
+                  >
+                    <span
+                      className="affairs-shortcut-rail-icon"
+                      style={smartIcon.style}
+                      aria-hidden="true"
+                    >
+                      {smartIcon.text}
+                    </span>
+                    <span className="affairs-shortcut-rail-copy">
+                      <strong>{shortcut.title}</strong>
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : null}
     </section>
+  );
+}
+
+export function CodeModeShortcutAppsRail({
+  workspaceId,
+  sessionId,
+  navigationGroups,
+  terminalOpen,
+  onOpenTerminal
+}: {
+  workspaceId: string | null;
+  sessionId: string | null;
+  navigationGroups: WorkspaceSessionGroup[];
+  terminalOpen: boolean;
+  onOpenTerminal: () => void;
+}) {
+  const platform = usePlatform();
+  const { showToast } = useToast();
+  const [dashboardState, setDashboardState] = useState<AffairsWorkbenchDashboardState>(() =>
+    readAffairsDashboardState(AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID)
+    ?? createDefaultAffairsDashboardState(AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID)
+  );
+  const [globalLibraryBinding, setGlobalLibraryBinding] = useState<AffairsLibraryBindingDto | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [addingShortcut, setAddingShortcut] = useState(false);
+  const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
+  const [previewingShortcut, setPreviewingShortcut] = useState<ShortcutAppState | null>(null);
+  const currentLibraryWorkspaceOption = useMemo(
+    () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
+    [globalLibraryBinding, workspaceId]
+  );
+  const sourceWorkspaceOptions = useMemo(
+    () => buildWorkspaceHtmlSourceWorkspaceOptions(
+      navigationGroups,
+      workspaceId,
+      currentLibraryWorkspaceOption
+    ),
+    [currentLibraryWorkspaceOption, navigationGroups, workspaceId]
+  );
+  const defaultSourceWorkspaceId = useMemo(
+    () => resolveWorkspaceHtmlSourceDefaultWorkspaceId({
+      currentWorkspaceId: workspaceId,
+      currentLibraryWorkspace: currentLibraryWorkspaceOption,
+      options: sourceWorkspaceOptions
+    }),
+    [currentLibraryWorkspaceOption, sourceWorkspaceOptions, workspaceId]
+  );
+  const [sourceWorkspaceId, setSourceWorkspaceId] = useState(defaultSourceWorkspaceId);
+  const selectedSourceWorkspaceOption = useMemo(
+    () => resolveHtmlSourceScopeOption(sourceWorkspaceOptions, sourceWorkspaceId),
+    [sourceWorkspaceId, sourceWorkspaceOptions]
+  );
+  const selectedSourceWorkspaceLabel = useMemo(
+    () => selectedSourceWorkspaceOption?.label ?? "",
+    [selectedSourceWorkspaceOption]
+  );
+  const [entryPath, setEntryPath] = useState("");
+  const [title, setTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function refreshShortcutApps() {
+      setDashboardState(
+        readAffairsDashboardState(AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID)
+        ?? createDefaultAffairsDashboardState(AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID)
+      );
+    }
+
+    refreshShortcutApps();
+    window.addEventListener(AFFAIRS_DASHBOARD_STATE_UPDATED_EVENT, refreshShortcutApps as EventListener);
+    return () => {
+      window.removeEventListener(AFFAIRS_DASHBOARD_STATE_UPDATED_EVENT, refreshShortcutApps as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    void getGlobalAffairsLibraryBinding()
+      .then((binding) => {
+        setGlobalLibraryBinding(binding);
+      })
+      .catch(() => {
+        setGlobalLibraryBinding(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!addingShortcut) {
+      setSourceWorkspaceId(defaultSourceWorkspaceId);
+      setEntryPath("");
+      setTitle("");
+      setEditingShortcutId(null);
+    }
+  }, [addingShortcut, defaultSourceWorkspaceId]);
+
+  const writeDashboardState = useCallback((
+    updater: (current: AffairsWorkbenchDashboardState) => AffairsWorkbenchDashboardState
+  ) => {
+    setDashboardState((current) => {
+      const nextState = updater(current);
+      writeAffairsDashboardState(nextState);
+      return nextState;
+    });
+  }, []);
+
+  const addShortcutApp = useCallback((input: {
+    title?: string;
+    sourceKind?: ShortcutAppSourceKind;
+    workspaceId: string;
+    entryPath: string;
+  }) => {
+    writeDashboardState((current) => {
+      const sourceKind: ShortcutAppSourceKind = input.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
+      const sourceWorkspaceId = input.workspaceId.trim();
+      const normalizedPath = input.entryPath.trim();
+      const timestamp = new Date().toISOString();
+      const existingIndex = current.shortcutApps.findIndex((item) => (
+        item.sourceKind === sourceKind && item.workspaceId === sourceWorkspaceId && item.entryPath === normalizedPath
+      ));
+
+      if (existingIndex >= 0) {
+        const nextShortcut = {
+          ...current.shortcutApps[existingIndex],
+          title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+          sourceKind,
+          workspaceId: sourceWorkspaceId,
+          updatedAt: timestamp
+        };
+        const shortcutApps = [...current.shortcutApps];
+        shortcutApps.splice(existingIndex, 1);
+        shortcutApps.unshift(nextShortcut);
+        return {
+          ...current,
+          shortcutApps,
+          updatedAt: timestamp
+        };
+      }
+
+      return {
+        ...current,
+        shortcutApps: [
+          createAffairsShortcutAppState(
+            {
+              title: input.title,
+              sourceKind,
+              workspaceId: sourceWorkspaceId,
+              entryPath: normalizedPath,
+              sourceId: normalizedPath
+            },
+            timestamp
+          ),
+          ...current.shortcutApps
+        ],
+        updatedAt: timestamp
+      };
+    });
+  }, [writeDashboardState]);
+
+  const updateShortcutApp = useCallback((shortcutId: string, input: {
+    title?: string;
+    sourceKind?: ShortcutAppSourceKind;
+    workspaceId: string;
+    entryPath: string;
+  }) => {
+    writeDashboardState((current) => {
+      const sourceKind: ShortcutAppSourceKind = input.sourceKind === "affairs_library" ? "affairs_library" : "workspace";
+      const sourceWorkspaceId = input.workspaceId.trim();
+      const normalizedPath = input.entryPath.trim();
+      const timestamp = new Date().toISOString();
+      const targetShortcut = current.shortcutApps.find((item) => item.id === shortcutId);
+
+      if (!targetShortcut) {
+        return current;
+      }
+
+      const duplicateShortcut = current.shortcutApps.find((item) => (
+        item.id !== shortcutId
+        && item.sourceKind === sourceKind
+        && item.workspaceId === sourceWorkspaceId
+        && item.entryPath === normalizedPath
+      ));
+
+      const nextShortcut = {
+        ...targetShortcut,
+        title: resolveWorkspaceHtmlSourceTitle(normalizedPath, input.title),
+        sourceKind,
+        workspaceId: sourceWorkspaceId,
+        entryPath: normalizedPath,
+        sourceId: normalizedPath,
+        updatedAt: timestamp
+      };
+
+      return {
+        ...current,
+        shortcutApps: [
+          nextShortcut,
+          ...current.shortcutApps.filter((item) => item.id !== shortcutId && item.id !== duplicateShortcut?.id)
+        ],
+        updatedAt: timestamp
+      };
+    });
+  }, [writeDashboardState]);
+
+  const removeShortcutApp = useCallback((shortcutId: string) => {
+    writeDashboardState((current) => ({
+      ...current,
+      shortcutApps: current.shortcutApps.filter((item) => item.id !== shortcutId),
+      updatedAt: new Date().toISOString()
+    }));
+  }, [writeDashboardState]);
+
+  const openShortcutApp = useCallback((shortcut: ShortcutAppState) => {
+    if (editing) {
+      setEditingShortcutId(shortcut.id);
+      setSourceWorkspaceId(shortcut.sourceKind === "affairs_library" ? AFFAIRS_HTML_SOURCE_CURRENT_LIBRARY : shortcut.workspaceId);
+      setEntryPath(shortcut.entryPath);
+      setTitle(shortcut.title);
+      setAddingShortcut(true);
+      return;
+    }
+
+    setPreviewingShortcut(shortcut);
+  }, [editing]);
+
+  const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const source = await validateShortcutSourceSelection(selectedSourceWorkspaceOption, entryPath);
+      const resolvedTitle = resolveWorkspaceHtmlSourceTitle(source.path, title);
+      if (editingShortcutId) {
+        updateShortcutApp(editingShortcutId, {
+          sourceKind: selectedSourceWorkspaceOption?.kind === "affairs_library" ? "affairs_library" : "workspace",
+          title: resolvedTitle,
+          workspaceId: selectedSourceWorkspaceOption?.workspaceId ?? workspaceId ?? AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID,
+          entryPath: source.path
+        });
+      } else {
+        addShortcutApp({
+          sourceKind: selectedSourceWorkspaceOption?.kind === "affairs_library" ? "affairs_library" : "workspace",
+          title: resolvedTitle,
+          workspaceId: selectedSourceWorkspaceOption?.workspaceId ?? workspaceId ?? AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID,
+          entryPath: source.path
+        });
+      }
+      setSourceWorkspaceId(defaultSourceWorkspaceId);
+      setEntryPath("");
+      setTitle("");
+      setAddingShortcut(false);
+      showToast({
+        title: editingShortcutId ? t("shell.affairsShortcutRailUpdatedTitle") : t("shell.affairsShortcutRailAddedTitle"),
+        description: resolvedTitle,
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: resolveErrorMessage(error, editingShortcutId ? t("shell.affairsShortcutRailUpdateFailed") : t("shell.affairsShortcutRailAddFailed")),
+        tone: "error"
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    addShortcutApp,
+    defaultSourceWorkspaceId,
+    editingShortcutId,
+    entryPath,
+    selectedSourceWorkspaceOption,
+    showToast,
+    submitting,
+    title,
+    updateShortcutApp,
+    workspaceId
+  ]);
+
+  const handleDetachShortcutPreview = useCallback(async () => {
+    if (!previewingShortcut) {
+      return;
+    }
+
+    try {
+      if (previewingShortcut.sourceKind === "affairs_library") {
+        const preview = await getAffairsLibraryPreview(previewingShortcut.workspaceId, previewingShortcut.entryPath);
+        if (!preview.previewUrl) {
+          throw new Error(t("shell.affairsShortcutRailOpenFailed"));
+        }
+        window.open(buildDashboardPreviewUrl(preview.previewUrl), "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      const previewLink = await getFilePreviewLink(previewingShortcut.workspaceId, previewingShortcut.entryPath);
+      window.open(buildDashboardPreviewUrl(previewLink.previewUrl), "_blank", "noopener,noreferrer");
+    } catch (error) {
+      showToast({
+        title: resolveErrorMessage(error, t("shell.affairsShortcutRailOpenFailed")),
+        description: previewingShortcut.title,
+        tone: "error"
+      });
+    }
+  }, [previewingShortcut, showToast]);
+
+  return (
+    <>
+      <SharedAffairsShortcutRail
+        shortcutApps={dashboardState.shortcutApps}
+        editing={editing}
+        addingShortcut={addingShortcut}
+        collapsed={false}
+        shortcutCount={dashboardState.shortcutApps.length}
+        systemItems={[
+          {
+            id: "terminal",
+            title: t("shell.codeShortcutTerminalTitle"),
+            iconText: ">_",
+            active: terminalOpen,
+            actionLabel: t("shell.codeShortcutTerminalAction"),
+            onClick: onOpenTerminal
+          },
+          {
+            id: "skills",
+            title: t("shell.codeShortcutSkillsTitle"),
+            iconText: "技",
+            actionLabel: t("settings.skillManageAction"),
+            renderTrigger: ({ className, icon, title }) => (
+              <SkillManagementPanel
+                triggerClassName={className}
+                triggerLabel={title}
+                triggerLeading={icon}
+                workspaceId={workspaceId}
+                sessionId={sessionId}
+              />
+            )
+          }
+        ]}
+        onToggleAddingShortcut={() => {
+          setAddingShortcut((current) => {
+            const nextOpen = !current;
+            if (nextOpen) {
+              setEditingShortcutId(null);
+              setSourceWorkspaceId(defaultSourceWorkspaceId);
+              setEntryPath("");
+              setTitle("");
+            }
+            return nextOpen;
+          });
+        }}
+        onToggleEditing={() => {
+          setEditing((current) => {
+            const nextEditing = !current;
+            if (!nextEditing) {
+              setAddingShortcut(false);
+            }
+            return nextEditing;
+          });
+        }}
+        onRemoveShortcutApp={removeShortcutApp}
+        onOpenShortcutApp={openShortcutApp}
+        shortcutEditor={editing && addingShortcut ? (
+          <form className="affairs-shortcut-rail-editor" onSubmit={handleSubmit}>
+            <label className="affairs-dashboard-inline-field" htmlFor="code-shortcut-source-workspace">
+              <span>{t("shell.affairsWorkbenchHtmlSourceWorkspaceField")}</span>
+              <select
+                id="code-shortcut-source-workspace"
+                className="affairs-dashboard-inline-select"
+                value={sourceWorkspaceId}
+                onChange={(event) => {
+                  setSourceWorkspaceId(event.currentTarget.value);
+                  setEntryPath("");
+                }}
+              >
+                {sourceWorkspaceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            {selectedSourceWorkspaceOption?.kind === "affairs_library" ? (
+              <p className="affairs-dashboard-inline-help">
+                {t("shell.affairsWorkbenchHtmlSourceWorkspaceCurrentLibraryHelper", {
+                  path: selectedSourceWorkspaceOption.rootDir
+                })}
+              </p>
+            ) : null}
+            <WorkspaceShortcutFilePicker
+              sourceOption={selectedSourceWorkspaceOption}
+              workspaceLabel={selectedSourceWorkspaceLabel}
+              inputId="code-shortcut-entry-path"
+              value={entryPath}
+              onChange={setEntryPath}
+              label={t("shell.affairsShortcutRailSourceSelectField")}
+              placeholder={t("shell.affairsShortcutRailSourceSelectPlaceholder")}
+              helpText={t("shell.affairsShortcutRailSourceHelper")}
+              listFailedMessage={t("shell.affairsShortcutRailSourceListFailed")}
+            />
+            <label className="affairs-dashboard-inline-field" htmlFor="code-shortcut-title">
+              <span>{t("shell.affairsShortcutRailTitleField")}</span>
+              <input
+                id="code-shortcut-title"
+                className="affairs-dashboard-inline-input"
+                value={title}
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                placeholder={t("shell.affairsShortcutRailTitlePlaceholder")}
+              />
+            </label>
+            <div className="affairs-dashboard-inline-actions">
+              <button type="submit" className="secondary-button" disabled={submitting}>
+                {submitting
+                  ? t("common.loading")
+                  : (editingShortcutId ? t("shell.affairsShortcutRailConfirmEditAction") : t("shell.affairsShortcutRailConfirmAddAction"))}
+              </button>
+            </div>
+          </form>
+        ) : null}
+      />
+
+      {previewingShortcut ? (
+        <FileViewerPanel
+          workspaceId={previewingShortcut.workspaceId}
+          filePath={previewingShortcut.entryPath}
+          open
+          chrome="inline"
+          onClose={() => setPreviewingShortcut(null)}
+          onSaved={() => undefined}
+          windowTitle={previewingShortcut.title}
+          previewLoader={previewingShortcut.sourceKind === "affairs_library"
+            ? ((targetWorkspaceId, targetFilePath, options) => getAffairsLibraryPreviewWithOptions(targetWorkspaceId, targetFilePath, options))
+            : undefined}
+          saveHandler={previewingShortcut.sourceKind === "affairs_library"
+            ? (async ({ workspaceId: targetWorkspaceId, filePath: targetFilePath, content, expectedVersion }) => {
+                await operateAffairsLibraryFile(targetWorkspaceId, {
+                  opType: "write",
+                  srcPath: targetFilePath,
+                  content,
+                  expectedVersion
+                });
+              })
+            : undefined}
+          showDetachAction={platform.isDesktop && platform.bridge.supported}
+          onDetach={() => void handleDetachShortcutPreview()}
+        />
+      ) : null}
+    </>
   );
 }
 

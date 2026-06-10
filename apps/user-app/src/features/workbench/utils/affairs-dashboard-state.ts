@@ -16,6 +16,8 @@ const AFFAIRS_DASHBOARD_STATE_KEY_PREFIX = "workbench.affairs.dashboard.";
 const AFFAIRS_DASHBOARD_STATE_VERSION = 7;
 const AFFAIRS_DASHBOARD_STATE_CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 const WORKSPACE_HTML_PATH_PATTERN = /\.(html?|HTML?)$/;
+export const AFFAIRS_DASHBOARD_GLOBAL_SCOPE_ID = "affairs-global";
+export const AFFAIRS_DASHBOARD_STATE_UPDATED_EVENT = "codingns:affairs-dashboard-state-updated";
 
 function buildAffairsDashboardStateKey(workspaceId: string) {
   return `${AFFAIRS_DASHBOARD_STATE_KEY_PREFIX}${workspaceId}`;
@@ -516,4 +518,14 @@ export function ensureAffairsDashboardState(workspaceId: string): AffairsWorkben
 
 export function writeAffairsDashboardState(state: AffairsWorkbenchDashboardState): void {
   writeViewSnapshot<AffairsWorkbenchDashboardState>(buildAffairsDashboardStateKey(state.workspaceId), state);
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(AFFAIRS_DASHBOARD_STATE_UPDATED_EVENT, {
+        detail: {
+          workspaceId: state.workspaceId
+        }
+      })
+    );
+  }
 }
