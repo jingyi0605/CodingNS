@@ -26,7 +26,7 @@ import {
   type TerminalPageWorkbenchShellOverrides
 } from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
-import { buildWorkspaceSessionIndexPath } from "../workbench/utils/workbench-navigation";
+import { buildWorkspaceSessionIndexPath, buildWorkspaceWorkbenchPath } from "../workbench/utils/workbench-navigation";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../platform/desktop/window-drag";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
@@ -144,15 +144,8 @@ function resolveDesktopCodeWindowRoute(descriptor: WindowDescriptor): string | n
 }
 
 function resolveLegacyAffairsWindowRoute(descriptor: WindowDescriptor): string | null {
-  // 事务窗口是旧入口，后续统一回到代码工作区，不能再跳 /affairs。
-  const routePath = descriptor.payload.routePath?.trim() ?? "";
-
-  if (routePath && !routePath.includes("/affairs")) {
-    return routePath;
-  }
-
   const workspaceId = descriptor.workspaceId?.trim() ?? "";
-  return workspaceId ? buildWorkspaceSessionIndexPath(workspaceId) : "/landing";
+  return workspaceId ? buildWorkspaceWorkbenchPath(workspaceId) : "/landing";
 }
 
 function resolveDesktopWindowNativeTitle(

@@ -176,9 +176,11 @@ import {
   buildWorkspaceChatPath,
   buildWorkspaceNewChatPath,
   buildWorkspaceDebugPath,
+  buildWorkspaceDocumentsPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
   buildWorkspaceSessionIndexPath,
+  buildWorkspaceWorkbenchPath,
   buildWorkspaceSessionPath,
   buildWorkspaceButlerPath,
   buildWorkspaceTerminalsPath,
@@ -834,6 +836,8 @@ function resolveRouteWorkspaceId(pathname: string, search: string): string | nul
     "/workspaces/:workspaceId",
     "/workspaces/:workspaceId/sessions",
     "/workspaces/:workspaceId/sessions/:sessionId",
+    "/workspaces/:workspaceId/documents",
+    "/workspaces/:workspaceId/workbench",
     "/workspaces/:workspaceId/chats",
     "/workspaces/:workspaceId/chats/new",
     "/workspaces/:workspaceId/chats/:chatId",
@@ -932,6 +936,38 @@ function isSessionDetailRoute(pathname: string) {
   return Boolean(resolveRouteSessionMatch(pathname));
 }
 
+function resolveCodeEmbeddedAffairsSectionFromPath(pathname: string): "library" | "workbench" | null {
+  if (matchPath("/workspaces/:workspaceId/documents", pathname)) {
+    return "library";
+  }
+
+  if (matchPath("/workspaces/:workspaceId/workbench", pathname)) {
+    return "workbench";
+  }
+
+  return null;
+}
+
+function isCodeEmbeddedAffairsRoute(pathname: string) {
+  return resolveCodeEmbeddedAffairsSectionFromPath(pathname) !== null;
+}
+
+function buildCodeEmbeddedAffairsRoutePath(
+  workspaceId: string,
+  section: AffairsViewState["primarySection"],
+  workspaceRef?: WorkspaceRef | null
+): string | null {
+  if (section === "library") {
+    return buildWorkspaceDocumentsPath(workspaceId, workspaceRef);
+  }
+
+  if (section === "workbench") {
+    return buildWorkspaceWorkbenchPath(workspaceId, workspaceRef);
+  }
+
+  return null;
+}
+
 function resolveRouteLightweightChatMatch(pathname: string): {
   chatId: string | null;
   workspaceId: string | null;
@@ -1017,6 +1053,14 @@ function resolveFallbackWorkspaceRoute(
 ): string {
   if (matchPath("/workspaces/:workspaceId/debug", pathname)) {
     return buildWorkspaceDebugPath(workspaceId, workspaceRef);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/documents", pathname)) {
+    return buildWorkspaceDocumentsPath(workspaceId, workspaceRef);
+  }
+
+  if (matchPath("/workspaces/:workspaceId/workbench", pathname)) {
+    return buildWorkspaceWorkbenchPath(workspaceId, workspaceRef);
   }
 
   if (matchPath("/workspaces/:workspaceId", pathname)) {
@@ -13497,6 +13541,7 @@ export function WorkbenchLayout({
     () => currentWorkspace?.name ?? null,
     [currentWorkspace]
   );
+  const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
 
   useEffect(() => {
     if (!currentWorkspaceId || !isLightweightChatRoute(location.pathname)) {
@@ -13541,16 +13586,59 @@ export function WorkbenchLayout({
       return;
     }
 
-    setCodeEmbeddedAffairsState(null);
+    if (!routeCodeEmbeddedAffairsSection) {
+      setCodeEmbeddedAffairsState(null);
+    }
+
     setCodeShortcutAffairsState(createDefaultAffairsViewState(currentWorkspaceId));
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, routeCodeEmbeddedAffairsSection]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId || !routeCodeEmbeddedAffairsSection) {
+      return;
+    }
+
+    if (
+      codeEmbeddedAffairsState?.workspaceId === currentWorkspaceId
+      && codeEmbeddedAffairsState.primarySection === routeCodeEmbeddedAffairsSection
+    ) {
+      return;
+    }
+
+    const currentState =
+      readAffairsViewState(currentWorkspaceId)
+      ?? codeEmbeddedAffairsState
+      ?? createDefaultAffairsViewState(currentWorkspaceId);
+    const nextState = routeCodeEmbeddedAffairsSection === "library"
+      ? createDefaultAffairsLibraryLandingState(currentWorkspaceId, currentState)
+      : {
+          ...currentState,
+          workspaceId: currentWorkspaceId,
+          primarySection: "workbench" as const,
+          selectedNodeId: "workbench:overview",
+          selectedObjectId: null,
+          selectedDocumentId: null,
+          pendingLibraryPreview: null
+        };
+
+    setRightCollapsed(nextState.primarySection === "workbench");
+    setCodeEmbeddedAffairsState(nextState);
+  }, [
+    codeEmbeddedAffairsState,
+    currentWorkspaceId,
+    routeCodeEmbeddedAffairsSection
+  ]);
 
   useEffect(() => {
     if (!codeEmbeddedAffairsState) {
       return;
     }
 
-    if (isSessionDetailRoute(location.pathname) || isSessionsRoute(location.pathname)) {
+    if (
+      isSessionDetailRoute(location.pathname)
+      || isSessionsRoute(location.pathname)
+      || isCodeEmbeddedAffairsRoute(location.pathname)
+    ) {
       return;
     }
 
@@ -13768,7 +13856,17 @@ export function WorkbenchLayout({
         workspaceId
       });
     });
-  }, [currentWorkspaceId]);
+
+    const targetPath = buildCodeEmbeddedAffairsRoutePath(
+      workspaceId,
+      nextState.primarySection,
+      workspaceId === currentWorkspaceId ? currentWorkspaceRef : null
+    );
+
+    if (targetPath && `${location.pathname}${location.search}` !== targetPath) {
+      navigate(targetPath);
+    }
+  }, [currentWorkspaceId, currentWorkspaceRef, location.pathname, location.search, navigate]);
 
   const openCodeEmbeddedAffairsSection = useCallback((section: AffairsViewState["primarySection"]) => {
     if (!currentWorkspaceId) {

@@ -3758,7 +3758,7 @@ describe("WorkbenchLayout", () => {
     expect(await screen.findByRole("dialog", { name: t("shell.searchModalTitle") })).toBeInTheDocument();
   });
 
-  it("桌面侧栏会按代码、事务、对话、终端、技能顺序显示顶部入口，并支持跳转", async () => {
+  it("桌面侧栏会直接把文档和工作台切到独立路由", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -3780,33 +3780,102 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(currentSnapshot);
       }
 
-      throw new Error(`未处理的请求: ${url}`);
+      if (url.includes("/api/affairs/library-capability")) {
+        return createJsonResponse({
+          enabled: true,
+          binding: {
+            workspaceId: "workspace-1",
+            rootDir: "/Users/jackson/WorkFile",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-05-31T08:00:00.000Z"
+          }
+        });
+      }
+
+      if (url.includes("/api/affairs/library-snapshot")) {
+        return createJsonResponse({
+          binding: {
+            workspaceId: "workspace-1",
+            rootDir: "/Users/jackson/WorkFile",
+            enabled: true,
+            configRelativePath: ".ai-index/doc-semantic-index.config.json",
+            exportMode: "v2",
+            updatedAt: "2026-05-31T08:00:00.000Z"
+          },
+          status: {
+            state: "fresh",
+            dirtyReasons: [],
+            lastRequestedAt: null,
+            lastStartedAt: null,
+            lastCompletedAt: "2026-05-31T08:00:00.000Z",
+            lastFailedAt: null,
+            nextAllowedAt: null,
+            runningTaskId: null,
+            errorSummary: null
+          },
+          tags: [],
+          favorites: [],
+          folders: [],
+          recentDocuments: [],
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        });
+      }
+
+      if (url.endsWith("/api/butler/profile")) {
+        return createJsonResponse({
+          initialized: true,
+          affairsSetupCompleted: true,
+          profile: null
+        });
+      }
+
+      if (url.endsWith("/api/butler/overview")) {
+        return createJsonResponse({
+          overview: {
+            version: "v1",
+            generatedAt: "2026-06-05T08:00:00.000Z",
+            global: {
+              projectCount: 0,
+              activeProjectCount: 0,
+              blockedProjectCount: 0,
+              highRiskProjectCount: 0,
+              topRisks: [],
+              nextActions: []
+            },
+            projects: [],
+            sessions: [],
+            patrols: [],
+            verifications: []
+          }
+        });
+      }
+
+      if (url.includes("/api/butler/inbox") || url.includes("/api/butler/follow-up-tasks")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      if (url.endsWith("/api/butler/notifications/archives")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      return createJsonResponse({ items: [], total: 0, offset: 0, limit: 100 });
     }) as typeof fetch;
 
     const user = userEvent.setup();
-    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    renderWorkbenchRoute("/settings", { showLocationProbe: true });
 
-    await screen.findByText("会话 Alpha");
+    await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") });
 
-    const navSegment = document.querySelector(".workbench-nav-segment");
-    expect(navSegment).not.toBeNull();
-    expect(navSegment?.querySelectorAll(".workbench-nav-segment-pair .workbench-nav-segment-button")).toHaveLength(2);
-
-    const navLabels = Array.from(navSegment?.querySelectorAll("button") ?? []).map((button) =>
-      button.textContent?.trim()
-    );
-    expect(navLabels).toEqual([
-      t("shell.workbenchModeCode"),
-      t("shell.workbenchModeAffairs"),
-      t("shell.conversationEntry"),
-      t("shell.terminalsEntry"),
-      t("shell.skillsEntry")
-    ]);
-
-    await user.click(screen.getByRole("tab", { name: t("shell.terminalsEntry") }));
-
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/terminals");
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/documents");
+    });
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") }));
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/workbench");
     });
   });
 

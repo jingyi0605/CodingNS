@@ -42,6 +42,14 @@ export function buildWorkspaceSessionIndexPath(workspaceId: string, workspaceRef
   return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/sessions`, workspaceRef);
 }
 
+export function buildWorkspaceDocumentsPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/documents`, workspaceRef);
+}
+
+export function buildWorkspaceWorkbenchPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/workbench`, workspaceRef);
+}
+
 export function buildWorkspaceSessionPath(
   workspaceId: string,
   sessionId: string,

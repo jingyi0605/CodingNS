@@ -215,7 +215,7 @@ describe("DesktopWindowPage", () => {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/desktop-window/:windowId" element={<DesktopWindowPage />} />
-          <Route path="/workspaces/:workspaceId/affairs" element={<CurrentPathProbe />} />
+          <Route path="/workspaces/:workspaceId/workbench" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions/:sessionId" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions" element={<CurrentPathProbe />} />
         </Routes>
@@ -422,7 +422,7 @@ describe("DesktopWindowPage", () => {
   });
 
 
-  it("事务外部窗口会跳转到完整事务工作台路由", async () => {
+  it("旧事务外部窗口会跳转到工作台独立路由", async () => {
     getWindowDescriptorMock.mockResolvedValue({
       ok: true,
       value: {
@@ -448,7 +448,7 @@ describe("DesktopWindowPage", () => {
     renderPage("/desktop-window/affairs-workspace-1");
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/affairs");
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/workbench");
     });
   });
 
