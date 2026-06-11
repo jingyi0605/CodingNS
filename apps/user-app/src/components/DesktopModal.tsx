@@ -16,7 +16,7 @@ export type DesktopModalLayoutPreset = "confirm" | "form" | "list" | "viewer";
 interface DesktopModalProps {
   readonly open: boolean;
   readonly title: string;
-  readonly description?: string;
+  readonly description?: ReactNode;
   readonly hideHeader?: boolean;
   readonly size?: DesktopModalSizePreset;
   readonly layout?: DesktopModalLayoutPreset;

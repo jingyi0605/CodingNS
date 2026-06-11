@@ -318,6 +318,17 @@ describe("WorkbenchLayout", () => {
   it("会按照本地设置的会话名称顺序显示工作区会话", async () => {
     localUiPreferenceStore.setSessionDisplaySortMode("title");
 
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
     const snapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -430,6 +441,126 @@ describe("WorkbenchLayout", () => {
     expect(await screen.findByText("未检测到 Gemini CLI")).toBeInTheDocument();
     expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions");
    expect(screen.getByTestId("current-search").textContent).toBe("");
+  });
+
+  it("PeerHOST 工作区的新建会话会带着远端 HOST 和远端工作区进入草稿页", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXAD"),
+        sessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "GXAD"
+            }
+          ]
+        });
+      }
+
+      if (url.endsWith("/api/providers/catalog")) {
+        return createJsonResponse({
+          items: [
+            { provider: "codex", displayName: "Codex", enabled: true }
+          ]
+        });
+      }
+
+      if (url.includes("/api/providers/")) {
+        return createJsonResponse(createAvailableCapabilities("codex"));
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1/sessions?targetHostId=peer-host-1");
+
+    const workspaceGroup = await findWorkspaceGroupByName("GXAD");
+    await userEvent.click(within(workspaceGroup).getByRole("button", { name: t("shell.createSession") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const targetLine = within(dialog).getByText("WIN").closest(".create-session-modal-target");
+
+    expect(targetLine).toBeInstanceOf(HTMLElement);
+    expect(within(targetLine as HTMLElement).getByText("WIN")).toHaveClass("workspace-host-badge");
+    expect(within(targetLine as HTMLElement).getByText("GXAD")).toBeInTheDocument();
+
+    await userEvent.click(await within(dialog).findByRole("button", { name: /Codex/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toMatch(
+        /^\/workspaces\/workspace-1\/sessions\/draft-/
+      );
+      expect(screen.getByTestId("current-search").textContent).toContain("targetHostId=peer-host-1");
+      expect(screen.getByTestId("current-search").textContent).toContain("provider=codex");
+      expect(screen.getByTestId("current-search").textContent).toContain("workspaceId=remote-workspace-1");
+    });
   });
 
   it("新建会话弹窗支持先创建子工作区，再选择供应商", async () => {
@@ -554,9 +685,7 @@ describe("WorkbenchLayout", () => {
     await userEvent.click(within(worktreeDialog).getByRole("button", { name: t("shell.createWorktreeHelpAction") }));
     expect(within(worktreeDialog).getByText(t("shell.createWorktreeHelpTitle"))).toBeInTheDocument();
     expect(within(worktreeDialog).getByText(t("shell.createWorktreeHelpBranchBody"))).toBeInTheDocument();
-    const baseRefInput = within(worktreeDialog).getByRole("combobox", {
-      name: new RegExp(`^${t("shell.createWorktreeBaseRefLabel")}`)
-    });
+    const baseRefInput = within(worktreeDialog).getByRole("combobox");
     await userEvent.click(within(worktreeDialog).getByRole("button", { name: t("shell.createWorktreeBaseRefToggle") }));
     const listbox = screen.getByRole("listbox");
     expect(within(listbox).getByText(t("shell.createWorktreeBaseRefLocalGroup"))).toBeInTheDocument();
@@ -596,7 +725,14 @@ describe("WorkbenchLayout", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(`${t("shell.createSessionTarget")} · feat/login-codex`)).toBeInTheDocument();
+      const createSessionDialog = screen.getByRole("dialog", {
+        name: t("shell.createSessionModalTitle")
+      });
+      const targetLine = createSessionDialog.querySelector(".create-session-modal-target");
+
+      expect(targetLine).toBeInstanceOf(HTMLElement);
+      expect(targetLine?.textContent).toContain(t("shell.createSessionTarget"));
+      expect(targetLine?.textContent).toContain("feat/login-codex");
     });
   });
 

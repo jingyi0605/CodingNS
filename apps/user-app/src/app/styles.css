@@ -16965,6 +16965,18 @@ textarea:focus-visible {
   padding-inline: 2px;
 }
 
+.workbench-create-session-modal .create-session-modal-target {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workbench-create-session-modal .workspace-host-badge--create-session {
+  transform: translateY(-1px);
+}
+
 .create-session-modal-section {
   display: flex;
   flex-direction: column;

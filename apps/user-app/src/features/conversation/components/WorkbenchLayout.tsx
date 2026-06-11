@@ -1936,9 +1936,12 @@ interface WorkbenchShellContextValue {
 
 async function assertProviderCanStartDraftSession(
   workspaceId: string,
-  provider: ProviderId
+  provider: ProviderId,
+  targetHostId?: string | null
 ): Promise<void> {
-  const capabilities = await getProviderCapabilities(provider, workspaceId);
+  const capabilities = await getProviderCapabilities(provider, workspaceId, undefined, {
+    targetHostId: targetHostId ?? undefined
+  });
 
   if (capabilities.canStartSession !== false) {
     return;
@@ -8521,14 +8524,20 @@ function SidebarContent({
     setActionProvider(provider);
 
     try {
-      await assertProviderCanStartDraftSession(workspaceId, provider);
-      setCreateSessionWorkspaceId(null);
       const workspace = workspaceGroups.find((item) => item.workspace.id === workspaceId)?.workspace ?? null;
+      const workspaceRef = workspace
+        ? resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace))
+        : null;
+      const targetHostId = workspaceRef?.hostId && workspaceRef.hostId !== "current" ? workspaceRef.hostId : null;
+      const targetWorkspaceId = workspaceRef?.workspaceId?.trim() || workspaceId;
+
+      await assertProviderCanStartDraftSession(targetWorkspaceId, provider, targetHostId);
+      setCreateSessionWorkspaceId(null);
       navigate(
         buildDraftSessionPath(
           workspaceId,
           provider,
-          workspace ? resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace)) : null
+          workspaceRef
         )
       );
       onClose?.();
@@ -9886,7 +9895,13 @@ function SidebarContent({
         className="workbench-create-session-modal"
         description={
           createSessionWorkspace
-            ? `${t("shell.createSessionTarget")} · ${createSessionWorkspace.name}`
+            ? (
+                <span className="create-session-modal-target">
+                  <span>{t("shell.createSessionTarget")} · </span>
+                  {renderWorkspaceHostBadge(createSessionWorkspace, "workspace-host-badge--create-session")}
+                  <span>{createSessionWorkspace.name}</span>
+                </span>
+              )
             : t("shell.createSessionModalDescription")
         }
         headerActions={
@@ -9923,7 +9938,14 @@ function SidebarContent({
           </div>
           <SessionProviderPicker
             disabled={Boolean(actionWorkspaceId) || creatingWorktree}
-            workspaceId={createSessionWorkspace?.id ?? null}
+            workspaceId={
+              createSessionWorkspace
+                ? resolveWorkspaceRefForHost(
+                  createSessionWorkspace,
+                  resolveWorkspaceHostId(createSessionWorkspace)
+                )?.workspaceId ?? createSessionWorkspace.id
+                : null
+            }
             targetHostId={
               createSessionWorkspace
                 ? resolveRemoteSelectedHostId(resolveWorkspaceHostId(createSessionWorkspace))
@@ -15018,11 +15040,14 @@ export function WorkbenchLayout({
 
   const startDraftSession = useCallback(
     (workspaceId: string, provider: ProviderId) => {
-      void assertProviderCanStartDraftSession(workspaceId, provider)
+      const workspace = navigationGroups.find((item) => item.workspace.id === workspaceId)?.workspace ?? null;
+      const workspaceRef =
+        workspace ? resolveWorkspaceRefForTargetHost(workspace, activeTargetHostId ?? "current") : currentWorkspaceRef;
+      const targetHostId = workspaceRef?.hostId && workspaceRef.hostId !== "current" ? workspaceRef.hostId : null;
+      const targetWorkspaceId = workspaceRef?.workspaceId?.trim() || workspaceId;
+
+      void assertProviderCanStartDraftSession(targetWorkspaceId, provider, targetHostId)
         .then(() => {
-          const workspace = navigationGroups.find((item) => item.workspace.id === workspaceId)?.workspace ?? null;
-          const workspaceRef =
-            workspace ? resolveWorkspaceRefForTargetHost(workspace, activeTargetHostId ?? "current") : currentWorkspaceRef;
           navigate(
             buildDraftSessionPath(
               workspaceId,

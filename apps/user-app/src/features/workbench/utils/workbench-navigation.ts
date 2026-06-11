@@ -197,6 +197,10 @@ export function buildDraftSessionPath(
     provider
   });
 
+  if (workspaceRef?.hostId && workspaceRef.hostId !== "current" && workspaceRef.workspaceId.trim()) {
+    search.set("workspaceId", workspaceRef.workspaceId.trim());
+  }
+
   const separator = basePath.includes("?") ? "&" : "?";
   return `${basePath}${separator}${search.toString()}`;
 }
