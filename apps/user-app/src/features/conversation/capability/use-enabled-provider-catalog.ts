@@ -13,13 +13,14 @@ interface UseEnabledProviderCatalogResult {
 
 export function useEnabledProviderCatalog(
   providers: readonly ProviderId[],
-  enabled = true
+  enabled = true,
+  targetHostId?: string | null
 ): UseEnabledProviderCatalogResult {
   const orderedProviders = useMemo(
     () => orderProviderIds(providers),
     [providers]
   );
-  const { items: providerCatalog, loading, requested } = useProviderCatalog(enabled);
+  const { items: providerCatalog, loading, requested } = useProviderCatalog(enabled, targetHostId);
 
   const visibleProviders = useMemo(() => {
     if (!providerCatalog) {

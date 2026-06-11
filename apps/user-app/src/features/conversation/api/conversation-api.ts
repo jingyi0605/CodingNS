@@ -154,6 +154,11 @@ export interface AffairsLibraryBindingDto {
   updatedAt: string;
 }
 
+export interface AffairsLibraryCapabilityDto {
+  enabled: boolean;
+  binding: AffairsLibraryBindingDto | null;
+}
+
 export interface AffairsLibraryConfigDto {
   binding: AffairsLibraryBindingDto | null;
   mirrorRoot: string | null;
@@ -1767,6 +1772,10 @@ export function getGlobalAffairsLibraryBinding() {
   return httpClient.request<AffairsLibraryBindingDto | null>("/api/affairs/library-binding");
 }
 
+export function getGlobalAffairsLibraryCapability() {
+  return httpClient.request<AffairsLibraryCapabilityDto>("/api/affairs/library-capability");
+}
+
 export function saveAffairsLibraryBinding(workspaceId: string, payload: { rootDir: string }) {
   return httpClient.request<AffairsLibraryBindingDto>(
     "/api/affairs/library-binding",
@@ -2484,26 +2493,30 @@ export function deleteSession(sessionId: string, options?: ScopedRequestOptions)
 
 export function createParallelGroupFromSession(
   sessionId: string,
-  payload: CreateParallelSessionGroupPayload
+  payload: CreateParallelSessionGroupPayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<ParallelSessionGroupDetailDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/parallel-groups`,
     {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
 
 export function createParallelGroupFromWorkspace(
   workspaceId: string,
-  payload: CreateParallelSessionGroupPayload
+  payload: CreateParallelSessionGroupPayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<ParallelSessionGroupDetailDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/parallel-groups`,
     {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
@@ -2516,13 +2529,15 @@ export function getParallelGroupDetail(groupId: string) {
 
 export function appendParallelGroupMembers(
   groupId: string,
-  payload: AppendParallelGroupMembersPayload
+  payload: AppendParallelGroupMembersPayload,
+  options?: ScopedRequestOptions
 ) {
   return httpClient.request<ParallelSessionGroupDetailDto>(
     `/api/parallel-groups/${encodeURIComponent(groupId)}/members`,
     {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 }
@@ -2650,16 +2665,20 @@ export function getProviderCapabilities(
   );
 }
 
-export async function listProviderCatalog(): Promise<ProviderCatalogEntryDto[]> {
-  const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>("/api/providers/catalog");
+export async function listProviderCatalog(options?: ScopedRequestOptions): Promise<ProviderCatalogEntryDto[]> {
+  const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>(
+    "/api/providers/catalog",
+    { targetHostId: options?.targetHostId ?? undefined }
+  );
   return response.items;
 }
 
-export async function refreshProviderCatalog(): Promise<ProviderCatalogEntryDto[]> {
+export async function refreshProviderCatalog(options?: ScopedRequestOptions): Promise<ProviderCatalogEntryDto[]> {
   const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>(
     "/api/providers/catalog/refresh",
     {
-      method: "POST"
+      method: "POST",
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
   return response.items;
@@ -2667,13 +2686,15 @@ export async function refreshProviderCatalog(): Promise<ProviderCatalogEntryDto[
 
 export async function updateProviderCatalogEntry(
   provider: ProviderId,
-  enabled: boolean
+  enabled: boolean,
+  options?: ScopedRequestOptions
 ): Promise<ProviderCatalogEntryDto> {
   const response = await httpClient.request<{ item: ProviderCatalogEntryDto }>(
     `/api/providers/catalog/${encodeURIComponent(provider)}`,
     {
       method: "PUT",
-      body: JSON.stringify({ enabled })
+      body: JSON.stringify({ enabled }),
+      targetHostId: options?.targetHostId ?? undefined
     }
   );
 

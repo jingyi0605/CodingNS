@@ -28,16 +28,25 @@ export interface ModelManagementSnapshotDto {
   scannedAt: string;
 }
 
-export async function fetchModelManagementSnapshot(): Promise<ModelManagementSnapshotDto> {
-  return await httpClient.request<ModelManagementSnapshotDto>("/api/system/model-switch");
+export interface ModelManagementRequestOptions {
+  targetHostId?: string | null;
+}
+
+export async function fetchModelManagementSnapshot(
+  options?: ModelManagementRequestOptions
+): Promise<ModelManagementSnapshotDto> {
+  return await httpClient.request<ModelManagementSnapshotDto>("/api/system/model-switch", {
+    targetHostId: options?.targetHostId ?? undefined
+  });
 }
 
 export async function switchModelPreset(input: {
   app: ModelSwitchAppId;
   presetId: string;
-}): Promise<ModelManagementAppSnapshotDto> {
+}, options?: ModelManagementRequestOptions): Promise<ModelManagementAppSnapshotDto> {
   return await httpClient.request<ModelManagementAppSnapshotDto>("/api/system/model-switch", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
+    targetHostId: options?.targetHostId ?? undefined
   });
 }

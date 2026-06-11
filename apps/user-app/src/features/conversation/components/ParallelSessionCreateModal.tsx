@@ -79,6 +79,7 @@ export type ParallelSessionCreateSource =
 interface ParallelSessionCreateModalProps {
   readonly open: boolean;
   readonly source: ParallelSessionCreateSource | null;
+  readonly targetHostId?: string | null;
   readonly onClose: () => void;
   readonly onCreated: (detail: ParallelSessionGroupDetailDto) => void | Promise<void>;
 }
@@ -128,6 +129,7 @@ function countCreatedMembers(requestedCount: number, memberFailures: readonly Pa
 export function ParallelSessionCreateModal({
   open,
   source,
+  targetHostId = null,
   onClose,
   onCreated
 }: ParallelSessionCreateModalProps) {
@@ -146,7 +148,8 @@ export function ParallelSessionCreateModal({
   const initialSharedPrompt = source?.kind === "group" ? source.sharedPrompt : "";
   const { visibleProviders: visibleCatalogProviders } = useEnabledProviderCatalog(
     SESSION_PROVIDER_PICKER_IDS,
-    open
+    open,
+    targetHostId
   );
   const [sharedPrompt, setSharedPrompt] = useState(initialSharedPrompt);
   const [memberCount, setMemberCount] = useState(initialMemberCount);
@@ -209,7 +212,8 @@ export function ParallelSessionCreateModal({
     source?.workspaceId,
     source?.kind === "session" ? source.sessionId : null,
     source?.kind === "group" ? source.groupId : null,
-    source?.kind === "group" ? source.sharedPrompt : null
+    source?.kind === "group" ? source.sharedPrompt : null,
+    targetHostId
   ]);
 
   useEffect(() => {
@@ -249,7 +253,7 @@ export function ParallelSessionCreateModal({
     let cancelled = false;
     setLoadingProviderCapabilities(true);
 
-    void listProviderCapabilities(visibleCatalogProviders, source.workspaceId)
+    void listProviderCapabilities(visibleCatalogProviders, source.workspaceId, { targetHostId })
       .then((capabilities) => {
         if (cancelled) {
           return;
@@ -268,7 +272,7 @@ export function ParallelSessionCreateModal({
     return () => {
       cancelled = true;
     };
-  }, [open, source?.workspaceId, visibleCatalogProviders]);
+  }, [open, source?.workspaceId, targetHostId, visibleCatalogProviders]);
 
   useEffect(() => {
     if (!open) {
@@ -285,7 +289,7 @@ export function ParallelSessionCreateModal({
       ...Object.fromEntries(DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, true]))
     }));
 
-    void fetchModelManagementSnapshot()
+    void fetchModelManagementSnapshot({ targetHostId })
       .then((snapshot) => {
         const fetchedSnapshots = Object.fromEntries(
           snapshot.items.map((item) => [item.app, item] as const)
@@ -310,7 +314,7 @@ export function ParallelSessionCreateModal({
           ...Object.fromEntries(DEPLOYMENT_SNAPSHOT_APPS.map((app) => [app, false]))
         }));
       });
-  }, [open]);
+  }, [open, targetHostId]);
 
   useEffect(() => {
     if (!open || !source) {
@@ -346,7 +350,7 @@ export function ParallelSessionCreateModal({
       void getProviderCapabilities(provider, source.workspaceId, {
         providerConfigMode: "cc-switch-preset",
         providerPresetId: presetId
-      })
+      }, { targetHostId })
         .then((capabilities) => {
           setDeploymentCapabilitiesByKey((current) => ({
             ...current,
@@ -368,7 +372,7 @@ export function ParallelSessionCreateModal({
           }));
         });
     }
-  }, [deploymentCapabilitiesByKey, members, open, source]);
+  }, [deploymentCapabilitiesByKey, members, open, source, targetHostId]);
 
   const availableProviderIds = useMemo(
     () =>
@@ -680,18 +684,18 @@ export function ParallelSessionCreateModal({
           ? await appendParallelGroupMembers(activeSource.groupId, {
               permissionMode,
               members: memberPayload
-            })
+            }, { targetHostId })
           : activeSource.kind === "session"
             ? await createParallelGroupFromSession(activeSource.sessionId, {
                 sharedPrompt: normalizedSharedPrompt,
                 permissionMode,
                 members: memberPayload
-              })
+              }, { targetHostId })
             : await createParallelGroupFromWorkspace(activeSource.workspaceId, {
                 sharedPrompt: normalizedSharedPrompt,
                 permissionMode,
                 members: memberPayload
-              });
+              }, { targetHostId });
 
       if (detail.memberFailures.length > 0) {
         const nextCreatedMemberCount = countCreatedMembers(members.length, detail.memberFailures);

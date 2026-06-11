@@ -49,7 +49,11 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
-  const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(providers);
+  const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(
+    providers,
+    true,
+    targetHostId
+  );
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>

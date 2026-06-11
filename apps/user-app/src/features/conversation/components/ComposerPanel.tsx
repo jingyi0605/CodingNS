@@ -228,7 +228,16 @@ const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   border: 0
 };
 
-const composerDeploymentSnapshotCache = new Map<ModelSwitchAppId, ModelManagementAppSnapshotDto>();
+const composerDeploymentSnapshotCache = new Map<string, ModelManagementAppSnapshotDto>();
+
+function buildComposerDeploymentSnapshotCacheKey(
+  app: ModelSwitchAppId,
+  targetHostId?: string | null
+): string {
+  const hostKey = targetHostId?.trim() || "current";
+  return `${hostKey}::${app}`;
+}
+
 
 function createFallbackModelOptions(provider: ProviderId): ModelOption[] {
   return [
@@ -686,7 +695,8 @@ export function ComposerPanel({
       return;
     }
 
-    const cached = composerDeploymentSnapshotCache.get(modelSwitchApp) ?? null;
+    const cacheKey = buildComposerDeploymentSnapshotCacheKey(modelSwitchApp, currentTargetHostId);
+    const cached = composerDeploymentSnapshotCache.get(cacheKey) ?? null;
 
     if (cached) {
       setDeploymentSnapshot(cached);
@@ -695,14 +705,17 @@ export function ComposerPanel({
     let cancelled = false;
     setDeploymentSnapshotLoading(!cached);
 
-    void fetchModelManagementSnapshot()
+    void fetchModelManagementSnapshot({ targetHostId: currentTargetHostId })
       .then((response) => {
         response.items.forEach((item) => {
-          composerDeploymentSnapshotCache.set(item.app, item);
+          composerDeploymentSnapshotCache.set(
+            buildComposerDeploymentSnapshotCacheKey(item.app, currentTargetHostId),
+            item
+          );
         });
 
         if (!cancelled) {
-          setDeploymentSnapshot(composerDeploymentSnapshotCache.get(modelSwitchApp) ?? null);
+          setDeploymentSnapshot(composerDeploymentSnapshotCache.get(cacheKey) ?? null);
         }
       })
       .catch(() => {
@@ -719,7 +732,7 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [modelSwitchApp]);
+  }, [currentTargetHostId, modelSwitchApp]);
 
   useEffect(() => {
     const forkApp = forkDraft ? mapProviderToModelSwitchApp(forkDraft.targetProvider) : null;
@@ -730,7 +743,8 @@ export function ComposerPanel({
       return;
     }
 
-    const cached = composerDeploymentSnapshotCache.get(forkApp) ?? null;
+    const cacheKey = buildComposerDeploymentSnapshotCacheKey(forkApp, currentTargetHostId);
+    const cached = composerDeploymentSnapshotCache.get(cacheKey) ?? null;
 
     if (cached) {
       setForkDeploymentSnapshot(cached);
@@ -739,14 +753,17 @@ export function ComposerPanel({
     let cancelled = false;
     setForkDeploymentSnapshotLoading(!cached);
 
-    void fetchModelManagementSnapshot()
+    void fetchModelManagementSnapshot({ targetHostId: currentTargetHostId })
       .then((response) => {
         response.items.forEach((item) => {
-          composerDeploymentSnapshotCache.set(item.app, item);
+          composerDeploymentSnapshotCache.set(
+            buildComposerDeploymentSnapshotCacheKey(item.app, currentTargetHostId),
+            item
+          );
         });
 
         if (!cancelled) {
-          setForkDeploymentSnapshot(composerDeploymentSnapshotCache.get(forkApp) ?? null);
+          setForkDeploymentSnapshot(composerDeploymentSnapshotCache.get(cacheKey) ?? null);
         }
       })
       .catch(() => {
@@ -763,7 +780,7 @@ export function ComposerPanel({
     return () => {
       cancelled = true;
     };
-  }, [forkDraft]);
+  }, [currentTargetHostId, forkDraft]);
 
   useEffect(() => {
     if (selectedProviderConfigMode !== "cc-switch-preset") {
@@ -965,7 +982,8 @@ export function ComposerPanel({
   const hasForkDraft = Boolean(forkDraft);
   const { visibleProviders: visibleCatalogForkProviders } = useEnabledProviderCatalog(
     FORK_PROVIDER_IDS,
-    hasForkDraft
+    hasForkDraft,
+    currentTargetHostId
   );
   const activeForkProvider = forkDraft?.targetProvider ?? null;
   const forkModelSwitchApp = mapProviderToModelSwitchApp(activeForkProvider);

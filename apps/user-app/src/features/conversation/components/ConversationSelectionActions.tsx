@@ -263,7 +263,8 @@ export function ConversationSelectionActions({
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const { visibleProviders: visibleCatalogProviders } = useEnabledProviderCatalog(
     SESSION_PROVIDER_PICKER_IDS,
-    actionDialogOpen
+    actionDialogOpen,
+    currentTargetHostId
   );
   const [actionPrompt, setActionPrompt] = useState("");
   const [includeContext, setIncludeContext] = useState(false);
@@ -508,7 +509,7 @@ export function ConversationSelectionActions({
 
     let cancelled = false;
     setDeploymentSnapshotLoading(true);
-    void fetchModelManagementSnapshot()
+    void fetchModelManagementSnapshot({ targetHostId: currentTargetHostId })
       .then((snapshot) => {
         if (cancelled) {
           return;
@@ -534,7 +535,7 @@ export function ConversationSelectionActions({
     return () => {
       cancelled = true;
     };
-  }, [actionDialogOpen, selectedModelSwitchApp]);
+  }, [actionDialogOpen, currentTargetHostId, selectedModelSwitchApp]);
 
   useEffect(() => {
     if (

@@ -68,6 +68,7 @@ export async function registerAffairsRoutes(
   const teableRuntime = teableRuntimeController ?? unavailableController as unknown as TeableRuntimeController;
 
   app.get("/api/affairs/library-binding", affairsLibraryController.getGlobalBinding);
+  app.get("/api/affairs/library-capability", affairsLibraryController.getGlobalCapability);
   app.put("/api/affairs/library-binding", affairsLibraryController.saveGlobalBinding);
   app.put("/api/affairs/library-enabled", affairsLibraryController.setGlobalEnabled);
   app.get("/api/affairs/library-config", withGlobalWorkspace(affairsLibraryController.getConfig));

@@ -15,20 +15,28 @@ interface ProviderCatalogSnapshot {
 
 type Listener = () => void;
 
-const listeners = new Set<Listener>();
-let snapshot: ProviderCatalogSnapshot = {
+const CURRENT_HOST_KEY = "current";
+const EMPTY_PROVIDER_CATALOG_SNAPSHOT: ProviderCatalogSnapshot = {
   items: null,
   loading: false,
   requested: false
 };
-let inFlight: Promise<ProviderCatalogEntryDto[] | null> | null = null;
+
+const listeners = new Set<Listener>();
+const snapshotsByHost = new Map<string, ProviderCatalogSnapshot>();
+const inFlightByHost = new Map<string, Promise<ProviderCatalogEntryDto[] | null>>();
+
+function normalizeTargetHostKey(targetHostId?: string | null): string {
+  const trimmedTargetHostId = targetHostId?.trim();
+  return trimmedTargetHostId || CURRENT_HOST_KEY;
+}
 
 function emitChange(): void {
   listeners.forEach((listener) => listener());
 }
 
-function setSnapshot(next: ProviderCatalogSnapshot): void {
-  snapshot = next;
+function setSnapshot(hostKey: string, next: ProviderCatalogSnapshot): void {
+  snapshotsByHost.set(hostKey, next);
   emitChange();
 }
 
@@ -39,30 +47,37 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
-function getSnapshot(): ProviderCatalogSnapshot {
-  return snapshot;
+function getSnapshotForHost(targetHostId?: string | null): ProviderCatalogSnapshot {
+  return snapshotsByHost.get(normalizeTargetHostKey(targetHostId)) ?? EMPTY_PROVIDER_CATALOG_SNAPSHOT;
 }
 
-export function ensureProviderCatalogLoaded(force = false): Promise<ProviderCatalogEntryDto[] | null> {
+export function ensureProviderCatalogLoaded(
+  force = false,
+  targetHostId?: string | null
+): Promise<ProviderCatalogEntryDto[] | null> {
+  const hostKey = normalizeTargetHostKey(targetHostId);
+  const currentSnapshot = getSnapshotForHost(targetHostId);
+
   if (!force) {
-    if (snapshot.items) {
-      return Promise.resolve(snapshot.items);
+    if (currentSnapshot.items) {
+      return Promise.resolve(currentSnapshot.items);
     }
 
-    if (inFlight) {
-      return inFlight;
+    const currentInFlight = inFlightByHost.get(hostKey);
+    if (currentInFlight) {
+      return currentInFlight;
     }
   }
 
-  setSnapshot({
-    ...snapshot,
+  setSnapshot(hostKey, {
+    ...currentSnapshot,
     loading: true,
     requested: true
   });
 
-  inFlight = listProviderCatalog()
+  const inFlight = listProviderCatalog({ targetHostId })
     .then((items) => {
-      setSnapshot({
+      setSnapshot(hostKey, {
         items,
         loading: false,
         requested: true
@@ -70,8 +85,8 @@ export function ensureProviderCatalogLoaded(force = false): Promise<ProviderCata
       return items;
     })
     .catch(() => {
-      setSnapshot({
-        ...snapshot,
+      setSnapshot(hostKey, {
+        ...getSnapshotForHost(targetHostId),
         items: null,
         loading: false,
         requested: true
@@ -79,22 +94,30 @@ export function ensureProviderCatalogLoaded(force = false): Promise<ProviderCata
       return null;
     })
     .finally(() => {
-      inFlight = null;
+      if (inFlightByHost.get(hostKey) === inFlight) {
+        inFlightByHost.delete(hostKey);
+      }
     });
 
+  inFlightByHost.set(hostKey, inFlight);
   return inFlight;
 }
 
-export function refreshProviderCatalogStore(): Promise<ProviderCatalogEntryDto[] | null> {
-  setSnapshot({
-    ...snapshot,
+export function refreshProviderCatalogStore(
+  targetHostId?: string | null
+): Promise<ProviderCatalogEntryDto[] | null> {
+  const hostKey = normalizeTargetHostKey(targetHostId);
+  const currentSnapshot = getSnapshotForHost(targetHostId);
+
+  setSnapshot(hostKey, {
+    ...currentSnapshot,
     loading: true,
     requested: true
   });
 
-  inFlight = refreshProviderCatalog()
+  const inFlight = refreshProviderCatalog({ targetHostId })
     .then((items) => {
-      setSnapshot({
+      setSnapshot(hostKey, {
         items,
         loading: false,
         requested: true
@@ -102,25 +125,33 @@ export function refreshProviderCatalogStore(): Promise<ProviderCatalogEntryDto[]
       return items;
     })
     .catch(() => {
-      setSnapshot({
-        ...snapshot,
+      setSnapshot(hostKey, {
+        ...getSnapshotForHost(targetHostId),
         loading: false,
         requested: true
       });
       return null;
     })
     .finally(() => {
-      inFlight = null;
+      if (inFlightByHost.get(hostKey) === inFlight) {
+        inFlightByHost.delete(hostKey);
+      }
     });
 
+  inFlightByHost.set(hostKey, inFlight);
   return inFlight;
 }
 
-export function updateProviderCatalogEntryInStore(entry: ProviderCatalogEntryDto): void {
-  const currentItems = snapshot.items ?? [];
+export function updateProviderCatalogEntryInStore(
+  entry: ProviderCatalogEntryDto,
+  targetHostId?: string | null
+): void {
+  const hostKey = normalizeTargetHostKey(targetHostId);
+  const currentSnapshot = getSnapshotForHost(targetHostId);
+  const currentItems = currentSnapshot.items ?? [];
   const nextItems = replaceProviderCatalogEntry(currentItems, entry);
 
-  setSnapshot({
+  setSnapshot(hostKey, {
     items: nextItems,
     loading: false,
     requested: true
@@ -129,32 +160,34 @@ export function updateProviderCatalogEntryInStore(entry: ProviderCatalogEntryDto
 
 export async function setProviderCatalogEntryEnabled(
   provider: ProviderCatalogEntryDto["provider"],
-  enabled: boolean
+  enabled: boolean,
+  targetHostId?: string | null
 ): Promise<ProviderCatalogEntryDto> {
-  const entry = await updateProviderCatalogEntry(provider, enabled);
-  updateProviderCatalogEntryInStore(entry);
+  const entry = await updateProviderCatalogEntry(provider, enabled, { targetHostId });
+  updateProviderCatalogEntryInStore(entry, targetHostId);
   return entry;
 }
 
 export function clearProviderCatalogStore(): void {
-  inFlight = null;
-  setSnapshot({
-    items: null,
-    loading: false,
-    requested: false
-  });
+  inFlightByHost.clear();
+  snapshotsByHost.clear();
+  emitChange();
 }
 
-export function useProviderCatalog(enabled = true) {
-  const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+export function useProviderCatalog(enabled = true, targetHostId?: string | null) {
+  const state = useSyncExternalStore(
+    subscribe,
+    () => getSnapshotForHost(targetHostId),
+    () => getSnapshotForHost(targetHostId)
+  );
 
   useEffect(() => {
     if (!enabled) {
       return;
     }
 
-    void ensureProviderCatalogLoaded();
-  }, [enabled]);
+    void ensureProviderCatalogLoaded(false, targetHostId);
+  }, [enabled, targetHostId]);
 
   return state;
 }

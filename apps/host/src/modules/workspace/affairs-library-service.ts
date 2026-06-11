@@ -520,15 +520,27 @@ export class AffairsLibraryService {
     return this.buildBindingFromSetting(setting, workspaceId);
   }
 
+  getGlobalCapability(userId: string): {
+    enabled: boolean;
+    binding: AffairsLibraryBindingDto | null;
+  } {
+    const binding = this.getGlobalBinding(userId);
+    return {
+      enabled: binding?.enabled === true,
+      binding
+    };
+  }
+
   saveGlobalBinding(userId: string, rootDir: string): AffairsLibraryBindingDto {
     const normalizedRootDir = this.normalizeAndValidateBindingRootDir(rootDir);
     const timestamp = nowIso();
     const currentSetting = this.resolveLibrarySetting(userId, null);
     const workspaceId = AFFAIRS_GLOBAL_WORKSPACE_ID;
+    const enabled = currentSetting?.enabled === true;
     const nextSetting = this.upsertLibrarySetting({
       userId,
       rootDir: normalizedRootDir,
-      enabled: true,
+      enabled,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId ?? currentSetting?.lastWorkspaceId ?? null,
       dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
@@ -536,7 +548,11 @@ export class AffairsLibraryService {
       updatedAt: timestamp
     });
     this.syncLightweightReconcileTimers();
-    this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    if (enabled) {
+      this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    } else {
+      this.cleanupDisabledLibraryTasks(workspaceId, normalizedRootDir, "binding_saved_disabled");
+    }
     return this.buildBindingFromSetting(nextSetting, AFFAIRS_GLOBAL_WORKSPACE_ID)!;
   }
 
@@ -628,10 +644,11 @@ export class AffairsLibraryService {
 
     const timestamp = nowIso();
     const currentSetting = this.resolveLibrarySetting(userId, workspaceId);
+    const enabled = currentSetting?.enabled === true;
     const nextSetting = this.upsertLibrarySetting({
       userId,
       rootDir: normalizedRootDir,
-      enabled: true,
+      enabled,
       favoritesJson: currentSetting?.favoritesJson ?? "[]",
       lastWorkspaceId: workspaceId,
       dashboardStateJson: currentSetting?.dashboardStateJson ?? "{}",
@@ -639,7 +656,11 @@ export class AffairsLibraryService {
       updatedAt: timestamp
     });
     this.syncLightweightReconcileTimers();
-    this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    if (enabled) {
+      this.scheduleAutoRefresh(workspaceId, "binding_saved");
+    } else {
+      this.cleanupDisabledLibraryTasks(workspaceId, normalizedRootDir, "binding_saved_disabled");
+    }
 
     return this.buildBindingFromSetting(nextSetting, workspaceId)!;
   }

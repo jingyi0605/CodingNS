@@ -86,6 +86,13 @@ export class AffairsLibraryController {
     reply.send(this.affairsLibraryService.getGlobalBinding(requireUserId(request)));
   };
 
+  readonly getGlobalCapability = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.affairsLibraryService.getGlobalCapability(requireUserId(request)));
+  };
+
   readonly saveGlobalBinding = async (
     request: FastifyRequest<{ Body: SaveAffairsLibraryBindingBody }>,
     reply: FastifyReply
