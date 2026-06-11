@@ -201,6 +201,27 @@ const appRoutes = [
             )
           },
           {
+            path: "workspaces/:workspaceId/chats",
+            lazy: lazyRouteComponent(
+              () => import("../features/pure-conversation/PureConversationPage"),
+              "PureConversationPage"
+            )
+          },
+          {
+            path: "workspaces/:workspaceId/chats/new",
+            lazy: lazyRouteComponent(
+              () => import("../features/pure-conversation/PureConversationPage"),
+              "PureConversationPage"
+            )
+          },
+          {
+            path: "workspaces/:workspaceId/chats/:chatId",
+            lazy: lazyRouteComponent(
+              () => import("../features/pure-conversation/PureConversationPage"),
+              "PureConversationPage"
+            )
+          },
+          {
             path: "workspaces/:workspaceId/tools",
             lazy: lazyRouteComponent(
               () => import("../features/mobile-tools/ToolsHomePage"),

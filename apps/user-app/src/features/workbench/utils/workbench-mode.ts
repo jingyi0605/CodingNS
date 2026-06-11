@@ -129,6 +129,9 @@ export function resolveWorkbenchModeFromPath(pathname: string): WorkbenchMode | 
   if (
     matchPath("/workspaces/:workspaceId/sessions", pathname)
     || matchPath("/workspaces/:workspaceId/sessions/:sessionId", pathname)
+    || matchPath("/workspaces/:workspaceId/chats", pathname)
+    || matchPath("/workspaces/:workspaceId/chats/new", pathname)
+    || matchPath("/workspaces/:workspaceId/chats/:chatId", pathname)
     || matchPath("/workspaces/:workspaceId/tools", pathname)
     || matchPath("/workspaces/:workspaceId/tools/files", pathname)
     || matchPath("/workspaces/:workspaceId/tools/git", pathname)

@@ -243,6 +243,8 @@ interface AffairsWorkbenchProviderProps {
   state: AffairsViewState;
   onStateChange: (nextState: AffairsViewState) => void;
   onRefreshNavigation?: () => Promise<void>;
+  onConversationDraftSelected?: (draft: AffairsConversationDraftSelection) => void;
+  forceRoute?: boolean;
   children: ReactNode;
 }
 
@@ -600,14 +602,14 @@ type AutomationRecord = {
   lastRunStatusLabel: string | null;
 };
 
-type AffairsConversationKind = "lightweight" | "agent";
+export type AffairsConversationKind = "lightweight" | "agent";
 
-type AffairsConversationDraftSelection = {
+export type AffairsConversationDraftSelection = {
   kind: AffairsConversationKind;
   provider: ProviderId;
 };
 
-type AffairsConversationCreateModalMode = "all" | "agent-only";
+export type AffairsConversationCreateModalMode = "all" | "agent-only" | "lightweight-only";
 
 type AffairsConversationSessionSelection = {
   kind: AffairsConversationKind;
@@ -1513,6 +1515,8 @@ export function AffairsWorkbenchProvider({
   state,
   onStateChange,
   onRefreshNavigation,
+  onConversationDraftSelected,
+  forceRoute = true,
   children
 }: AffairsWorkbenchProviderProps) {
   const navigationContext = useContext(UNSAFE_NavigationContext) as { navigator?: Navigator } | null;
@@ -1679,11 +1683,11 @@ export function AffairsWorkbenchProvider({
   }), [affairsSetupCompleted, butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
   const isAffairsRoute = location.pathname === buildAffairsPath();
   const ensureAffairsRoute = useCallback(() => {
-    if (isAffairsRoute) {
+    if (!forceRoute || isAffairsRoute) {
       return;
     }
     navigate(buildAffairsPath());
-  }, [isAffairsRoute, navigate, workspaceId]);
+  }, [forceRoute, isAffairsRoute, navigate, workspaceId]);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
   const directoryHintKeyRef = useRef<string | null>(null);
@@ -3945,7 +3949,7 @@ export function AffairsWorkbenchProvider({
     conversationCreateModalOpen,
     conversationCreateModalMode,
     openConversationCreateModal: (input) => {
-      setConversationCreateModalMode(input?.mode === "agent-only" ? "agent-only" : "all");
+      setConversationCreateModalMode(input?.mode ?? "all");
       setConversationCreateModalOpen(true);
     },
     closeConversationCreateModal: () => {
@@ -4172,6 +4176,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     selectedConversationDraft,
     selectConversationDraft: (draft) => {
       rememberConversationDraft(draft);
+      onConversationDraftSelected?.(draft);
       onStateChange({
         ...state,
         primarySection: "conversation",
@@ -4236,6 +4241,7 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     managedTags,
     initGuard,
     onStateChange,
+    onConversationDraftSelected,
     onRefreshNavigation,
     selectedManagedTag,
     saveFavorites,
@@ -6993,14 +6999,52 @@ function AffairsConversationCreateModal() {
           providers={AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS}
         />
       ) : null}
-      <AffairsConversationCreateProviderSection
-        kind="agent"
-        title={t("shell.affairsConversationAssistantTitle")}
-        description={t("shell.affairsConversationAssistantDescription")}
-        providers={AFFAIRS_ASSISTANT_PROVIDER_IDS}
-      />
+      {conversationCreateModalMode !== "lightweight-only" ? (
+        <AffairsConversationCreateProviderSection
+          kind="agent"
+          title={t("shell.affairsConversationAssistantTitle")}
+          description={t("shell.affairsConversationAssistantDescription")}
+          providers={AFFAIRS_ASSISTANT_PROVIDER_IDS}
+        />
+      ) : null}
     </WorkbenchModal>
   );
+}
+
+
+export function AffairsLightweightConversationCreateModalLauncher({
+  onClose
+}: {
+  onClose: () => void;
+}) {
+  const {
+    conversationCreateModalOpen,
+    openConversationCreateModal
+  } = useAffairsWorkbenchInternal();
+  const requestedRef = useRef(false);
+  const observedOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (requestedRef.current) {
+      return;
+    }
+
+    requestedRef.current = true;
+    openConversationCreateModal({ mode: "lightweight-only" });
+  }, [openConversationCreateModal]);
+
+  useEffect(() => {
+    if (conversationCreateModalOpen) {
+      observedOpenRef.current = true;
+      return;
+    }
+
+    if (observedOpenRef.current) {
+      onClose();
+    }
+  }, [conversationCreateModalOpen, onClose]);
+
+  return null;
 }
 
 function AffairsConversationEmptyState() {
@@ -7067,7 +7111,7 @@ function AffairsConnectionCheckingState() {
   );
 }
 
-function AffairsLightweightConversationDraftState(input: {
+export function AffairsLightweightConversationDraftState(input: {
   workspaceId: string;
   draft: AffairsConversationDraftSelection;
 }) {
@@ -7308,7 +7352,7 @@ function AffairsLightweightConversationDraftState(input: {
   );
 }
 
-function AffairsLightweightConversationLiveState(input: {
+export function AffairsLightweightConversationLiveState(input: {
   sessionId: string;
   runtimeSeed: AffairsConversationRuntimeSeed;
 }) {
@@ -18376,11 +18420,11 @@ function resolveAffairsConversationProviderLabel(provider: ProviderId) {
   return getProviderDisplayName(provider, "full");
 }
 
-function buildAffairsConversationDraftNodeId(draft: AffairsConversationDraftSelection): string {
+export function buildAffairsConversationDraftNodeId(draft: AffairsConversationDraftSelection): string {
   return `conversation:draft:${draft.kind}:${draft.provider}`;
 }
 
-function buildAffairsConversationSessionNodeId(
+export function buildAffairsConversationSessionNodeId(
   kind: AffairsConversationKind,
   sessionId: string
 ): string {

@@ -390,6 +390,9 @@ export function renderWorkbenchRoute(
               path="/workspaces/:workspaceId/sessions/:sessionId"
               element={<CurrentLocationProbe />}
             />
+            <Route path="/workspaces/:workspaceId/chats" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId/chats/new" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId/chats/:chatId" element={<CurrentLocationProbe />} />
             <Route path="/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/affairs" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />

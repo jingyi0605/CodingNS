@@ -53,6 +53,25 @@ export function buildWorkspaceSessionPath(
   );
 }
 
+export function buildWorkspaceChatIndexPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/chats`, workspaceRef);
+}
+
+export function buildWorkspaceNewChatPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
+  return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/chats/new`, workspaceRef);
+}
+
+export function buildWorkspaceChatPath(
+  workspaceId: string,
+  chatId: string,
+  workspaceRef?: WorkspaceRef | null
+): string {
+  return appendTargetHostId(
+    `/workspaces/${encodeURIComponent(workspaceId)}/chats/${encodeURIComponent(chatId)}`,
+    workspaceRef
+  );
+}
+
 export function buildAffairsPath(): string {
   return "/affairs";
 }
