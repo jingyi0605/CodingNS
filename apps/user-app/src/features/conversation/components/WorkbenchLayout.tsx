@@ -3685,7 +3685,7 @@ function ImportIcon() {
 
 function WorkspaceManageIcon() {
   return (
-    <svg className="workbench-toolbar-icon workbench-toolbar-icon-settings" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <rect x="4" y="5" width="16" height="14" rx="2" />
       <line x1="8" y1="10" x2="16" y2="10" />
       <line x1="8" y1="14" x2="12" y2="14" />
@@ -3947,7 +3947,7 @@ function CloneIcon() {
 
 function SettingsIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg className="workbench-toolbar-icon workbench-toolbar-icon-settings" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82L4.21 7.1a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2.4a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .66.39 1.25 1 1.51h.09a2 2 0 0 1 0 4h-.09c-.61.26-1 .85-1 1.49z" />
     </svg>
@@ -4090,6 +4090,46 @@ function QuestionIcon() {
       <circle cx="12" cy="12" r="9" />
       <path d="M9.7 9.4a2.5 2.5 0 1 1 4.1 2c-.8.7-1.8 1.2-1.8 2.6" strokeLinecap="round" />
       <circle cx="12" cy="17.2" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function CodeShortcutTerminalIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.75" y="4" width="18.5" height="16" rx="4.25" />
+      <path d="M7 8.5h2.5" opacity="0.78" />
+      <path d="m8 11.5 3.4 3-3.4 3" />
+      <path d="M13.75 17H17.5" />
+    </svg>
+  );
+}
+
+function CodeShortcutSkillIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M11.5 2.75 14 9.5l6.75 2.5L14 14.5l-2.5 6.75L9 14.5 2.25 12 9 9.5l2.5-6.75Z" />
+      <path d="m18.5 15.5.95 2.55 2.55.95-2.55.95-1 2.55-.95-2.55-2.55-.95 2.55-.95.95-2.55Z" strokeWidth="1.7" />
     </svg>
   );
 }
@@ -11549,6 +11589,7 @@ export function WorkbenchLayout({
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [affairsViewState, setAffairsViewState] = useState<AffairsViewState | null>(null);
+  const [codeEmbeddedAffairsState, setCodeEmbeddedAffairsState] = useState<AffairsViewState | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
@@ -13486,7 +13527,7 @@ export function WorkbenchLayout({
           {
             id: "terminal",
             title: t("shell.codeShortcutTerminalTitle"),
-            iconText: ">_",
+            iconText: <CodeShortcutTerminalIcon />,
             active: codeTerminalDockState?.open === true,
             badge: currentWorkspaceTerminalCount > 99 ? "99+" : String(currentWorkspaceTerminalCount),
             badgeLabel: `${t("terminalManager.terminalCountLabel")}: ${currentWorkspaceTerminalCount}`,
@@ -13496,7 +13537,7 @@ export function WorkbenchLayout({
           {
             id: "skills",
             title: t("shell.codeShortcutSkillsTitle"),
-            iconText: "技",
+            iconText: <CodeShortcutSkillIcon />,
             actionLabel: t("settings.skillManageAction"),
             renderTrigger: ({ className, icon, title }: { className: string; icon: ReactNode; title: string }) => (
               <SkillManagementPanel
@@ -13563,6 +13604,33 @@ export function WorkbenchLayout({
     refreshNavigation,
     updateCodeShortcutRailHostState
   ]);
+  const openCodeEmbeddedAffairsSection = useCallback((section: AffairsViewState["primarySection"]) => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    const currentState =
+      readAffairsViewState(currentWorkspaceId)
+      ?? codeEmbeddedAffairsState
+      ?? createDefaultAffairsViewState(currentWorkspaceId);
+    const nextState =
+      section === "library"
+        ? createDefaultAffairsLibraryLandingState(currentWorkspaceId, currentState)
+        : {
+            ...currentState,
+            workspaceId: currentWorkspaceId,
+            primarySection: section,
+            selectedNodeId: section === "conversation" ? "conversation:home" : "workbench:overview",
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            auxiliaryTab: section === "conversation" ? "detail" : currentState.auxiliaryTab,
+            pendingLibraryPreview: null
+          };
+
+    flushSync(() => {
+      setCodeEmbeddedAffairsState(nextState);
+    });
+  }, [codeEmbeddedAffairsState, currentWorkspaceId]);
   const codeShortcutRailLeftSlot = codeShortcutRailSide === "left" ? codeShortcutRailSlot : null;
   const codeShortcutRailRightSlot = codeShortcutRailSide === "right" ? codeShortcutRailSlot : null;
   const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {

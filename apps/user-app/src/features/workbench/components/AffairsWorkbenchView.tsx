@@ -4855,6 +4855,7 @@ export function SharedAffairsShortcutRail({
                     className="affairs-shortcut-rail-icon"
                     aria-hidden="true"
                     data-system="true"
+                    data-system-id={item.id}
                     data-active={item.active ? "true" : undefined}
                   >
                     {item.iconText}

@@ -17,7 +17,11 @@ describe("SharedAffairsShortcutRail", () => {
           {
             id: "terminal",
             title: t("shell.codeShortcutTerminalTitle"),
-            iconText: ">_",
+            iconText: (
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <rect x="4" y="5" width="16" height="14" rx="3" />
+              </svg>
+            ),
             actionLabel: t("shell.codeShortcutTerminalAction"),
             badge: "3",
             badgeLabel: `${t("terminalManager.terminalCountLabel")}: 3`
@@ -29,5 +33,6 @@ describe("SharedAffairsShortcutRail", () => {
 
     const badge = screen.getByText("3");
     expect(badge).toHaveClass("affairs-shortcut-rail-icon-badge");
+    expect(screen.getByRole("button", { name: t("shell.codeShortcutTerminalAction") }).querySelector("svg")).not.toBeNull();
   });
 });
