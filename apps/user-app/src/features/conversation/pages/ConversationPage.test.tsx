@@ -840,7 +840,7 @@ describe("ConversationPage", () => {
       session: {
         ...createBaseLiveSession(),
         sessionId: "session-peer-1",
-        workspaceId: "workspace-1"
+        workspaceId: "remote-workspace-1"
       },
       message: {
         messageId: "message-peer-1",
@@ -856,16 +856,19 @@ describe("ConversationPage", () => {
 
     renderDraftConversationPage({
       initialEntry:
-        "/workspaces/workspace-1/sessions/draft-codex-1?provider=codex&workspaceId=workspace-1&targetHostId=peer-host-1",
+        "/workspaces/workspace-1/sessions/draft-codex-1?targetHostId=peer-host-1&provider=codex&workspaceId=remote-workspace-1",
       withRouteProbe: true
     });
 
     fireEvent.click(await screen.findByTestId("composer-send"));
 
     await waitFor(() => {
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("codex", "remote-workspace-1", undefined, {
+        targetHostId: "peer-host-1"
+      });
       expect(mockStartLiveSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          workspaceId: "workspace-1",
+          workspaceId: "remote-workspace-1",
           provider: "codex"
         }),
         { targetHostId: "peer-host-1" }
@@ -874,7 +877,7 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
-        "/workspaces/workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
+        "/workspaces/remote-workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
       );
     });
   });

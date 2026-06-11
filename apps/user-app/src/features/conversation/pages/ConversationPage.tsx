@@ -1084,6 +1084,7 @@ function DraftConversationPage({
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
+  const draftTargetWorkspaceId = resolveDraftTargetWorkspaceId(draft, currentTargetHostId, currentWorkspaceRef);
   const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
@@ -1215,7 +1216,7 @@ function DraftConversationPage({
     // 草稿页先用本地兜底能力，随后再按 provider + workspace 拉真实模型列表。
     setCapabilities(fallbackCapabilities);
 
-    void getProviderCapabilities(draft.provider, draft.workspaceId, undefined, {
+    void getProviderCapabilities(draft.provider, draftTargetWorkspaceId, undefined, {
       targetHostId: currentTargetHostId
     })
       .then((nextCapabilities) => {
@@ -1230,7 +1231,7 @@ function DraftConversationPage({
     return () => {
       disposed = true;
     };
-  }, [currentTargetHostId, draft.provider, draft.workspaceId, fallbackCapabilities]);
+  }, [currentTargetHostId, draft.provider, draftTargetWorkspaceId, fallbackCapabilities]);
 
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,
@@ -1381,7 +1382,7 @@ function DraftConversationPage({
                 const startLiveStartedAtMs = performance.now();
                 logPerfDebug("session_send.start_live.client_start", {
                   draftSessionId: draft.sessionId,
-                  workspaceId: draft.workspaceId,
+                  workspaceId: draftTargetWorkspaceId,
                   provider: draft.provider,
                   clientRequestId,
                   contentLength: content.length
@@ -1389,7 +1390,7 @@ function DraftConversationPage({
 
                 try {
                   const created = await startLiveSession({
-                    workspaceId: draft.workspaceId,
+                    workspaceId: draftTargetWorkspaceId,
                     provider: draft.provider,
                     content,
                     clientRequestId,
@@ -1405,7 +1406,7 @@ function DraftConversationPage({
                   logPerfDebug("session_send.start_live.client_response", {
                     draftSessionId: draft.sessionId,
                     sessionId: created.sessionId,
-                    workspaceId: created.session?.workspaceId ?? draft.workspaceId,
+                    workspaceId: created.session?.workspaceId ?? draftTargetWorkspaceId,
                     provider: created.provider,
                     clientRequestId,
                     durationMs: Math.round(performance.now() - startLiveStartedAtMs),
@@ -1416,7 +1417,7 @@ function DraftConversationPage({
                     upsertNavigationSession(created.session);
                   }
 
-                  const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draft.workspaceId;
+                  const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draftTargetWorkspaceId;
                   const resolvedWorkspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
 
                   setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
@@ -1448,7 +1449,7 @@ function DraftConversationPage({
                 } catch (error) {
                   logPerfDebug("session_send.start_live.client_error", {
                     draftSessionId: draft.sessionId,
-                    workspaceId: draft.workspaceId,
+                    workspaceId: draftTargetWorkspaceId,
                     provider: draft.provider,
                     clientRequestId,
                     durationMs: Math.round(performance.now() - startLiveStartedAtMs),
@@ -1538,7 +1539,9 @@ function parseDraftContext(
     return null;
   }
 
-  const workspaceId = routeWorkspaceId ?? searchParams.get("workspaceId")?.trim() ?? null;
+  const searchWorkspaceId = searchParams.get("workspaceId")?.trim() || null;
+  const targetHostId = searchParams.get("targetHostId")?.trim() || null;
+  const workspaceId = targetHostId ? searchWorkspaceId ?? routeWorkspaceId : routeWorkspaceId ?? searchWorkspaceId;
   const provider = searchParams.get("provider")?.trim() ?? fallbackProvider ?? null;
 
   if (!workspaceId || !isDraftProviderSupported(provider)) {
@@ -1550,6 +1553,22 @@ function parseDraftContext(
     workspaceId,
     provider: provider as ProviderId
   };
+}
+
+function resolveDraftTargetWorkspaceId(
+  draft: DraftConversationContext,
+  currentTargetHostId?: string | null,
+  currentWorkspaceRef?: WorkspaceRef | null
+): string {
+  if (
+    currentTargetHostId
+    && currentWorkspaceRef?.hostId === currentTargetHostId
+    && currentWorkspaceRef.workspaceId.trim()
+  ) {
+    return currentWorkspaceRef.workspaceId.trim();
+  }
+
+  return draft.workspaceId;
 }
 
 function createDraftSessionSummary(draft: DraftConversationContext): SessionSummaryDto {
