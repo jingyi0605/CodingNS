@@ -574,6 +574,7 @@ function LiveConversationPage({
                 }
               : null
           }
+          targetHostId={currentTargetHostId}
           onClose={() => setParallelCreateOpen(false)}
           onCreated={async (detail) => {
             detail.members.forEach((item) => {
@@ -973,6 +974,7 @@ function LiveConversationPage({
                 }
               : null
           }
+          targetHostId={currentTargetHostId}
           onClose={() => setParallelCreateOpen(false)}
           onCreated={async (detail) => {
             detail.members.forEach((item) => {

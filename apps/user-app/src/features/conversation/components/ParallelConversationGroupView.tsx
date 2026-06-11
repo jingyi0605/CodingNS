@@ -262,7 +262,8 @@ export function ParallelConversationGroupView({
   const { showToast } = useToast();
   const {
     navigationGroups,
-    requestNavigationRefresh
+    requestNavigationRefresh,
+    currentTargetHostId
   } = useWorkbenchShell();
   const flattenedEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
@@ -724,6 +725,7 @@ export function ParallelConversationGroupView({
               }
             : null
         }
+        targetHostId={currentTargetHostId}
         onClose={() => setAppendModalOpen(false)}
         onCreated={async (nextDetail) => {
           setDetail(nextDetail);

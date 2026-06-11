@@ -169,7 +169,10 @@ export function SessionButlerActionButton({
     session?.sessionIsolatedWorkspace?.sourceWorkspaceId,
     session?.sessionIsolatedWorkspace?.workspaceId
   ]);
-  const { items: providerCatalog } = useProviderCatalog(Boolean(session?.sessionId && sessionBelongsToCurrentHost));
+  const { items: providerCatalog } = useProviderCatalog(
+    Boolean(session?.sessionId && sessionBelongsToCurrentHost),
+    currentTargetHostId
+  );
   const completionCriteriaPresets = buildCompletionCriteriaPresets();
   const availableFollowUpProviders = useMemo<FollowUpProviderId[]>(() => {
     if (!providerCatalog) {
