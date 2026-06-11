@@ -2602,7 +2602,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-toolbar-icon-settings {
-  transform: scale(0.88);
+  transform: scale(0.86);
 }
 .workbench-host-switcher-item-copy {
   display: flex;
