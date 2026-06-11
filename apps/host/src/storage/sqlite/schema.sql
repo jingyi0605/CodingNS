@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
   background_color TEXT,
   hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
+  shortcut_apps_collapsed INTEGER NOT NULL DEFAULT 0 CHECK (shortcut_apps_collapsed IN (0, 1)),
+  shortcut_apps_side TEXT NOT NULL DEFAULT 'left' CHECK (shortcut_apps_side IN ('left', 'right')),
   affairs_library_root_path TEXT,
   affairs_library_enabled INTEGER NOT NULL DEFAULT 0 CHECK (affairs_library_enabled IN (0, 1)),
   affairs_library_favorites_json TEXT,

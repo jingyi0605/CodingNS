@@ -172,6 +172,8 @@ export interface Workspace {
   repoRoot: string | null;
   backgroundColor?: string | null;
   hidden?: boolean;
+  shortcutAppsCollapsed?: boolean;
+  shortcutAppsSide?: "left" | "right";
   favorite: boolean;
   sortOrder: number;
   createdAt: string;
@@ -290,6 +292,8 @@ export interface WorkspaceNavigationStateRecord {
   collapsed: boolean;
   backgroundColor: string | null;
   hidden: boolean;
+  shortcutAppsCollapsed: boolean;
+  shortcutAppsSide: "left" | "right";
   affairsLibraryRootPath?: string | null;
   affairsLibraryEnabled?: boolean;
   affairsLibraryFavoritesJson?: string | null;

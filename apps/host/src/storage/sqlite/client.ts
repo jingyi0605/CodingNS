@@ -30,6 +30,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
   ensureWorkspaceNavigationHiddenColumn(db);
+  ensureWorkspaceNavigationShortcutAppsColumns(db);
   ensureWorkspaceNavigationAffairsLibraryColumns(db);
   ensureOpenCliProviderSchema(db);
   ensureOpenCliCatalogSchema(db);
@@ -1108,6 +1109,26 @@ function ensureWorkspaceNavigationHiddenColumn(db: BetterSqliteDatabase): void {
   }
 
   db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1))");
+}
+
+function ensureWorkspaceNavigationShortcutAppsColumns(db: BetterSqliteDatabase): void {
+  const columns = db
+    .prepare("PRAGMA table_info(workspace_navigation_states)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("shortcut_apps_collapsed")) {
+    db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN shortcut_apps_collapsed INTEGER NOT NULL DEFAULT 0 CHECK (shortcut_apps_collapsed IN (0, 1))");
+  }
+
+  if (!columnNames.has("shortcut_apps_side")) {
+    db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN shortcut_apps_side TEXT NOT NULL DEFAULT 'left' CHECK (shortcut_apps_side IN ('left', 'right'))");
+  }
 }
 
 function ensureSessionAttachmentSchema(db: BetterSqliteDatabase): void {

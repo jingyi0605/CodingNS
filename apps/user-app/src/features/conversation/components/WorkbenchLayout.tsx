@@ -81,6 +81,7 @@ import {
   type SessionDisplaySortMode
 } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import type { TerminalDto } from "../../terminal/api/terminal-api";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useTheme } from "../../../shared/theme/theme";
@@ -289,6 +290,33 @@ const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
 const WORKSPACE_HOST_ASSIGNMENT_KEY = "workbench.workspace.host.assignment.v1";
 const WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT = "codingns:workspace-host-assignment-changed";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
+
+type CodeShortcutRailSide = "left" | "right";
+
+interface CodeShortcutRailHostState {
+  workspaceId: string;
+  collapsed: boolean;
+  side: CodeShortcutRailSide;
+}
+
+function createDefaultCodeShortcutRailHostState(workspaceId: string): CodeShortcutRailHostState {
+  return {
+    workspaceId,
+    collapsed: false,
+    side: "left"
+  };
+}
+
+function resolveCodeShortcutRailHostState(
+  workspaceId: string,
+  workspace: WorkspaceDto | null | undefined
+): CodeShortcutRailHostState {
+  return {
+    workspaceId,
+    collapsed: workspace?.shortcutAppsCollapsed === true,
+    side: workspace?.shortcutAppsSide === "right" ? "right" : "left"
+  };
+}
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
 const MIN_LEFT_PANEL_WIDTH = 240;
@@ -5722,6 +5750,7 @@ function SidebarContent({
   isTerminalActive,
   isButlerActive,
   terminalDockOpen,
+  currentWorkspaceTerminalCount,
   isSearchOpen,
   navigationLoading,
   navigationError,
@@ -5756,6 +5785,7 @@ function SidebarContent({
   onToggleNotificationPanel,
   onClose,
   onToggleCollapse,
+  codeShortcutRailSlot,
   affairsMenuSlot,
   affairsContentSlot
 }: {
@@ -5770,6 +5800,7 @@ function SidebarContent({
   isTerminalActive: boolean;
   isButlerActive: boolean;
   terminalDockOpen: boolean;
+  currentWorkspaceTerminalCount: number;
   isSearchOpen: boolean;
   navigationLoading: boolean;
   navigationError: string | null;
@@ -5808,6 +5839,7 @@ function SidebarContent({
   onToggleNotificationPanel: () => void;
   onClose?: () => void;
   onToggleCollapse?: () => void;
+  codeShortcutRailSlot?: ReactNode;
   affairsMenuSlot?: ReactNode;
   affairsContentSlot?: ReactNode;
 }) {
@@ -9508,38 +9540,7 @@ function SidebarContent({
       </div>
 
       <div className="workbench-nav-footer minimal">
-        {activeWorkbenchMode === "code" ? (
-          <AffairsShortcutAppsRail
-            systemItems={[
-              {
-                id: "terminal",
-                title: t("shell.codeShortcutTerminalTitle"),
-                iconText: ">_",
-                active: terminalDockOpen,
-                actionLabel: t("shell.codeShortcutTerminalAction"),
-                onClick: onOpenTerminalDock
-              },
-              {
-                id: "skills",
-                title: t("shell.codeShortcutSkillsTitle"),
-                iconText: "技",
-                actionLabel: t("settings.skillManageAction"),
-                renderTrigger: ({ className, icon, title }) => (
-                  <SkillManagementPanel
-                    triggerClassName={className}
-                    triggerLabel={title}
-                    triggerLeading={icon}
-                    workspaceId={activeWorkspaceId}
-                    sessionId={activeSessionId}
-                  />
-                )
-              }
-            ]}
-            defaultCollapsed={false}
-            mountMode="footer"
-            emptyText={t("shell.affairsShortcutRailEmpty")}
-          />
-        ) : null}
+        {activeWorkbenchMode === "code" ? codeShortcutRailSlot ?? null : null}
         <div className="workbench-nav-footer-actions">
           <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
         </div>
@@ -11552,6 +11553,9 @@ export function WorkbenchLayout({
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
   const [codeTerminalDockState, setCodeTerminalDockState] = useState<CodeTerminalDockState | null>(null);
+  const [codeShortcutAffairsState, setCodeShortcutAffairsState] = useState<AffairsViewState | null>(null);
+  const [codeShortcutRailHostState, setCodeShortcutRailHostState] = useState<CodeShortcutRailHostState | null>(null);
+  const [currentWorkspaceTerminalCount, setCurrentWorkspaceTerminalCount] = useState(0);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -13337,9 +13341,13 @@ export function WorkbenchLayout({
     currentWorkspaceRef && currentWorkspaceRef.hostId !== "current"
       ? currentWorkspaceRef.hostId
       : activeTargetHostId;
-  const currentWorkspaceName = useMemo(
-    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name ?? null,
+  const currentWorkspace = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null,
     [currentWorkspaceId, navigationGroups]
+  );
+  const currentWorkspaceName = useMemo(
+    () => currentWorkspace?.name ?? null,
+    [currentWorkspace]
   );
 
   useEffect(() => {
@@ -13353,6 +13361,29 @@ export function WorkbenchLayout({
       ?? createDefaultCodeTerminalDockState(currentWorkspaceId)
     );
   }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      setCodeShortcutAffairsState(null);
+      return;
+    }
+
+    setCodeShortcutAffairsState(createDefaultAffairsViewState(currentWorkspaceId));
+  }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId) {
+      setCodeShortcutRailHostState(null);
+      return;
+    }
+
+    setCodeShortcutRailHostState(resolveCodeShortcutRailHostState(currentWorkspaceId, currentWorkspace));
+  }, [
+    currentWorkspace,
+    currentWorkspace?.shortcutAppsCollapsed,
+    currentWorkspace?.shortcutAppsSide,
+    currentWorkspaceId
+  ]);
 
   const updateCodeTerminalDockState = useCallback((
     updater: (current: CodeTerminalDockState) => CodeTerminalDockState
@@ -13371,6 +13402,36 @@ export function WorkbenchLayout({
       return nextState;
     });
   }, [currentWorkspaceId]);
+
+  const updateCodeShortcutRailHostState = useCallback((
+    updater: (current: CodeShortcutRailHostState) => CodeShortcutRailHostState
+  ) => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    setCodeShortcutRailHostState((current) => {
+      const baseState = current?.workspaceId === currentWorkspaceId
+        ? current
+        : resolveCodeShortcutRailHostState(currentWorkspaceId, currentWorkspace);
+      const nextState = updater(baseState);
+
+      void updateWorkspaceNavigationState(currentWorkspaceId, {
+        shortcutAppsCollapsed: nextState.collapsed,
+        shortcutAppsSide: nextState.side
+      }).catch((error) => {
+        setCodeShortcutRailHostState((latest) =>
+          latest?.workspaceId === currentWorkspaceId ? baseState : latest
+        );
+        showToastRef.current({
+          title: error instanceof Error ? error.message : t("shell.codeShortcutRailStateSaveFailed"),
+          tone: "error"
+        });
+      });
+
+      return nextState;
+    });
+  }, [currentWorkspace, currentWorkspaceId]);
 
   const openCodeTerminalDock = useCallback(() => {
     if (!currentWorkspaceId) {
@@ -13418,6 +13479,92 @@ export function WorkbenchLayout({
       updatedAt: new Date().toISOString()
     }));
   }, [updateCodeTerminalDockState]);
+  const codeShortcutRailSide = codeShortcutRailHostState?.side ?? "left";
+  const codeShortcutSystemItems = useMemo(() => (
+    currentWorkspaceId
+      ? [
+          {
+            id: "terminal",
+            title: t("shell.codeShortcutTerminalTitle"),
+            iconText: ">_",
+            active: codeTerminalDockState?.open === true,
+            badge: currentWorkspaceTerminalCount > 99 ? "99+" : String(currentWorkspaceTerminalCount),
+            badgeLabel: `${t("terminalManager.terminalCountLabel")}: ${currentWorkspaceTerminalCount}`,
+            actionLabel: t("shell.codeShortcutTerminalAction"),
+            onClick: openCodeTerminalDock
+          },
+          {
+            id: "skills",
+            title: t("shell.codeShortcutSkillsTitle"),
+            iconText: "技",
+            actionLabel: t("settings.skillManageAction"),
+            renderTrigger: ({ className, icon, title }: { className: string; icon: ReactNode; title: string }) => (
+              <SkillManagementPanel
+                triggerClassName={className}
+                triggerLabel={title}
+                triggerLeading={icon}
+                workspaceId={currentWorkspaceId}
+                sessionId={currentSessionId}
+              />
+            )
+          }
+        ]
+      : []
+  ), [
+    currentSessionId,
+    codeTerminalDockState?.open,
+    currentWorkspaceId,
+    currentWorkspaceTerminalCount,
+    openCodeTerminalDock
+  ]);
+  const codeShortcutRailSlot = useMemo(() => {
+    if (!currentWorkspaceId || !codeShortcutAffairsState) {
+      return null;
+    }
+
+    return (
+      <AffairsWorkbenchProvider
+        workspaceId={currentWorkspaceId}
+        workspaceName={currentWorkspaceName}
+        navigationGroups={navigationGroups}
+        state={codeShortcutAffairsState}
+        onStateChange={(nextState) => setCodeShortcutAffairsState(nextState)}
+        onRefreshNavigation={refreshNavigation}
+      >
+        <AffairsShortcutAppsRail
+          systemItems={codeShortcutSystemItems}
+          mountMode="footer"
+          collapsed={codeShortcutRailHostState?.collapsed ?? false}
+          onCollapsedChange={(collapsed) => {
+            updateCodeShortcutRailHostState((current) => ({
+              ...current,
+              collapsed
+            }));
+          }}
+          moveDirection={codeShortcutRailSide === "left" ? "right" : "left"}
+          onMoveSide={() => {
+            updateCodeShortcutRailHostState((current) => ({
+              ...current,
+              side: current.side === "left" ? "right" : "left"
+            }));
+          }}
+          emptyText={t("shell.affairsShortcutRailEmpty")}
+        />
+      </AffairsWorkbenchProvider>
+    );
+  }, [
+    codeShortcutAffairsState,
+    codeShortcutRailHostState?.collapsed,
+    codeShortcutRailSide,
+    codeShortcutSystemItems,
+    currentWorkspaceId,
+    currentWorkspaceName,
+    navigationGroups,
+    refreshNavigation,
+    updateCodeShortcutRailHostState
+  ]);
+  const codeShortcutRailLeftSlot = codeShortcutRailSide === "left" ? codeShortcutRailSlot : null;
+  const codeShortcutRailRightSlot = codeShortcutRailSide === "right" ? codeShortcutRailSlot : null;
   const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {
     if (preferredWorkspaceId) {
       const preferredEntry =
@@ -13714,6 +13861,81 @@ export function WorkbenchLayout({
         ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
         : currentWorkspaceRef?.workspaceId ?? null
       : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
+  const currentTerminalSnapshotCacheKey = useMemo(
+    () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
+    [currentRequestWorkspaceId, currentTargetHostId]
+  );
+  useEffect(() => {
+    if (!currentTerminalSnapshotCacheKey) {
+      setCurrentWorkspaceTerminalCount(0);
+      return;
+    }
+
+    const cachedSnapshot = readViewSnapshot<{ terminals?: TerminalDto[] }>(
+      currentTerminalSnapshotCacheKey,
+      60 * 1000
+    );
+    setCurrentWorkspaceTerminalCount(Array.isArray(cachedSnapshot?.terminals) ? cachedSnapshot.terminals.length : 0);
+  }, [currentTerminalSnapshotCacheKey]);
+
+  useEffect(() => {
+    if (!currentRequestWorkspaceId) {
+      setCurrentWorkspaceTerminalCount(0);
+      return;
+    }
+
+    return addTerminalManagerSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== currentRequestWorkspaceId || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)) {
+        return;
+      }
+
+      const terminalCount = Array.isArray(snapshot.terminals) ? snapshot.terminals.length : 0;
+      setCurrentWorkspaceTerminalCount(terminalCount);
+
+      if (currentTerminalSnapshotCacheKey) {
+        writeViewSnapshot(currentTerminalSnapshotCacheKey, {
+          revision: snapshot.revision ?? null,
+          terminals: snapshot.terminals,
+          templates: snapshot.templates,
+          templateStatuses: snapshot.templateStatuses,
+          shellOptions: snapshot.shellOptions,
+          targetHostId: currentTargetHostId ?? null
+        });
+      }
+    });
+  }, [
+    addTerminalManagerSnapshotListener,
+    currentRequestWorkspaceId,
+    currentTargetHostId,
+    currentTerminalSnapshotCacheKey
+  ]);
+
+  useEffect(() => {
+    if (!currentRequestWorkspaceId) {
+      return;
+    }
+
+    const cachedSnapshot = currentTerminalSnapshotCacheKey
+      ? readViewSnapshot<{ revision?: string | null }>(currentTerminalSnapshotCacheKey, 60 * 1000)
+      : null;
+    const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
+
+    subscribeTerminalManagerSnapshot(currentRequestWorkspaceId, {
+      knownRevision,
+      targetHostId: currentTargetHostId
+    });
+    requestTerminalManagerRefresh(currentRequestWorkspaceId, {
+      knownRevision,
+      targetHostId: currentTargetHostId
+    });
+  }, [
+    currentRequestWorkspaceId,
+    currentTargetHostId,
+    currentTerminalSnapshotCacheKey,
+    requestTerminalManagerRefresh,
+    subscribeTerminalManagerSnapshot
+  ]);
+
   const currentAuxiliaryWorktreeNode = useMemo(
     () => findNavigationWorktreeNodeByWorkspaceId(effectiveNavigationGroups, currentAuxiliaryWorkspaceId),
     [currentAuxiliaryWorkspaceId, effectiveNavigationGroups]
@@ -15569,6 +15791,7 @@ export function WorkbenchLayout({
       isTerminalActive={activeCenterTab === "terminals"}
       isButlerActive={activeCenterTab === "butler"}
       terminalDockOpen={codeTerminalDockState?.open === true}
+      currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
       isSearchOpen={searchModalOpen}
       navigationLoading={navigationLoading}
       navigationError={navigationError}
@@ -15627,6 +15850,7 @@ export function WorkbenchLayout({
         setNotificationPanelOpen((current) => !current);
       }}
       onClose={() => setMobileNavOpen(false)}
+      codeShortcutRailSlot={codeShortcutRailLeftSlot}
     />
   ) : null;
   const mobileAuxiliaryPanel = isMobileShell && shouldShowAuxiliaryPanel ? auxiliaryPanelContent : null;
@@ -15762,6 +15986,7 @@ export function WorkbenchLayout({
                     isTerminalActive={activeCenterTab === "terminals"}
                     isButlerActive={activeCenterTab === "butler"}
                     terminalDockOpen={codeTerminalDockState?.open === true}
+                    currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
                     isSearchOpen={searchModalOpen}
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
@@ -15811,6 +16036,7 @@ export function WorkbenchLayout({
                     onToggleCollapse={() => {
                       setLeftCollapsed(true);
                     }}
+                    codeShortcutRailSlot={codeShortcutRailLeftSlot}
                     affairsMenuSlot={<AffairsSectionMenu />}
                     affairsContentSlot={<AffairsSidebarPanel />}
                   />
@@ -15949,6 +16175,7 @@ export function WorkbenchLayout({
                     isTerminalActive={activeCenterTab === "terminals"}
                     isButlerActive={activeCenterTab === "butler"}
                     terminalDockOpen={codeTerminalDockState?.open === true}
+                    currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
                     isSearchOpen={searchModalOpen}
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
@@ -15998,6 +16225,7 @@ export function WorkbenchLayout({
                     onToggleCollapse={() => {
                       setLeftCollapsed(true);
                     }}
+                    codeShortcutRailSlot={codeShortcutRailLeftSlot}
                   />
                 </aside>
                 <div
@@ -16069,6 +16297,7 @@ export function WorkbenchLayout({
                     workspaceId={currentWorkspaceId}
                     workspaceName={currentWorkspaceName}
                     terminalDockState={codeTerminalDockState}
+                    terminalDockVisible={showCodeTerminalDock}
                     onCloseTerminalDock={closeCodeTerminalDock}
                     onChangeTerminalDockOrientation={changeCodeTerminalDockOrientation}
                     onResizeTerminalDock={resizeCodeTerminalDock}
@@ -16140,6 +16369,11 @@ export function WorkbenchLayout({
                           onCleanupWorktree={requestWorktreeCleanup}
                         />
                       )}
+                      {codeShortcutRailRightSlot ? (
+                        <div className="workbench-auxiliary-footer">
+                          {codeShortcutRailRightSlot}
+                        </div>
+                      ) : null}
                     </aside>
                   </>
                 ) : null}
@@ -16521,6 +16755,21 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       revealWorkspaceFile: () => false
     }
   );
+}
+
+function readSnapshotTargetHostId(snapshot: unknown): string | null {
+  return snapshot && typeof snapshot === "object" && "targetHostId" in snapshot
+    ? ((snapshot as { targetHostId?: unknown }).targetHostId as string | null | undefined) ?? null
+    : null;
+}
+
+function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
+  return (left ?? null) === (right ?? null);
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  const hostPart = targetHostId?.trim() ? `${targetHostId.trim()}:` : "";
+  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
 }
 
 function isDraftSessionId(sessionId: string): boolean {

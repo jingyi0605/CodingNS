@@ -498,7 +498,12 @@ export class WorkbenchService {
 
 function applyWorkspaceNavigationState(
   workspace: Workspace,
-  navigationState: { backgroundColor: string | null; hidden?: boolean } | null | undefined
+  navigationState: {
+    backgroundColor: string | null;
+    hidden?: boolean;
+    shortcutAppsCollapsed?: boolean;
+    shortcutAppsSide?: "left" | "right";
+  } | null | undefined
 ): Workspace {
   if (!navigationState) {
     return workspace;
@@ -507,7 +512,9 @@ function applyWorkspaceNavigationState(
   return {
     ...workspace,
     backgroundColor: navigationState.backgroundColor,
-    hidden: navigationState.hidden ?? false
+    hidden: navigationState.hidden ?? false,
+    shortcutAppsCollapsed: navigationState.shortcutAppsCollapsed ?? false,
+    shortcutAppsSide: navigationState.shortcutAppsSide ?? "left"
   };
 }
 

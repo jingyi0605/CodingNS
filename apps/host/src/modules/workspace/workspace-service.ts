@@ -82,6 +82,8 @@ export interface UpdateWorkspaceNavigationStateInput {
   collapsed?: boolean;
   backgroundColor?: string | null;
   hidden?: boolean;
+  shortcutAppsCollapsed?: boolean;
+  shortcutAppsSide?: "left" | "right";
 }
 
 const DIRECTORY_BROWSE_LIMIT = 200;
@@ -293,7 +295,9 @@ export class WorkspaceService {
       return {
         ...workspace,
         backgroundColor: navigationState?.backgroundColor ?? workspace.backgroundColor ?? null,
-        hidden: navigationState?.hidden ?? false
+        hidden: navigationState?.hidden ?? false,
+        shortcutAppsCollapsed: navigationState?.shortcutAppsCollapsed ?? false,
+        shortcutAppsSide: navigationState?.shortcutAppsSide ?? "left"
       };
     });
   }
@@ -469,7 +473,13 @@ export class WorkspaceService {
     input: UpdateWorkspaceNavigationStateInput
   ): WorkspaceNavigationStateRecord {
     this.getWorkspaceForUserOrThrow(workspaceId, userId);
-    if (input.collapsed === undefined && input.backgroundColor === undefined && input.hidden === undefined) {
+    if (
+      input.collapsed === undefined
+      && input.backgroundColor === undefined
+      && input.hidden === undefined
+      && input.shortcutAppsCollapsed === undefined
+      && input.shortcutAppsSide === undefined
+    ) {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
@@ -491,6 +501,8 @@ export class WorkspaceService {
             ? normalizedBackgroundColor
             : existing?.backgroundColor ?? null,
         hidden: input.hidden ?? existing?.hidden ?? false,
+        shortcutAppsCollapsed: input.shortcutAppsCollapsed ?? existing?.shortcutAppsCollapsed ?? false,
+        shortcutAppsSide: input.shortcutAppsSide ?? existing?.shortcutAppsSide ?? "left",
         affairsLibraryRootPath: existing?.affairsLibraryRootPath ?? null,
         affairsLibraryEnabled: existing?.affairsLibraryEnabled ?? false,
         affairsLibraryFavoritesJson: existing?.affairsLibraryFavoritesJson ?? null,
@@ -509,6 +521,8 @@ export class WorkspaceService {
           collapsed: input.collapsed ?? null,
           backgroundColor: normalizedBackgroundColor ?? null,
           hidden: input.hidden ?? null,
+          shortcutAppsCollapsed: input.shortcutAppsCollapsed ?? null,
+          shortcutAppsSide: input.shortcutAppsSide ?? null,
           oldBinding: toWorkspaceNavigationBindingLog(existing),
           newBinding: toWorkspaceNavigationBindingLog(nextRecord),
         },
@@ -529,6 +543,8 @@ export class WorkspaceService {
           collapsed: input.collapsed ?? null,
           backgroundColor: normalizedBackgroundColor ?? null,
           hidden: input.hidden ?? null,
+          shortcutAppsCollapsed: input.shortcutAppsCollapsed ?? null,
+          shortcutAppsSide: input.shortcutAppsSide ?? null,
           oldBinding: toWorkspaceNavigationBindingLog(existing),
           newBinding: null,
         },

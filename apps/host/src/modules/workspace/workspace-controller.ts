@@ -52,6 +52,8 @@ interface UpdateWorkspaceNavigationStateBody {
   collapsed?: unknown;
   backgroundColor?: unknown;
   hidden?: unknown;
+  shortcutAppsCollapsed?: unknown;
+  shortcutAppsSide?: unknown;
 }
 
 export class WorkspaceController {
@@ -173,6 +175,14 @@ export class WorkspaceController {
 
     if (typeof request.body?.hidden === "boolean") {
       input.hidden = request.body.hidden;
+    }
+
+    if (typeof request.body?.shortcutAppsCollapsed === "boolean") {
+      input.shortcutAppsCollapsed = request.body.shortcutAppsCollapsed;
+    }
+
+    if (request.body?.shortcutAppsSide === "left" || request.body?.shortcutAppsSide === "right") {
+      input.shortcutAppsSide = request.body.shortcutAppsSide;
     }
 
     reply.send(

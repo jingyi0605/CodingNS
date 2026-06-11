@@ -417,6 +417,8 @@ interface UpdateAssistantWorkspaceNavigationStateInput {
   collapsed?: boolean;
   backgroundColor?: string | null;
   hidden?: boolean;
+  shortcutAppsCollapsed?: boolean;
+  shortcutAppsSide?: "left" | "right";
 }
 
 interface CreateAssistantWorktreeInput {
@@ -2581,7 +2583,9 @@ export class AssistantCapabilityService {
     const state = this.workspaceService.updateNavigationState(input.workspaceId, input.userId, {
       collapsed: input.collapsed,
       backgroundColor: input.backgroundColor,
-      hidden: input.hidden
+      hidden: input.hidden,
+      shortcutAppsCollapsed: input.shortcutAppsCollapsed,
+      shortcutAppsSide: input.shortcutAppsSide
     });
 
     return this.createReceipt("workspaces.navigation-state.update", {

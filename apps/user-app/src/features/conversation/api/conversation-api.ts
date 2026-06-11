@@ -83,6 +83,8 @@ export interface WorkspaceDto {
   repoRoot: string | null;
   backgroundColor?: string | null;
   hidden?: boolean;
+  shortcutAppsCollapsed?: boolean;
+  shortcutAppsSide?: "left" | "right";
   sortOrder?: number;
 }
 
@@ -941,6 +943,8 @@ export interface WorkspaceNavigationStateDto {
   collapsed: boolean;
   backgroundColor: string | null;
   hidden: boolean;
+  shortcutAppsCollapsed: boolean;
+  shortcutAppsSide: "left" | "right";
   updatedAt: string;
 }
 
@@ -1740,6 +1744,8 @@ export function updateWorkspaceNavigationState(
     collapsed?: boolean;
     backgroundColor?: string | null;
     hidden?: boolean;
+    shortcutAppsCollapsed?: boolean;
+    shortcutAppsSide?: "left" | "right";
   }
 ) {
   return httpClient.request<WorkspaceNavigationStateDto>(

@@ -367,6 +367,8 @@ interface AssistantWorkspaceNavigationStateBody {
   collapsed?: unknown;
   backgroundColor?: unknown;
   hidden?: unknown;
+  shortcutAppsCollapsed?: unknown;
+  shortcutAppsSide?: unknown;
 }
 
 interface AssistantCreateWorktreeBody {
@@ -1408,6 +1410,8 @@ export class AssistantCapabilityController {
       collapsed?: boolean;
       backgroundColor?: string | null;
       hidden?: boolean;
+      shortcutAppsCollapsed?: boolean;
+      shortcutAppsSide?: "left" | "right";
     } = {
       workspaceId: request.params.workspaceId,
       userId: requireUserId(request)
@@ -1427,6 +1431,14 @@ export class AssistantCapabilityController {
 
     if (typeof request.body?.hidden === "boolean") {
       input.hidden = request.body.hidden;
+    }
+
+    if (typeof request.body?.shortcutAppsCollapsed === "boolean") {
+      input.shortcutAppsCollapsed = request.body.shortcutAppsCollapsed;
+    }
+
+    if (request.body?.shortcutAppsSide === "left" || request.body?.shortcutAppsSide === "right") {
+      input.shortcutAppsSide = request.body.shortcutAppsSide;
     }
 
     reply.send(this.assistantCapabilityService.updateWorkspaceNavigationState(input));

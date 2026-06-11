@@ -261,6 +261,8 @@ interface AffairsShortcutRailSystemItem {
   iconText: ReactNode;
   actionLabel: string;
   active?: boolean;
+  badge?: ReactNode;
+  badgeLabel?: string;
   onClick?: () => void;
   renderTrigger?: (content: {
     className: string;
@@ -276,11 +278,13 @@ interface SharedAffairsShortcutRailProps {
   editing: boolean;
   addingShortcut: boolean;
   collapsed: boolean;
+  moveDirection?: "left" | "right" | null;
   shortcutCount?: number;
   systemItems?: AffairsShortcutRailSystemItem[];
   onToggleEditing?: () => void;
   onToggleAddingShortcut?: () => void;
   onToggleCollapsed?: () => void;
+  onMoveSide?: () => void;
   onRemoveShortcutApp?: (shortcutId: string) => void;
   onOpenShortcutApp: (shortcut: ShortcutAppState) => void;
   shortcutEditor?: ReactNode;
@@ -4450,13 +4454,21 @@ export function AffairsShortcutAppsRail({
   standalone = false,
   systemItems = [],
   defaultCollapsed,
+  collapsed: collapsedProp,
+  onCollapsedChange,
   mountMode = "sidebar",
+  moveDirection = null,
+  onMoveSide,
   emptyText
 }: {
   standalone?: boolean;
   systemItems?: AffairsShortcutRailSystemItem[];
   defaultCollapsed?: boolean;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
   mountMode?: "sidebar" | "footer";
+  moveDirection?: "left" | "right" | null;
+  onMoveSide?: () => void;
   emptyText?: string;
 }) {
   const { workspaceId, navigationGroups, globalLibraryBinding } = useAffairsWorkbenchInternal();
@@ -4466,7 +4478,8 @@ export function AffairsShortcutAppsRail({
   const [editing, setEditing] = useState(false);
   const [addingShortcut, setAddingShortcut] = useState(false);
   const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? !standalone);
+  const [internalCollapsed, setInternalCollapsed] = useState(defaultCollapsed ?? !standalone);
+  const collapsed = typeof collapsedProp === "boolean" ? collapsedProp : internalCollapsed;
   const currentLibraryWorkspaceOption = useMemo(
     () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
     [globalLibraryBinding, workspaceId]
@@ -4511,11 +4524,13 @@ export function AffairsShortcutAppsRail({
   }, [addingShortcut, defaultSourceWorkspaceId]);
 
   useEffect(() => {
-    setCollapsed(defaultCollapsed ?? !standalone);
+    if (typeof collapsedProp !== "boolean") {
+      setInternalCollapsed(defaultCollapsed ?? !standalone);
+    }
     setEditing(false);
     setAddingShortcut(false);
     setEditingShortcutId(null);
-  }, [defaultCollapsed, standalone]);
+  }, [collapsedProp, defaultCollapsed, standalone]);
 
   const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -4618,6 +4633,7 @@ export function AffairsShortcutAppsRail({
         editing={editing}
         addingShortcut={addingShortcut}
         collapsed={collapsed}
+        moveDirection={moveDirection}
         shortcutCount={systemItems.length + dashboardState.shortcutApps.length}
         onToggleAddingShortcut={() => {
           setAddingShortcut((current) => {
@@ -4640,7 +4656,14 @@ export function AffairsShortcutAppsRail({
             return nextEditing;
           });
         }}
-        onToggleCollapsed={() => setCollapsed((current) => !current)}
+        onToggleCollapsed={() => {
+          const nextCollapsed = !collapsed;
+          if (typeof collapsedProp !== "boolean") {
+            setInternalCollapsed(nextCollapsed);
+          }
+          onCollapsedChange?.(nextCollapsed);
+        }}
+        onMoveSide={onMoveSide}
         onRemoveShortcutApp={removeShortcutApp}
         onOpenShortcutApp={openShortcutApp}
         systemItems={systemItems}
@@ -4731,18 +4754,20 @@ export function AffairsShortcutAppsRail({
   );
 }
 
-function SharedAffairsShortcutRail({
+export function SharedAffairsShortcutRail({
   standalone = false,
   mountMode = "sidebar",
   shortcutApps,
   editing,
   addingShortcut,
   collapsed,
+  moveDirection = null,
   shortcutCount,
   systemItems = [],
   onToggleEditing,
   onToggleAddingShortcut,
   onToggleCollapsed,
+  onMoveSide,
   onRemoveShortcutApp,
   onOpenShortcutApp,
   shortcutEditor,
@@ -4776,6 +4801,17 @@ function SharedAffairsShortcutRail({
               onClick={onToggleAddingShortcut}
             >
               {addingShortcut ? <AffairsDashboardRemoveIcon /> : <AffairsDashboardAddTabIcon />}
+            </button>
+          ) : null}
+          {(standalone || !collapsed) && moveDirection && onMoveSide ? (
+            <button
+              type="button"
+              className="affairs-dashboard-toolbar-icon-button affairs-shortcut-rail-header-icon-button"
+              aria-label={moveDirection === "right" ? t("shell.affairsShortcutRailMoveRightAction") : t("shell.affairsShortcutRailMoveLeftAction")}
+              title={moveDirection === "right" ? t("shell.affairsShortcutRailMoveRightAction") : t("shell.affairsShortcutRailMoveLeftAction")}
+              onClick={onMoveSide}
+            >
+              {moveDirection === "right" ? <AffairsShortcutMoveRightIcon /> : <AffairsShortcutMoveLeftIcon />}
             </button>
           ) : null}
           {(standalone || !collapsed) && onToggleEditing ? (
@@ -4822,6 +4858,14 @@ function SharedAffairsShortcutRail({
                     data-active={item.active ? "true" : undefined}
                   >
                     {item.iconText}
+                    {item.badge !== undefined && item.badge !== null ? (
+                      <span
+                        className="affairs-shortcut-rail-icon-badge"
+                        aria-label={item.badgeLabel}
+                      >
+                        {item.badge}
+                      </span>
+                    ) : null}
                   </span>
                 ),
                 title: item.title
@@ -4997,6 +5041,22 @@ function AffairsSessionExportIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M10 3.5v8m0 0 3-3m-3 3-3-3M4.5 13.5v1A1.5 1.5 0 0 0 6 16h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsShortcutMoveLeftIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M9.25 5.25 4.5 10l4.75 4.75M5.25 10h10.25" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AffairsShortcutMoveRightIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10.75 5.25 15.5 10l-4.75 4.75M4.25 10H14.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -14234,7 +14294,7 @@ function renderAffairsAssistantContextIcon(kind: "spark" | "todo" | "automation"
   }
 }
 
-function AffairsLibraryIcon() {
+export function AffairsLibraryIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
       <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2h5.5A2.5 2.5 0 0 1 20 9.5v8A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5z" />
@@ -14268,7 +14328,7 @@ function AffairsAutomationIcon() {
   );
 }
 
-function AffairsConversationIcon() {
+export function AffairsConversationIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
       <path d="M6.5 5h11A2.5 2.5 0 0 1 20 7.5v7A2.5 2.5 0 0 1 17.5 17H9l-4 3V7.5A2.5 2.5 0 0 1 7.5 5Z" />
@@ -14278,7 +14338,7 @@ function AffairsConversationIcon() {
   );
 }
 
-function AffairsWorkbenchIcon() {
+export function AffairsWorkbenchIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
       <rect x="4" y="5" width="7" height="6" rx="1.5" />
