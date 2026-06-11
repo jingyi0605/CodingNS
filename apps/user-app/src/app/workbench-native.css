@@ -4238,6 +4238,15 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   text-align: left;
 }
 
+.workbench-nav-code-entries {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.workbench-nav-code-entries > .workbench-nav-segment-button {
+  min-height: 31px;
+}
+
 .workbench-nav-segment-button.active,
 .workbench-nav-segment-button[data-open="true"] {
   background: rgba(120, 120, 128, 0.12);
@@ -4327,6 +4336,15 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
     + var(--workbench-nav-leading-slot)
     + var(--workbench-nav-leading-gap)
   );
+}
+
+.workbench-chat-section {
+  padding-top: 2px;
+}
+
+.workbench-chat-section > .workbench-section-heading {
+  min-height: 24px;
+  margin-bottom: 4px;
 }
 
 .workbench-workspace-section {

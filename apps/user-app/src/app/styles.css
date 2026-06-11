@@ -13402,6 +13402,100 @@ textarea:focus-visible {
   line-height: 1.2;
 }
 
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-header.minimal,
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-toggle,
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-actions {
+  min-height: 32px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-actions {
+  gap: 6px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-actions .workbench-workspace-icon-button,
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-workspace-actions .workbench-workspace-create {
+  width: 26px;
+  min-height: 26px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-list {
+  gap: 0;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-tree-node {
+  gap: 0;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-card:not(.workbench-chat-card) .workbench-session-link {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-card:not(.workbench-chat-card) .workbench-session-link-copy {
+  min-height: 22px;
+  gap: 1px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-card:not(.workbench-chat-card) .session-title {
+  line-height: 14px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-card:not(.workbench-chat-card) .session-meta-row {
+  line-height: 11px;
+}
+
+.workbench-workspace-section:not(.workbench-chat-section) .workbench-session-card:not(.workbench-chat-card) .workbench-session-main > .session-state-indicator {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.workbench-chat-section {
+  margin-top: 2px;
+  padding-top: 2px;
+}
+
+.workbench-chat-section > .workbench-section-heading {
+  min-height: 24px;
+  margin-bottom: 4px;
+}
+
+.workbench-chat-list {
+  gap: 1px;
+}
+
+.workbench-chat-section .workbench-section-actions {
+  display: flex;
+  width: auto;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.workbench-chat-card .workbench-session-link {
+  min-height: 26px;
+  padding: 3px 9px 3px var(--workbench-nav-label-start);
+}
+
+.workbench-chat-card .workbench-session-link-copy {
+  width: 100%;
+  min-height: 20px;
+  gap: 0;
+  justify-content: center;
+}
+
+.workbench-chat-card .session-title-row,
+.workbench-chat-card .session-title {
+  width: 100%;
+}
+
+.workbench-chat-card .session-title {
+  line-height: 20px;
+}
+
+.workbench-chat-card .workbench-session-main > .session-state-indicator {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .workbench-closed-subagent-toggle-row {
   align-items: center;
   justify-content: flex-end;
