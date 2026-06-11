@@ -430,11 +430,9 @@ export const enUS = {
     abilityManagementNavValue: "Library / Providers / Profiles",
     affairsLibraryCapabilityTitle: "Document library",
     affairsLibraryCapabilityDescription:
-      "When off, the document entry is hidden from the left sidebar and document or tag indexing services stop. Off by default.",
+      "This switch controls the left document entry and the document or tag indexing services.",
     affairsLibraryCapabilityToggleLabel: "Enable document library",
     affairsLibraryCapabilityLoading: "Updating document library status...",
-    affairsLibraryCapabilityEnabledHint: "The document entry is visible. Indexing runs when needed.",
-    affairsLibraryCapabilityDisabledHint: "The document entry is hidden. Indexing will not continue.",
     affairsLibraryCapabilityEnableSuccess: "Document library enabled.",
     affairsLibraryCapabilityDisableSuccess: "Document library disabled.",
     affairsLibraryCapabilityLoadFailed: "Failed to load document library status.",

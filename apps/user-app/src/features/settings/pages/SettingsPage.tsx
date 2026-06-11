@@ -970,13 +970,6 @@ function AffairsLibraryCapabilitySwitch() {
           void handleChange(enabled);
         }}
       />
-      <span className="settings-provider-entrypoint-note">
-        {capability.loading || saving
-          ? t("settings.affairsLibraryCapabilityLoading")
-          : capability.enabled
-            ? t("settings.affairsLibraryCapabilityEnabledHint")
-            : t("settings.affairsLibraryCapabilityDisabledHint")}
-      </span>
       {statusText ? <span className="settings-provider-status">{statusText}</span> : null}
       {errorText ?? capability.error ? (
         <span className="settings-provider-error">{errorText ?? t("settings.affairsLibraryCapabilityLoadFailed")}</span>
