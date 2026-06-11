@@ -410,6 +410,8 @@ export function TerminalPage({
     {}
   );
   const [zoomScale, setZoomScale] = useState(() => readPersistedTerminalZoomScale() ?? 1);
+  const embeddedDockToggleTargetOrientation =
+    embeddedDockControls?.orientation === "vertical" ? "horizontal" : "vertical";
   const shellCurrentWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === shellCurrentWorkspaceId) ?? null,
     [shellCurrentWorkspaceId, workspaces]
@@ -605,6 +607,7 @@ export function TerminalPage({
   const terminalShellStyle = {
     "--terminal-mobile-list-width": isMobileTerminalPage && mobileQuickDrawerOpen ? "60vw" : "0px"
   } as CSSProperties;
+  const showTopTabstrip = embeddedMode && embeddedDockControls?.orientation === "horizontal";
 
   useEffect(() => {
     terminalsRef.current = terminals;
@@ -2028,7 +2031,7 @@ export function TerminalPage({
           <>
             <div
               className="terminal-desktop-shell"
-              data-top-tabstrip={effectiveSplitDirection === "vertical" ? "true" : "false"}
+              data-top-tabstrip={showTopTabstrip ? "true" : "false"}
             >
               <header
                 className="terminal-tabbar"
@@ -2045,46 +2048,6 @@ export function TerminalPage({
                     <span>{currentWorkspace?.name ?? t("terminal.workspaceField")}</span>
                   </div>
                   <div className="terminal-tabbar-inline-actions">
-                    {embeddedMode && embeddedDockControls ? (
-                      <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
-                        <div
-                          className="code-workbench-terminal-layout-switcher"
-                          role="group"
-                          aria-label={t("shell.codeTerminalDockLayoutLabel")}
-                        >
-                          <button
-                            type="button"
-                            className="code-workbench-terminal-layout-button"
-                            data-active={embeddedDockControls.orientation === "vertical"}
-                            aria-label={t("shell.codeTerminalDockLayoutVertical")}
-                            onClick={() => {
-                              embeddedDockControls.onChangeOrientation("vertical");
-                            }}
-                          >
-                            <span aria-hidden="true">↕</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="code-workbench-terminal-layout-button"
-                            data-active={embeddedDockControls.orientation === "horizontal"}
-                            aria-label={t("shell.codeTerminalDockLayoutHorizontal")}
-                            onClick={() => {
-                              embeddedDockControls.onChangeOrientation("horizontal");
-                            }}
-                          >
-                            <span aria-hidden="true">↔</span>
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          className="code-workbench-terminal-close-button"
-                          aria-label={t("shell.codeTerminalDockCloseAction")}
-                          onClick={embeddedDockControls.onClose}
-                        >
-                          <span aria-hidden="true">×</span>
-                        </button>
-                      </div>
-                    ) : null}
                     <div className="terminal-toolbar-anchor" data-window-drag="ignore">
                       <div
                         ref={toolbarRef}
@@ -2255,11 +2218,97 @@ export function TerminalPage({
                         </span>
                       </button>
                     </div>
+                    {embeddedMode && embeddedDockControls ? (
+                      <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
+                        <div
+                          className="code-workbench-terminal-layout-switcher"
+                        >
+                          <button
+                            type="button"
+                            className="code-workbench-terminal-layout-button"
+                            aria-label={
+                              embeddedDockToggleTargetOrientation === "horizontal"
+                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                : t("shell.codeTerminalDockSwitchToVerticalAction")
+                            }
+                            title={
+                              embeddedDockToggleTargetOrientation === "horizontal"
+                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                : t("shell.codeTerminalDockSwitchToVerticalAction")
+                            }
+                            onClick={() => {
+                              embeddedDockControls.onChangeOrientation(
+                                embeddedDockToggleTargetOrientation
+                              );
+                            }}
+                          >
+                            <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                              {embeddedDockToggleTargetOrientation === "horizontal" ? (
+                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                  <path
+                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                  <path
+                                    d="M8 4.25v7.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              ) : (
+                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                  <path
+                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                  <path
+                                    d="M3.75 8h9.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className="code-workbench-terminal-close-button"
+                          aria-label={t("shell.codeTerminalDockCloseAction")}
+                          onClick={embeddedDockControls.onClose}
+                        >
+                          <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                            <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                              <path
+                                d="m5.25 5.25 5.5 5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                              />
+                              <path
+                                d="m10.75 5.25-5.5 5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          </span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </header>
 
-              {effectiveSplitDirection === "vertical" ? (
+              {showTopTabstrip ? (
                 <div className="terminal-desktop-tabstrip">
                   <div
                     ref={terminalTabbarScrollRef}
@@ -2464,7 +2513,7 @@ export function TerminalPage({
                 </div>
               </section>
 
-              {effectiveSplitDirection !== "vertical" ? (
+              {!showTopTabstrip ? (
                 <aside className="terminal-desktop-rail">
                   <div
                     ref={terminalTabbarScrollRef}

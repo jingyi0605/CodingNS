@@ -877,45 +877,64 @@ describe("TerminalPage", () => {
     });
   });
 
-  it("只有左右分栏时才会把终端标签栏放到顶部", async () => {
-    renderPage();
+  it("嵌入工作台时只在左右停靠下把终端标签栏放到顶部", async () => {
+    const onChangeOrientation = vi.fn();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/terminals"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/terminals"
+              element={(
+                <TerminalPage
+                  embeddedMode
+                  externalWindowWorkspaceId="workspace-1"
+                  embeddedDockControls={{
+                    orientation: "horizontal",
+                    onChangeOrientation,
+                    onClose
+                  }}
+                />
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
 
     await screen.findByRole("button", { name: "新建终端" });
 
-    const desktopShell = document.querySelector(".terminal-desktop-shell");
+    let desktopShell = document.querySelector(".terminal-desktop-shell");
     expect(desktopShell).not.toBeNull();
-    expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
-    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).not.toBeVisible();
-    expect(desktopShell?.querySelector(".terminal-desktop-rail")).not.toBeNull();
-
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "展开终端工具菜单"
-      })
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "左右分栏"
-      })
-    );
-
-    await waitFor(() => {
-      expect(desktopShell).toHaveAttribute("data-top-tabstrip", "true");
-    });
+    expect(desktopShell).toHaveAttribute("data-top-tabstrip", "true");
     expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).toBeVisible();
     expect(desktopShell?.querySelector(".terminal-desktop-rail")).toBeNull();
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "展开终端工具菜单"
-      })
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "上下分栏"
-      })
+    rerender(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/terminals"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/terminals"
+              element={(
+                <TerminalPage
+                  embeddedMode
+                  externalWindowWorkspaceId="workspace-1"
+                  embeddedDockControls={{
+                    orientation: "vertical",
+                    onChangeOrientation,
+                    onClose
+                  }}
+                />
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     );
 
+    desktopShell = document.querySelector(".terminal-desktop-shell");
     await waitFor(() => {
       expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
     });
@@ -939,7 +958,7 @@ describe("TerminalPage", () => {
 
     await screen.findByRole("button", { name: "新建终端" });
 
-    fireEvent.click(screen.getByRole("button", { name: "左右布局" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换到左右布局" }));
     expect(onChangeOrientation).toHaveBeenCalledWith("horizontal");
 
     fireEvent.click(screen.getByRole("button", { name: "关闭终端面板" }));
