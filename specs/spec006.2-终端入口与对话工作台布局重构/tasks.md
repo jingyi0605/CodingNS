@@ -108,6 +108,35 @@
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` §2.3.1、§3.2.1
 
+- [x] 1.4 把代码视图快捷应用栏的折叠和左右位置收进同一套宿主状态
+  - 状态：DONE
+  - 这一步到底做什么：继续复用事务模式的快捷应用组件本体，但把“收起 / 展开”和“显示在左侧还是右侧”收进 Host 导航状态，不再只靠前端临时状态硬撑。
+  - 做完你能看到什么：代码视图里的快捷应用栏可以从左侧栏底部移到右侧栏底部；收起状态和左右位置切页后还能按上次状态恢复。
+  - 先依赖什么：1.1、1.2
+  - 开始前先看：
+    - `requirements.md` 需求 1
+    - 本轮补充需求：Host 记住折叠状态、编辑按钮左侧增加左右移动按钮
+  - 主要改哪里：
+    - `apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
+    - `apps/user-app/src/features/workbench/components/AffairsWorkbenchView.tsx`
+    - `apps/user-app/src/app/workbench-native.css`
+    - `apps/user-app/src/shared/i18n/index.ts`
+    - `apps/host/src/modules/workspace/workspace-service.ts`
+    - `apps/host/src/storage/repositories/workspace-navigation-state-repository.ts`
+    - `apps/host/src/storage/sqlite/schema.sql`
+  - 这一步先不做什么：不重写快捷应用组件，不新增第二套代码模式专用快捷应用栏。
+  - 怎么算完成：
+    1. 左侧显示时，标题栏里出现“移到右侧”按钮
+    2. 右侧显示时，标题栏里出现“移到左侧”按钮
+    3. 折叠状态和左右位置写入 Host 导航状态
+    4. 左右两侧都还是挂同一个 `AffairsShortcutAppsRail`
+  - 怎么验证：
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - `pnpm exec tsc -p apps/host/tsconfig.json --noEmit`
+    - `pnpm check:sqlite-runtime`
+  - 对应需求：`requirements.md` 需求 1
+  - 对应设计：`design.md` §2.1、§2.3.1、§4.1
+
 ### 阶段检查
 
 - [ ] 1.3 检查入口是不是已经统一
@@ -133,8 +162,8 @@
 
 ## 阶段 2：把终端塞回代码视图中间，不再单独飘着
 
-- [ ] 2.1 新增代码视图终端面板壳层
-  - 状态：TODO
+- [x] 2.1 新增代码视图终端面板壳层
+  - 状态：DONE
   - 这一步到底做什么：在 `WorkbenchLayout` 中间区挂上“对话区 + 终端区”的双面板壳层，让终端能从底部展开出来。
   - 做完你能看到什么：点击终端后，不再跳独立页，而是在当前对话区域内出现终端面板。
   - 先依赖什么：1.3
@@ -152,12 +181,13 @@
     2. 对话区不会被整个替换掉
     3. 手动关闭后能回到正常对话视图
   - 怎么验证：
-    - `pnpm test:related -- apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - 人工代码走查 `CodeWorkbenchView` 已挂入代码视图主区域，关闭后只收起面板不关闭后台终端
   - 对应需求：`requirements.md` 需求 2
   - 对应设计：`design.md` §2.2、§2.3.1、§4.2
 
-- [ ] 2.2 把终端标签列表改到终端区右侧
-  - 状态：TODO
+- [x] 2.2 把终端标签列表改到终端区右侧
+  - 状态：DONE
   - 这一步到底做什么：调整终端前端显示结构，把终端标签列表固定到终端区右侧，同时继续复用现有终端数据。
   - 做完你能看到什么：终端切换更像正常 IDE，标签列表不再跑到别的区域。
   - 先依赖什么：2.1
@@ -174,15 +204,15 @@
     1. 终端标签列表在终端区右侧稳定显示
     2. 切换终端标签不影响后台其他终端运行
   - 怎么验证：
-    - `pnpm test:related -- apps/user-app/src/features/terminal/pages/TerminalPage.tsx`
-    - `pnpm test:related -- apps/user-app/src/features/workbench/components/TerminalManagerPanel.tsx`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - 人工代码走查 `TerminalPage embeddedMode` 已使用 `terminal-desktop-stage + terminal-desktop-rail` 结构
   - 对应需求：`requirements.md` 需求 3
   - 对应设计：`design.md` §2.2、§3.3
 
 ### 阶段检查
 
 - [ ] 2.3 检查终端是不是已经能在代码视图里正常同屏
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：确认终端不是“看起来嵌进去了”，而是真的能和对话同屏工作。
   - 做完你能看到什么：终端同屏主链路能跑通，再继续做布局状态。
   - 先依赖什么：2.1、2.2
@@ -204,8 +234,8 @@
 
 ## 阶段 3：把布局切换、拖拽比例和恢复状态做完整
 
-- [ ] 3.1 新增终端面板布局状态存储
-  - 状态：TODO
+- [x] 3.1 新增终端面板布局状态存储
+  - 状态：DONE
   - 这一步到底做什么：把终端面板是否打开、方向、比例、手动关闭标记按工作区存起来。
   - 做完你能看到什么：终端面板不再每次回到默认状态。
   - 先依赖什么：2.3
@@ -222,13 +252,13 @@
     1. 按工作区记住终端面板开关、方向、比例
     2. 坏快照能回退默认值
   - 怎么验证：
-    - 新增状态工具测试
-    - `pnpm test:related -- <新增状态文件>`
+    - `pnpm --dir apps/user-app test -- --run src/features/workbench/utils/code-terminal-dock-state.test.ts`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
   - 对应需求：`requirements.md` 需求 4、需求 5
   - 对应设计：`design.md` §3.2.2、§3.3.1、§4.1
 
-- [ ] 3.2 接入上下 / 左右布局切换和拖拽调比例
-  - 状态：TODO
+- [x] 3.2 接入上下 / 左右布局切换和拖拽调比例
+  - 状态：DONE
   - 这一步到底做什么：给终端面板加方向切换和中间分隔拖拽，让上下、左右两种布局都能用。
   - 做完你能看到什么：用户能像 IDE 一样自己摆终端和对话的比例。
   - 先依赖什么：3.1
@@ -247,12 +277,13 @@
     3. 两种布局都能拖拽调比例
     4. 比例有最小尺寸保护
   - 怎么验证：
-    - `pnpm test:related -- apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
+    - `pnpm exec tsc -p apps/user-app/tsconfig.json --noEmit`
+    - 人工代码走查上下 / 左右两种布局都通过 `CodeWorkbenchView` 分隔条拖拽写回比例
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` §2.3.2、§3.2.2、§4.2
 
 - [ ] 3.3 接入“切走再回来”的恢复逻辑
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：把终端面板恢复逻辑接进代码视图路由和工作区恢复链路，确保不是手动关闭就继续显示。
   - 做完你能看到什么：用户从别的页面回来时，终端面板按上次状态恢复。
   - 先依赖什么：3.2
