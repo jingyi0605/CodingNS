@@ -19,9 +19,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import { pinyin } from "pinyin-pro";
 import {
-  UNSAFE_LocationContext,
   UNSAFE_NavigationContext,
-  type Location,
   type Navigator
 } from "react-router-dom";
 
@@ -48,7 +46,6 @@ import {
   writeAffairsDashboardState
 } from "../utils/affairs-dashboard-state";
 import { resolveShortcutAppSmartIcon } from "../utils/affairs-shortcut-icon";
-import { buildAffairsPath } from "../utils/workbench-navigation";
 import type {
   AssistantAutomationRunDto,
   AssistantAutomationTaskDto,
@@ -200,6 +197,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { listWorkspaceBridgeDir } from "../../../platform/preview/codingns-workspace-bridge";
 import { resolveContextMenuPosition } from "../utils/context-menu-position";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { useAffairsLibraryCapability } from "../affairs-library-capability-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import {
   AFFAIRS_GRID_COLUMN_GAP,
@@ -1498,13 +1496,6 @@ function resolveHtmlSourceScopeOption(
 
 const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
 const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
-const FALLBACK_ROUTER_LOCATION: Location = {
-  pathname: "",
-  search: "",
-  hash: "",
-  state: null,
-  key: "affairs-workbench-fallback"
-};
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
 
@@ -1516,15 +1507,13 @@ export function AffairsWorkbenchProvider({
   onStateChange,
   onRefreshNavigation,
   onConversationDraftSelected,
-  forceRoute = true,
+  forceRoute = false,
   children
 }: AffairsWorkbenchProviderProps) {
   const navigationContext = useContext(UNSAFE_NavigationContext) as { navigator?: Navigator } | null;
-  const locationContext = useContext(UNSAFE_LocationContext) as { location?: Location } | null;
   const navigate = useCallback((to: string) => {
     navigationContext?.navigator?.push(to);
   }, [navigationContext]);
-  const location = locationContext?.location ?? FALLBACK_ROUTER_LOCATION;
   const workspaceGroup = useMemo(
     () => navigationGroups.find((item) => item.workspace.id === workspaceId) ?? null,
     [navigationGroups, workspaceId]
@@ -1593,6 +1582,7 @@ export function AffairsWorkbenchProvider({
     [workspaceId, state]
   );
   const activeSection = normalizeSection(state.primarySection);
+  const affairsLibraryCapability = useAffairsLibraryCapability(true);
   const [libraryLoading, setLibraryLoading] = useState(initialLibrarySnapshot === null);
   const [todoLoading, setTodoLoading] = useState(false);
   const [automationLoading, setAutomationLoading] = useState(false);
@@ -1660,6 +1650,33 @@ export function AffairsWorkbenchProvider({
   const butlerInitError = useButlerRuntimeStore(butlerStore, (value) => value.error);
   const butlerProfile = useButlerRuntimeStore(butlerStore, (value) => value.profile);
   const butlerActiveProvider = useButlerRuntimeStore(butlerStore, (value) => value.activeProvider);
+
+  useEffect(() => {
+    if (
+      !affairsLibraryCapability.requested
+      || affairsLibraryCapability.enabled
+      || activeSection !== "library"
+    ) {
+      return;
+    }
+
+    onStateChange({
+      ...state,
+      primarySection: "conversation",
+      selectedNodeId: state.selectedNodeId?.startsWith("conversation:")
+        ? state.selectedNodeId
+        : "conversation:home",
+      selectedObjectId: null,
+      selectedDocumentId: null,
+      pendingLibraryPreview: null
+    });
+  }, [
+    activeSection,
+    affairsLibraryCapability.enabled,
+    affairsLibraryCapability.requested,
+    onStateChange,
+    state
+  ]);
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const { showToast } = useToast();
   const butlerHostUnavailable =
@@ -1681,13 +1698,11 @@ export function AffairsWorkbenchProvider({
         }
       : null
   }), [affairsSetupCompleted, butlerHostUnavailable, butlerInitError, butlerInitLoading, butlerInitialized, butlerProfile]);
-  const isAffairsRoute = location.pathname === buildAffairsPath();
   const ensureAffairsRoute = useCallback(() => {
-    if (!forceRoute || isAffairsRoute) {
-      return;
-    }
-    navigate(buildAffairsPath());
-  }, [forceRoute, isAffairsRoute, navigate, workspaceId]);
+    // 事务内容已经并入代码视图，这里只保留旧调用点，不再主动跳转到 /affairs。
+    void forceRoute;
+    void navigate;
+  }, [forceRoute, navigate]);
   const recentFileActivationRef = useRef<{ path: string; timestamp: number } | null>(null);
   const librarySnapshotRef = useRef<AffairsLibrarySnapshotDto | null>(initialLibrarySnapshot);
   const directoryHintKeyRef = useRef<string | null>(null);
@@ -4420,19 +4435,22 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
 
 export function AffairsSectionMenu() {
   const { activeSection, selectSection } = useAffairsWorkbenchInternal();
+  const affairsLibraryCapability = useAffairsLibraryCapability(true);
 
   return (
     <div className="workbench-nav-code-entries" role="tablist" aria-label={t("shell.affairsSidebarMenuLabel")}>
-      <button
-        type="button"
-        className={activeSection === "library" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
-        role="tab"
-        aria-selected={activeSection === "library"}
-        onClick={() => selectSection("library")}
-      >
-        <AffairsLibraryIcon />
-        <span>{t("shell.affairsLibraryNav")}</span>
-      </button>
+      {affairsLibraryCapability.enabled ? (
+        <button
+          type="button"
+          className={activeSection === "library" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}
+          role="tab"
+          aria-selected={activeSection === "library"}
+          onClick={() => selectSection("library")}
+        >
+          <AffairsLibraryIcon />
+          <span>{t("shell.affairsLibraryNav")}</span>
+        </button>
+      ) : null}
       <button
         type="button"
         className={activeSection === "conversation" ? "workbench-nav-segment-button active" : "workbench-nav-segment-button"}

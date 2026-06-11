@@ -37,6 +37,10 @@ import { SettingsSwitch } from "../../../settings/SettingsSwitch";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 import type { DebugPortPoolConfig } from "../../../preferences/types";
+import {
+  setAffairsLibraryCapabilityEnabled,
+  useAffairsLibraryCapability
+} from "../../workbench/affairs-library-capability-store";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 
 const DEFAULT_DEBUG_PORT_POOLS: DebugPortPoolConfig = {
@@ -609,6 +613,18 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
 
             <div className="settings-row">
               <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.affairsLibraryCapabilityTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.affairsLibraryCapabilityDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <AffairsLibraryCapabilitySwitch />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.providerManagement")}</span>
                 <span className="settings-row-description">
                   {t("settings.providerManagementDescription")}
@@ -913,6 +929,68 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
       />
     </div>
   );
+}
+
+function AffairsLibraryCapabilitySwitch() {
+  const capability = useAffairsLibraryCapability(true);
+  const [saving, setSaving] = useState(false);
+  const [statusText, setStatusText] = useState<string | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
+
+  async function handleChange(enabled: boolean): Promise<void> {
+    if (saving) {
+      return;
+    }
+
+    setSaving(true);
+    setStatusText(null);
+    setErrorText(null);
+
+    try {
+      await setAffairsLibraryCapabilityEnabled(enabled);
+      setStatusText(
+        enabled
+          ? t("settings.affairsLibraryCapabilityEnableSuccess")
+          : t("settings.affairsLibraryCapabilityDisableSuccess")
+      );
+    } catch (error) {
+      setErrorText(resolveAffairsLibraryCapabilityError(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="settings-affairs-library-capability-control">
+      <SettingsSwitch
+        checked={capability.enabled}
+        label={t("settings.affairsLibraryCapabilityToggleLabel")}
+        semanticRole="switch"
+        onChange={(enabled) => {
+          void handleChange(enabled);
+        }}
+      />
+      <span className="settings-provider-entrypoint-note">
+        {capability.loading || saving
+          ? t("settings.affairsLibraryCapabilityLoading")
+          : capability.enabled
+            ? t("settings.affairsLibraryCapabilityEnabledHint")
+            : t("settings.affairsLibraryCapabilityDisabledHint")}
+      </span>
+      {statusText ? <span className="settings-provider-status">{statusText}</span> : null}
+      {errorText ?? capability.error ? (
+        <span className="settings-provider-error">{errorText ?? t("settings.affairsLibraryCapabilityLoadFailed")}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function resolveAffairsLibraryCapabilityError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return t("settings.affairsLibraryCapabilitySaveFailed");
 }
 
 function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
@@ -1517,6 +1595,15 @@ function MobileAbilityManagementSection() {
             >
               {t("settings.teableOpenSettingsAction")}
             </button>
+          </div>
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.affairsLibraryCapabilityTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.affairsLibraryCapabilityDescription")}
+              </span>
+            </div>
+            <AffairsLibraryCapabilitySwitch />
           </div>
         </div>
         <div className="settings-mobile-ability-stack">

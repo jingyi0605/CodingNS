@@ -72,13 +72,6 @@ export function buildWorkspaceChatPath(
   );
 }
 
-export function buildAffairsPath(): string {
-  return "/affairs";
-}
-
-export function buildWorkspaceAffairsPath(_workspaceId: string): string {
-  return buildAffairsPath();
-}
 
 export function buildWorkspaceToolsPath(workspaceId: string, tab?: "files" | "git", workspaceRef?: WorkspaceRef | null): string {
   const basePath = `${buildWorkspaceBasePath(workspaceId)}/tools`;

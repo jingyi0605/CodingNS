@@ -58,7 +58,6 @@ import {
   type DesktopWindowDetachPreviewController
 } from "../../../platform/desktop/window-detach-animation";
 import {
-  openAffairsExternalWindow,
   openCodeExternalWindow,
   openFilesExternalWindow,
   openGitExternalWindow,
@@ -173,7 +172,6 @@ import {
 import { buildSessionTitlePresentation } from "../session-title";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import {
-  buildAffairsPath,
   buildDraftSessionPath,
   buildWorkspaceChatPath,
   buildWorkspaceNewChatPath,
@@ -248,14 +246,13 @@ import {
   AffairsAuxiliaryPanel,
   AffairsLibraryIcon,
   AffairsLightweightConversationCreateModalLauncher,
-  AffairsSectionMenu,
   AffairsShortcutAppsRail,
-  AffairsSidebarPanel,
   AffairsWorkbenchIcon,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView,
   type AffairsConversationDraftSelection
 } from "../../workbench/components/AffairsWorkbenchView";
+import { useAffairsLibraryCapability } from "../../workbench/affairs-library-capability-store";
 import { CodeWorkbenchView } from "../../workbench/components/CodeWorkbenchView";
 import {
   createDefaultCodeTerminalDockState,
@@ -268,14 +265,9 @@ import {
   createDefaultAffairsViewState,
   createDefaultAffairsLibraryLandingState,
   readAffairsViewState,
-  readWorkbenchModeLastPath,
-  readWorkspaceWorkbenchMode,
-  resolveWorkbenchModeFromPath,
-  writeAffairsViewState,
-  writeWorkbenchModeLastPath,
-  writeWorkspaceWorkbenchMode
+  writeAffairsViewState
 } from "../../workbench/utils/workbench-mode";
-import type { AffairsViewState, WorkbenchMode } from "../../workbench/types/workbench-mode";
+import type { AffairsViewState } from "../../workbench/types/workbench-mode";
 import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
@@ -840,7 +832,6 @@ function formatWorkbenchNotificationTime(value: string): string {
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
   const workspaceRoutePatterns = [
     "/workspaces/:workspaceId",
-    "/workspaces/:workspaceId/affairs",
     "/workspaces/:workspaceId/sessions",
     "/workspaces/:workspaceId/sessions/:sessionId",
     "/workspaces/:workspaceId/chats",
@@ -890,35 +881,6 @@ function readWorkspaceRefFromLocation(location: Pick<Location, "pathname" | "sea
     hostId: targetHostId || "current",
     workspaceId
   };
-}
-
-function resolveValidWorkbenchModeLastPath(
-  workspaceId: string,
-  mode: WorkbenchMode
-): string | null {
-  const candidate = readWorkbenchModeLastPath(workspaceId, mode)?.trim();
-
-  if (!candidate) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(candidate, "https://codingns.local");
-    const pathname = parsed.pathname;
-    const search = parsed.search;
-
-    if (resolveWorkbenchModeFromPath(pathname) !== mode) {
-      return null;
-    }
-
-    if (resolveRouteWorkspaceId(pathname, search) !== workspaceId) {
-      return null;
-    }
-
-    return `${pathname}${search}`;
-  } catch {
-    return null;
-  }
 }
 
 function shouldRedirectMobileToWorkspaceHome(pathname: string) {
@@ -1138,7 +1100,6 @@ function normalizeSearchKeywordTerms(value: string | string[]): string[] {
   return result;
 }
 
-const AFFAIRS_GLOBAL_WORKSPACE_ID = "affairs-global";
 const GLOBAL_SEARCH_SOURCE_TIMEOUT_MS = 6000;
 const CODE_SEARCH_PAGE_SIZE = 100;
 const AFFAIRS_SEARCH_DOCUMENT_PAGE_SIZE = 200;
@@ -2093,7 +2054,6 @@ const EMPTY_AFFAIRS_SEARCH_RESULTS: AffairsSearchResults = {
   todos: []
 };
 
-const WORKBENCH_MODE_DEFAULT: WorkbenchMode = "code";
 
 const WorkbenchShellContext = createContext<WorkbenchShellContextValue | null>(null);
 
@@ -5840,7 +5800,8 @@ function SidebarContent({
   favoriteSessions,
   favoriteSessionIds,
   activeWorkspaceId,
-  activeWorkbenchMode,
+  codeEmbeddedAffairsState,
+  affairsLibraryEnabled,
   lightweightChatSessionsByWorkspaceId,
   activeLightweightChatId,
   isConversationActive,
@@ -5852,16 +5813,16 @@ function SidebarContent({
   navigationLoading,
   navigationError,
   activeSessionId,
+  currentTargetHostId,
   onRefreshNavigation,
   onSessionUpdated,
   onNavigateConversation,
-  onSelectWorkbenchMode,
   onNavigateTerminals,
   onOpenTerminalDock,
   onNavigateButler,
   onOpenSearch,
   onOpenSettings,
-  onOpenAffairsSection,
+  onOpenCodeEmbeddedAffairsSection,
   onOpenLightweightChat,
   onCreateLightweightChat,
   onSelectWorkspace,
@@ -5884,9 +5845,7 @@ function SidebarContent({
   onToggleNotificationPanel,
   onClose,
   onToggleCollapse,
-  codeShortcutRailSlot,
-  affairsMenuSlot,
-  affairsContentSlot
+  codeShortcutRailSlot
 }: {
   workspaceGroups: WorkspaceSidebarGroup[];
   workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
@@ -5894,7 +5853,8 @@ function SidebarContent({
   favoriteSessions: NavigationSessionEntry[];
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
-  activeWorkbenchMode: WorkbenchMode;
+  codeEmbeddedAffairsState?: AffairsViewState | null;
+  affairsLibraryEnabled: boolean;
   lightweightChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
   activeLightweightChatId: string | null;
   isConversationActive: boolean;
@@ -5906,16 +5866,16 @@ function SidebarContent({
   navigationLoading: boolean;
   navigationError: string | null;
   activeSessionId: string | null;
+  currentTargetHostId?: string | null;
   onRefreshNavigation: () => Promise<void>;
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onNavigateConversation: () => void;
-  onSelectWorkbenchMode: (mode: WorkbenchMode) => void;
   onNavigateTerminals: () => void;
   onOpenTerminalDock: () => void;
   onNavigateButler: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
-  onOpenAffairsSection: (section: AffairsViewState["primarySection"]) => void;
+  onOpenCodeEmbeddedAffairsSection: (section: AffairsViewState["primarySection"]) => void;
   onOpenLightweightChat: (workspace: WorkspaceDto, session: SessionSummaryDto) => void;
   onCreateLightweightChat: (workspace: WorkspaceDto) => void;
   onSelectWorkspace: (workspaceId: string, workspaceRef?: WorkspaceRef | null) => void;
@@ -5943,8 +5903,6 @@ function SidebarContent({
   onClose?: () => void;
   onToggleCollapse?: () => void;
   codeShortcutRailSlot?: ReactNode;
-  affairsMenuSlot?: ReactNode;
-  affairsContentSlot?: ReactNode;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -6192,8 +6150,7 @@ function SidebarContent({
   }
 
   const openCodeInExternalWindow = useCallback(async (workspaceId: string) => {
-    const routePath = resolveValidWorkbenchModeLastPath(workspaceId, "code")
-      ?? buildWorkspaceSessionIndexPath(workspaceId);
+    const routePath = buildWorkspaceSessionIndexPath(workspaceId);
     const result = await openCodeExternalWindow(platform, {
       workspaceId,
       focusOwner: "code-workbench",
@@ -6207,56 +6164,6 @@ function SidebarContent({
       });
     }
   }, [platform, showToast]);
-
-  const openAffairsInExternalWindow = useCallback(async (workspaceId: string) => {
-    const routePath = buildAffairsPath();
-    const result = await openAffairsExternalWindow(platform, {
-      workspaceId,
-      focusOwner: "affairs-workbench",
-      routePath
-    });
-
-    if (!result.ok) {
-      showToast({
-        title: result.detail ?? t("desktopWindow.invalidAffairsTarget"),
-        tone: "error"
-      });
-    }
-  }, [platform, showToast]);
-
-  const handleCodeModeContextMenu = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (!platform.isDesktop || !platform.bridge.supported || !activeWorkspaceId) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    await showDesktopContextMenu([
-      {
-        id: "open-code-new-window",
-        label: t("shell.workbenchModeCodeOpenInNewWindow"),
-        onSelect: () => openCodeInExternalWindow(activeWorkspaceId)
-      }
-    ]);
-  }, [activeWorkspaceId, openCodeInExternalWindow, platform.bridge.supported, platform.isDesktop]);
-
-  const handleAffairsModeContextMenu = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (!platform.isDesktop || !platform.bridge.supported || !activeWorkspaceId) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    await showDesktopContextMenu([
-      {
-        id: "open-affairs-new-window",
-        label: t("shell.workbenchModeAffairsOpenInNewWindow"),
-        onSelect: () => openAffairsInExternalWindow(activeWorkspaceId)
-      }
-    ]);
-  }, [activeWorkspaceId, openAffairsInExternalWindow, platform.bridge.supported, platform.isDesktop]);
 
   const [importBrowserOpen, setImportBrowserOpen] = useState(false);
   const [cloneBrowserOpen, setCloneBrowserOpen] = useState(false);
@@ -9406,106 +9313,69 @@ function SidebarContent({
       >
         <div className="workbench-nav-segment">
           <div className="workbench-nav-segment-tabs" role="tablist" aria-label={t("shell.workbenchModeTabsLabel")}>
-            <div className="workbench-nav-segment-pair" data-variant="mode">
+            <div className="workbench-nav-code-entries">
               <button
                 type="button"
                 className={
-                  activeWorkbenchMode === "code"
+                  isConversationActive && !codeEmbeddedAffairsState
                     ? "workbench-nav-segment-button active"
                     : "workbench-nav-segment-button"
                 }
-                data-layout="paired"
-                data-variant="mode"
                 role="tab"
-                aria-selected={activeWorkbenchMode === "code"}
-                onClick={() => onSelectWorkbenchMode("code")}
-                onContextMenu={(event) => {
-                  void handleCodeModeContextMenu(event);
-                }}
+                aria-selected={isConversationActive && !codeEmbeddedAffairsState}
+                onClick={onNavigateConversation}
               >
-                <span>{t("shell.workbenchModeCode")}</span>
+                <ConversationIcon />
+                <span>{t("shell.conversationEntry")}</span>
               </button>
               <button
                 type="button"
                 className={
-                  activeWorkbenchMode === "affairs"
+                  isSearchOpen
                     ? "workbench-nav-segment-button active"
                     : "workbench-nav-segment-button"
                 }
-                data-layout="paired"
-                data-variant="mode"
-                role="tab"
-                aria-selected={activeWorkbenchMode === "affairs"}
-                onClick={() => onSelectWorkbenchMode("affairs")}
-                onContextMenu={(event) => {
-                  void handleAffairsModeContextMenu(event);
-                }}
+                aria-haspopup="dialog"
+                aria-expanded={isSearchOpen}
+                onClick={onOpenSearch}
               >
-                <span>{t("shell.workbenchModeAffairs")}</span>
+                <SearchIcon />
+                <span>{t("shell.searchEntry")}</span>
               </button>
-            </div>
-            {activeWorkbenchMode === "code" ? (
-              <div className="workbench-nav-code-entries">
+              {affairsLibraryEnabled ? (
                 <button
                   type="button"
                   className={
-                    isConversationActive
+                    codeEmbeddedAffairsState?.primarySection === "library"
                       ? "workbench-nav-segment-button active"
                       : "workbench-nav-segment-button"
                   }
                   role="tab"
-                  aria-selected={isConversationActive}
-                  onClick={onNavigateConversation}
-                >
-                  <ConversationIcon />
-                  <span>{t("shell.conversationEntry")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    isSearchOpen
-                      ? "workbench-nav-segment-button active"
-                      : "workbench-nav-segment-button"
-                  }
-                  aria-haspopup="dialog"
-                  aria-expanded={isSearchOpen}
-                  onClick={onOpenSearch}
-                >
-                  <SearchIcon />
-                  <span>{t("shell.searchEntry")}</span>
-                </button>
-                <button
-                  type="button"
-                  className="workbench-nav-segment-button"
-                  role="tab"
-                  aria-selected={false}
-                  onClick={() => onOpenAffairsSection("library")}
+                  aria-selected={codeEmbeddedAffairsState?.primarySection === "library"}
+                  onClick={() => onOpenCodeEmbeddedAffairsSection("library")}
                 >
                   <AffairsLibraryIcon />
                   <span>{t("shell.affairsLibraryNav")}</span>
                 </button>
-                <button
-                  type="button"
-                  className="workbench-nav-segment-button"
-                  role="tab"
-                  aria-selected={false}
-                  onClick={() => onOpenAffairsSection("workbench")}
-                >
-                  <AffairsWorkbenchIcon />
-                  <span>{t("shell.affairsWorkbenchNav")}</span>
-                </button>
-              </div>
-            ) : null}
+              ) : null}
+              <button
+                type="button"
+                className={
+                  codeEmbeddedAffairsState?.primarySection === "workbench"
+                    ? "workbench-nav-segment-button active"
+                    : "workbench-nav-segment-button"
+                }
+                role="tab"
+                aria-selected={codeEmbeddedAffairsState?.primarySection === "workbench"}
+                onClick={() => onOpenCodeEmbeddedAffairsSection("workbench")}
+              >
+                <AffairsWorkbenchIcon />
+                <span>{t("shell.affairsWorkbenchNav")}</span>
+              </button>
+            </div>
           </div>
-          {activeWorkbenchMode === "affairs" ? (
-            affairsMenuSlot ?? <div className="affairs-sidebar-empty">{t("common.loading")}</div>
-          ) : null}
         </div>
 
-        {activeWorkbenchMode === "affairs" ? (
-          affairsContentSlot ?? null
-        ) : (
-          <>
         {navigationError ? (
           <div className="workbench-status-row">
             <p className="status-text" data-tone="error">
@@ -9720,12 +9590,10 @@ function SidebarContent({
         </section>
 
         {renderLightweightChatSection()}
-          </>
-        )}
       </div>
 
       <div className="workbench-nav-footer minimal">
-        {activeWorkbenchMode === "code" ? codeShortcutRailSlot ?? null : null}
+        {codeShortcutRailSlot ?? null}
         <div className="workbench-nav-footer-actions">
           <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
         </div>
@@ -9978,6 +9846,7 @@ function SidebarContent({
       <ParallelSessionCreateModal
         open={parallelCreateSource !== null}
         source={parallelCreateSource}
+        targetHostId={currentTargetHostId}
         onClose={() => setParallelCreateSource(null)}
         onCreated={async (detail) => {
           detail.members.forEach((item) => {
@@ -11507,7 +11376,6 @@ export function WorkbenchLayout({
   const pendingArchiveStateBySessionIdRef = useRef(new Map<string, boolean>());
   const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
-  const lastExplicitWorkbenchModeRef = useRef<WorkbenchMode | null>(null);
   const fileRevealRequestIdRef = useRef(0);
   const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
@@ -11708,7 +11576,6 @@ export function WorkbenchLayout({
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
-  const [affairsRightCollapsed, setAffairsRightCollapsed] = useState(true);
   const [parallelConversationTransition, setParallelConversationTransition] =
     useState<ParallelGroupTransitionSignal | null>(null);
   const [activeResizeSide, setActiveResizeSide] = useState<"left" | "right" | null>(null);
@@ -11733,11 +11600,11 @@ export function WorkbenchLayout({
         : null;
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
-  const [affairsViewState, setAffairsViewState] = useState<AffairsViewState | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
   const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
   const [codeTerminalDockState, setCodeTerminalDockState] = useState<CodeTerminalDockState | null>(null);
+  const [codeEmbeddedAffairsState, setCodeEmbeddedAffairsState] = useState<AffairsViewState | null>(null);
   const [codeShortcutAffairsState, setCodeShortcutAffairsState] = useState<AffairsViewState | null>(null);
   const [lightweightChatCreateWorkspace, setLightweightChatCreateWorkspace] = useState<WorkspaceDto | null>(null);
   const [lightweightChatCreateAffairsState, setLightweightChatCreateAffairsState] = useState<AffairsViewState | null>(null);
@@ -11755,12 +11622,32 @@ export function WorkbenchLayout({
   const [affairsSearchLoading, setAffairsSearchLoading] = useState(false);
   const [affairsSearchError, setAffairsSearchError] = useState<string | null>(null);
   const [affairsSearchResults, setAffairsSearchResults] = useState<AffairsSearchResults>(EMPTY_AFFAIRS_SEARCH_RESULTS);
+  const affairsLibraryCapability = useAffairsLibraryCapability(true);
   const [lightweightChatSessionsByWorkspaceId, setLightweightChatSessionsByWorkspaceId] = useState<Record<string, SessionSummaryDto[]>>({});
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
   const useMacOsNativeTitlebarDragRegion = shouldUseMacOsNativeTitlebarDragRegion(platform);
+
+  useEffect(() => {
+    if (affairsLibraryCapability.enabled || codeEmbeddedAffairsState?.primarySection !== "library") {
+      return;
+    }
+
+    setCodeEmbeddedAffairsState((current) => (
+      current?.primarySection === "library"
+        ? {
+            ...current,
+            primarySection: "workbench",
+            selectedNodeId: "workbench:overview",
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            pendingLibraryPreview: null
+          }
+        : current
+    ));
+  }, [affairsLibraryCapability.enabled, codeEmbeddedAffairsState?.primarySection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -13627,12 +13514,26 @@ export function WorkbenchLayout({
 
   useEffect(() => {
     if (!currentWorkspaceId) {
+      setCodeEmbeddedAffairsState(null);
       setCodeShortcutAffairsState(null);
       return;
     }
 
+    setCodeEmbeddedAffairsState(null);
     setCodeShortcutAffairsState(createDefaultAffairsViewState(currentWorkspaceId));
   }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    if (!codeEmbeddedAffairsState) {
+      return;
+    }
+
+    if (isSessionDetailRoute(location.pathname) || isSessionsRoute(location.pathname)) {
+      return;
+    }
+
+    setCodeEmbeddedAffairsState(null);
+  }, [codeEmbeddedAffairsState, location.pathname]);
 
   useEffect(() => {
     if (!currentWorkspaceId) {
@@ -13826,7 +13727,89 @@ export function WorkbenchLayout({
     refreshNavigation,
     updateCodeShortcutRailHostState
   ]);
-  const codeWorkbenchContent = <Outlet />;
+  const openCodeEmbeddedAffairsState = useCallback((nextState: AffairsViewState, options?: { closeSearchModal?: boolean }) => {
+    if (options?.closeSearchModal !== false) {
+      setSearchModalOpen(false);
+    }
+
+    const workspaceId = nextState.workspaceId || currentWorkspaceId;
+
+    if (!workspaceId) {
+      return;
+    }
+
+    setSelectedWorkspaceId(workspaceId);
+    flushSync(() => {
+      setRightCollapsed(nextState.primarySection === "workbench");
+      setCodeEmbeddedAffairsState({
+        ...nextState,
+        workspaceId
+      });
+    });
+  }, [currentWorkspaceId]);
+
+  const openCodeEmbeddedAffairsSection = useCallback((section: AffairsViewState["primarySection"]) => {
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    if (section === "library" && !affairsLibraryCapability.enabled) {
+      return;
+    }
+
+    const currentState =
+      readAffairsViewState(currentWorkspaceId)
+      ?? codeEmbeddedAffairsState
+      ?? createDefaultAffairsViewState(currentWorkspaceId);
+    const nextState =
+      section === "library"
+        ? createDefaultAffairsLibraryLandingState(currentWorkspaceId, currentState)
+        : {
+            ...currentState,
+            workspaceId: currentWorkspaceId,
+            primarySection: section,
+            selectedNodeId: section === "conversation" ? "conversation:home" : "workbench:overview",
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            auxiliaryTab: section === "conversation" ? "detail" : currentState.auxiliaryTab,
+            pendingLibraryPreview: null
+          };
+
+    openCodeEmbeddedAffairsState(nextState, { closeSearchModal: false });
+  }, [affairsLibraryCapability.enabled, codeEmbeddedAffairsState, currentWorkspaceId, openCodeEmbeddedAffairsState]);
+
+  const codeWorkbenchContent = useMemo(() => {
+    if (!currentWorkspaceId || !codeEmbeddedAffairsState) {
+      return <Outlet />;
+    }
+
+    if (
+      codeEmbeddedAffairsState.primarySection !== "library"
+      && codeEmbeddedAffairsState.primarySection !== "workbench"
+    ) {
+      return <Outlet />;
+    }
+
+    return (
+      <AffairsWorkbenchProvider
+        workspaceId={currentWorkspaceId}
+        workspaceName={currentWorkspaceName}
+        navigationGroups={navigationGroups}
+        state={codeEmbeddedAffairsState}
+        onStateChange={setCodeEmbeddedAffairsState}
+        onRefreshNavigation={refreshNavigation}
+        forceRoute={false}
+      >
+        <AffairsWorkbenchView workspaceId={currentWorkspaceId} />
+      </AffairsWorkbenchProvider>
+    );
+  }, [
+    codeEmbeddedAffairsState,
+    currentWorkspaceId,
+    currentWorkspaceName,
+    navigationGroups,
+    refreshNavigation
+  ]);
   const codeShortcutRailLeftSlot = codeShortcutRailSide === "left" ? codeShortcutRailSlot : null;
   const codeShortcutRailRightSlot = codeShortcutRailSide === "right" ? codeShortcutRailSlot : null;
   const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {
@@ -14067,41 +14050,9 @@ export function WorkbenchLayout({
     : isButlerRoute(location.pathname)
       ? "butler"
       : "conversation";
-  const routeWorkbenchMode = resolveWorkbenchModeFromPath(location.pathname);
-  const rememberedRouteWorkbenchMode = location.pathname.startsWith("/settings")
-    ? lastExplicitWorkbenchModeRef.current
-    : null;
-  const activeWorkbenchMode: WorkbenchMode = routeWorkbenchMode
-    ?? rememberedRouteWorkbenchMode
-    ?? (currentWorkspaceId ? readWorkspaceWorkbenchMode(currentWorkspaceId) : null)
-    ?? WORKBENCH_MODE_DEFAULT;
-  const affairsWorkspaceId = activeWorkbenchMode === "affairs" ? AFFAIRS_GLOBAL_WORKSPACE_ID : currentWorkspaceId;
-  const effectiveAffairsViewState = affairsWorkspaceId
-    ? affairsViewState ?? createDefaultAffairsViewState(affairsWorkspaceId)
-    : null;
-  const shouldUseAffairsShell =
-    activeWorkbenchMode === "affairs"
-    && Boolean(affairsWorkspaceId && effectiveAffairsViewState);
-  const shouldRenderAffairsWorkbench =
-    routeWorkbenchMode === "affairs"
-    && shouldUseAffairsShell;
-  const affairsPrimarySection = effectiveAffairsViewState?.primarySection ?? "library";
-  const shouldAllowAffairsAuxiliaryPanel =
-    shouldRenderAffairsWorkbench
-    && affairsPrimarySection !== "conversation";
-  const shouldShowAffairsAuxiliaryPanel =
-    shouldAllowAffairsAuxiliaryPanel
-    && !affairsRightCollapsed;
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
-  useEffect(() => {
-    if (!routeWorkbenchMode) {
-      return;
-    }
-
-    lastExplicitWorkbenchModeRef.current = routeWorkbenchMode;
-  }, [routeWorkbenchMode]);
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -14343,8 +14294,6 @@ export function WorkbenchLayout({
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
-    : activeWorkbenchMode === "affairs"
-      ? "workspaces"
     : isButlerRoute(location.pathname)
       ? "terminals"
     : isTerminalsRoute(location.pathname)
@@ -14930,37 +14879,6 @@ export function WorkbenchLayout({
   }, [currentSessionId, isDraftSession, location.pathname, location.search, sessionWorkspaceId]);
 
   useEffect(() => {
-    if (!affairsWorkspaceId || routeWorkbenchMode === null) {
-      return;
-    }
-
-    writeWorkspaceWorkbenchMode(affairsWorkspaceId, activeWorkbenchMode);
-    writeWorkbenchModeLastPath(affairsWorkspaceId, activeWorkbenchMode, `${location.pathname}${location.search}`);
-  }, [activeWorkbenchMode, affairsWorkspaceId, location.pathname, location.search, routeWorkbenchMode]);
-
-  useEffect(() => {
-    if (!affairsWorkspaceId) {
-      setAffairsViewState(null);
-      return;
-    }
-
-    setAffairsViewState(
-      createDefaultAffairsLibraryLandingState(
-        affairsWorkspaceId,
-        readAffairsViewState(affairsWorkspaceId) ?? createDefaultAffairsViewState(affairsWorkspaceId)
-      )
-    );
-  }, [affairsWorkspaceId]);
-
-  useEffect(() => {
-    if (!affairsViewState) {
-      return;
-    }
-
-    writeAffairsViewState(affairsViewState);
-  }, [affairsViewState]);
-
-  useEffect(() => {
     if (currentSessionId && isDraftSession) {
       lastDraftSessionPathRef.current = `${location.pathname}${location.search}`;
       return;
@@ -15004,11 +14922,6 @@ export function WorkbenchLayout({
   }
 
   function openRightPanel() {
-    if (shouldUseAffairsShell) {
-      setAffairsRightCollapsed(false);
-      return;
-    }
-
     if (isParallelConversationActive) {
       return;
     }
@@ -15033,11 +14946,6 @@ export function WorkbenchLayout({
   }
 
   function toggleRightPanel() {
-    if (shouldUseAffairsShell) {
-      setAffairsRightCollapsed((current) => !current);
-      return;
-    }
-
     if (isParallelConversationActive) {
       return;
     }
@@ -15067,15 +14975,6 @@ export function WorkbenchLayout({
     ensureInfoPanelReady();
 
     if (!effectiveWorkspaceRef) {
-      return;
-    }
-
-    if (activeWorkbenchMode === "affairs") {
-      const targetPath = buildAffairsPath();
-
-      if (location.pathname !== targetPath) {
-        navigate(targetPath);
-      }
       return;
     }
 
@@ -15204,51 +15103,19 @@ export function WorkbenchLayout({
   }, []);
 
   const openAffairsSearchState = useCallback((workspaceId: string, nextState: AffairsViewState, options?: { closeSearchModal?: boolean }) => {
-    if (options?.closeSearchModal !== false) {
-      closeSearchModal();
-    }
-    setSelectedWorkspaceId(workspaceId);
-    writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, "affairs");
-    setAffairsViewState({
+    openCodeEmbeddedAffairsState({
       ...nextState,
-      workspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID
-    });
-    const targetPath = buildAffairsPath();
-    if (location.pathname !== targetPath) {
-      navigate(targetPath);
+      workspaceId
+    }, options);
+  }, [openCodeEmbeddedAffairsState]);
+
+  useEffect(() => {
+    if (!codeEmbeddedAffairsState) {
+      return;
     }
-  }, [closeSearchModal, location.pathname, navigate]);
-  const openAffairsSection = useCallback((section: AffairsViewState["primarySection"]) => {
-    const currentState =
-      readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
-      ?? affairsViewState
-      ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID);
-    const nextState =
-      section === "library"
-        ? createDefaultAffairsLibraryLandingState(AFFAIRS_GLOBAL_WORKSPACE_ID, currentState)
-        : {
-            ...currentState,
-            workspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID,
-            primarySection: section,
-            selectedNodeId: section === "conversation" ? "conversation:home" : "workbench:overview",
-            selectedObjectId: null,
-            selectedDocumentId: null,
-            auxiliaryTab: section === "conversation" ? "detail" : currentState.auxiliaryTab,
-            pendingLibraryPreview: null
-          };
 
-    writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, "affairs");
-    flushSync(() => {
-      setAffairsRightCollapsed(section === "conversation");
-      setAffairsViewState(nextState);
-    });
-
-    const targetPath = buildAffairsPath();
-    if (location.pathname !== targetPath) {
-      navigate(targetPath);
-    }
-  }, [affairsViewState, location.pathname, navigate]);
-
+    writeAffairsViewState(codeEmbeddedAffairsState);
+  }, [codeEmbeddedAffairsState]);
   function applyWorkbenchShellPanelWidths(nextLeftWidth: number, nextRightWidth: number) {
     const shellElement = workbenchShellRef.current;
 
@@ -15357,42 +15224,9 @@ export function WorkbenchLayout({
     document.addEventListener("mouseup", stopResize);
   }
 
-  function handleSelectWorkbenchMode(nextMode: WorkbenchMode) {
-    if (routeWorkbenchMode === nextMode) {
-      return;
-    }
-
-    if (nextMode === "affairs") {
-      writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, nextMode);
-      const nextAffairsViewState = createDefaultAffairsLibraryLandingState(
-        AFFAIRS_GLOBAL_WORKSPACE_ID,
-        readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID) ?? affairsViewState ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
-      );
-      flushSync(() => {
-        setAffairsRightCollapsed(false);
-        setAffairsViewState(nextAffairsViewState);
-      });
-      navigate(buildAffairsPath());
-      return;
-    }
-
-    if (!currentWorkspaceId) {
-      return;
-    }
-
-    writeWorkspaceWorkbenchMode(currentWorkspaceId, nextMode);
-    const targetPath = resolveValidWorkbenchModeLastPath(currentWorkspaceId, nextMode)
-      ?? resolveValidWorkbenchModeLastPath(currentWorkspaceId, "code")
-      ?? buildWorkspaceSessionIndexPath(currentWorkspaceId, currentWorkspaceRef);
-
-    navigate(targetPath);
-  }
-
   function goToConversationTab() {
-    if (activeWorkbenchMode === "affairs") {
-      navigate(buildAffairsPath());
-      return;
-    }
+    setRightCollapsed(false);
+    setCodeEmbeddedAffairsState(null);
 
     if (navigateToRememberedConversation()) {
       return;
@@ -15677,15 +15511,39 @@ export function WorkbenchLayout({
         onCleanupWorktree={applyWorktreeCleanup}
       />
     );
+  const codeEmbeddedAffairsAuxiliaryPanelContent =
+    currentWorkspaceId && codeEmbeddedAffairsState
+      ? (
+        <AffairsWorkbenchProvider
+          workspaceId={currentWorkspaceId}
+          workspaceName={currentWorkspaceName}
+          navigationGroups={navigationGroups}
+          state={codeEmbeddedAffairsState}
+          onStateChange={setCodeEmbeddedAffairsState}
+          onRefreshNavigation={refreshNavigation}
+          forceRoute={false}
+        >
+          <AffairsAuxiliaryPanel workspaceId={currentWorkspaceId} onToggleCollapse={() => setRightCollapsed(true)} />
+        </AffairsWorkbenchProvider>
+      )
+      : null;
+  const shouldRenderCodeEmbeddedAffairs = Boolean(
+      currentWorkspaceId
+      && codeEmbeddedAffairsState
+      && (
+        codeEmbeddedAffairsState.primarySection === "library"
+        || codeEmbeddedAffairsState.primarySection === "workbench"
+      )
+    );
   const isLightweightChatActive = isLightweightChatRoute(location.pathname);
-  const effectiveAuxiliaryPanelContent = defaultAuxiliaryPanelContent;
-  const shouldShowAuxiliaryPanel = shouldRenderAffairsWorkbench
-    ? shouldShowAffairsAuxiliaryPanel
-    : effectiveAuxiliaryPanelContent !== null && !isLightweightChatActive;
+  const effectiveAuxiliaryPanelContent = shouldRenderCodeEmbeddedAffairs
+    ? codeEmbeddedAffairsAuxiliaryPanelContent
+    : defaultAuxiliaryPanelContent;
+  const codeRightCollapsed = rightCollapsed || isParallelConversationActive;
+  const shouldAllowAuxiliaryPanel = effectiveAuxiliaryPanelContent !== null && !isLightweightChatActive;
+  const shouldShowAuxiliaryPanel = shouldAllowAuxiliaryPanel && !codeRightCollapsed;
   const effectiveLeftCollapsed = leftCollapsed;
-  const effectiveRightCollapsed = shouldRenderAffairsWorkbench
-    ? affairsRightCollapsed
-    : rightCollapsed || isParallelConversationActive;
+  const effectiveRightCollapsed = codeRightCollapsed;
   const shellRightCollapsed = effectiveRightCollapsed;
   const shouldKeepParallelAuxiliaryMounted =
     isParallelConversationActive
@@ -15709,17 +15567,6 @@ export function WorkbenchLayout({
   const shouldUseMacOsOverlayTitlebarAlignment =
     platform.isDesktop && platform.ui.osFamily === "macos" && platform.ui.prefersOverlayTitlebar;
 
-  useEffect(() => {
-    if (!shouldUseAffairsShell || !effectiveAffairsViewState) {
-      return;
-    }
-
-    if (routeWorkbenchMode !== "affairs") {
-      return;
-    }
-
-    setAffairsRightCollapsed(effectiveAffairsViewState.primarySection !== "library");
-  }, [effectiveAffairsViewState?.primarySection, routeWorkbenchMode, shouldUseAffairsShell]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
@@ -16083,7 +15930,8 @@ export function WorkbenchLayout({
       favoriteSessions={favoriteSessions}
       favoriteSessionIds={favoriteSessionIdSet}
       activeWorkspaceId={currentWorkspaceId}
-      activeWorkbenchMode={activeWorkbenchMode}
+      codeEmbeddedAffairsState={codeEmbeddedAffairsState}
+      affairsLibraryEnabled={affairsLibraryCapability.enabled}
       lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
       activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
       isConversationActive={activeCenterTab === "conversation"}
@@ -16095,10 +15943,10 @@ export function WorkbenchLayout({
       navigationLoading={navigationLoading}
       navigationError={navigationError}
       activeSessionId={currentSessionId}
+      currentTargetHostId={currentTargetHostId}
       onRefreshNavigation={refreshNavigation}
       onSessionUpdated={upsertNavigationSession}
       onNavigateConversation={goToConversationTab}
-      onSelectWorkbenchMode={handleSelectWorkbenchMode}
       onNavigateTerminals={() => {
         setMobileNavOpen(false);
         navigate(
@@ -16127,7 +15975,7 @@ export function WorkbenchLayout({
         setMobileNavOpen(false);
         navigate("/settings");
       }}
-      onOpenAffairsSection={openAffairsSection}
+      onOpenCodeEmbeddedAffairsSection={openCodeEmbeddedAffairsSection}
       onOpenLightweightChat={openLightweightChat}
       onCreateLightweightChat={createLightweightChat}
       onSelectWorkspace={handleSelectWorkspace}
@@ -16259,31 +16107,24 @@ export function WorkbenchLayout({
           data-info-ready={infoPanelReady}
           data-parallel-conversation-active={isParallelConversationActive ? "true" : undefined}
           data-parallel-sidebar-transition={shouldKeepParallelAuxiliaryMounted ? "true" : undefined}
-          data-workbench-mode={activeWorkbenchMode}
+          data-workbench-mode="code"
           data-runtime-platform={platform.platform}
           data-os-family={platform.ui.osFamily}
           data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
         >
           <div className="workbench-body-shell">
-            {shouldUseAffairsShell ? (
-              <AffairsWorkbenchProvider
-                workspaceId={currentWorkspaceId!}
-                workspaceName={currentWorkspaceEntity?.name ?? null}
-                navigationGroups={navigationGroups}
-                state={effectiveAffairsViewState!}
-                onStateChange={setAffairsViewState}
-                onRefreshNavigation={refreshNavigation}
-              >
+            <>
                 <aside className="workbench-nav surface-card" data-collapsed={effectiveLeftCollapsed}>
                   <SidebarContent
                     workspaceGroups={workspaceSidebarGroups}
                     workspaceVisualContextMap={workspaceVisualContextMap}
                     sessionDisplaySortMode={sessionDisplaySortMode}
                     favoriteSessions={favoriteSessions}
-                    favoriteSessionIds={favoriteSessionIdSet}
-                    activeWorkspaceId={currentWorkspaceId}
-                    activeWorkbenchMode={activeWorkbenchMode}
-                    lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
+                  favoriteSessionIds={favoriteSessionIdSet}
+                  activeWorkspaceId={currentWorkspaceId}
+                  codeEmbeddedAffairsState={codeEmbeddedAffairsState}
+                  affairsLibraryEnabled={affairsLibraryCapability.enabled}
+                  lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
                     activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
                     isConversationActive={activeCenterTab === "conversation"}
                     isTerminalActive={activeCenterTab === "terminals"}
@@ -16294,10 +16135,10 @@ export function WorkbenchLayout({
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
                     activeSessionId={currentSessionId}
+                    currentTargetHostId={currentTargetHostId}
                     onRefreshNavigation={refreshNavigation}
                     onSessionUpdated={upsertNavigationSession}
                     onNavigateConversation={goToConversationTab}
-                    onSelectWorkbenchMode={handleSelectWorkbenchMode}
                     onNavigateTerminals={() =>
                       navigate(
                         currentWorkspaceId
@@ -16315,200 +16156,7 @@ export function WorkbenchLayout({
                     }
                     onOpenSearch={() => openSearchModal()}
                     onOpenSettings={() => navigate("/settings")}
-                    onOpenAffairsSection={openAffairsSection}
-                    onOpenLightweightChat={openLightweightChat}
-                    onCreateLightweightChat={createLightweightChat}
-                    onSelectWorkspace={handleSelectWorkspace}
-                    onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
-                    onStartWorkspaceReorder={handleStartWorkspaceReorder}
-                    onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
-                    onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
-                    allowWorkspaceReorder
-                    subscribeGitSnapshot={subscribeGitSnapshot}
-                    requestGitRefresh={requestGitRefresh}
-                    subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
-                    requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
-                    onToggleFavoriteSession={toggleFavoriteSession}
-                    onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-                    onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-                    workspaceManagementStateById={workspaceManagementStateById}
-                    setWorkspaceManagementStateById={setWorkspaceManagementStateById}
-                    unreadNotificationCount={unreadNotificationCount}
-                    notificationPanelOpen={notificationPanelOpen}
-                    onToggleNotificationPanel={() => {
-                      setNotificationPanelOpen((current) => !current);
-                    }}
-                    onToggleCollapse={() => {
-                      setLeftCollapsed(true);
-                    }}
-                    codeShortcutRailSlot={codeShortcutRailLeftSlot}
-                    affairsMenuSlot={<AffairsSectionMenu />}
-                    affairsContentSlot={<AffairsSidebarPanel />}
-                  />
-                </aside>
-                <div
-                  className="workbench-side-resizer"
-                  data-side="left"
-                  data-collapsed={effectiveLeftCollapsed}
-                  role="separator"
-                  aria-label={t("shell.leftResizerLabel")}
-                  onMouseDown={
-                    effectiveLeftCollapsed
-                      ? undefined
-                      : (event) => beginResize("left", event)
-                  }
-                />
-
-                <div className="workbench-main-shell">
-                  <div className="workbench-collapsed-rail" aria-hidden={!effectiveLeftCollapsed && !effectiveRightCollapsed}>
-                    <div
-                      className="workbench-collapsed-controls left"
-                      data-visible={effectiveLeftCollapsed}
-                    >
-                      <SidebarDockButton
-                        className="workbench-nav-toolbar-button workbench-collapsed-button"
-                        ariaLabel={t("shell.showSessionSidebar")}
-                        side="left"
-                        collapsed={true}
-                        onClick={openLeftPanel}
-                      />
-                      <WorkbenchHostSwitcher collapsed />
-                      <WorkbenchNotificationButton
-                        unreadCount={unreadNotificationCount}
-                        open={notificationPanelOpen}
-                        onToggle={() => {
-                          setNotificationPanelOpen((current) => !current);
-                        }}
-                        collapsed
-                      />
-                      <button
-                        type="button"
-                        className="workbench-nav-toolbar-button workbench-collapsed-button"
-                        data-open={searchModalOpen}
-                        aria-label={t("shell.searchEntry")}
-                        title={t("shell.searchEntry")}
-                        aria-haspopup="dialog"
-                        aria-expanded={searchModalOpen}
-                        onClick={() => openSearchModal()}
-                      >
-                        <SearchIcon />
-                      </button>
-                    </div>
-
-                    {!isParallelConversationActive && shouldAllowAffairsAuxiliaryPanel ? (
-                      <div
-                        className="workbench-collapsed-controls right"
-                        data-visible={effectiveRightCollapsed}
-                      >
-                        <SidebarDockButton
-                          className="workbench-nav-toolbar-button workbench-collapsed-button"
-                          ariaLabel={t("shell.showInfoSidebar")}
-                          side="right"
-                          collapsed={true}
-                          onClick={openRightPanel}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {shouldRenderAffairsWorkbench ? (
-                    <AffairsWorkbenchView workspaceId={AFFAIRS_GLOBAL_WORKSPACE_ID} />
-                  ) : (
-                    <CodeWorkbenchView
-                      workspaceId={currentWorkspaceId}
-                      workspaceName={currentWorkspaceName}
-                      terminalDockState={codeTerminalDockState}
-                      terminalDockVisible={showCodeTerminalDock}
-                      onCloseTerminalDock={closeCodeTerminalDock}
-                      onChangeTerminalDockOrientation={changeCodeTerminalDockOrientation}
-                      onResizeTerminalDock={resizeCodeTerminalDock}
-                      terminalWorkbenchShellOverrides={{
-                        navigationGroups,
-                        currentWorkspaceId,
-                        currentWorkspaceRef,
-                        currentTargetHostId,
-                        selectWorkspace: handleSelectWorkspace,
-                        subscribeTerminalManagerSnapshot,
-                        requestTerminalManagerRefresh,
-                        addTerminalManagerSnapshotListener
-                      }}
-                    >
-                      {codeWorkbenchContent}
-                    </CodeWorkbenchView>
-                  )}
-                </div>
-
-                {shouldShowAffairsAuxiliaryPanel ? (
-                  <>
-                    <div
-                      className="workbench-side-resizer"
-                      data-side="right"
-                      data-collapsed={effectiveRightCollapsed}
-                      role="separator"
-                      aria-label={t("shell.rightResizerLabel")}
-                      onMouseDown={
-                        effectiveRightCollapsed
-                          ? undefined
-                          : (event) => beginResize("right", event)
-                      }
-                    />
-                    <aside
-                      className="workbench-auxiliary surface-card"
-                      data-collapsed={effectiveRightCollapsed}
-                      aria-hidden={effectiveRightCollapsed}
-                    >
-                      <AffairsAuxiliaryPanel
-                        workspaceId={currentWorkspaceId!}
-                        onToggleCollapse={() => setAffairsRightCollapsed(true)}
-                      />
-                    </aside>
-                  </>
-                ) : null}
-              </AffairsWorkbenchProvider>
-            ) : (
-              <>
-                <aside className="workbench-nav surface-card" data-collapsed={effectiveLeftCollapsed}>
-                  <SidebarContent
-                    workspaceGroups={workspaceSidebarGroups}
-                    workspaceVisualContextMap={workspaceVisualContextMap}
-                    sessionDisplaySortMode={sessionDisplaySortMode}
-                    favoriteSessions={favoriteSessions}
-                    favoriteSessionIds={favoriteSessionIdSet}
-                    activeWorkspaceId={currentWorkspaceId}
-                    activeWorkbenchMode={activeWorkbenchMode}
-                    lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
-                    activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
-                    isConversationActive={activeCenterTab === "conversation"}
-                    isTerminalActive={activeCenterTab === "terminals"}
-                    isButlerActive={activeCenterTab === "butler"}
-                    terminalDockOpen={codeTerminalDockState?.open === true}
-                    currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
-                    isSearchOpen={searchModalOpen}
-                    navigationLoading={navigationLoading}
-                    navigationError={navigationError}
-                    activeSessionId={currentSessionId}
-                    onRefreshNavigation={refreshNavigation}
-                    onSessionUpdated={upsertNavigationSession}
-                    onNavigateConversation={goToConversationTab}
-                    onSelectWorkbenchMode={handleSelectWorkbenchMode}
-                    onNavigateTerminals={() =>
-                      navigate(
-                        currentWorkspaceId
-                          ? buildWorkspaceTerminalsPath(currentWorkspaceId, currentWorkspaceRef)
-                          : buildWorkspaceHomePath()
-                      )
-                    }
-                    onOpenTerminalDock={openCodeTerminalDock}
-                    onNavigateButler={() =>
-                      navigate(
-                        currentWorkspaceId
-                          ? buildWorkspaceButlerPath(currentWorkspaceId, undefined, currentWorkspaceRef)
-                          : buildWorkspaceHomePath()
-                      )
-                    }
-                    onOpenSearch={() => openSearchModal()}
-                    onOpenSettings={() => navigate("/settings")}
-                    onOpenAffairsSection={openAffairsSection}
+                    onOpenCodeEmbeddedAffairsSection={openCodeEmbeddedAffairsSection}
                     onOpenLightweightChat={openLightweightChat}
                     onCreateLightweightChat={createLightweightChat}
                     onSelectWorkspace={handleSelectWorkspace}
@@ -16652,7 +16300,7 @@ export function WorkbenchLayout({
                       style={createWorkspaceToneStyle(currentAuxiliaryWorkspaceContext)}
                     >
                       {isParallelConversationActive && !shouldKeepParallelAuxiliaryMounted ? null : effectiveAuxiliaryPanelContent}
-                      {codeShortcutRailRightSlot ? (
+                      {!shouldRenderCodeEmbeddedAffairs && codeShortcutRailRightSlot ? (
                         <div className="workbench-auxiliary-footer">
                           {codeShortcutRailRightSlot}
                         </div>
@@ -16661,7 +16309,6 @@ export function WorkbenchLayout({
                   </>
                 ) : null}
               </>
-            )}
           </div>
         </div>
       )}
@@ -16746,14 +16393,12 @@ export function WorkbenchLayout({
         onOpenCodeFile={(item) => {
           closeSearchModal();
           setSelectedWorkspaceId(item.workspaceId);
-          writeWorkspaceWorkbenchMode(item.workspaceId, "code");
           revealWorkspaceFile({
             workspaceId: item.workspaceId,
             filePath: item.file.path,
             openViewer: item.file.kind === "file"
           });
-          const targetPath = resolveValidWorkbenchModeLastPath(item.workspaceId, "code")
-            ?? resolveStoredConversationPath(item.workspaceId)
+          const targetPath = resolveStoredConversationPath(item.workspaceId)
             ?? buildWorkspaceSessionIndexPath(item.workspaceId, currentWorkspaceRef);
           if (location.pathname !== targetPath) {
             navigate(targetPath);

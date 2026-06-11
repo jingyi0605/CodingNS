@@ -156,10 +156,7 @@ const appRoutes = [
           },
           {
             path: "affairs",
-            lazy: lazyRouteComponent(
-              () => import("../features/conversation/pages/ConversationPage"),
-              "ConversationPage"
-            )
+            element: <Navigate to="/landing" replace />
           },
           {
             path: "workspaces",
@@ -181,10 +178,6 @@ const appRoutes = [
               () => import("../features/debug-target/pages/WorkspaceDebugDetailPage"),
               "WorkspaceDebugDetailPage"
             )
-          },
-          {
-            path: "workspaces/:workspaceId/affairs",
-            element: <Navigate to="/affairs" replace />
           },
           {
             path: "workspaces/:workspaceId/sessions",

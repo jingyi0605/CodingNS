@@ -209,6 +209,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsLightweightSessionMessages: vi.fn(),
   getGlobalAffairsDashboardState: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
+  getGlobalAffairsLibraryCapability: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
   getAffairsDocumentTagTask: vi.fn(),
   getProviderCapabilities: vi.fn(),
@@ -276,6 +277,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
     getGlobalAffairsDashboardState: conversationApiMock.getGlobalAffairsDashboardState,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
+    getGlobalAffairsLibraryCapability: conversationApiMock.getGlobalAffairsLibraryCapability,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
     getAffairsDocumentTagTask: conversationApiMock.getAffairsDocumentTagTask,
     getProviderCapabilities: conversationApiMock.getProviderCapabilities,
@@ -1123,6 +1125,7 @@ beforeEach(() => {
   conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
   conversationApiMock.getAffairsLibrarySnapshot.mockReset();
   conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
+  conversationApiMock.getGlobalAffairsLibraryCapability.mockReset();
   conversationApiMock.getProviderCapabilities.mockReset();
   conversationApiMock.listAffairsLibraryFiles.mockReset();
   conversationApiMock.listAffairsLibraryDocuments.mockReset();
@@ -1305,6 +1308,10 @@ beforeEach(() => {
   });
   conversationApiMock.getAffairsLibrarySnapshot.mockResolvedValue(createLibrarySnapshot());
   conversationApiMock.getGlobalAffairsLibraryBinding.mockResolvedValue(baseLibrarySnapshot().binding);
+  conversationApiMock.getGlobalAffairsLibraryCapability.mockResolvedValue({
+    enabled: true,
+    binding: baseLibrarySnapshot().binding
+  });
   conversationApiMock.getProviderCapabilities.mockResolvedValue({
     provider: "gemini",
     canStartSession: true,

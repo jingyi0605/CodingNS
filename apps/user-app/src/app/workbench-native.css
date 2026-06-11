@@ -2191,6 +2191,16 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   width: 100%;
 }
 
+.settings-affairs-library-capability-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  max-width: min(420px, 100%);
+  text-align: right;
+}
+
 .settings-inline-form {
   display: flex;
   align-items: center;
@@ -3262,23 +3272,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   margin-top: 6px;
 }
 
-.workbench-nav-segment-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.workbench-nav-segment-pair[data-variant="mode"] {
-  width: 100%;
-  margin: 0;
-  gap: 0;
-  padding: 1px;
-  border-radius: 13px;
-  background: rgba(120, 120, 128, 0.05);
-  border: 1px solid rgba(24, 24, 27, 0.06);
-  box-sizing: border-box;
-  justify-self: stretch;
-}
 
 .workbench-nav-segment-button {
   display: flex;
@@ -3300,33 +3293,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
     transform var(--transition-fast);
 }
 
-.workbench-nav-segment-button[data-layout="paired"] {
-  justify-content: center;
-  padding: 0 10px;
-  text-align: center;
-}
-
-.workbench-nav-segment-button:not([data-variant="mode"]) {
-  padding-left: 14px;
-}
-
-.workbench-nav-segment-button[data-variant="mode"] {
-  min-height: 29px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.workbench-nav-segment-button[data-variant="mode"]:not(.active) {
-  background: transparent;
-  color: rgba(58, 58, 60, 0.6);
-}
-
-.workbench-nav-segment-button[data-variant="mode"].active {
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: none;
-  color: #111111;
-}
 
 .workbench-nav-segment-button svg {
   width: 18px;
@@ -3369,19 +3335,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   color: #f5f5f7;
 }
 
-[data-theme="dark"] .workbench-nav-segment-pair[data-variant="mode"] {
-  background: rgba(118, 118, 128, 0.12);
-  border-color: rgba(255, 255, 255, 0.06);
-}
-
-[data-theme="dark"] .workbench-nav-segment-button[data-variant="mode"]:not(.active) {
-  color: #f5f5f7;
-}
-
-[data-theme="dark"] .workbench-nav-segment-button[data-variant="mode"].active {
-  background: rgba(118, 118, 128, 0.26);
-  color: #f5f5f7;
-}
 
 .workbench-section-block {
   padding: 10px;
@@ -4199,9 +4152,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   gap: 2px;
 }
 
-.workbench-nav-segment-pair {
-  gap: 2px;
-}
 
 .workbench-nav-segment-button {
   display: grid;
@@ -4219,10 +4169,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   line-height: 1.2;
 }
 
-.workbench-nav-segment-button[data-layout="paired"] {
-  display: flex;
-  padding: 0 10px;
-}
 
 .workbench-nav-segment-button svg {
   width: 16px;
@@ -7173,68 +7119,6 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   box-shadow: none;
 }
 
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-pair[data-variant="mode"] {
-  display: grid;
-  align-items: center;
-  gap: 0;
-  padding: 1px;
-  box-sizing: border-box;
-  min-height: 34px;
-  border-radius: 13px;
-  background: var(--mac-segmented-shell-bg);
-  border: none;
-  box-shadow: var(--mac-segmented-shell-shadow);
-  backdrop-filter: var(--mac-segmented-shell-blur);
-  -webkit-backdrop-filter: var(--mac-segmented-shell-blur);
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"] {
-  align-self: center;
-  min-height: 32px;
-  height: 32px;
-  padding: 0 18px;
-  border-radius: 11px;
-  font-size: 13px;
-  font-weight: 590;
-  color: var(--mac-segmented-label);
-  border: none;
-  box-shadow: none;
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]::before,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]::after {
-  content: none !important;
-  display: none !important;
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]:not(.active) {
-  background: transparent;
-  color: var(--mac-segmented-label);
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"].active,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"][data-open="true"] {
-  background: var(--mac-segmented-active-bg);
-  color: var(--mac-segmented-label-active);
-  border: none;
-  box-shadow: var(--mac-segmented-active-shadow);
-  background-clip: padding-box;
-  backdrop-filter: var(--mac-segmented-active-blur);
-  -webkit-backdrop-filter: var(--mac-segmented-active-blur);
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"]:hover {
-  background: transparent;
-  color: var(--mac-segmented-label);
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"].active:hover,
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-segment-button[data-variant="mode"][data-open="true"]:hover {
-  background: var(--mac-segmented-active-bg);
-  color: var(--mac-segmented-label-active);
-}
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-tree-item:hover,
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary .file-session-list-button:hover,

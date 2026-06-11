@@ -22876,6 +22876,16 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-width: 0;
 }
 
+.settings-affairs-library-capability-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  max-width: min(420px, 100%);
+  text-align: right;
+}
+
 .settings-inline-form {
   display: flex;
   align-items: center;

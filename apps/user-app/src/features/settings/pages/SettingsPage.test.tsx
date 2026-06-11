@@ -22,6 +22,24 @@ import { AppVersionProvider } from "../../../shared/version/app-version";
 import { SettingsPage } from "./SettingsPage";
 
 const mockUseWorkbenchShell = vi.fn();
+const affairsLibraryCapabilityMock = vi.hoisted(() => ({
+  state: {
+    enabled: false,
+    binding: null,
+    loading: false,
+    requested: true,
+    error: null
+  },
+  setEnabled: vi.fn(async (enabled: boolean) => {
+    affairsLibraryCapabilityMock.state = {
+      ...affairsLibraryCapabilityMock.state,
+      enabled,
+      loading: false,
+      error: null
+    };
+    return affairsLibraryCapabilityMock.state;
+  })
+}));
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const originalFetch = global.fetch;
 const originalMatchMedia = window.matchMedia;
@@ -51,6 +69,11 @@ vi.mock("../../../settings/AuthDeviceManagementPanel", () => ({
 
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => mockUseWorkbenchShell()
+}));
+
+vi.mock("../../workbench/affairs-library-capability-store", () => ({
+  useAffairsLibraryCapability: () => affairsLibraryCapabilityMock.state,
+  setAffairsLibraryCapabilityEnabled: affairsLibraryCapabilityMock.setEnabled
 }));
 
 vi.mock("../../plugins/api/plugins-api", async () => {
@@ -202,6 +225,14 @@ vi.mock("../../plugins/api/plugins-api", async () => {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    affairsLibraryCapabilityMock.state = {
+      enabled: false,
+      binding: null,
+      loading: false,
+      requested: true,
+      error: null
+    };
+    affairsLibraryCapabilityMock.setEnabled.mockClear();
     mockUseWorkbenchShell.mockReturnValue({
       currentWorkspaceId: "workspace-1",
       navigationGroups: [

@@ -26,10 +26,7 @@ import {
   type TerminalPageWorkbenchShellOverrides
 } from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
-import {
-  buildWorkspaceAffairsPath,
-  buildWorkspaceSessionIndexPath
-} from "../workbench/utils/workbench-navigation";
+import { buildWorkspaceSessionIndexPath } from "../workbench/utils/workbench-navigation";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../platform/desktop/window-drag";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
@@ -146,15 +143,16 @@ function resolveDesktopCodeWindowRoute(descriptor: WindowDescriptor): string | n
   return workspaceId ? buildWorkspaceSessionIndexPath(workspaceId) : null;
 }
 
-function resolveDesktopAffairsWindowRoute(descriptor: WindowDescriptor): string | null {
+function resolveLegacyAffairsWindowRoute(descriptor: WindowDescriptor): string | null {
+  // 事务窗口是旧入口，后续统一回到代码工作区，不能再跳 /affairs。
   const routePath = descriptor.payload.routePath?.trim() ?? "";
 
-  if (routePath) {
+  if (routePath && !routePath.includes("/affairs")) {
     return routePath;
   }
 
   const workspaceId = descriptor.workspaceId?.trim() ?? "";
-  return workspaceId ? buildWorkspaceAffairsPath(workspaceId) : null;
+  return workspaceId ? buildWorkspaceSessionIndexPath(workspaceId) : "/landing";
 }
 
 function resolveDesktopWindowNativeTitle(
@@ -413,7 +411,7 @@ export function DesktopWindowPage() {
   }
 
   if (descriptor.kind === "affairs") {
-    const routePath = resolveDesktopAffairsWindowRoute(descriptor);
+    const routePath = resolveLegacyAffairsWindowRoute(descriptor);
 
     if (!routePath) {
       return (
