@@ -35,7 +35,9 @@ export async function registerAffairsRoutes(
 
   const unavailableController = {
     getGlobalBinding: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    getGlobalCapability: async (_request: any, reply: any) => reply.send({ enabled: false, binding: null }),
     saveGlobalBinding: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
+    setGlobalEnabled: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
     getOverview: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
     requestMirrorSync: async (_request: any, reply: any) => reply.code(501).send({ detail: "当前事务接口没有注入 controller" }),
     listSyncLogs: async (_request: any, reply: any) => reply.send([]),
@@ -68,7 +70,11 @@ export async function registerAffairsRoutes(
   const teableRuntime = teableRuntimeController ?? unavailableController as unknown as TeableRuntimeController;
 
   app.get("/api/affairs/library-binding", affairsLibraryController.getGlobalBinding);
-  app.get("/api/affairs/library-capability", affairsLibraryController.getGlobalCapability);
+  app.get(
+    "/api/affairs/library-capability",
+    affairsLibraryController.getGlobalCapability
+    ?? (async (_request: any, reply: any) => reply.send({ enabled: false, binding: null }))
+  );
   app.put("/api/affairs/library-binding", affairsLibraryController.saveGlobalBinding);
   app.put("/api/affairs/library-enabled", affairsLibraryController.setGlobalEnabled);
   app.get("/api/affairs/library-config", withGlobalWorkspace(affairsLibraryController.getConfig));
