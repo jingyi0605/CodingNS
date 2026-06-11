@@ -513,6 +513,12 @@ function renderPage(
   props?: {
     externalWindowMode?: boolean;
     externalWindowWorkspaceId?: string | null;
+    embeddedMode?: boolean;
+    embeddedDockControls?: {
+      orientation: "vertical" | "horizontal";
+      onChangeOrientation: (orientation: "vertical" | "horizontal") => void;
+      onClose: () => void;
+    };
   }
 ) {
   return render(
@@ -869,6 +875,75 @@ describe("TerminalPage", () => {
         })
       );
     });
+  });
+
+  it("只有左右分栏时才会把终端标签栏放到顶部", async () => {
+    renderPage();
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    const desktopShell = document.querySelector(".terminal-desktop-shell");
+    expect(desktopShell).not.toBeNull();
+    expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
+    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).not.toBeVisible();
+    expect(desktopShell?.querySelector(".terminal-desktop-rail")).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "展开终端工具菜单"
+      })
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "左右分栏"
+      })
+    );
+
+    await waitFor(() => {
+      expect(desktopShell).toHaveAttribute("data-top-tabstrip", "true");
+    });
+    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).toBeVisible();
+    expect(desktopShell?.querySelector(".terminal-desktop-rail")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "展开终端工具菜单"
+      })
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "上下分栏"
+      })
+    );
+
+    await waitFor(() => {
+      expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
+    });
+    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).not.toBeVisible();
+    expect(desktopShell?.querySelector(".terminal-desktop-rail")).not.toBeNull();
+  });
+
+  it("嵌入模式会把工作台终端布局和关闭按钮并到终端标签栏", async () => {
+    const onChangeOrientation = vi.fn();
+    const onClose = vi.fn();
+
+    renderPage("/workspaces/workspace-1/terminals", {
+      embeddedMode: true,
+      externalWindowWorkspaceId: "workspace-1",
+      embeddedDockControls: {
+        orientation: "vertical",
+        onChangeOrientation,
+        onClose
+      }
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    fireEvent.click(screen.getByRole("button", { name: "左右布局" }));
+    expect(onChangeOrientation).toHaveBeenCalledWith("horizontal");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭终端面板" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("分栏模式下的标签菜单会明确显示主副分栏绑定动作", async () => {

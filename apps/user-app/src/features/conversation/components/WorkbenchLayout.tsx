@@ -13842,6 +13842,7 @@ export function WorkbenchLayout({
     : isSessionsRoute(location.pathname) || isSessionDetailRoute(location.pathname)
       ? "sessions"
         : "workspaces";
+  const showCodeTerminalDock = activeCenterTab === "conversation";
   const isMobileConversationFocus =
     isMobileShell
     && (
@@ -15886,6 +15887,7 @@ export function WorkbenchLayout({
                       workspaceId={currentWorkspaceId}
                       workspaceName={currentWorkspaceName}
                       terminalDockState={codeTerminalDockState}
+                      terminalDockVisible={showCodeTerminalDock}
                       onCloseTerminalDock={closeCodeTerminalDock}
                       onChangeTerminalDockOrientation={changeCodeTerminalDockOrientation}
                       onResizeTerminalDock={resizeCodeTerminalDock}

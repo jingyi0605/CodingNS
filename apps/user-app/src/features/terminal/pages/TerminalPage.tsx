@@ -268,6 +268,11 @@ interface TerminalPageProps {
   externalWindowWorkspaceId?: string | null;
   embeddedMode?: boolean;
   workbenchShellOverrides?: TerminalPageWorkbenchShellOverrides;
+  embeddedDockControls?: {
+    orientation: "vertical" | "horizontal";
+    onChangeOrientation: (orientation: "vertical" | "horizontal") => void;
+    onClose: () => void;
+  };
 }
 
 function resolveTerminalSelectedWorkspaceId(input: {
@@ -305,7 +310,8 @@ export function TerminalPage({
   externalWindowMode = false,
   externalWindowWorkspaceId = null,
   embeddedMode = false,
-  workbenchShellOverrides
+  workbenchShellOverrides,
+  embeddedDockControls
 }: TerminalPageProps = {}) {
   const platform = usePlatform();
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
@@ -2020,197 +2026,413 @@ export function TerminalPage({
           </>
         ) : (
           <>
-            <div className="terminal-desktop-shell">
-              <section className="terminal-desktop-stage">
-                <header
-                  className="terminal-tabbar"
-                  data-window-drag-handle="terminal-tabbar"
+            <div
+              className="terminal-desktop-shell"
+              data-top-tabstrip={effectiveSplitDirection === "vertical" ? "true" : "false"}
+            >
+              <header
+                className="terminal-tabbar"
+                data-window-drag-handle="terminal-tabbar"
+                data-tauri-drag-region={macOsNativeTitlebarDragRegion}
+              >
+                <div
+                  ref={terminalTabbarMainRef}
+                  className="terminal-tabbar-main"
                   data-tauri-drag-region={macOsNativeTitlebarDragRegion}
                 >
-                  <div
-                    ref={terminalTabbarMainRef}
-                    className="terminal-tabbar-main"
-                    data-tauri-drag-region={macOsNativeTitlebarDragRegion}
-                  >
-                    <div className="terminal-tabbar-title" data-window-drag="ignore">
-                      <strong>{t("terminal.title")}</strong>
-                      <span>{currentWorkspace?.name ?? t("terminal.workspaceField")}</span>
-                    </div>
-                    <div className="terminal-tabbar-inline-actions">
-                  <div className="terminal-toolbar-anchor" data-window-drag="ignore">
-                    <div
-                      ref={toolbarRef}
-                      className="terminal-toolbar-inline"
-                      data-open={toolbarOpen}
-                      aria-hidden={!toolbarOpen}
-                      data-window-drag="ignore"
-                    >
-                      <div className="terminal-toolbar-cluster">
-                        {canDetachTerminalWindow ? (
+                  <div className="terminal-tabbar-title" data-window-drag="ignore">
+                    <strong>{t("terminal.title")}</strong>
+                    <span>{currentWorkspace?.name ?? t("terminal.workspaceField")}</span>
+                  </div>
+                  <div className="terminal-tabbar-inline-actions">
+                    {embeddedMode && embeddedDockControls ? (
+                      <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
+                        <div
+                          className="code-workbench-terminal-layout-switcher"
+                          role="group"
+                          aria-label={t("shell.codeTerminalDockLayoutLabel")}
+                        >
                           <button
                             type="button"
-                            className="terminal-toolbar-menu-action"
+                            className="code-workbench-terminal-layout-button"
+                            data-active={embeddedDockControls.orientation === "vertical"}
+                            aria-label={t("shell.codeTerminalDockLayoutVertical")}
                             onClick={() => {
-                              if (!resolvedWorkspaceId) {
+                              embeddedDockControls.onChangeOrientation("vertical");
+                            }}
+                          >
+                            <span aria-hidden="true">↕</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="code-workbench-terminal-layout-button"
+                            data-active={embeddedDockControls.orientation === "horizontal"}
+                            aria-label={t("shell.codeTerminalDockLayoutHorizontal")}
+                            onClick={() => {
+                              embeddedDockControls.onChangeOrientation("horizontal");
+                            }}
+                          >
+                            <span aria-hidden="true">↔</span>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className="code-workbench-terminal-close-button"
+                          aria-label={t("shell.codeTerminalDockCloseAction")}
+                          onClick={embeddedDockControls.onClose}
+                        >
+                          <span aria-hidden="true">×</span>
+                        </button>
+                      </div>
+                    ) : null}
+                    <div className="terminal-toolbar-anchor" data-window-drag="ignore">
+                      <div
+                        ref={toolbarRef}
+                        className="terminal-toolbar-inline"
+                        data-open={toolbarOpen}
+                        aria-hidden={!toolbarOpen}
+                        data-window-drag="ignore"
+                      >
+                        <div className="terminal-toolbar-cluster">
+                          {canDetachTerminalWindow ? (
+                            <button
+                              type="button"
+                              className="terminal-toolbar-menu-action"
+                              onClick={() => {
+                                if (!resolvedWorkspaceId) {
+                                  return;
+                                }
+
+                                setToolbarOpen(false);
+                                void openDetachedTerminalWindow(
+                                  resolvedWorkspaceId,
+                                  currentWorkspace?.name ?? null
+                                );
+                              }}
+                            >
+                              {t("terminal.openExternalAction")}
+                            </button>
+                          ) : null}
+
+                          <div className="terminal-toolbar-section">
+                            <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
+                            <select
+                              className="terminal-runtime-select"
+                              value={selectedRuntimeType}
+                              aria-label={t("terminal.runtimeField")}
+                              title={
+                                runtimeOptions.find((option) => option.value === selectedRuntimeType)
+                                  ?.description
+                              }
+                              onChange={(event) => {
+                                setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+                              }}
+                            >
+                              {runtimeOptions.map((option) => (
+                                <option key={option.value || "auto"} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="terminal-toolbar-section">
+                            <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
+                            <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
+                              <button
+                                type="button"
+                                className="terminal-zoom-button"
+                                aria-label={t("terminal.zoomOutAction")}
+                                onClick={() => {
+                                  updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
+                                }}
+                              >
+                                -
+                              </button>
+                              <button
+                                type="button"
+                                className="terminal-zoom-value"
+                                aria-label={t("terminal.zoomResetAction")}
+                                onClick={() => {
+                                  updateZoomScale(1);
+                                }}
+                              >
+                                {formatZoomPercent(zoomScale)}
+                              </button>
+                              <button
+                                type="button"
+                                className="terminal-zoom-button"
+                                aria-label={t("terminal.zoomInAction")}
+                                onClick={() => {
+                                  updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="terminal-toolbar-section">
+                            <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
+                            <div className="terminal-layout-switcher">
+                              <button
+                                type="button"
+                                className="terminal-layout-button"
+                                data-active={splitDirection === "single"}
+                                aria-label={t("terminal.layoutSingleAction")}
+                                onClick={() => {
+                                  applySplitLayout("single");
+                                }}
+                              >
+                                1
+                              </button>
+                              <button
+                                type="button"
+                                className="terminal-layout-button"
+                                data-active={splitDirection === "vertical"}
+                                aria-label={t("terminal.layoutVerticalAction")}
+                                onClick={() => {
+                                  applySplitLayout("vertical");
+                                }}
+                              >
+                                ||
+                              </button>
+                              <button
+                                type="button"
+                                className="terminal-layout-button"
+                                data-active={splitDirection === "horizontal"}
+                                aria-label={t("terminal.layoutHorizontalAction")}
+                                onClick={() => {
+                                  applySplitLayout("horizontal");
+                                }}
+                              >
+                                =
+                              </button>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="terminal-toolbar-save"
+                            disabled={!activeTerminal}
+                            onClick={() => {
+                              void handleSaveActivePaneLog();
+                            }}
+                          >
+                            {t("terminal.saveLogAction")}
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        ref={toolbarToggleRef}
+                        type="button"
+                        className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                        data-open={toolbarOpen}
+                        aria-label={t("terminal.toolbarToggleAction")}
+                        aria-expanded={toolbarOpen}
+                        onClick={() => {
+                          setActionMenu(null);
+                          setToolbarOpen((current) => !current);
+                        }}
+                      >
+                        <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                          <svg viewBox="0 0 20 20" fill="none" focusable="false">
+                            <path
+                              d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
+                              stroke="currentColor"
+                              strokeWidth="1.35"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                            <path
+                              d="m5.85 11.92 2.22 2.22"
+                              stroke="currentColor"
+                              strokeWidth="1.35"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+
+              {effectiveSplitDirection === "vertical" ? (
+                <div className="terminal-desktop-tabstrip">
+                  <div
+                    ref={terminalTabbarScrollRef}
+                    className="terminal-tabbar-scroll terminal-tabbar-scroll-main"
+                    role="tablist"
+                    aria-label={t("terminal.title")}
+                    data-window-drag="ignore"
+                  >
+                    {orderedTerminals.map((terminal) => {
+                      const isActive = terminal.id === activeTerminalId;
+                      const isPinned = pinnedTerminalIdSet.has(terminal.id);
+                      const menuOpen = actionMenu?.terminalId === terminal.id;
+                      const pendingMutation = terminalMutations[terminal.id] ?? null;
+                      const indicatorStatus = pendingMutation
+                        ? "creating"
+                        : resolveTerminalIndicatorStatus({
+                            terminal,
+                            paneBindings: effectivePaneBindings,
+                            paneConnectionStates: effectivePaneConnectionStates,
+                            manuallyDisconnectedTerminalIdSet
+                          });
+
+                      return (
+                        <div
+                          key={terminal.id}
+                          className="terminal-tab-shell"
+                          data-active={isActive}
+                          data-assigned={isTerminalAssigned(
+                            terminal.id,
+                            effectivePaneBindings,
+                            effectiveSplitDirection
+                          )}
+                        >
+                          <button
+                            className="terminal-tab"
+                            data-active={isActive}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            aria-busy={pendingMutation !== null}
+                            onClick={() => {
+                              if (!isActive) {
+                                void haptics.trigger("selection");
+                              }
+                              bindTerminalToActivePane(terminal.id);
+                            }}
+                            onAuxClick={(event) => {
+                              if (event.button !== 1 || pendingMutation !== null) {
                                 return;
                               }
 
-                              setToolbarOpen(false);
-                              void openDetachedTerminalWindow(
-                                resolvedWorkspaceId,
-                                currentWorkspace?.name ?? null
+                              event.preventDefault();
+                              void handleCloseTerminal(terminal.id);
+                            }}
+                          >
+                            <span className="terminal-tab-name">
+                              <>
+                                <span
+                                  className="terminal-tab-status-dot"
+                                  data-status={indicatorStatus}
+                                  aria-hidden="true"
+                                />
+                                {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                                <span className="terminal-tab-name-text">{terminal.name}</span>
+                                <span
+                                  className="terminal-tab-runtime"
+                                  title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
+                                >
+                                  {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
+                                </span>
+                                {pendingMutation ? (
+                                  <span
+                                    className="terminal-tab-operation"
+                                    data-operation={pendingMutation}
+                                  >
+                                    <span
+                                      className="terminal-tab-operation-spinner"
+                                      aria-hidden="true"
+                                    />
+                                    {pendingMutation === "closing"
+                                      ? t("terminal.closePendingBadge")
+                                      : t("terminal.deletePendingBadge")}
+                                  </span>
+                                ) : null}
+                              </>
+                            </span>
+                          </button>
+                          <button
+                            ref={(node) => {
+                              terminalActionMenuTriggerRef.current[terminal.id] = node;
+                            }}
+                            className="terminal-tab-inline-action"
+                            type="button"
+                            data-open={menuOpen}
+                            disabled={pendingMutation !== null}
+                            aria-haspopup="menu"
+                            aria-label={t("terminal.moreActions")}
+                            aria-expanded={menuOpen}
+                            onClick={(event) => {
+                              event.stopPropagation();
+
+                              if (menuOpen) {
+                                setActionMenu(null);
+                                return;
+                              }
+
+                              setActionMenu(
+                                buildActionMenuState(terminal.id, event.currentTarget) ?? {
+                                  terminalId: terminal.id,
+                                  top: 0,
+                                  left: 0
+                                }
                               );
                             }}
                           >
-                            {t("terminal.openExternalAction")}
+                            ⋯
                           </button>
-                        ) : null}
-
-                        <div className="terminal-toolbar-section">
-                          <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
-                          <select
-                            className="terminal-runtime-select"
-                            value={selectedRuntimeType}
-                            aria-label={t("terminal.runtimeField")}
-                            title={
-                              runtimeOptions.find((option) => option.value === selectedRuntimeType)
-                                ?.description
-                            }
-                            onChange={(event) => {
-                              setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
-                            }}
-                          >
-                            {runtimeOptions.map((option) => (
-                              <option key={option.value || "auto"} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
                         </div>
-
-                        <div className="terminal-toolbar-section">
-                          <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
-                          <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
-                            <button
-                              type="button"
-                              className="terminal-zoom-button"
-                              aria-label={t("terminal.zoomOutAction")}
-                              onClick={() => {
-                                updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
-                              }}
+                      );
+                    })}
+                    {pendingTerminalCreationPaneId ? (
+                      <div
+                        className="terminal-tab-shell"
+                        role="presentation"
+                        data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
+                        data-assigned="false"
+                        data-pending="true"
+                      >
+                        <div className="terminal-tab" aria-hidden="true">
+                          <span className="terminal-tab-name">
+                            <span
+                              className="terminal-tab-status-dot"
+                              data-status="creating"
+                              aria-hidden="true"
+                            />
+                            <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
+                            <span
+                              className="terminal-tab-runtime"
+                              title={getTerminalRuntimeLabel(
+                                selectedRuntimeType || undefined,
+                                platform.ui.osFamily
+                              )}
                             >
-                              -
-                            </button>
-                            <button
-                              type="button"
-                              className="terminal-zoom-value"
-                              aria-label={t("terminal.zoomResetAction")}
-                              onClick={() => {
-                                updateZoomScale(1);
-                              }}
-                            >
-                              {formatZoomPercent(zoomScale)}
-                            </button>
-                            <button
-                              type="button"
-                              className="terminal-zoom-button"
-                              aria-label={t("terminal.zoomInAction")}
-                              onClick={() => {
-                                updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
-                              }}
-                            >
-                              +
-                            </button>
-                          </div>
+                              {getTerminalRuntimeShortLabel(
+                                selectedRuntimeType || undefined,
+                                platform.ui.osFamily
+                              )}
+                            </span>
+                          </span>
                         </div>
-
-                        <div className="terminal-toolbar-section">
-                          <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
-                          <div className="terminal-layout-switcher">
-                            <button
-                              type="button"
-                              className="terminal-layout-button"
-                              data-active={splitDirection === "single"}
-                              aria-label={t("terminal.layoutSingleAction")}
-                              onClick={() => {
-                                applySplitLayout("single");
-                              }}
-                            >
-                              1
-                            </button>
-                            <button
-                              type="button"
-                              className="terminal-layout-button"
-                              data-active={splitDirection === "vertical"}
-                              aria-label={t("terminal.layoutVerticalAction")}
-                              onClick={() => {
-                                applySplitLayout("vertical");
-                              }}
-                            >
-                              ||
-                            </button>
-                            <button
-                              type="button"
-                              className="terminal-layout-button"
-                              data-active={splitDirection === "horizontal"}
-                              aria-label={t("terminal.layoutHorizontalAction")}
-                              onClick={() => {
-                                applySplitLayout("horizontal");
-                              }}
-                            >
-                              =
-                            </button>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          className="terminal-toolbar-save"
-                          disabled={!activeTerminal}
-                          onClick={() => {
-                            void handleSaveActivePaneLog();
-                          }}
-                        >
-                          {t("terminal.saveLogAction")}
-                        </button>
                       </div>
-                    </div>
-
-                    <button
-                      ref={toolbarToggleRef}
-                      type="button"
-                      className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
-                      data-open={toolbarOpen}
-                      aria-label={t("terminal.toolbarToggleAction")}
-                      aria-expanded={toolbarOpen}
-                      onClick={() => {
-                        setActionMenu(null);
-                        setToolbarOpen((current) => !current);
-                      }}
-                    >
-                      <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
-                        <svg viewBox="0 0 20 20" fill="none" focusable="false">
-                          <path
-                            d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
-                            stroke="currentColor"
-                            strokeWidth="1.35"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          <path
-                            d="m5.85 11.92 2.22 2.22"
-                            stroke="currentColor"
-                            strokeWidth="1.35"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </span>
-                    </button>
+                    ) : null}
                   </div>
-                    </div>
-                  </div>
-                </header>
+                  <button
+                    className="terminal-tab-control terminal-tab-control-main"
+                    type="button"
+                    aria-label={t("terminal.createButton")}
+                    title={t("terminal.createButton")}
+                    disabled={!selectedWorkspaceId || creatingTerminal}
+                    onClick={() => {
+                      void handleCreateTerminalEntry();
+                    }}
+                  >
+                    <span className="terminal-toolbar-icon" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
+                      </svg>
+                    </span>
+                  </button>
+                </div>
+              ) : null}
 
+              <section className="terminal-desktop-stage">
                 <div className="terminal-stage-surface">
                   <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile="false">
                     {visiblePaneIds.map((paneId) => {
@@ -2242,201 +2464,204 @@ export function TerminalPage({
                 </div>
               </section>
 
-              <aside className="terminal-desktop-rail">
-                <div
-                  ref={terminalTabbarScrollRef}
-                  className="terminal-tabbar-scroll terminal-tabbar-scroll-rail"
-                  role="tablist"
-                  aria-label={t("terminal.title")}
-                  data-window-drag="ignore"
-                >
-                  {orderedTerminals.map((terminal) => {
-                    const isActive = terminal.id === activeTerminalId;
-                    const isPinned = pinnedTerminalIdSet.has(terminal.id);
-                    const menuOpen = actionMenu?.terminalId === terminal.id;
-                    const pendingMutation = terminalMutations[terminal.id] ?? null;
-                    const indicatorStatus = pendingMutation
-                      ? "creating"
-                      : resolveTerminalIndicatorStatus({
-                          terminal,
-                          paneBindings: effectivePaneBindings,
-                          paneConnectionStates: effectivePaneConnectionStates,
-                          manuallyDisconnectedTerminalIdSet
-                        });
+              {effectiveSplitDirection !== "vertical" ? (
+                <aside className="terminal-desktop-rail">
+                  <div
+                    ref={terminalTabbarScrollRef}
+                    className="terminal-tabbar-scroll terminal-tabbar-scroll-rail"
+                    role="tablist"
+                    aria-label={t("terminal.title")}
+                    data-window-drag="ignore"
+                  >
+                    {orderedTerminals.map((terminal) => {
+                      const isActive = terminal.id === activeTerminalId;
+                      const isPinned = pinnedTerminalIdSet.has(terminal.id);
+                      const menuOpen = actionMenu?.terminalId === terminal.id;
+                      const pendingMutation = terminalMutations[terminal.id] ?? null;
+                      const indicatorStatus = pendingMutation
+                        ? "creating"
+                        : resolveTerminalIndicatorStatus({
+                            terminal,
+                            paneBindings: effectivePaneBindings,
+                            paneConnectionStates: effectivePaneConnectionStates,
+                            manuallyDisconnectedTerminalIdSet
+                          });
 
-                    return (
-                      <div
-                        key={terminal.id}
-                        className="terminal-tab-shell"
-                        data-active={isActive}
-                        data-assigned={isTerminalAssigned(
-                          terminal.id,
-                          effectivePaneBindings,
-                          effectiveSplitDirection
-                        )}
-                      >
-                        <button
-                          className="terminal-tab"
+                      return (
+                        <div
+                          key={terminal.id}
+                          className="terminal-tab-shell"
                           data-active={isActive}
-                          type="button"
-                          role="tab"
-                          aria-selected={isActive}
-                          aria-busy={pendingMutation !== null}
-                          onClick={() => {
-                            if (!isActive) {
-                              void haptics.trigger("selection");
-                            }
-                            bindTerminalToActivePane(terminal.id);
-                          }}
-                          onAuxClick={(event) => {
-                            if (event.button !== 1 || pendingMutation !== null) {
-                              return;
-                            }
-
-                            event.preventDefault();
-                            void handleCloseTerminal(terminal.id);
-                          }}
+                          data-assigned={isTerminalAssigned(
+                            terminal.id,
+                            effectivePaneBindings,
+                            effectiveSplitDirection
+                          )}
                         >
-                          <span className="terminal-tab-name">
-                            <>
-                              <span
-                                className="terminal-tab-status-dot"
-                                data-status={indicatorStatus}
-                                aria-hidden="true"
-                              />
-                              {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
-                              <span className="terminal-tab-name-text">{terminal.name}</span>
-                              <span
-                                className="terminal-tab-runtime"
-                                title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
-                              >
-                                {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
-                              </span>
-                              {pendingMutation ? (
-                                <span
-                                  className="terminal-tab-operation"
-                                  data-operation={pendingMutation}
-                                >
-                                  <span
-                                    className="terminal-tab-operation-spinner"
-                                    aria-hidden="true"
-                                  />
-                                  {pendingMutation === "closing"
-                                    ? t("terminal.closePendingBadge")
-                                    : t("terminal.deletePendingBadge")}
-                                </span>
-                              ) : null}
-                            </>
-                          </span>
-                        </button>
-                        <button
-                          ref={(node) => {
-                            terminalActionMenuTriggerRef.current[terminal.id] = node;
-                          }}
-                          className="terminal-tab-inline-action"
-                          type="button"
-                          data-open={menuOpen}
-                          disabled={pendingMutation !== null}
-                          aria-haspopup="menu"
-                          aria-label={t("terminal.moreActions")}
-                          aria-expanded={menuOpen}
-                          onClick={(event) => {
-                            event.stopPropagation();
-
-                            if (menuOpen) {
-                              setActionMenu(null);
-                              return;
-                            }
-
-                            setActionMenu(
-                              buildActionMenuState(terminal.id, event.currentTarget) ?? {
-                                terminalId: terminal.id,
-                                top: 0,
-                                left: 0
+                          <button
+                            className="terminal-tab"
+                            data-active={isActive}
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            aria-busy={pendingMutation !== null}
+                            onClick={() => {
+                              if (!isActive) {
+                                void haptics.trigger("selection");
                               }
-                            );
-                          }}
-                        >
-                          ⋯
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {pendingTerminalCreationPaneId ? (
-                    <div
-                      className="terminal-tab-shell"
-                      role="presentation"
-                      data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
-                      data-assigned="false"
-                      data-pending="true"
-                    >
-                      <div className="terminal-tab" aria-hidden="true">
-                        <span className="terminal-tab-name">
-                          <span
-                            className="terminal-tab-status-dot"
-                            data-status="creating"
-                            aria-hidden="true"
-                          />
-                          <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
-                          <span
-                            className="terminal-tab-runtime"
-                            title={getTerminalRuntimeLabel(
-                              selectedRuntimeType || undefined,
-                              platform.ui.osFamily
-                            )}
+                              bindTerminalToActivePane(terminal.id);
+                            }}
+                            onAuxClick={(event) => {
+                              if (event.button !== 1 || pendingMutation !== null) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              void handleCloseTerminal(terminal.id);
+                            }}
                           >
-                            {getTerminalRuntimeShortLabel(
-                              selectedRuntimeType || undefined,
-                              platform.ui.osFamily
-                            )}
+                            <span className="terminal-tab-name">
+                              <>
+                                <span
+                                  className="terminal-tab-status-dot"
+                                  data-status={indicatorStatus}
+                                  aria-hidden="true"
+                                />
+                                {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                                <span className="terminal-tab-name-text">{terminal.name}</span>
+                                <span
+                                  className="terminal-tab-runtime"
+                                  title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
+                                >
+                                  {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
+                                </span>
+                                {pendingMutation ? (
+                                  <span
+                                    className="terminal-tab-operation"
+                                    data-operation={pendingMutation}
+                                  >
+                                    <span
+                                      className="terminal-tab-operation-spinner"
+                                      aria-hidden="true"
+                                    />
+                                    {pendingMutation === "closing"
+                                      ? t("terminal.closePendingBadge")
+                                      : t("terminal.deletePendingBadge")}
+                                  </span>
+                                ) : null}
+                              </>
+                            </span>
+                          </button>
+                          <button
+                            ref={(node) => {
+                              terminalActionMenuTriggerRef.current[terminal.id] = node;
+                            }}
+                            className="terminal-tab-inline-action"
+                            type="button"
+                            data-open={menuOpen}
+                            disabled={pendingMutation !== null}
+                            aria-haspopup="menu"
+                            aria-label={t("terminal.moreActions")}
+                            aria-expanded={menuOpen}
+                            onClick={(event) => {
+                              event.stopPropagation();
+
+                              if (menuOpen) {
+                                setActionMenu(null);
+                                return;
+                              }
+
+                              setActionMenu(
+                                buildActionMenuState(terminal.id, event.currentTarget) ?? {
+                                  terminalId: terminal.id,
+                                  top: 0,
+                                  left: 0
+                                }
+                              );
+                            }}
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {pendingTerminalCreationPaneId ? (
+                      <div
+                        className="terminal-tab-shell"
+                        role="presentation"
+                        data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
+                        data-assigned="false"
+                        data-pending="true"
+                      >
+                        <div className="terminal-tab" aria-hidden="true">
+                          <span className="terminal-tab-name">
+                            <span
+                              className="terminal-tab-status-dot"
+                              data-status="creating"
+                              aria-hidden="true"
+                            />
+                            <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
+                            <span
+                              className="terminal-tab-runtime"
+                              title={getTerminalRuntimeLabel(
+                                selectedRuntimeType || undefined,
+                                platform.ui.osFamily
+                              )}
+                            >
+                              {getTerminalRuntimeShortLabel(
+                                selectedRuntimeType || undefined,
+                                platform.ui.osFamily
+                              )}
+                            </span>
                           </span>
-                        </span>
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
-                <button
-                  className="terminal-tab-control terminal-tab-control-rail"
-                  type="button"
-                  aria-label={t("terminal.createButton")}
-                  title={t("terminal.createButton")}
-                  disabled={!selectedWorkspaceId || creatingTerminal}
-                  onClick={() => {
-                    void handleCreateTerminalEntry();
-                  }}
-                >
-                  <span className="terminal-toolbar-icon" aria-hidden="true">
-                    <svg viewBox="0 0 16 16" focusable="false">
-                      <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
-                    </svg>
-                  </span>
-                </button>
-                {actionMenu && actionMenuTerminal ? (
-                  <TerminalActionMenu
-                    ref={terminalActionMenuRef}
-                    actionMenu={actionMenu}
-                    terminal={actionMenuTerminal}
-                    paneBindings={effectivePaneBindings}
-                    splitDirection={effectiveSplitDirection}
-                    activePaneId={effectiveActivePaneId}
-                    paneConnectionStates={effectivePaneConnectionStates}
-                    pinnedTerminalIdSet={pinnedTerminalIdSet}
-                    manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
-                    pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
-                    onBindToActivePane={bindTerminalToActivePane}
-                    onBindToPane={bindTerminalToPane}
-                    onDuplicate={handleDuplicateTerminal}
-                    onDisconnect={handleDisconnectTerminal}
-                    onReconnect={handleReconnectTerminal}
-                    onClose={handleCloseTerminal}
-                    onDelete={handleDeleteTerminal}
-                    onTogglePin={handleTogglePin}
-                    onCloseMenu={() => {
-                      setActionMenu(null);
+                    ) : null}
+                  </div>
+                  <button
+                    className="terminal-tab-control terminal-tab-control-rail"
+                    type="button"
+                    aria-label={t("terminal.createButton")}
+                    title={t("terminal.createButton")}
+                    disabled={!selectedWorkspaceId || creatingTerminal}
+                    onClick={() => {
+                      void handleCreateTerminalEntry();
                     }}
-                  />
-                ) : null}
-              </aside>
+                  >
+                    <span className="terminal-toolbar-icon" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
+                      </svg>
+                    </span>
+                  </button>
+                </aside>
+              ) : null}
+
+              {actionMenu && actionMenuTerminal ? (
+                <TerminalActionMenu
+                  ref={terminalActionMenuRef}
+                  actionMenu={actionMenu}
+                  terminal={actionMenuTerminal}
+                  paneBindings={effectivePaneBindings}
+                  splitDirection={effectiveSplitDirection}
+                  activePaneId={effectiveActivePaneId}
+                  paneConnectionStates={effectivePaneConnectionStates}
+                  pinnedTerminalIdSet={pinnedTerminalIdSet}
+                  manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
+                  pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
+                  onBindToActivePane={bindTerminalToActivePane}
+                  onBindToPane={bindTerminalToPane}
+                  onDuplicate={handleDuplicateTerminal}
+                  onDisconnect={handleDisconnectTerminal}
+                  onReconnect={handleReconnectTerminal}
+                  onClose={handleCloseTerminal}
+                  onDelete={handleDeleteTerminal}
+                  onTogglePin={handleTogglePin}
+                  onCloseMenu={() => {
+                    setActionMenu(null);
+                  }}
+                />
+              ) : null}
             </div>
           </>
         )}

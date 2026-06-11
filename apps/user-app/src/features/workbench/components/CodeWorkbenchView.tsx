@@ -17,6 +17,7 @@ interface CodeWorkbenchViewProps {
   workspaceId: string | null;
   workspaceName?: string | null;
   terminalDockState: CodeTerminalDockState | null;
+  terminalDockVisible?: boolean;
   onCloseTerminalDock: () => void;
   onChangeTerminalDockOrientation: (orientation: CodeTerminalDockOrientation) => void;
   onResizeTerminalDock: (ratio: number) => void;
@@ -33,12 +34,13 @@ export function CodeWorkbenchView({
   workspaceId,
   workspaceName = null,
   terminalDockState,
+  terminalDockVisible = true,
   onCloseTerminalDock,
   onChangeTerminalDockOrientation,
   onResizeTerminalDock,
   terminalWorkbenchShellOverrides
 }: CodeWorkbenchViewProps) {
-  const dockOpen = Boolean(workspaceId && terminalDockState?.open);
+  const dockOpen = Boolean(workspaceId && terminalDockState?.open && terminalDockVisible);
   const orientation = terminalDockState?.orientation ?? "vertical";
   const ratio = orientation === "horizontal"
     ? terminalDockState?.horizontalRatio ?? 0.42
@@ -128,6 +130,7 @@ export function CodeWorkbenchView({
     <div
       ref={shellRef}
       className="code-workbench-view"
+      data-terminal-visible={terminalDockVisible ? "true" : "false"}
       data-terminal-open={dockOpen ? "true" : "false"}
       data-terminal-orientation={dockOpen ? orientation : undefined}
       style={shellStyle}
@@ -149,52 +152,19 @@ export function CodeWorkbenchView({
           />
           <section
             className="code-workbench-terminal-pane"
+            data-orientation={orientation}
             aria-label={t("shell.codeTerminalDockTitle")}
           >
-            <header className="code-workbench-terminal-pane-toolbar">
-              <div className="code-workbench-terminal-pane-copy">
-                <strong>{t("shell.codeTerminalDockTitle")}</strong>
-                <span>
-                  {workspaceName || t("shell.codeTerminalDockWorkspaceFallback")}
-                </span>
-              </div>
-              <div className="code-workbench-terminal-pane-actions">
-                <div className="code-workbench-terminal-layout-switcher" role="group" aria-label={t("shell.codeTerminalDockLayoutLabel")}>
-                  <button
-                    type="button"
-                    className="code-workbench-terminal-layout-button"
-                    data-active={orientation === "vertical"}
-                    aria-label={t("shell.codeTerminalDockLayoutVertical")}
-                    onClick={() => onChangeTerminalDockOrientation("vertical")}
-                  >
-                    <span aria-hidden="true">↕</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="code-workbench-terminal-layout-button"
-                    data-active={orientation === "horizontal"}
-                    aria-label={t("shell.codeTerminalDockLayoutHorizontal")}
-                    onClick={() => onChangeTerminalDockOrientation("horizontal")}
-                  >
-                    <span aria-hidden="true">↔</span>
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="code-workbench-terminal-close-button"
-                  aria-label={t("shell.codeTerminalDockCloseAction")}
-                  onClick={onCloseTerminalDock}
-                >
-                  <span aria-hidden="true">×</span>
-                </button>
-              </div>
-            </header>
-
             <div className="code-workbench-terminal-pane-body">
               <TerminalPage
                 embeddedMode
                 externalWindowWorkspaceId={workspaceId}
                 workbenchShellOverrides={terminalWorkbenchShellOverrides}
+                embeddedDockControls={{
+                  orientation,
+                  onChangeOrientation: onChangeTerminalDockOrientation,
+                  onClose: onCloseTerminalDock
+                }}
               />
             </div>
           </section>
