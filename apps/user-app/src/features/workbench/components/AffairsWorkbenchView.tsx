@@ -268,6 +268,7 @@ interface AffairsShortcutRailSystemItem {
     className: string;
     icon: ReactNode;
     title: string;
+    children: ReactNode;
   }) => ReactNode;
 }
 
@@ -4869,7 +4870,31 @@ export function SharedAffairsShortcutRail({
                     ) : null}
                   </span>
                 ),
-                title: item.title
+                title: item.title,
+                children: (
+                  <>
+                    <span
+                      className="affairs-shortcut-rail-icon"
+                      aria-hidden="true"
+                      data-system="true"
+                      data-system-id={item.id}
+                      data-active={item.active ? "true" : undefined}
+                    >
+                      {item.iconText}
+                      {item.badge !== undefined && item.badge !== null ? (
+                        <span
+                          className="affairs-shortcut-rail-icon-badge"
+                          aria-label={item.badgeLabel}
+                        >
+                          {item.badge}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="affairs-shortcut-rail-copy">
+                      <strong>{item.title}</strong>
+                    </span>
+                  </>
+                )
               };
 
               return (
@@ -4881,10 +4906,7 @@ export function SharedAffairsShortcutRail({
                       aria-label={item.actionLabel}
                       onClick={item.onClick}
                     >
-                      {content.icon}
-                      <span className="affairs-shortcut-rail-copy">
-                        <strong>{content.title}</strong>
-                      </span>
+                      {content.children}
                     </button>
                   )}
                 </div>

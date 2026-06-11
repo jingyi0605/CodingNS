@@ -35,4 +35,38 @@ describe("SharedAffairsShortcutRail", () => {
     expect(badge).toHaveClass("affairs-shortcut-rail-icon-badge");
     expect(screen.getByRole("button", { name: t("shell.codeShortcutTerminalAction") }).querySelector("svg")).not.toBeNull();
   });
+
+  it("弹窗型系统快捷应用会复用统一的图标和名称结构", () => {
+    render(
+      <SharedAffairsShortcutRail
+        standalone
+        shortcutApps={[]}
+        editing={false}
+        addingShortcut={false}
+        collapsed={false}
+        systemItems={[
+          {
+            id: "skills",
+            title: t("shell.codeShortcutSkillsTitle"),
+            iconText: (
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M12 3 14 10 21 12 14 14 12 21 10 14 3 12 10 10z" />
+              </svg>
+            ),
+            actionLabel: t("settings.skillManageAction"),
+            renderTrigger: ({ className, children }) => (
+              <button type="button" className={className} aria-label={t("settings.skillManageAction")}>
+                {children}
+              </button>
+            )
+          }
+        ]}
+        onOpenShortcutApp={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: t("settings.skillManageAction") });
+    expect(button.querySelector(".affairs-shortcut-rail-icon")).not.toBeNull();
+    expect(button.querySelector(".affairs-shortcut-rail-copy strong")).toHaveTextContent(t("shell.codeShortcutSkillsTitle"));
+  });
 });

@@ -13539,11 +13539,11 @@ export function WorkbenchLayout({
             title: t("shell.codeShortcutSkillsTitle"),
             iconText: <CodeShortcutSkillIcon />,
             actionLabel: t("settings.skillManageAction"),
-            renderTrigger: ({ className, icon, title }: { className: string; icon: ReactNode; title: string }) => (
+            renderTrigger: ({ className, children, title }: { className: string; children: ReactNode; title: string }) => (
               <SkillManagementPanel
                 triggerClassName={className}
                 triggerLabel={title}
-                triggerLeading={icon}
+                triggerContent={children}
                 workspaceId={currentWorkspaceId}
                 sessionId={currentSessionId}
               />

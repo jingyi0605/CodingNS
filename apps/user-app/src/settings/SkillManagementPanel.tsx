@@ -91,6 +91,7 @@ interface SkillManagementPanelProps {
   readonly triggerClassName?: string;
   readonly triggerLabel?: string;
   readonly triggerLeading?: ReactNode;
+  readonly triggerContent?: ReactNode;
   readonly workspaceId?: string | null;
   readonly sessionId?: string | null;
   readonly initialTab?: SkillManagementTabId;
@@ -110,6 +111,7 @@ export function SkillManagementPanel({
   triggerClassName = "secondary-button",
   triggerLabel,
   triggerLeading,
+  triggerContent,
   workspaceId = null,
   sessionId = null,
   initialTab = "skills",
@@ -1153,8 +1155,12 @@ async function reloadPanelData(): Promise<void> {
           setModalOpen(true);
         }}
       >
-        {triggerLeading}
-        <span>{resolvedTriggerLabel}</span>
+        {triggerContent ?? (
+          <>
+            {triggerLeading}
+            <span>{resolvedTriggerLabel}</span>
+          </>
+        )}
       </button>
 
       <WorkbenchModal
