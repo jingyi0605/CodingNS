@@ -520,6 +520,14 @@ describe("ConversationSelectionActions", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+
+    expect(mockListProviderCatalog).toHaveBeenCalledWith({
+      targetHostId: "peer-host-1"
+    });
+    expect(mockFetchModelManagementSnapshot).toHaveBeenCalledWith({
+      targetHostId: "peer-host-1"
+    });
+
     fireEvent.click(within(dialog).getByRole("button", { name: t("conversation.selectionActionSubmit") }));
 
     await act(async () => {

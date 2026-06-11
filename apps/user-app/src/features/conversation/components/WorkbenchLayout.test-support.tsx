@@ -814,6 +814,20 @@ export function mockAffairsLibraryFetch() {
   global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
     const url = String(rawInput);
 
+    if (url.includes("/api/affairs/library-capability")) {
+      return createJsonResponse({
+        enabled: true,
+        binding: {
+          workspaceId: "workspace-1",
+          rootDir: "/Users/jackson/WorkFile",
+          enabled: true,
+          configRelativePath: ".ai-index/doc-semantic-index.config.json",
+          exportMode: "v2",
+          updatedAt: "2026-05-31T08:00:00.000Z"
+        }
+      });
+    }
+
     if (url.includes("/api/affairs/library-snapshot")) {
       return createJsonResponse({
         binding: {

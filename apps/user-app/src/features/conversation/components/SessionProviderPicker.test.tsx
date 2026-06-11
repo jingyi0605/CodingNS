@@ -83,6 +83,35 @@ describe("SessionProviderPicker", () => {
     expect(mockListProviderCapabilities).not.toHaveBeenCalled();
   });
 
+
+  it("PeerHOST 下 provider catalog 和能力请求都会带 targetHostId", async () => {
+    mockListProviderCapabilities.mockResolvedValue({
+      gemini: createUnavailableCapabilities("gemini", "远端未检测到 Gemini CLI")
+    });
+
+    render(
+      <SessionProviderPicker
+        workspaceId="remote-workspace-1"
+        targetHostId="peer-host-1"
+        providers={["gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockListProviderCatalog).toHaveBeenCalledWith({
+        targetHostId: "peer-host-1"
+      });
+    });
+    await waitFor(() => {
+      expect(mockListProviderCapabilities).toHaveBeenCalledWith(
+        ["gemini"],
+        "remote-workspace-1",
+        { targetHostId: "peer-host-1" }
+      );
+    });
+  });
+
   it("清掉 provider picker 缓存后会重新请求能力", async () => {
     mockListProviderCapabilities.mockResolvedValue({
       gemini: createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")

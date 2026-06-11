@@ -9,6 +9,10 @@ import { ComposerPanel, resolveComposerMacSelectPopoverWidth } from "./ComposerP
 
 const mockSearchComposerMentionItems = vi.fn();
 const mockRevealWorkspaceFile = vi.fn();
+const mockFetchModelManagementSnapshot = vi.fn();
+const workbenchShellMock = vi.hoisted(() => ({
+  currentTargetHostId: null as string | null
+}));
 const platformMock = vi.hoisted(() => ({
   platform: "web",
   isDesktop: false,
@@ -141,13 +145,26 @@ vi.mock("../api/composer-mention-api", () => ({
   searchComposerMentionItems: (...args: unknown[]) => mockSearchComposerMentionItems(...args)
 }));
 
+vi.mock("../../settings/api/model-switch-api", async () => {
+  const actual = await vi.importActual<typeof import("../../settings/api/model-switch-api")>(
+    "../../settings/api/model-switch-api"
+  );
+
+  return {
+    ...actual,
+    fetchModelManagementSnapshot: (...args: unknown[]) =>
+      mockFetchModelManagementSnapshot(...args)
+  };
+});
+
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => platformMock
 }));
 
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
-    revealWorkspaceFile: (...args: unknown[]) => mockRevealWorkspaceFile(...args)
+    revealWorkspaceFile: (...args: unknown[]) => mockRevealWorkspaceFile(...args),
+    currentTargetHostId: workbenchShellMock.currentTargetHostId
   })
 }));
 
@@ -302,6 +319,8 @@ describe("ComposerPanel", () => {
     mockListProviderCatalog.mockReset();
     mockSearchComposerMentionItems.mockReset();
     mockRevealWorkspaceFile.mockReset();
+    mockFetchModelManagementSnapshot.mockReset();
+    workbenchShellMock.currentTargetHostId = null;
     mockListQuickPhrases.mockResolvedValue({
       items: [
         {
@@ -332,6 +351,22 @@ describe("ComposerPanel", () => {
       { provider: "kimi", displayName: "Kimi", enabled: false }
     ]);
     mockGetProviderCapabilities.mockResolvedValue(createCapabilities());
+    mockFetchModelManagementSnapshot.mockResolvedValue({
+      scannedAt: "2026-06-11T00:00:00.000Z",
+      items: [
+        {
+          app: "codex",
+          displayName: "Codex",
+          cliAvailable: true,
+          status: "ready",
+          statusText: null,
+          currentPresetId: "default",
+          currentPresetName: "默认",
+          currentModel: "gpt-5.4",
+          options: []
+        }
+      ]
+    });
     mockSearchComposerMentionItems.mockResolvedValue({
       skills: [],
       files: []
@@ -364,6 +399,25 @@ describe("ComposerPanel", () => {
         measureText: (text) => text.length * 8
       })
     ).toBe(312);
+  });
+
+
+  it("PeerHOST 下 Composer 会从目标 HOST 读取模型配置", async () => {
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        isSubmitting={false}
+        onSend={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockFetchModelManagementSnapshot).toHaveBeenCalledWith({
+        targetHostId: "peer-host-1"
+      });
+    });
   });
 
   it("连续提交两次时只会发送一次", async () => {
