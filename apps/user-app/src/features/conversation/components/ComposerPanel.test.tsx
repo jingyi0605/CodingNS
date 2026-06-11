@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
+import { clearProviderCatalogStore } from "../capability/provider-catalog-store";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { ComposerPanel, resolveComposerMacSelectPopoverWidth } from "./ComposerPanel";
 
@@ -299,6 +300,7 @@ function createForkDraft(options?: {
 describe("ComposerPanel", () => {
   beforeEach(() => {
     localStorage.clear();
+    clearProviderCatalogStore();
     platformMock.platform = "web";
     platformMock.isDesktop = false;
     platformMock.isWeb = true;
@@ -1526,7 +1528,7 @@ describe("ComposerPanel", () => {
     });
   });
 
-  it("fork 引用态只显示当前支持的目标 CLI，不展示不可用 provider", () => {
+  it("fork 引用态只显示当前支持的目标 CLI，不展示不可用 provider", async () => {
     render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -1539,11 +1541,13 @@ describe("ComposerPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetProviderLabel") }));
 
-    expect(screen.getByRole("option", { name: /Codex/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Claude Code/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /OpenCode/i })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Gemini/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Kimi/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /Codex/i })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: /Claude Code/i })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: /OpenCode/i })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: /Gemini/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: /Kimi/i })).not.toBeInTheDocument();
+    });
   });
 
   it("fork 目标 provider 列表会继续过滤 catalog 中已禁用的项", async () => {
@@ -1599,7 +1603,11 @@ describe("ComposerPanel", () => {
 
     render(<Wrapper />);
 
-    chooseOption(t("conversation.forkTargetProviderLabel"), "OpenCode");
+    fireEvent.click(screen.getByLabelText(t("conversation.forkTargetProviderLabel")));
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("option", { name: "OpenCode" }));
 
     expect(screen.getByRole("dialog", { name: t("conversation.forkSwitchConfirmTitle") })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkSwitchKeepNative") }));
@@ -1652,7 +1660,11 @@ describe("ComposerPanel", () => {
 
     render(<Wrapper />);
 
-    chooseOption(t("conversation.forkTargetProviderLabel"), "OpenCode");
+    fireEvent.click(screen.getByLabelText(t("conversation.forkTargetProviderLabel")));
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("option", { name: "OpenCode" }));
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkSwitchConfirmAction") }));
 
     await waitFor(() => {
@@ -1663,7 +1675,7 @@ describe("ComposerPanel", () => {
       expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1", {
         providerConfigMode: "global-default",
         providerPresetId: null
-      });
+      }, { targetHostId: null });
     });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));
