@@ -5557,9 +5557,17 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
 }
 
 .terminal-layout-embedded .terminal-tabbar {
-  min-height: 44px;
-  padding: 4px 10px;
+  min-height: 38px;
+  padding: 2px 10px;
   border-bottom-color: color-mix(in srgb, var(--panel-separator) 82%, transparent);
+}
+
+.terminal-layout-embedded .terminal-tabbar-title {
+  gap: 0;
+}
+
+.terminal-layout-embedded .terminal-tabbar-title span {
+  font-size: 10px;
 }
 
 .terminal-layout-embedded .terminal-desktop-shell[data-top-tabstrip="true"] {
@@ -5567,7 +5575,7 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
 }
 
 .terminal-layout-embedded .terminal-desktop-shell[data-top-tabstrip="true"] .terminal-desktop-tabstrip {
-  padding: 8px 10px 10px;
+  padding: 6px 10px 8px;
   background: color-mix(in srgb, var(--panel-bg, var(--bg-surface)) 72%, transparent);
 }
 
