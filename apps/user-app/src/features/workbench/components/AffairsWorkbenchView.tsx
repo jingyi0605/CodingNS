@@ -5522,7 +5522,7 @@ export function AffairsSidebarPanel() {
       <AffairsShortcutAppsRail />
     </div>
   );
-  if (activeSection === "conversation" && initGuard.loading) {
+  if (initGuard.loading && !initGuard.initialized) {
     return renderWithShortcutRail(
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -5536,7 +5536,7 @@ export function AffairsSidebarPanel() {
     );
   }
 
-  if (activeSection === "conversation" && initGuard.unavailable) {
+  if (initGuard.unavailable && !initGuard.initialized) {
     return renderWithShortcutRail(
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
@@ -5550,12 +5550,12 @@ export function AffairsSidebarPanel() {
     );
   }
 
-  if (activeSection === "conversation" && !initGuard.initialized) {
+  if (!initGuard.initialized) {
     return renderWithShortcutRail(
       <section className="workbench-section-block affairs-sidebar-block">
         <div className="affairs-sidebar-block-header">
           <div>
-            <h2>{t("shell.affairsConversationSidebarTitle")}</h2>
+            <h2>{t("shell.affairsInitPill")}</h2>
             <p>{t("shell.affairsInitRouteGuardHint")}</p>
           </div>
         </div>
@@ -7121,7 +7121,7 @@ function AffairsConnectionCheckingState() {
   return (
     <div className="affairs-conversation-empty-state">
       <header className="affairs-conversation-empty-header">
-        <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+        <span className="affairs-inline-pill">{t("shell.affairsInitPill")}</span>
         <h2>{t("shell.affairsConnectionCheckingTitle")}</h2>
         <p>{t("shell.affairsConnectionCheckingDescription")}</p>
       </header>
@@ -8253,7 +8253,7 @@ function AffairsHostUnavailableState({
   return (
     <div className="affairs-conversation-empty-state">
       <header className="affairs-conversation-empty-header">
-        <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+        <span className="affairs-inline-pill">{t("shell.affairsInitPill")}</span>
         <h2>{t("shell.affairsHostUnavailableTitle")}</h2>
         <p>{t("shell.affairsHostUnavailableDescription")}</p>
       </header>
@@ -8312,20 +8312,71 @@ const AFFAIRS_INIT_REPORT_PRIORITY_VALUES: Record<ButlerReportPriorityPresetId, 
   "progress-first": ["progress", "risk", "blocker"]
 };
 
-function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) {
+function AffairsConversationState({ workspaceId }: { workspaceId: string }) {
+  const {
+    selectedConversationDraft,
+    selectedConversationSession,
+    conversationRuntimeSeed,
+    agentWorkspaceId
+  } = useAffairsWorkbenchInternal();
+
+  if (selectedConversationSession?.kind === "lightweight") {
+    return (
+      <AffairsLightweightConversationLiveState
+        sessionId={selectedConversationSession.sessionId}
+        runtimeSeed={
+          conversationRuntimeSeed?.kind === "lightweight"
+          && conversationRuntimeSeed.session.sessionId === selectedConversationSession.sessionId
+            ? conversationRuntimeSeed
+            : null
+        }
+      />
+    );
+  }
+
+  if (selectedConversationSession?.kind === "agent") {
+    if (!agentWorkspaceId) {
+      return <AffairsConversationEmptyState />;
+    }
+    return (
+      <AffairsAgentConversationState
+        workspaceId={agentWorkspaceId}
+        sessionId={selectedConversationSession.sessionId}
+      />
+    );
+  }
+
+  if (selectedConversationDraft?.kind === "lightweight") {
+    return (
+      <AffairsLightweightConversationDraftState
+        workspaceId={workspaceId}
+        draft={selectedConversationDraft}
+      />
+    );
+  }
+
+  if (selectedConversationDraft?.kind === "agent") {
+    if (!agentWorkspaceId) {
+      return <AffairsConversationEmptyState />;
+    }
+    return (
+      <AffairsAgentConversationState
+        workspaceId={agentWorkspaceId}
+        draft={selectedConversationDraft}
+      />
+    );
+  }
+
+  return <AffairsConversationEmptyState />;
+}
+
+function AffairsInitGate({ workspaceId }: { workspaceId: string }) {
   const {
     initGuard,
     initializeButlerProfile,
     updateButlerProfile,
-    openInitializedSection,
-    reloadButlerProfile,
-    selectedConversationDraft,
-    selectedConversationSession,
-    conversationRuntimeSeed,
-    agentWorkspaceId,
-    agentWorkspacePath
+    reloadButlerProfile
   } = useAffairsWorkbenchInternal();
-  const initialized = initGuard.initialized;
   const loading = initGuard.loading;
   const unavailable = initGuard.unavailable;
   const butlerInitialized = initGuard.butlerInitialized;
@@ -8333,7 +8384,6 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
   const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_BUTLER_INIT_FORM_STATE);
   const [initializing, setInitializing] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [pendingOpenLibrary, setPendingOpenLibrary] = useState(false);
   const [libraryInit, setLibraryInit] = useState({
     enabled: true,
     rootDir: ""
@@ -8356,10 +8406,8 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
       profile?.providerId
     ]
   );
+
   useEffect(() => {
-    if (initialized) {
-      return;
-    }
     void getGlobalAffairsLibraryBinding()
       .then((binding) => {
         setLibraryInit({
@@ -8368,7 +8416,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
         });
       })
       .catch(() => undefined);
-  }, [initialized, workspaceId]);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!profile) {
@@ -8382,67 +8430,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
     }));
   }, [profile]);
 
-  useEffect(() => {
-    if (!initialized || !pendingOpenLibrary) {
-      return;
-    }
-
-    openInitializedSection("library");
-    setPendingOpenLibrary(false);
-  }, [initialized, openInitializedSection, pendingOpenLibrary]);
-
-  if (initialized) {
-    if (selectedConversationSession?.kind === "lightweight") {
-      return (
-        <AffairsLightweightConversationLiveState
-          sessionId={selectedConversationSession.sessionId}
-          runtimeSeed={
-            conversationRuntimeSeed?.kind === "lightweight"
-            && conversationRuntimeSeed.session.sessionId === selectedConversationSession.sessionId
-              ? conversationRuntimeSeed
-              : null
-          }
-        />
-      );
-    }
-
-    if (selectedConversationSession?.kind === "agent") {
-      if (!agentWorkspaceId) {
-        return <AffairsConversationEmptyState />;
-      }
-      return (
-        <AffairsAgentConversationState
-          workspaceId={agentWorkspaceId}
-          sessionId={selectedConversationSession.sessionId}
-        />
-      );
-    }
-
-    if (selectedConversationDraft?.kind === "lightweight") {
-      return (
-        <AffairsLightweightConversationDraftState
-          workspaceId={workspaceId}
-          draft={selectedConversationDraft}
-        />
-      );
-    }
-
-    if (selectedConversationDraft?.kind === "agent") {
-      if (!agentWorkspaceId) {
-        return <AffairsConversationEmptyState />;
-      }
-      return (
-        <AffairsAgentConversationState
-          workspaceId={agentWorkspaceId}
-          draft={selectedConversationDraft}
-        />
-      );
-    }
-
-    return <AffairsConversationEmptyState />;
-  }
-
-  if (loading) {
+  if (loading && !initializing) {
     return (
       <main className="workbench-page butler-page-shell butler-init-shell affairs-conversation-page-shell">
         <AffairsConnectionCheckingState />
@@ -8519,7 +8507,6 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
         await setGlobalAffairsLibraryEnabled({ enabled: libraryInit.enabled });
       }
       await reloadButlerProfile();
-      setPendingOpenLibrary(true);
       showToast({
         title: t("shell.affairsInitSuccess"),
         tone: "success"
@@ -8540,7 +8527,7 @@ function AffairsConversationInitState({ workspaceId }: { workspaceId: string }) 
       <section className="affairs-init-panel">
         <header className="affairs-init-panel-header">
           <div>
-            <span className="affairs-inline-pill">{t("shell.workbenchModeAffairs")}</span>
+            <span className="affairs-inline-pill">{t("shell.affairsInitPill")}</span>
             <h2>{t("shell.butlerInitTitle")}</h2>
             <p>{t("shell.affairsInitRouteGuardHint")}</p>
           </div>
@@ -9702,12 +9689,12 @@ export function AffairsWorkbenchView({ workspaceId }: AffairsWorkbenchViewProps)
     return createPortal(content, document.body);
   };
 
-  if (!initGuard.loading && !initGuard.unavailable && !initGuard.initialized) {
-    return <AffairsConversationInitState workspaceId={workspaceId} />;
+  if (!initGuard.initialized) {
+    return <AffairsInitGate workspaceId={workspaceId} />;
   }
 
   if (activeSection === "conversation") {
-    return <AffairsConversationInitState workspaceId={workspaceId} />;
+    return <AffairsConversationState workspaceId={workspaceId} />;
   }
 
   return (
@@ -10290,7 +10277,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
   } = useAffairsWorkbenchInternal();
   const butlerControlSession = useButlerRuntimeStore(butlerStore, (value) => value.controlSession);
   const [viewerReady, setViewerReady] = useState(false);
-  const conversationGuardActive = activeSection === "conversation" && !initGuard.initialized;
+  const initGuardActive = !initGuard.initialized;
   const assistantHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const assistantHistoryPopoverRef = useRef<HTMLDivElement | null>(null);
   const [assistantHistoryOpen, setAssistantHistoryOpen] = useState(false);
@@ -10505,7 +10492,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     workspaceId
   ]);
 
-  if (activeSection === "conversation" && initGuard.loading) {
+  if (initGuard.loading && !initGuard.initialized) {
     return (
       <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
         <div className="affairs-sidebar-block-header">
@@ -10519,7 +10506,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
     );
   }
 
-  if (activeSection === "conversation" && initGuard.unavailable) {
+  if (initGuard.unavailable && !initGuard.initialized) {
     return (
       <section className="workbench-section-block affairs-sidebar-block affairs-auxiliary-block">
         <div className="affairs-sidebar-block-header">
@@ -10661,7 +10648,7 @@ export function AffairsAuxiliaryPanel({ workspaceId, onToggleCollapse }: Affairs
         data-scrollbar-autohide="true"
         data-affairs-auxiliary-tab={auxiliaryTab}
       >
-        {conversationGuardActive ? (
+        {initGuardActive ? (
           auxiliaryTab === "assistant"
             ? <UniversalAssistantBridge workspaceId={workspaceId} context={null} />
             : <div className="affairs-stage-empty">{t("shell.affairsInitRouteGuardAuxiliaryEmpty")}</div>
