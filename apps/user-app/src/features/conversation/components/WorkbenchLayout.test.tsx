@@ -176,14 +176,14 @@ describe("WorkbenchLayout", () => {
     });
 
     const view = renderWorkbenchRoute();
-    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+    const settingsButton = view.container.querySelector(`.workbench-nav-toolbar button[aria-label="${t("settings.title")}"]`);
 
     if (!(settingsButton instanceof HTMLElement)) {
       throw new Error("未找到设置按钮");
     }
 
-    expect(within(settingsButton).getByText(t("settings.title"))).toBeInTheDocument();
-    expect(within(settingsButton).getByText("办公室 Host")).toBeInTheDocument();
+    expect(settingsButton).toHaveAttribute("aria-label", t("settings.title"));
+    expect(settingsButton.textContent?.trim() ?? "").toBe("");
   });
 
   it("旧 HOST 的工作区路由切到新 HOST 后会自动收敛到当前 Host 的可用会话", async () => {
@@ -285,14 +285,14 @@ describe("WorkbenchLayout", () => {
     });
 
     const view = renderWorkbenchRoute();
-    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+    const settingsButton = view.container.querySelector(`.workbench-nav-toolbar button[aria-label="${t("settings.title")}"]`);
 
     if (!(settingsButton instanceof HTMLElement)) {
       throw new Error("未找到设置按钮");
     }
 
-    expect(within(settingsButton).getByText(t("settings.title"))).toBeInTheDocument();
-    expect(within(settingsButton).queryByText("本地 Host")).not.toBeInTheDocument();
+    expect(settingsButton).toHaveAttribute("aria-label", t("settings.title"));
+    expect(settingsButton.textContent?.trim() ?? "").toBe("");
   });
 
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {

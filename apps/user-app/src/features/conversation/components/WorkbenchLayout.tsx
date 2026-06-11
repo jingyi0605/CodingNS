@@ -71,7 +71,6 @@ import {
 import { usePlatform } from "../../../platform/platform-provider";
 import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
-import { getVisibleDiscoveredHosts } from "../../../config/local-host-discovery-store";
 import { normalizeHostAliasLabel, resolveHostAliasTag } from "../../workbench/utils/host-alias";
 import {
   listWorkspaceHostBindings,
@@ -244,9 +243,11 @@ import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostS
 import { SkillManagementPanel } from "../../../settings/SkillManagementPanel";
 import {
   AffairsAuxiliaryPanel,
+  AffairsLibraryIcon,
   AffairsSectionMenu,
   AffairsShortcutAppsRail,
   AffairsSidebarPanel,
+  AffairsWorkbenchIcon,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView
 } from "../../workbench/components/AffairsWorkbenchView";
@@ -5734,6 +5735,7 @@ function SidebarContent({
   onNavigateButler,
   onOpenSearch,
   onOpenSettings,
+  onOpenAffairsSection,
   onSelectWorkspace,
   onToggleWorkspaceCollapse,
   onStartWorkspaceReorder,
@@ -5781,6 +5783,7 @@ function SidebarContent({
   onNavigateButler: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
+  onOpenAffairsSection: (section: AffairsViewState["primarySection"]) => void;
   onSelectWorkspace: (workspaceId: string, workspaceRef?: WorkspaceRef | null) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
   onStartWorkspaceReorder: () => void;
@@ -5818,7 +5821,6 @@ function SidebarContent({
   const routeWorkspaceRef = useMemo(() => readWorkspaceRefFromLocation(location), [location.pathname, location.search]);
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = runtimeConfig.activeHostId ?? activeHost?.id ?? "current";
-  const activeHostName = activeHost?.name ?? "";
   const selectableWorkspaceHosts = useMemo(() => {
     const activeEntry = activeHost
       ? [{ id: "current", host: activeHost }]
@@ -6121,9 +6123,6 @@ function SidebarContent({
     ]);
   }, [activeWorkspaceId, openAffairsInExternalWindow, platform.bridge.supported, platform.isDesktop]);
 
-  const showHostNameBadge =
-    runtimeConfig.hosts.length + getVisibleDiscoveredHosts(runtimeConfig).length > 1
-    && activeHostName.length > 0;
   const [importBrowserOpen, setImportBrowserOpen] = useState(false);
   const [cloneBrowserOpen, setCloneBrowserOpen] = useState(false);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
@@ -9180,14 +9179,11 @@ function SidebarContent({
           <button
             type="button"
             className="workbench-nav-toolbar-button"
-            data-open={isSearchOpen}
-            aria-label={t("shell.searchEntry")}
-            title={t("shell.searchEntry")}
-            aria-haspopup="dialog"
-            aria-expanded={isSearchOpen}
-            onClick={onOpenSearch}
+            aria-label={t("settings.title")}
+            title={t("settings.title")}
+            onClick={onOpenSettings}
           >
-            <SearchIcon />
+            <SettingsIcon />
           </button>
         </div>
       </div>
@@ -9252,6 +9248,36 @@ function SidebarContent({
                 >
                   <ConversationIcon />
                   <span>{t("shell.conversationEntry")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    isSearchOpen
+                      ? "workbench-nav-segment-button active"
+                      : "workbench-nav-segment-button"
+                  }
+                  aria-haspopup="dialog"
+                  aria-expanded={isSearchOpen}
+                  onClick={onOpenSearch}
+                >
+                  <SearchIcon />
+                  <span>{t("shell.searchEntry")}</span>
+                </button>
+                <button
+                  type="button"
+                  className="workbench-nav-segment-button"
+                  onClick={() => onOpenAffairsSection("library")}
+                >
+                  <AffairsLibraryIcon />
+                  <span>{t("shell.affairsLibraryNav")}</span>
+                </button>
+                <button
+                  type="button"
+                  className="workbench-nav-segment-button"
+                  onClick={() => onOpenAffairsSection("workbench")}
+                >
+                  <AffairsWorkbenchIcon />
+                  <span>{t("shell.affairsWorkbenchNav")}</span>
                 </button>
               </div>
             ) : null}
@@ -9515,20 +9541,6 @@ function SidebarContent({
           />
         ) : null}
         <div className="workbench-nav-footer-actions">
-          <button
-            className="settings-entry-button workbench-nav-settings-button"
-            type="button"
-            onClick={onOpenSettings}
-            title={showHostNameBadge ? `${t("settings.title")} · ${activeHostName}` : t("settings.title")}
-          >
-            <SettingsIcon />
-            <span className="settings-entry-label">{t("settings.title")}</span>
-            {showHostNameBadge ? (
-              <span className="workbench-nav-settings-host-badge" title={activeHostName}>
-                {activeHostName}
-              </span>
-            ) : null}
-          </button>
           <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
         </div>
       </div>
@@ -14692,6 +14704,37 @@ export function WorkbenchLayout({
     }
   }, [closeSearchModal, location.pathname, navigate]);
 
+  const openAffairsSection = useCallback((section: AffairsViewState["primarySection"]) => {
+    const currentState =
+      readAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID)
+      ?? affairsViewState
+      ?? createDefaultAffairsViewState(AFFAIRS_GLOBAL_WORKSPACE_ID);
+    const nextState =
+      section === "library"
+        ? createDefaultAffairsLibraryLandingState(AFFAIRS_GLOBAL_WORKSPACE_ID, currentState)
+        : {
+            ...currentState,
+            workspaceId: AFFAIRS_GLOBAL_WORKSPACE_ID,
+            primarySection: section,
+            selectedNodeId: section === "conversation" ? "conversation:home" : "workbench:overview",
+            selectedObjectId: null,
+            selectedDocumentId: null,
+            auxiliaryTab: section === "conversation" ? "detail" : currentState.auxiliaryTab,
+            pendingLibraryPreview: null
+          };
+
+    writeWorkspaceWorkbenchMode(AFFAIRS_GLOBAL_WORKSPACE_ID, "affairs");
+    flushSync(() => {
+      setAffairsRightCollapsed(section === "conversation");
+      setAffairsViewState(nextState);
+    });
+
+    const targetPath = buildAffairsPath();
+    if (location.pathname !== targetPath) {
+      navigate(targetPath);
+    }
+  }, [affairsViewState, location.pathname, navigate]);
+
   function applyWorkbenchShellPanelWidths(nextLeftWidth: number, nextRightWidth: number) {
     const shellElement = workbenchShellRef.current;
 
@@ -15561,6 +15604,7 @@ export function WorkbenchLayout({
         setMobileNavOpen(false);
         navigate("/settings");
       }}
+      onOpenAffairsSection={openAffairsSection}
       onSelectWorkspace={handleSelectWorkspace}
       onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
       onStartWorkspaceReorder={handleStartWorkspaceReorder}
@@ -15742,6 +15786,7 @@ export function WorkbenchLayout({
                     }
                     onOpenSearch={() => openSearchModal()}
                     onOpenSettings={() => navigate("/settings")}
+                    onOpenAffairsSection={openAffairsSection}
                     onSelectWorkspace={handleSelectWorkspace}
                     onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
                     onStartWorkspaceReorder={handleStartWorkspaceReorder}
@@ -15927,6 +15972,7 @@ export function WorkbenchLayout({
                     }
                     onOpenSearch={() => openSearchModal()}
                     onOpenSettings={() => navigate("/settings")}
+                    onOpenAffairsSection={openAffairsSection}
                     onSelectWorkspace={handleSelectWorkspace}
                     onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
                     onStartWorkspaceReorder={handleStartWorkspaceReorder}

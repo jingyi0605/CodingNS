@@ -71,7 +71,7 @@ describe("WorkbenchLayout", () => {
     const user = userEvent.setup();
     const view = renderWorkbenchRoute("/affairs");
     await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") });
-    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+    const settingsButton = view.container.querySelector(`.workbench-nav-toolbar button[aria-label="${t("settings.title")}"]`);
 
     if (!(settingsButton instanceof HTMLElement)) {
       throw new Error("未找到设置按钮");
@@ -215,6 +215,67 @@ describe("WorkbenchLayout", () => {
     expect(await screen.findByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
   });
 
+  it("代码视图顶部菜单会显示对话、搜索、文档和工作台入口", async () => {
+    mockAffairsLibraryFetch();
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await screen.findByRole("tab", { name: t("shell.workbenchModeCode") });
+    const menu = view.container.querySelector(".workbench-nav-code-entries");
+
+    if (!(menu instanceof HTMLElement)) {
+      throw new Error("未找到代码视图顶部菜单");
+    }
+
+    const labels = Array.from(menu.querySelectorAll("button span:last-child"))
+      .map((node) => node.textContent?.trim())
+      .filter(Boolean);
+
+    expect(labels).toEqual([
+      t("shell.conversationEntry"),
+      t("shell.searchEntry"),
+      t("shell.affairsLibraryNav"),
+      t("shell.affairsWorkbenchNav")
+    ]);
+  });
+
+  it("代码视图点击文档入口后会切到事务文档视图", async () => {
+    mockAffairsLibraryFetch();
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话一",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    const user = userEvent.setup();
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await user.click(await screen.findByRole("button", { name: t("shell.affairsLibraryNav") }));
+
+    expect(await screen.findByRole("tab", { name: t("shell.workbenchModeAffairs") })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("current-path")).not.toBeInTheDocument();
+  });
+
   it("事务模式入口不会复用错误写入的设置页路径", async () => {
     writeViewSnapshot("workbench.mode.affairs.last-path.workspace-1", "/settings");
     writeViewSnapshot("workbench.affairs.state.workspace-1", {
@@ -276,7 +337,7 @@ describe("WorkbenchLayout", () => {
     const user = userEvent.setup();
     const view = renderWorkbenchRoute("/affairs");
     await screen.findByRole("tab", { name: t("shell.affairsLibraryNav") });
-    const settingsButton = view.container.querySelector(".workbench-nav-settings-button");
+    const settingsButton = view.container.querySelector(`.workbench-nav-toolbar button[aria-label="${t("settings.title")}"]`);
 
     if (!(settingsButton instanceof HTMLElement)) {
       throw new Error("未找到设置按钮");
