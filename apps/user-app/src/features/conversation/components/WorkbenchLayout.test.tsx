@@ -3870,12 +3870,12 @@ describe("WorkbenchLayout", () => {
 
     await user.click(screen.getByRole("tab", { name: t("shell.affairsLibraryNav") }));
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/documents");
+      expect(screen.getByTestId("current-path").textContent).toBe("/documents");
     });
 
     await user.click(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") }));
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/workbench");
+      expect(screen.getByTestId("current-path").textContent).toBe("/workbench");
     });
   });
 

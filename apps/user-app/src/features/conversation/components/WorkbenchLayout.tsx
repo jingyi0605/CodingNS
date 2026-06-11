@@ -176,11 +176,11 @@ import {
   buildWorkspaceChatPath,
   buildWorkspaceNewChatPath,
   buildWorkspaceDebugPath,
-  buildWorkspaceDocumentsPath,
+  buildDocumentsPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
   buildWorkspaceSessionIndexPath,
-  buildWorkspaceWorkbenchPath,
+  buildWorkbenchPath,
   buildWorkspaceSessionPath,
   buildWorkspaceButlerPath,
   buildWorkspaceTerminalsPath,
@@ -836,8 +836,6 @@ function resolveRouteWorkspaceId(pathname: string, search: string): string | nul
     "/workspaces/:workspaceId",
     "/workspaces/:workspaceId/sessions",
     "/workspaces/:workspaceId/sessions/:sessionId",
-    "/workspaces/:workspaceId/documents",
-    "/workspaces/:workspaceId/workbench",
     "/workspaces/:workspaceId/chats",
     "/workspaces/:workspaceId/chats/new",
     "/workspaces/:workspaceId/chats/:chatId",
@@ -937,11 +935,11 @@ function isSessionDetailRoute(pathname: string) {
 }
 
 function resolveCodeEmbeddedAffairsSectionFromPath(pathname: string): "library" | "workbench" | null {
-  if (matchPath("/workspaces/:workspaceId/documents", pathname)) {
+  if (matchPath("/documents", pathname)) {
     return "library";
   }
 
-  if (matchPath("/workspaces/:workspaceId/workbench", pathname)) {
+  if (matchPath("/workbench", pathname)) {
     return "workbench";
   }
 
@@ -953,16 +951,14 @@ function isCodeEmbeddedAffairsRoute(pathname: string) {
 }
 
 function buildCodeEmbeddedAffairsRoutePath(
-  workspaceId: string,
-  section: AffairsViewState["primarySection"],
-  workspaceRef?: WorkspaceRef | null
+  section: AffairsViewState["primarySection"]
 ): string | null {
   if (section === "library") {
-    return buildWorkspaceDocumentsPath(workspaceId, workspaceRef);
+    return buildDocumentsPath();
   }
 
   if (section === "workbench") {
-    return buildWorkspaceWorkbenchPath(workspaceId, workspaceRef);
+    return buildWorkbenchPath();
   }
 
   return null;
@@ -1053,14 +1049,6 @@ function resolveFallbackWorkspaceRoute(
 ): string {
   if (matchPath("/workspaces/:workspaceId/debug", pathname)) {
     return buildWorkspaceDebugPath(workspaceId, workspaceRef);
-  }
-
-  if (matchPath("/workspaces/:workspaceId/documents", pathname)) {
-    return buildWorkspaceDocumentsPath(workspaceId, workspaceRef);
-  }
-
-  if (matchPath("/workspaces/:workspaceId/workbench", pathname)) {
-    return buildWorkspaceWorkbenchPath(workspaceId, workspaceRef);
   }
 
   if (matchPath("/workspaces/:workspaceId", pathname)) {
@@ -13857,11 +13845,7 @@ export function WorkbenchLayout({
       });
     });
 
-    const targetPath = buildCodeEmbeddedAffairsRoutePath(
-      workspaceId,
-      nextState.primarySection,
-      workspaceId === currentWorkspaceId ? currentWorkspaceRef : null
-    );
+    const targetPath = buildCodeEmbeddedAffairsRoutePath(nextState.primarySection);
 
     if (targetPath && `${location.pathname}${location.search}` !== targetPath) {
       navigate(targetPath);

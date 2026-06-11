@@ -26,7 +26,7 @@ import {
   type TerminalPageWorkbenchShellOverrides
 } from "../terminal/pages/TerminalPage";
 import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
-import { buildWorkspaceSessionIndexPath, buildWorkspaceWorkbenchPath } from "../workbench/utils/workbench-navigation";
+import { buildWorkspaceSessionIndexPath, buildWorkbenchPath } from "../workbench/utils/workbench-navigation";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../platform/desktop/window-drag";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
@@ -145,7 +145,7 @@ function resolveDesktopCodeWindowRoute(descriptor: WindowDescriptor): string | n
 
 function resolveLegacyAffairsWindowRoute(descriptor: WindowDescriptor): string | null {
   const workspaceId = descriptor.workspaceId?.trim() ?? "";
-  return workspaceId ? buildWorkspaceWorkbenchPath(workspaceId) : "/landing";
+  return workspaceId ? buildWorkbenchPath() : "/landing";
 }
 
 function resolveDesktopWindowNativeTitle(

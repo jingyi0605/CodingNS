@@ -215,7 +215,7 @@ describe("DesktopWindowPage", () => {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/desktop-window/:windowId" element={<DesktopWindowPage />} />
-          <Route path="/workspaces/:workspaceId/workbench" element={<CurrentPathProbe />} />
+          <Route path="/workbench" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions/:sessionId" element={<CurrentPathProbe />} />
           <Route path="/workspaces/:workspaceId/sessions" element={<CurrentPathProbe />} />
         </Routes>
@@ -448,7 +448,7 @@ describe("DesktopWindowPage", () => {
     renderPage("/desktop-window/affairs-workspace-1");
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path")).toHaveTextContent("/workspaces/workspace-1/workbench");
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/workbench");
     });
   });
 

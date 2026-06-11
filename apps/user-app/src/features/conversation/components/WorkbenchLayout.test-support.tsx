@@ -395,8 +395,8 @@ export function renderWorkbenchRoute(
             <Route path="/workspaces/:workspaceId/chats" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/chats/new" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/chats/:chatId" element={<CurrentLocationProbe />} />
-            <Route path="/workspaces/:workspaceId/documents" element={<CurrentLocationProbe />} />
-            <Route path="/workspaces/:workspaceId/workbench" element={<CurrentLocationProbe />} />
+            <Route path="/documents" element={<CurrentLocationProbe />} />
+            <Route path="/workbench" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId/butler" element={<CurrentLocationProbe />} />
             <Route path="/settings" element={<CurrentLocationProbe />} />

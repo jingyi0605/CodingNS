@@ -190,11 +190,11 @@ const appRoutes = [
             )
           },
           {
-            path: "workspaces/:workspaceId/documents",
+            path: "documents",
             element: null
           },
           {
-            path: "workspaces/:workspaceId/workbench",
+            path: "workbench",
             element: null
           },
           {
