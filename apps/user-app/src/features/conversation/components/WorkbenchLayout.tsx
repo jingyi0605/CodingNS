@@ -3657,7 +3657,7 @@ function ImportIcon() {
 
 function WorkspaceManageIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg className="workbench-toolbar-icon workbench-toolbar-icon-notification" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <rect x="4" y="5" width="16" height="14" rx="2" />
       <line x1="8" y1="10" x2="16" y2="10" />
       <line x1="8" y1="14" x2="12" y2="14" />
@@ -3668,7 +3668,7 @@ function WorkspaceManageIcon() {
 
 function NotificationBellIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg className="workbench-toolbar-icon workbench-toolbar-icon-settings" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path
         d="M7.5 10.2a4.5 4.5 0 1 1 9 0v3.1c0 .8.3 1.6.9 2.2l.8.8H5.8l.8-.8c.6-.6.9-1.4.9-2.2z"
         strokeLinecap="round"

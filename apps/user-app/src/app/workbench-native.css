@@ -2587,6 +2587,17 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   height: 16px;
   flex-shrink: 0;
 }
+.workbench-toolbar-icon {
+  transform-origin: center;
+}
+
+.workbench-toolbar-icon-notification {
+  transform: scale(1.08);
+}
+
+.workbench-toolbar-icon-settings {
+  transform: scale(0.88);
+}
 .workbench-host-switcher-item-copy {
   display: flex;
   min-width: 0;
