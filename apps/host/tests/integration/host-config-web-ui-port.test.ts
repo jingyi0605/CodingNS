@@ -76,7 +76,7 @@ describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
     expect(config.codexHomeDir).toBe("/Users/jackson/custom-codex-home");
   });
 
-  it("npm 包安装模式会优先使用随包安装的 Codex CLI", () => {
+  it("npm 包安装模式不会让 cwd 里的旧 Codex CLI 抢在 Host 依赖前面", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-cli-"));
     tempDirs.push(tempDir);
     const originalCwd = process.cwd();
@@ -98,7 +98,7 @@ describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
         webUiDir: publicDir
       });
 
-      expect(realpathSync(config.codexCliPath)).toBe(realpathSync(codexShimPath));
+      expect(realpathSync(config.codexCliPath)).not.toBe(realpathSync(codexShimPath));
       expect(realpathSync(config.codexCliPath)).not.toBe(realpathSync(globalCodexPath));
     } finally {
       process.chdir(originalCwd);

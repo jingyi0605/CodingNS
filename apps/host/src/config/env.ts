@@ -340,10 +340,10 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
 
   const configDir = path.dirname(fileURLToPath(import.meta.url));
   const moduleSearchRoots = uniquePaths([
-    process.cwd(),
     path.resolve(configDir, "..", "..", ".."),
     path.resolve(configDir, "..", ".."),
-    resolveAppRootDir()
+    resolveAppRootDir(),
+    process.cwd()
   ]);
   const resolvedCodexScript = resolveModuleSpecifier("@openai/codex/bin/codex.js");
   const resolvedCodexSdkEntry = resolveModuleSpecifier("@openai/codex-sdk");
@@ -395,7 +395,9 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
     ])
   ];
   const globalCodexPath = resolveExecutableOnPath("codex");
-  const candidates = [...packageCandidates, ...resolvedCandidates, globalCodexPath];
+  // 先使用当前 Host 依赖树里能解析到的 Codex，再退回 cwd 和 PATH。
+  // npm 包安装模式下，cwd 里的旧项目依赖可能带着不支持 app-server 的旧 codex。
+  const candidates = [...resolvedCandidates, ...packageCandidates, globalCodexPath];
 
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {
