@@ -3,6 +3,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolvePackageRoot(import.meta.url),
+  scriptLabel: "codingns-postinstall"
+});
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const moduleRequire = createRequire(import.meta.url);

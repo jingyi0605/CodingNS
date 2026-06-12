@@ -1,9 +1,10 @@
-const { existsSync, readdirSync, readFileSync } = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const os = require("node:os");
-const path = require("node:path");
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-function ensureNode22ForCurrentScript(options = {}) {
+export function ensureNode22ForCurrentScript(options = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const scriptLabel = options.scriptLabel ?? "script";
 
@@ -21,7 +22,7 @@ function ensureNode22ForCurrentScript(options = {}) {
 
   if (!runtime) {
     throw new Error(
-      `[${scriptLabel}] 未找到可用的 Node 22 运行时。请先执行 docs/使用说明/DEVELOPMENT.md 里的 nvm use 22，或安装 /opt/homebrew/opt/node@22。`
+      `[${scriptLabel}] 未找到可用的 Node 22 运行时。请先执行 nvm use 22，或安装 /opt/homebrew/opt/node@22。`
     );
   }
 
@@ -47,7 +48,7 @@ function ensureNode22ForCurrentScript(options = {}) {
   process.exit(result.status ?? 0);
 }
 
-function resolveNode22Runtime(rootDir) {
+export function resolveNode22Runtime(rootDir) {
   const desiredVersion = readDesiredNodeVersion(rootDir);
   const candidates = collectNodeCandidates(desiredVersion);
 
@@ -62,16 +63,7 @@ function resolveNode22Runtime(rootDir) {
   return null;
 }
 
-function buildNode22Env(baseEnv, runtime) {
-  const nextPath = [runtime.binDir, baseEnv.PATH ?? ""].filter(Boolean).join(":");
-  return {
-    ...baseEnv,
-    PATH: nextPath,
-    CODINGNS_NODE22_BIN: runtime.nodePath
-  };
-}
-
-function readDesiredNodeVersion(rootDir) {
+export function readDesiredNodeVersion(rootDir) {
   const nvmrcPath = path.join(rootDir, ".nvmrc");
 
   try {
@@ -79,6 +71,10 @@ function readDesiredNodeVersion(rootDir) {
   } catch {
     return "22";
   }
+}
+
+export function resolvePackageRoot(fromUrl = import.meta.url) {
+  return path.resolve(path.dirname(fileURLToPath(fromUrl)), "..");
 }
 
 function collectNodeCandidates(desiredVersion) {
@@ -178,10 +174,3 @@ function pushCandidate(target, value) {
 
   target.push(value);
 }
-
-module.exports = {
-  buildNode22Env,
-  ensureNode22ForCurrentScript,
-  resolveNode22Runtime,
-  readDesiredNodeVersion
-};

@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { ensureNode22ForCurrentScript, resolveWorkspaceRoot } from "./node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolveWorkspaceRoot(import.meta.url),
+  scriptLabel: "related-test"
+});
 
 const repoRoot = process.cwd();
 const cliArgs = process.argv.slice(2).filter((arg) => arg !== "--");

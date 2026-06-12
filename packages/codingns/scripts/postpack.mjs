@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolvePackageRoot(import.meta.url),
+  scriptLabel: "codingns-postpack"
+});
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const packageJsonPath = path.join(packageRoot, "package.json");

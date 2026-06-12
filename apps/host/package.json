@@ -4,7 +4,7 @@
   "version": "0.9.9",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": "22.x"
   },
   "scripts": {
     "predev": "pnpm --dir ../../packages/session-sync-core build",

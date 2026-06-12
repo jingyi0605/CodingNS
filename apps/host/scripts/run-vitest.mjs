@@ -1,4 +1,10 @@
 import { spawn } from "node:child_process";
+import { ensureNode22ForCurrentScript, resolveWorkspaceRoot } from "../../../scripts/node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolveWorkspaceRoot(import.meta.url),
+  scriptLabel: "host-test"
+});
 
 // pnpm run test -- <patterns> 会把额外的 `--` 传进来，这里统一剥离，避免误触发全量测试。
 const rawArgs = process.argv.slice(2).filter((arg) => arg !== "--");

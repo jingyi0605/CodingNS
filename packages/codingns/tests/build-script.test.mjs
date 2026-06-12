@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 import { resolvePnpmInvocation } from "../scripts/build.mjs";
 import {
@@ -10,6 +11,8 @@ import {
   rewritePackageJsonForPublish,
   stripPackLifecycleScripts
 } from "../scripts/publish-package-utils.mjs";
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 test("resolvePnpmInvocation 遇到 npm_execpath 指向 npm 时会回退到 pnpm 命令", () => {
   const command = resolvePnpmInvocation(["--dir", "/tmp/project", "build"], {
@@ -49,7 +52,6 @@ test("resolvePnpmInvocation 遇到 pnpm 的 npm_execpath 时会复用当前入�
 });
 
 test("rewritePackageJsonForPublish 会改写 workspace 依赖并补齐 bundle 设置", () => {
-  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const originalPackageJson = JSON.parse(
     fs.readFileSync(path.join(workspaceRoot, "codingns", "package.json"), "utf8")
   );
@@ -106,4 +108,29 @@ test("vendor 里的 better-sqlite3 Windows 受控包在非 Windows 平台会跳�
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /非 win32 环境，跳过运行时校验/);
+});
+
+test("codingns CLI 在非 Node 22 进程下会自动切换到 Node 22", () => {
+  const cliPath = path.join(workspaceRoot, "codingns", "bin", "codingns.mjs");
+  const node25Path = "/opt/homebrew/bin/node";
+  const node22Path = "/opt/homebrew/opt/node@22/bin/node";
+
+  if (!fs.existsSync(node25Path) || !fs.existsSync(node22Path)) {
+    return;
+  }
+
+  const result = spawnSync(node25Path, [cliPath, "--help"], {
+    cwd: path.join(workspaceRoot, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CODINGNS_CLI_RUNTIME_PROBE: "1"
+    }
+  });
+
+  assert.equal(result.status, 0);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.nodeVersion.startsWith("v22."), true);
+  assert.equal(fs.realpathSync(payload.execPath), fs.realpathSync(node22Path));
+  assert.equal(result.error, undefined);
 });

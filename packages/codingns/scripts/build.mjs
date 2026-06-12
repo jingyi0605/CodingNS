@@ -3,6 +3,12 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
+import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolvePackageRoot(import.meta.url),
+  scriptLabel: "codingns-build"
+});
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const workspaceRoot = path.resolve(packageRoot, "..", "..");

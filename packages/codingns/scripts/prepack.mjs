@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runtime.mjs";
 import {
   cleanupVendorRoot,
   collectWorkspacePackageVersions,
@@ -10,6 +11,11 @@ import {
   rewritePackageJsonForPublish,
   writeJson
 } from "./publish-package-utils.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolvePackageRoot(import.meta.url),
+  scriptLabel: "codingns-prepack"
+});
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const workspaceRoot = path.resolve(packageRoot, "..", "..");

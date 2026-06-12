@@ -106,8 +106,8 @@ msg() {
 
     zh:error_root) printf '不要直接用 sudo 整个执行脚本。请用普通用户运行，脚本会在需要管理员权限时单独请求 sudo。';;
     en:error_root) printf 'Do not run the whole installer with sudo. Run it as a normal user and the script will request sudo only when needed.';;
-    zh:error_no_node) printf '未检测到 node，请先安装 Node.js 22 或更高版本。';;
-    en:error_no_node) printf 'Node.js was not found. Please install Node.js 22 or later first.';;
+    zh:error_no_node) printf '未检测到 node，请先安装 Node.js 22。';;
+    en:error_no_node) printf 'Node.js was not found. Please install Node.js 22 first.';;
     zh:error_no_npm) printf '未检测到 npm，请先安装 npm 10 或更高版本。';;
     en:error_no_npm) printf 'npm was not found. Please install npm 10 or later first.';;
     zh:error_no_make) printf '未检测到 make，Linux 下安装 CodingNS 需要编译工具链。';;
@@ -116,8 +116,8 @@ msg() {
     en:error_no_cpp_compiler) printf 'g++ was not found. CodingNS installation on Linux needs a C++ compiler.';;
     zh:error_no_python3) printf '未检测到 python3，Linux 下安装 CodingNS 需要 Python 3。';;
     en:error_no_python3) printf 'python3 was not found. CodingNS installation on Linux needs Python 3.';;
-    zh:error_bad_node_version) printf '当前 Node.js 版本是 %s，项目要求 >= 22。' "$@";;
-    en:error_bad_node_version) printf 'Your current Node.js version is %s, but CodingNS requires >= 22.' "$@";;
+    zh:error_bad_node_version) printf '当前 Node.js 版本是 %s，项目要求固定为 22.x。' "$@";;
+    en:error_bad_node_version) printf 'Your current Node.js version is %s, but CodingNS requires Node.js 22.x.' "$@";;
     zh:error_bad_npm_version) printf '当前 npm 版本是 %s，项目要求 >= 10。' "$@";;
     en:error_bad_npm_version) printf 'Your current npm version is %s, but CodingNS requires >= 10.' "$@";;
     zh:error_read_node_version) printf '无法识别 Node.js 版本：%s' "$@";;
@@ -1379,7 +1379,7 @@ collect_prerequisite_issues() {
       if ! is_windows_environment; then
         PREREQUISITE_ISSUES+=("error_read_node_version|$node_version")
       fi
-    elif (( node_major < 22 )) && ! is_windows_environment; then
+    elif (( node_major != 22 )) && ! is_windows_environment; then
       PREREQUISITE_ISSUES+=("error_bad_node_version|$node_version")
     fi
   fi
@@ -1523,15 +1523,18 @@ install_prerequisites_macos() {
   say_info info_installing_nodejs
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    say_info_custom "$BREW_BIN install node"
+    say_info_custom "$BREW_BIN install node@22"
+    say_info_custom "$BREW_BIN link --force --overwrite node@22"
     return
   fi
 
-  if "$BREW_BIN" list node >/dev/null 2>&1; then
-    "$BREW_BIN" upgrade node || "$BREW_BIN" install node
+  if "$BREW_BIN" list node@22 >/dev/null 2>&1; then
+    "$BREW_BIN" upgrade node@22 || "$BREW_BIN" install node@22
   else
-    "$BREW_BIN" install node
+    "$BREW_BIN" install node@22
   fi
+
+  "$BREW_BIN" link --force --overwrite node@22 >/dev/null 2>&1 || true
 
   hash -r
 }
