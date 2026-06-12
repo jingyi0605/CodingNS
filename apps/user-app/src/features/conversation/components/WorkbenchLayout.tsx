@@ -87,11 +87,13 @@ import { useTheme } from "../../../shared/theme/theme";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  deleteAffairsLightweightSession,
   deleteSession,
   cleanupWorktree,
   createWorktree,
   getAffairsAssistantSessionsSnapshot,
   getAffairsLibrarySnapshot,
+  getAffairsLightweightSessionMessages,
   getProviderCapabilities,
   getWorktreeMergePreview,
   getSessionPermissionRequests,
@@ -102,10 +104,14 @@ import {
   listScopedWorkspaces,
   listAffairsLibraryDocuments,
   listAffairsLightweightSessions,
+  markAffairsLightweightSessionSeen,
   mergeWorktreeIntoParent,
   reorderWorkspaces,
   removeWorkspace,
+  renameAffairsLightweightSessionTitle,
   renameSessionTitle,
+  updateAffairsLightweightSessionArchiveState,
+  updateAffairsLightweightSessionFavoriteState,
   updateSessionArchiveState,
   updateSessionFavoriteState,
   updateWorkspaceNavigationState,
@@ -170,9 +176,10 @@ import {
   loadSessionExportSnapshot
 } from "../session-export";
 import { buildSessionTitlePresentation } from "../session-title";
-import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
+import { toViewMessage, type SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import {
   buildDraftSessionPath,
+  buildWorkspaceChatIndexPath,
   buildWorkspaceChatPath,
   buildWorkspaceNewChatPath,
   buildWorkspaceDebugPath,
@@ -1783,6 +1790,15 @@ interface NavigationSessionEntry {
   workspace: WorkspaceDto;
 }
 
+interface LightweightChatSessionEntry {
+  session: SessionSummaryDto;
+  workspace: WorkspaceDto;
+}
+
+type FavoriteSidebarEntry =
+  | (NavigationSessionEntry & { favoriteEntryKind?: "workspace-session" })
+  | (LightweightChatSessionEntry & { favoriteEntryKind: "lightweight-chat" });
+
 interface BatchSessionDeletionTarget {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
@@ -2021,7 +2037,7 @@ interface WorktreeBaseRefOptionGroup {
   items: WorktreeBaseRefOption[];
 }
 
-type CenterTab = "conversation" | "terminals" | "butler";
+type CenterTab = "conversation" | "butler";
 type InfoTab = "files" | "git" | "terminals";
 type AffairsSearchSortMode = "relevance" | "updated_desc" | "title_asc";
 
@@ -4735,6 +4751,7 @@ interface SessionExportLayoutSnapshot {
 
 function SessionCard({
   menuKey,
+  cardClassName,
   session,
   workspace,
   workspaceContext,
@@ -4749,6 +4766,7 @@ function SessionCard({
   hasSubagents = false,
   subagentListExpanded = false,
   showParallelBadge = true,
+  hideMetaRow = false,
   selectionMode = false,
   selected = false,
   onToggleSelect,
@@ -4763,6 +4781,7 @@ function SessionCard({
   onCloseMenu
 }: {
   menuKey: string;
+  cardClassName?: string;
   session: SessionSummaryDto;
   workspace: WorkspaceDto;
   workspaceContext: WorkspaceVisualContext;
@@ -4777,6 +4796,7 @@ function SessionCard({
   hasSubagents?: boolean;
   subagentListExpanded?: boolean;
   showParallelBadge?: boolean;
+  hideMetaRow?: boolean;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -5043,7 +5063,7 @@ function SessionCard({
 
   return (
     <article
-      className="workbench-session-card"
+      className={["workbench-session-card", cardClassName].filter(Boolean).join(" ")}
       data-active={isActive}
       data-depth={depth}
       data-subagent={isSubagentSession(session)}
@@ -5166,20 +5186,22 @@ function SessionCard({
                 </span>
               ) : null}
             </div>
-            <div className="session-meta-row">
-              <span className="session-meta">
-                {buildSessionMeta(
-                  session,
-                  workspace,
-                  showWorkspaceName,
-                  workspaceContext.displayName
-                )}
-              </span>
-              {sessionActivityBadgeLabel && sessionActivityBadgeClassName ? (
-                <span className={sessionActivityBadgeClassName}>{sessionActivityBadgeLabel}</span>
-              ) : null}
-              <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
-            </div>
+            {!hideMetaRow ? (
+              <div className="session-meta-row">
+                <span className="session-meta">
+                  {buildSessionMeta(
+                    session,
+                    workspace,
+                    showWorkspaceName,
+                    workspaceContext.displayName
+                  )}
+                </span>
+                {sessionActivityBadgeLabel && sessionActivityBadgeClassName ? (
+                  <span className={sessionActivityBadgeClassName}>{sessionActivityBadgeLabel}</span>
+                ) : null}
+                <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+              </div>
+            ) : null}
           </div>
         </button>
       </div>
@@ -5838,6 +5860,7 @@ function SidebarContent({
   codeEmbeddedAffairsState,
   affairsLibraryEnabled,
   lightweightChatSessionsByWorkspaceId,
+  lightweightArchivedChatSessionsByWorkspaceId,
   activeLightweightChatId,
   isConversationActive,
   isTerminalActive,
@@ -5873,6 +5896,11 @@ function SidebarContent({
   onToggleFavoriteSession,
   onArchiveSession,
   onUnarchiveSession,
+  onToggleLightweightChatFavorite,
+  onArchiveLightweightChat,
+  onUnarchiveLightweightChat,
+  onRenameLightweightChat,
+  onDeleteLightweightChat,
   workspaceManagementStateById,
   setWorkspaceManagementStateById,
   unreadNotificationCount,
@@ -5885,12 +5913,13 @@ function SidebarContent({
   workspaceGroups: WorkspaceSidebarGroup[];
   workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
   sessionDisplaySortMode: SessionDisplaySortMode;
-  favoriteSessions: NavigationSessionEntry[];
+  favoriteSessions: FavoriteSidebarEntry[];
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
   codeEmbeddedAffairsState?: AffairsViewState | null;
   affairsLibraryEnabled: boolean;
   lightweightChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
+  lightweightArchivedChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
   activeLightweightChatId: string | null;
   isConversationActive: boolean;
   isTerminalActive: boolean;
@@ -5906,7 +5935,7 @@ function SidebarContent({
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onNavigateConversation: () => void;
   onNavigateTerminals: () => void;
-  onOpenTerminalDock: () => void;
+  onOpenTerminalDock: (workspaceId?: string | null, workspaceRef?: WorkspaceRef | null) => void;
   onNavigateButler: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
@@ -5930,6 +5959,11 @@ function SidebarContent({
   onToggleFavoriteSession: (sessionId: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
   onUnarchiveSession: (sessionId: string) => Promise<void>;
+  onToggleLightweightChatFavorite: (workspace: WorkspaceDto, session: SessionSummaryDto) => Promise<void>;
+  onArchiveLightweightChat: (workspace: WorkspaceDto, session: SessionSummaryDto) => Promise<void>;
+  onUnarchiveLightweightChat: (workspace: WorkspaceDto, sessionId: string) => Promise<void>;
+  onRenameLightweightChat: (workspace: WorkspaceDto, sessionId: string, title: string) => Promise<SessionSummaryDto>;
+  onDeleteLightweightChat: (workspace: WorkspaceDto, session: SessionSummaryDto) => Promise<void>;
   workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
   setWorkspaceManagementStateById: Dispatch<SetStateAction<Record<string, WorkspaceManagementViewState>>>;
   unreadNotificationCount: number;
@@ -6233,7 +6267,9 @@ function SidebarContent({
     useState<{ top: number; left: number; width: number } | null>(null);
   const [createWorktreeBaseRefPopoverHeight, setCreateWorktreeBaseRefPopoverHeight] = useState<number | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
+  const [lightweightChatArchiveWorkspaceId, setLightweightChatArchiveWorkspaceId] = useState<string | null>(null);
   const [sessionDeletionTarget, setSessionDeletionTarget] = useState<NavigationSessionEntry | null>(null);
+  const [lightweightChatDeletionTarget, setLightweightChatDeletionTarget] = useState<LightweightChatSessionEntry | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [batchSessionDeletionTarget, setBatchSessionDeletionTarget] = useState<BatchSessionDeletionTarget | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -6259,6 +6295,7 @@ function SidebarContent({
     collapsedWorkspaceIds: []
   });
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
+  const [lightweightChatRenameTarget, setLightweightChatRenameTarget] = useState<LightweightChatSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [batchWorkspaceId, setBatchWorkspaceId] = useState<string | null>(null);
@@ -6390,6 +6427,25 @@ function SidebarContent({
     toggleSearch: toggleArchiveSearch
   } = useArchiveSessionSearch(archiveWorkspaceGroup !== null, archiveSessions);
   const archiveSearchInputId = useId();
+  const lightweightChatArchiveWorkspace =
+    lightweightChatArchiveWorkspaceId
+      ? workspaceGroups.find((group) => group.workspace.id === lightweightChatArchiveWorkspaceId)?.workspace ?? null
+      : null;
+  const lightweightArchivedSessions =
+    lightweightChatArchiveWorkspaceId
+      ? lightweightArchivedChatSessionsByWorkspaceId[lightweightChatArchiveWorkspaceId] ?? []
+      : [];
+  const {
+    searchOpen: lightweightArchiveSearchOpen,
+    searchKeyword: lightweightArchiveSearchKeyword,
+    filteredSessions: filteredLightweightArchivedSessions,
+    summaryLoading: lightweightArchiveSummaryLoading,
+    summaryError: lightweightArchiveSummaryError,
+    summaryBySessionId: lightweightArchiveSummaryBySessionId,
+    setSearchKeyword: setLightweightArchiveSearchKeyword,
+    toggleSearch: toggleLightweightArchiveSearch
+  } = useArchiveSessionSearch(Boolean(lightweightChatArchiveWorkspaceId), lightweightArchivedSessions);
+  const lightweightArchiveSearchInputId = useId();
   const activeBatchWorkspaceTarget = useMemo(
     () => findSidebarBatchTarget(workspaceGroups, batchWorkspaceId),
     [batchWorkspaceId, workspaceGroups]
@@ -6584,8 +6640,9 @@ function SidebarContent({
   }
 
   async function handleOpenWorkspaceTerminals(workspace: WorkspaceDto) {
-    const workspaceRef = resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace));
-    navigate(buildWorkspaceTerminalsPath(workspace.id, workspaceRef));
+    const workspaceHostId = resolveWorkspaceHostId(workspace);
+    const workspaceRef = resolveWorkspaceRefForHost(workspace, workspaceHostId);
+    onOpenTerminalDock(workspace.id, workspaceRef);
     onClose?.();
   }
 
@@ -8510,7 +8567,11 @@ function SidebarContent({
       (activeWorkspaceId ? workspaceGroups.find((group) => group.workspace.id === activeWorkspaceId)?.workspace ?? null : null)
       ?? workspaceGroups[0]?.workspace
       ?? null;
-    const sessions = workspace ? lightweightChatSessionsByWorkspaceId[workspace.id] ?? [] : [];
+    const sessions = workspace
+      ? (lightweightChatSessionsByWorkspaceId[workspace.id] ?? []).filter((session) => session.isFavorite !== true)
+      : [];
+    const archivedSessions = workspace ? lightweightArchivedChatSessionsByWorkspaceId[workspace.id] ?? [] : [];
+    const workspaceContext = workspace ? getWorkspaceContext(workspace) : null;
 
     return (
       <section className="workbench-section-block workbench-workspace-section workbench-chat-section" aria-label={t("shell.chatSectionTitle")}>
@@ -8535,50 +8596,95 @@ function SidebarContent({
             ) : null}
           </div>
         </div>
-        <div className="workbench-session-list workbench-chat-list">
-          {!workspace || sessions.length === 0 ? (
-            <p className="workbench-session-empty">{t("shell.chatSectionEmpty")}</p>
-          ) : sessions.map((session) => {
-            const titlePresentation = buildSessionTitlePresentation(session.title, t("shell.untitledSession"));
-            const active = activeLightweightChatId === session.sessionId;
+	        <div className="workbench-session-list workbench-chat-list">
+	          {!workspace || sessions.length === 0 ? (
+	            <p className="workbench-session-empty">{t("shell.chatSectionEmpty")}</p>
+	          ) : sessions.map((session) => {
+	            const titlePresentation = buildSessionTitlePresentation(session.title, t("shell.untitledSession"));
+	            const active = activeLightweightChatId === session.sessionId;
+              const menuKey = `lightweight-chat:${workspace.id}:${session.sessionId}`;
+              const lightweightEntry = {
+                session,
+                workspace
+              } satisfies LightweightChatSessionEntry;
 
-            return (
-              <article
-                key={session.sessionId}
-                className="workbench-session-card workbench-chat-card"
-                data-active={active}
-                data-depth={0}
-              >
-                <div className="workbench-session-main">
-                  <span
-                    className={sessionStateClassName(session, { isActive: active })}
-                    data-activity-source={session.activitySource}
-                    aria-hidden="true"
-                  />
-                  <button
-                    type="button"
-                    className="workbench-session-link"
-                    data-active={active}
-                    onClick={() => {
+	            return (
+                <div key={session.sessionId}>
+                  <SessionCard
+                    menuKey={menuKey}
+                    cardClassName="workbench-chat-card"
+                    session={session}
+                    workspace={workspace}
+                    workspaceContext={workspaceContext ?? createFallbackWorkspaceVisualContext(workspace)}
+                    isActive={active}
+                    isFavorite={session.isFavorite === true}
+                    menuOpen={openSessionMenuKey === menuKey}
+                    showWorkspaceName={false}
+                    hideMetaRow
+                    depth={0}
+                    showActions
+                    exportDisabled
+                    onExport={() => undefined}
+                    menuAnchorPoint={openSessionMenuKey === menuKey ? openSessionMenuAnchorPoint : null}
+                    onOpenContextMenu={(anchorPoint) => openSessionMenu(menuKey, anchorPoint)}
+                    onOpen={() => {
                       onOpenLightweightChat(workspace, session);
                       onClose?.();
                     }}
-                  >
-                    <div className="workbench-session-link-copy">
-                      <div className="session-title-row">
-                        <span className="session-title" title={titlePresentation.fullTitle}>
-                          {titlePresentation.displayTitle}
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-    );
+                    onRename={() => {
+                      closeSessionMenu();
+                      setLightweightChatRenameTarget(lightweightEntry);
+                      setRenameTitleValue(session.title);
+                    }}
+                    onToggleFavorite={async () => {
+                      try {
+                        await onToggleLightweightChatFavorite(workspace, session);
+                      } catch (error) {
+                        showToast({
+                          title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+                          tone: "error"
+                        });
+                      }
+                    }}
+                    onArchive={async () => {
+                      try {
+                        await onArchiveLightweightChat(workspace, session);
+                      } catch (error) {
+                        showToast({
+                          title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+                          tone: "error"
+                        });
+                      }
+                    }}
+                    onDelete={() => {
+                      closeSessionMenu();
+                      setLightweightChatDeletionTarget(lightweightEntry);
+                    }}
+                    onCloseMenu={closeSessionMenu}
+                  />
+	                </div>
+	            );
+	          })}
+            {workspace && archivedSessions.length > 0
+              ? (
+                <button
+                  type="button"
+                  className="workbench-archive-folder"
+                  data-workspace-tone={workspaceContext?.tone ?? "root"}
+                  style={createWorkspaceToneStyle(workspaceContext)}
+                  onClick={() => setLightweightChatArchiveWorkspaceId(workspace.id)}
+                >
+                  <span className="workbench-archive-folder-main">
+                    <FolderArchiveIcon />
+                    <span>{t("shell.archiveFolderLabel")}</span>
+                  </span>
+                  <span className="workbench-section-counter">{archivedSessions.length}</span>
+                </button>
+              )
+              : null}
+	        </div>
+	      </section>
+	    );
   }
 
   function handleStartBatchSelection(workspaceId: string) {
@@ -9043,6 +9149,36 @@ function SidebarContent({
     }
   }
 
+  async function handleUnarchiveLightweightChat(sessionId: string) {
+    const workspaceId = lightweightChatArchiveWorkspaceId;
+
+    if (!workspaceId) {
+      return;
+    }
+
+    closeSessionMenu();
+
+    try {
+      const workspace =
+        workspaceGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
+
+      if (!workspace) {
+        return;
+      }
+
+      await onUnarchiveLightweightChat(workspace, sessionId);
+      showToast({
+        title: t("shell.archiveRestored"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+        tone: "error"
+      });
+    }
+  }
+
   function handleOpenRenameSession(session: SessionSummaryDto, workspace: WorkspaceDto) {
     closeSessionMenu();
     setRenameTarget({ session, workspace });
@@ -9080,6 +9216,74 @@ function SidebarContent({
       });
     } finally {
       setRenamingSessionId(null);
+    }
+  }
+
+  async function handleRenameLightweightChat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!lightweightChatRenameTarget) {
+      return;
+    }
+
+    const nextTitle = renameTitleValue.trim();
+
+    if (!nextTitle) {
+      return;
+    }
+
+    setRenamingSessionId(lightweightChatRenameTarget.session.sessionId);
+
+    try {
+      await onRenameLightweightChat(
+        lightweightChatRenameTarget.workspace,
+        lightweightChatRenameTarget.session.sessionId,
+        nextTitle
+      );
+      setLightweightChatRenameTarget(null);
+      setRenameTitleValue("");
+      showToast({
+        title: t("shell.renameSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.renameFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRenamingSessionId(null);
+    }
+  }
+
+  async function handleConfirmLightweightChatDeletion() {
+    if (!lightweightChatDeletionTarget || deletingSessionId) {
+      return;
+    }
+
+    const { session, workspace } = lightweightChatDeletionTarget;
+    setDeletingSessionId(session.sessionId);
+    closeSessionMenu();
+
+    try {
+      await onDeleteLightweightChat(workspace, session);
+      setLightweightChatDeletionTarget(null);
+
+      if (activeLightweightChatId === session.sessionId) {
+        navigate(buildWorkspaceChatIndexPath(workspace.id));
+      }
+
+      showToast({
+        title: t("shell.deleteSessionSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.deleteSessionFailed"),
+        tone: "error"
+      });
+    } finally {
+      setDeletingSessionId(null);
     }
   }
 
@@ -9509,11 +9713,79 @@ function SidebarContent({
               </div>
               <span className="workbench-section-counter">{favoriteSessions.length}</span>
             </div>
-            <div className="workbench-session-list">
-              {visibleFavoriteSessions.map((item) => {
-                const childSessions = getFavoriteChildSessions(item.session.sessionId);
+	            <div className="workbench-session-list">
+	              {visibleFavoriteSessions.map((item) => {
+                  if (item.favoriteEntryKind === "lightweight-chat") {
+                    const menuKey = `favorite:lightweight-chat:${item.workspace.id}:${item.session.sessionId}`;
+                    const workspaceContext = getWorkspaceContext(item.workspace);
 
-                return (
+                    return (
+                      <div key={`favorite:lightweight:${item.session.sessionId}`}>
+                        <SessionCard
+                          menuKey={menuKey}
+                          cardClassName="workbench-chat-card"
+                          session={item.session}
+                          workspace={item.workspace}
+                          workspaceContext={workspaceContext}
+                          isActive={activeLightweightChatId === item.session.sessionId}
+                          isFavorite
+                          menuOpen={openSessionMenuKey === menuKey}
+                          showWorkspaceName
+                          hideMetaRow
+                          depth={0}
+                          showActions
+                          exportDisabled
+                          onExport={() => undefined}
+                          menuAnchorPoint={openSessionMenuKey === menuKey ? openSessionMenuAnchorPoint : null}
+                          onOpenContextMenu={(anchorPoint) => openSessionMenu(menuKey, anchorPoint)}
+                          onOpen={() => {
+                            onOpenLightweightChat(item.workspace, item.session);
+                            onClose?.();
+                          }}
+                          onRename={() => {
+                            closeSessionMenu();
+                            setLightweightChatRenameTarget({
+                              session: item.session,
+                              workspace: item.workspace
+                            });
+                            setRenameTitleValue(item.session.title);
+                          }}
+                          onToggleFavorite={async () => {
+                            try {
+                              await onToggleLightweightChatFavorite(item.workspace, item.session);
+                            } catch (error) {
+                              showToast({
+                                title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+                                tone: "error"
+                              });
+                            }
+                          }}
+                          onArchive={async () => {
+                            try {
+                              await onArchiveLightweightChat(item.workspace, item.session);
+                            } catch (error) {
+                              showToast({
+                                title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+                                tone: "error"
+                              });
+                            }
+                          }}
+                          onDelete={() => {
+                            closeSessionMenu();
+                            setLightweightChatDeletionTarget({
+                              session: item.session,
+                              workspace: item.workspace
+                            });
+                          }}
+                          onCloseMenu={closeSessionMenu}
+                        />
+                      </div>
+                    );
+                  }
+
+	                const childSessions = getFavoriteChildSessions(item.session.sessionId);
+
+	                return (
                   <div key={item.session.sessionId}>
                     {renderSessionTreeBranch({
                       node: {
@@ -10481,7 +10753,98 @@ function SidebarContent({
       </SidebarModal>
 
       <SidebarModal
-        open={renameTarget !== null}
+        open={Boolean(lightweightChatArchiveWorkspaceId)}
+        title={t("shell.archiveModalTitle")}
+        description={
+          lightweightChatArchiveWorkspace
+            ? `${lightweightChatArchiveWorkspace.name} · ${t("shell.archiveModalDescription")}`
+            : t("shell.archiveModalDescription")
+        }
+        headerActions={lightweightArchivedSessions.length > 0 ? (
+          <button
+            type="button"
+            className="secondary-button"
+            aria-pressed={lightweightArchiveSearchOpen}
+            onClick={toggleLightweightArchiveSearch}
+          >
+            {t("shell.archiveSearchAction")}
+          </button>
+        ) : undefined}
+        onClose={() => setLightweightChatArchiveWorkspaceId(null)}
+      >
+        {lightweightArchiveSearchOpen ? (
+          <div className="workbench-archive-search-panel">
+            <ModalField label={t("shell.archiveSearchLabel")} htmlFor={lightweightArchiveSearchInputId}>
+              <input
+                id={lightweightArchiveSearchInputId}
+                type="text"
+                value={lightweightArchiveSearchKeyword}
+                placeholder={t("shell.archiveSearchPlaceholder")}
+                autoFocus
+                onChange={(event) => setLightweightArchiveSearchKeyword(event.target.value)}
+              />
+            </ModalField>
+            {lightweightArchiveSummaryLoading ? (
+              <p className="workbench-archive-search-status">{t("shell.archiveSearchSummaryLoading")}</p>
+            ) : null}
+            {lightweightArchiveSummaryError ? (
+              <p className="workbench-archive-search-status status-text" data-tone="warning">
+                {lightweightArchiveSummaryError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {lightweightChatArchiveWorkspace && filteredLightweightArchivedSessions.length > 0 ? (
+          <ModalList
+            className="workbench-archive-list"
+            data-workspace-tone={getWorkspaceContext(lightweightChatArchiveWorkspace).tone}
+            style={createWorkspaceToneStyle(getWorkspaceContext(lightweightChatArchiveWorkspace))}
+          >
+            {filteredLightweightArchivedSessions.map((session) => {
+              const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+              const archiveSummary = lightweightArchiveSummaryBySessionId[session.sessionId]?.trim() ?? "";
+
+              return (
+                <ModalListItem
+                  key={session.sessionId}
+                  className="workbench-archive-item"
+                  trailing={(
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void handleUnarchiveLightweightChat(session.sessionId)}
+                    >
+                      {t("shell.unarchiveAction")}
+                    </button>
+                  )}
+                >
+                  <div className="workbench-archive-item-main">
+                    <div className="workbench-archive-title-row">
+                      <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                    </div>
+                    {lightweightArchiveSearchOpen && archiveSummary ? (
+                      <p className="workbench-archive-item-summary">{archiveSummary}</p>
+                    ) : null}
+                  </div>
+                </ModalListItem>
+              );
+            })}
+          </ModalList>
+        ) : (
+          <ModalEmptyState
+            title={
+              lightweightArchivedSessions.length > 0 && lightweightArchiveSearchKeyword.trim().length > 0
+                ? t("shell.archiveSearchEmpty")
+                : t("shell.archiveEmpty")
+            }
+            compact
+            className="workbench-section-empty"
+          />
+        )}
+      </SidebarModal>
+
+      <SidebarModal
+        open={renameTarget !== null || lightweightChatRenameTarget !== null}
         title={t("shell.renameModalTitle")}
         description={t("shell.renameModalDescription")}
         onClose={() => {
@@ -10490,10 +10853,14 @@ function SidebarContent({
           }
 
           setRenameTarget(null);
+          setLightweightChatRenameTarget(null);
           setRenameTitleValue("");
         }}
       >
-        <form className="workbench-rename-form" onSubmit={handleRenameSession}>
+        <form
+          className="workbench-rename-form"
+          onSubmit={lightweightChatRenameTarget ? handleRenameLightweightChat : handleRenameSession}
+        >
           <label className="workbench-modal-field">
             <span>{t("shell.renameInputLabel")}</span>
             <input
@@ -10512,6 +10879,7 @@ function SidebarContent({
               disabled={Boolean(renamingSessionId)}
               onClick={() => {
                 setRenameTarget(null);
+                setLightweightChatRenameTarget(null);
                 setRenameTitleValue("");
               }}
             >
@@ -10520,14 +10888,56 @@ function SidebarContent({
             <button
               type="submit"
               className="primary-button"
-              disabled={!renameTitleValue.trim() || renamingSessionId === renameTarget?.session.sessionId}
+              disabled={
+                !renameTitleValue.trim()
+                || renamingSessionId === renameTarget?.session.sessionId
+                || renamingSessionId === lightweightChatRenameTarget?.session.sessionId
+              }
             >
               {renamingSessionId === renameTarget?.session.sessionId
+                || renamingSessionId === lightweightChatRenameTarget?.session.sessionId
                 ? t("shell.renamingSession")
                 : t("common.save")}
             </button>
           </div>
         </form>
+      </SidebarModal>
+
+      <SidebarModal
+        open={lightweightChatDeletionTarget !== null}
+        title={t("shell.deleteSessionConfirmTitle")}
+        description={t("shell.deleteSessionConfirmDescription")}
+        onClose={() => {
+          if (deletingSessionId) {
+            return;
+          }
+
+          setLightweightChatDeletionTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {lightweightChatDeletionTarget ? lightweightChatDeletionTarget.session.title : ""}
+        </p>
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(deletingSessionId)}
+            onClick={() => setLightweightChatDeletionTarget(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={Boolean(deletingSessionId)}
+            onClick={() => {
+              void handleConfirmLightweightChatDeletion();
+            }}
+          >
+            {deletingSessionId ? t("common.loading") : t("shell.deleteSessionAction")}
+          </button>
+        </div>
       </SidebarModal>
 
       {exportRenderJob ? (
@@ -11753,6 +12163,7 @@ export function WorkbenchLayout({
   const [affairsSearchResults, setAffairsSearchResults] = useState<AffairsSearchResults>(EMPTY_AFFAIRS_SEARCH_RESULTS);
   const affairsLibraryCapability = useAffairsLibraryCapability(true);
   const [lightweightChatSessionsByWorkspaceId, setLightweightChatSessionsByWorkspaceId] = useState<Record<string, SessionSummaryDto[]>>({});
+  const [lightweightArchivedChatSessionsByWorkspaceId, setLightweightArchivedChatSessionsByWorkspaceId] = useState<Record<string, SessionSummaryDto[]>>({});
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
@@ -12977,6 +13388,7 @@ export function WorkbenchLayout({
 
     if (workspaceIds.length === 0) {
       setLightweightChatSessionsByWorkspaceId({});
+      setLightweightArchivedChatSessionsByWorkspaceId({});
       return;
     }
 
@@ -12987,7 +13399,8 @@ export function WorkbenchLayout({
         const response = await listAffairsLightweightSessions(workspaceId);
         return {
           workspaceId,
-          sessions: response.items.filter((session) => !session.isArchived)
+          sessions: response.items.filter((session) => !session.isArchived),
+          archivedSessions: response.items.filter((session) => session.isArchived)
         };
       })
     ).then((results) => {
@@ -13005,6 +13418,21 @@ export function WorkbenchLayout({
         for (const result of results) {
           if (result.status === "fulfilled") {
             next[result.value.workspaceId] = result.value.sessions;
+          }
+        }
+
+        return next;
+      });
+      setLightweightArchivedChatSessionsByWorkspaceId((current) => {
+        const next: Record<string, SessionSummaryDto[]> = {};
+
+        for (const workspaceId of workspaceIds) {
+          next[workspaceId] = current[workspaceId] ?? [];
+        }
+
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            next[result.value.workspaceId] = result.value.archivedSessions;
           }
         }
 
@@ -13604,6 +14032,8 @@ export function WorkbenchLayout({
     () => currentWorkspace?.name ?? null,
     [currentWorkspace]
   );
+  const isMobileShell = shellMode === "mobile";
+  const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
 
   useEffect(() => {
@@ -13770,23 +14200,53 @@ export function WorkbenchLayout({
     });
   }, [currentWorkspace, currentWorkspaceId]);
 
-  const openCodeTerminalDock = useCallback(() => {
-    if (!currentWorkspaceId) {
+  const activeCenterTab: CenterTab = isButlerRoute(location.pathname)
+    ? "butler"
+    : "conversation";
+
+  const openCodeTerminalDock = useCallback((workspaceId?: string | null, workspaceRef?: WorkspaceRef | null) => {
+    const nextWorkspaceId = workspaceId?.trim() || currentWorkspaceId;
+    const nextWorkspaceRef = workspaceRef === undefined
+      ? nextWorkspaceId
+        ? ({
+            hostId: "current",
+            workspaceId: nextWorkspaceId
+          } satisfies WorkspaceRef)
+        : null
+      : workspaceRef;
+
+    if (!nextWorkspaceId || !nextWorkspaceRef) {
       return;
     }
 
+    setSelectedWorkspaceId(nextWorkspaceId);
+    setSelectedWorkspaceRef(nextWorkspaceRef);
+
     if (!isSessionDetailRoute(location.pathname) && !isSessionsRoute(location.pathname)) {
-      goToConversationTab();
+      if (!isMobileShell && isTerminalsRoute(location.pathname)) {
+        navigate(workbenchHomePath, { replace: true });
+      } else {
+        goToConversationTab();
+      }
     }
 
-    updateCodeTerminalDockState((current) => ({
-      ...current,
-      open: true,
-      lastManualClosed: false,
-      updatedAt: new Date().toISOString()
-    }));
-  }, [currentWorkspaceId, location.pathname, updateCodeTerminalDockState]);
-
+    setCodeTerminalDockState((current) => {
+      const baseState = current?.workspaceId === nextWorkspaceId
+        ? current
+        : readCodeTerminalDockState(nextWorkspaceId)
+          ?? createDefaultCodeTerminalDockState(nextWorkspaceId);
+      const nextState = {
+        ...baseState,
+        workspaceId: nextWorkspaceId,
+        open: true,
+        lastManualClosed: false,
+        orientation: "vertical" as const,
+        updatedAt: new Date().toISOString()
+      };
+      writeCodeTerminalDockState(nextState);
+      return nextState;
+    });
+  }, [currentWorkspaceId, goToConversationTab, isMobileShell, location.pathname, navigate, workbenchHomePath]);
   const closeCodeTerminalDock = useCallback(() => {
     updateCodeTerminalDockState((current) => ({
       ...current,
@@ -14224,15 +14684,6 @@ export function WorkbenchLayout({
     sessionWorkspaceId
   ]);
 
-  const activeCenterTab: CenterTab = isTerminalsRoute(location.pathname)
-    ? "terminals"
-    : isButlerRoute(location.pathname)
-      ? "butler"
-      : "conversation";
-  const isMobileShell = shellMode === "mobile";
-  const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
-
-
   const workspaceSidebarGroups = useMemo(
     () =>
       effectiveNavigationGroups.map((group) => {
@@ -14462,14 +14913,48 @@ export function WorkbenchLayout({
   ]);
 
   const favoriteSessions = useMemo(
-    () =>
-      flattenedSessions.filter(
-        (item) =>
-          favoriteSessionIdSet.has(item.session.sessionId) &&
-          !isArchivedSession(item.session) &&
-          !isSubagentSession(item.session)
-      ),
-    [favoriteSessionIdSet, flattenedSessions]
+    () => {
+      const workspaceSessionFavorites = flattenedSessions
+        .filter(
+          (item) =>
+            favoriteSessionIdSet.has(item.session.sessionId) &&
+            !isArchivedSession(item.session) &&
+            !isSubagentSession(item.session)
+        )
+        .map((item) => ({
+          ...item,
+          favoriteEntryKind: "workspace-session" as const
+        }));
+      const seenLightweightFavoriteKeys = new Set<string>();
+      const lightweightFavorites = Object.entries(lightweightChatSessionsByWorkspaceId).flatMap(([workspaceId, sessions]) => {
+        const workspace = effectiveNavigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
+
+        if (!workspace) {
+          return [];
+        }
+
+        return sessions.flatMap((session) => {
+          if (session.isFavorite !== true || session.isArchived) {
+            return [];
+          }
+
+          const dedupeKey = `${workspace.id}:${session.sessionId}`;
+          if (seenLightweightFavoriteKeys.has(dedupeKey)) {
+            return [];
+          }
+          seenLightweightFavoriteKeys.add(dedupeKey);
+
+          return [{
+            session,
+            workspace,
+            favoriteEntryKind: "lightweight-chat" as const
+          }];
+        });
+      });
+
+      return [...workspaceSessionFavorites, ...lightweightFavorites];
+    },
+    [effectiveNavigationGroups, favoriteSessionIdSet, flattenedSessions, lightweightChatSessionsByWorkspaceId]
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
@@ -15091,6 +15576,30 @@ export function WorkbenchLayout({
     navigate(workbenchHomePath, { replace: true });
   }, [explicitWorkspaceId, isMobileShell, location.pathname, navigate, navigationLoading, workbenchHomePath]);
 
+  useEffect(() => {
+    if (isMobileShell || !isTerminalsRoute(location.pathname) || navigationLoading) {
+      return;
+    }
+
+    const targetWorkspaceId = routeWorkspaceId ?? currentWorkspaceId;
+    const targetWorkspaceRef = routeScopedWorkspaceRef ?? currentWorkspaceRef;
+
+    if (!targetWorkspaceId || !targetWorkspaceRef) {
+      return;
+    }
+
+    openCodeTerminalDock(targetWorkspaceId, targetWorkspaceRef);
+  }, [
+    currentWorkspaceId,
+    currentWorkspaceRef,
+    isMobileShell,
+    location.pathname,
+    navigationLoading,
+    openCodeTerminalDock,
+    routeScopedWorkspaceRef,
+    routeWorkspaceId
+  ]);
+
   function openLeftPanel() {
     if (isMobileShell) {
       setMobileNavOpen(true);
@@ -15157,7 +15666,7 @@ export function WorkbenchLayout({
       return;
     }
 
-    if (isTerminalsRoute(location.pathname)) {
+    if (isMobileShell && isTerminalsRoute(location.pathname)) {
       const targetPath = buildWorkspaceTerminalsPath(workspaceId, effectiveWorkspaceRef);
 
       if (location.pathname !== targetPath) {
@@ -15264,6 +15773,99 @@ export function WorkbenchLayout({
     },
     [upsertNavigationSession]
   );
+
+  const toggleLightweightChatFavorite = useCallback(
+    async (workspace: WorkspaceDto, session: SessionSummaryDto) => {
+      const nextFavorite = session.isFavorite !== true;
+      const previousSessions = lightweightChatSessionsByWorkspaceId[workspace.id] ?? [];
+
+      setLightweightChatSessionsByWorkspaceId((current) => ({
+        ...current,
+        [workspace.id]: (current[workspace.id] ?? []).map((item) =>
+          item.sessionId === session.sessionId
+            ? {
+                ...item,
+                isFavorite: nextFavorite
+              }
+            : item
+        )
+      }));
+
+      try {
+        const updatedSession = await updateAffairsLightweightSessionFavoriteState(
+          workspace.id,
+          session.sessionId,
+          nextFavorite
+        );
+        setLightweightChatSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: (current[workspace.id] ?? []).map((item) =>
+            item.sessionId === session.sessionId ? updatedSession : item
+          )
+        }));
+      } catch (error) {
+        setLightweightChatSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: previousSessions
+        }));
+        throw error;
+      }
+    },
+    [lightweightChatSessionsByWorkspaceId]
+  );
+
+  const archiveLightweightChat = useCallback(async (workspace: WorkspaceDto, session: SessionSummaryDto) => {
+    await updateAffairsLightweightSessionArchiveState(workspace.id, session.sessionId, true);
+    setLightweightChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: (current[workspace.id] ?? []).filter((item) => item.sessionId !== session.sessionId)
+    }));
+    setLightweightArchivedChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: [
+        {
+          ...session,
+          isArchived: true
+        },
+        ...(current[workspace.id] ?? []).filter((item) => item.sessionId !== session.sessionId)
+      ]
+    }));
+  }, []);
+
+  const unarchiveLightweightChat = useCallback(async (workspace: WorkspaceDto, sessionId: string) => {
+    const restoredSession = await updateAffairsLightweightSessionArchiveState(workspace.id, sessionId, false);
+    setLightweightChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: [restoredSession, ...(current[workspace.id] ?? [])]
+    }));
+    setLightweightArchivedChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: (current[workspace.id] ?? []).filter((item) => item.sessionId !== sessionId)
+    }));
+  }, []);
+
+  const renameLightweightChat = useCallback(async (workspace: WorkspaceDto, sessionId: string, title: string) => {
+    const renamedSession = await renameAffairsLightweightSessionTitle(workspace.id, sessionId, title.trim());
+    setLightweightChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: (current[workspace.id] ?? []).map((item) =>
+        item.sessionId === renamedSession.sessionId ? renamedSession : item
+      )
+    }));
+    return renamedSession;
+  }, []);
+
+  const deleteLightweightChat = useCallback(async (workspace: WorkspaceDto, session: SessionSummaryDto) => {
+    await deleteAffairsLightweightSession(workspace.id, session.sessionId);
+    setLightweightChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: (current[workspace.id] ?? []).filter((item) => item.sessionId !== session.sessionId)
+    }));
+    setLightweightArchivedChatSessionsByWorkspaceId((current) => ({
+      ...current,
+      [workspace.id]: (current[workspace.id] ?? []).filter((item) => item.sessionId !== session.sessionId)
+    }));
+  }, []);
 
   const openSearchModal = useCallback(() => {
     setSearchModalOpen(true);
@@ -15531,11 +16133,7 @@ export function WorkbenchLayout({
 
       if (!event.shiftKey && normalizedKey === "2") {
         event.preventDefault();
-        navigate(
-          currentWorkspaceId
-            ? buildWorkspaceTerminalsPath(currentWorkspaceId, currentWorkspaceRef)
-            : buildWorkspaceHomePath()
-        );
+        openCodeTerminalDock();
         return;
       }
 
@@ -15562,7 +16160,7 @@ export function WorkbenchLayout({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [currentWorkspaceId, goToConversationTab, isMobileShell, navigate, openSearchModal, platform.isDesktop, refreshNavigation]);
+  }, [currentWorkspaceId, goToConversationTab, isMobileShell, navigate, openCodeTerminalDock, openSearchModal, platform.isDesktop, refreshNavigation]);
 
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
@@ -16115,9 +16713,10 @@ export function WorkbenchLayout({
       codeEmbeddedAffairsState={codeEmbeddedAffairsState}
       affairsLibraryEnabled={affairsLibraryCapability.enabled}
       lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
+      lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
       activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
       isConversationActive={activeCenterTab === "conversation"}
-      isTerminalActive={activeCenterTab === "terminals"}
+      isTerminalActive={false}
       isButlerActive={activeCenterTab === "butler"}
       terminalDockOpen={codeTerminalDockState?.open === true}
       currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
@@ -16173,6 +16772,11 @@ export function WorkbenchLayout({
       onToggleFavoriteSession={toggleFavoriteSession}
       onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
       onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+      onToggleLightweightChatFavorite={toggleLightweightChatFavorite}
+      onArchiveLightweightChat={archiveLightweightChat}
+      onUnarchiveLightweightChat={unarchiveLightweightChat}
+      onRenameLightweightChat={renameLightweightChat}
+      onDeleteLightweightChat={deleteLightweightChat}
       workspaceManagementStateById={workspaceManagementStateById}
       setWorkspaceManagementStateById={setWorkspaceManagementStateById}
       unreadNotificationCount={unreadNotificationCount}
@@ -16303,13 +16907,14 @@ export function WorkbenchLayout({
                     sessionDisplaySortMode={sessionDisplaySortMode}
                     favoriteSessions={favoriteSessions}
                   favoriteSessionIds={favoriteSessionIdSet}
-                  activeWorkspaceId={currentWorkspaceId}
-                  codeEmbeddedAffairsState={codeEmbeddedAffairsState}
-                  affairsLibraryEnabled={affairsLibraryCapability.enabled}
-                  lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
+                    activeWorkspaceId={currentWorkspaceId}
+                    codeEmbeddedAffairsState={codeEmbeddedAffairsState}
+                    affairsLibraryEnabled={affairsLibraryCapability.enabled}
+                    lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
+                    lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
                     activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
                     isConversationActive={activeCenterTab === "conversation"}
-                    isTerminalActive={activeCenterTab === "terminals"}
+                    isTerminalActive={false}
                     isButlerActive={activeCenterTab === "butler"}
                     terminalDockOpen={codeTerminalDockState?.open === true}
                     currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
@@ -16354,6 +16959,11 @@ export function WorkbenchLayout({
                     onToggleFavoriteSession={toggleFavoriteSession}
                     onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
                     onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                    onToggleLightweightChatFavorite={toggleLightweightChatFavorite}
+                    onArchiveLightweightChat={archiveLightweightChat}
+                    onUnarchiveLightweightChat={unarchiveLightweightChat}
+                    onRenameLightweightChat={renameLightweightChat}
+                    onDeleteLightweightChat={deleteLightweightChat}
                     workspaceManagementStateById={workspaceManagementStateById}
                     setWorkspaceManagementStateById={setWorkspaceManagementStateById}
                     unreadNotificationCount={unreadNotificationCount}

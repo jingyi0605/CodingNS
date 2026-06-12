@@ -235,13 +235,13 @@ describe("WorkbenchLayout", () => {
     const subagentTitle = screen.getByText("子代理探索");
     expect(subagentTitle).toBeInTheDocument();
     expect(subagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
-    expect(screen.getByText("worker · Banach")).toBeInTheDocument();
+    expect(screen.getByText("Banach")).toBeInTheDocument();
     const subagentCard = getSessionCardByTitle("子代理探索");
     await userEvent.click(within(subagentCard).getByRole("button", { name: t("shell.subagentExpand") }));
     const nestedSubagentTitle = screen.getByText("子代理深挖");
     expect(nestedSubagentTitle).toBeInTheDocument();
     expect(nestedSubagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
-    expect(screen.getByText("explorer · Turing")).toBeInTheDocument();
+    expect(screen.getByText("Turing")).toBeInTheDocument();
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
@@ -366,8 +366,141 @@ describe("WorkbenchLayout", () => {
     expect(within(dialog).getByText("已归档父会话")).toBeInTheDocument();
     expect(within(dialog).getByText("已归档子代理")).toBeInTheDocument();
     expect(within(dialog).getByText("已归档消息分叉")).toBeInTheDocument();
-    expect(within(dialog).getByText("worker · Banach")).toBeInTheDocument();
+    expect(within(dialog).getByText("Banach")).toBeInTheDocument();
     expect(within(dialog).getByText(t("shell.sessionForkMessage"))).toBeInTheDocument();
+  });
+
+  it("聊天分类有轻量会话归档记录时，会显示归档会话入口", async () => {
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.includes("/api/affairs/lightweight-sessions")) {
+        return createJsonResponse({
+          items: [
+            createSessionSummary({
+              sessionId: "lightweight-live-1",
+              title: "帮我搜索今天的AI新闻，并总结",
+              workspaceId: "workspace-1",
+              isArchived: false
+            }),
+            createSessionSummary({
+              sessionId: "lightweight-archived-1",
+              title: "请写1000字的科幻小说",
+              workspaceId: "workspace-1",
+              isArchived: true
+            })
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/chats/lightweight-live-1");
+
+    expect(
+      await screen.findByRole("button", {
+        name: new RegExp(`^${t("shell.archiveFolderLabel")}(?:\\s+1)?$`)
+      })
+    ).toBeInTheDocument();
+  });
+
+  it("轻量会话收藏后只显示一条收藏记录，并从聊天分类移除", async () => {
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    let workspace1LightweightSessions = [
+      createSessionSummary({
+        sessionId: "lightweight-live-1",
+        title: "帮我搜索今天的AI新闻，并总结",
+        workspaceId: "workspace-1",
+        isArchived: false,
+        isFavorite: false
+      })
+    ];
+    const workspace2LightweightSessions = [
+      createSessionSummary({
+        sessionId: "workspace-2-lightweight-1",
+        title: "请写1000字的科幻小说",
+        workspaceId: "workspace-2",
+        isArchived: false,
+        isFavorite: false
+      })
+    ];
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.includes("/api/affairs/lightweight-sessions/lightweight-live-1/favorite") && init?.method === "PATCH") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { favorite?: boolean };
+        const favorite = payload.favorite === true;
+        workspace1LightweightSessions = [
+          createSessionSummary({
+            sessionId: "lightweight-live-1",
+            title: "帮我搜索今天的AI新闻，并总结",
+            workspaceId: "workspace-1",
+            isArchived: false,
+            isFavorite: favorite
+          })
+        ];
+
+        return createJsonResponse(workspace1LightweightSessions[0]);
+      }
+
+      if (url.includes("/api/affairs/lightweight-sessions")) {
+        if (url.includes("workspace-2")) {
+          return createJsonResponse({
+            items: workspace2LightweightSessions
+          });
+        }
+
+        return createJsonResponse({
+          items: workspace1LightweightSessions
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/chats/lightweight-live-1");
+
+    const chatCard = await findSessionCardByTitle("帮我搜索今天的AI新闻，并总结");
+    openSessionCardContextMenu(chatCard);
+    await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
+
+    const favoriteSection = await screen.findByText(t("shell.favoriteSectionTitle"));
+    const favoriteBlock = favoriteSection.closest(".workbench-section-block") as HTMLElement | null;
+    expect(favoriteBlock).not.toBeNull();
+    expect(within(favoriteBlock!).getAllByText("帮我搜索今天的AI新闻，并总结")).toHaveLength(1);
+    expect(querySessionCardsByTitle("帮我搜索今天的AI新闻，并总结")).toHaveLength(1);
+
+    const chatSection = screen.getByLabelText(t("shell.chatSectionTitle"));
+    expect(within(chatSection).queryByText("帮我搜索今天的AI新闻，并总结")).not.toBeInTheDocument();
   });
 
   it("收藏会话在快照短暂缺失后恢复时，不会被前端错误清掉", async () => {
