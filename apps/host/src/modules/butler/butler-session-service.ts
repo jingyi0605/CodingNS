@@ -316,6 +316,7 @@ export class ButlerSessionService {
       includeArchived?: boolean;
       force?: boolean;
       mode?: "blocking" | "background";
+      signal?: AbortSignal;
     }
   ): Promise<void> {
     const project = this.getProjectForUserOrThrow(projectId, userId);
@@ -332,7 +333,8 @@ export class ButlerSessionService {
       await this.sessionHistoryService.discoverWorkspaceSessions(project.workspaceId, userId, {
         maxAgeMs: options?.force ? 0 : 15_000,
         force: options?.force ?? false,
-        refreshStateMode: "inline"
+        refreshStateMode: "inline",
+        signal: options?.signal
       });
     } else if (this.sessionHistoryService.requestWorkspaceDiscovery) {
       this.sessionHistoryService.requestWorkspaceDiscovery(project.workspaceId, userId, {

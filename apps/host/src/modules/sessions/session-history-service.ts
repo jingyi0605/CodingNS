@@ -718,6 +718,7 @@ export class SessionHistoryService {
       maxAgeMs?: number;
       force?: boolean;
       refreshStateMode?: "inline" | "deferred";
+      signal?: AbortSignal;
     }
   ): Promise<SessionListItem[]> {
     this.getDiscoverableWorkspaceForUserOrThrow(workspaceId, userId);
@@ -742,7 +743,7 @@ export class SessionHistoryService {
       return this.listWorkspaceSessions(workspaceId, userId);
     }
 
-    return this.taskManager.enqueue<{
+    const handle = this.taskManager.enqueue<{
       workspaceId: string;
       userId: string;
       refreshStateMode: "inline" | "deferred";
@@ -754,7 +755,13 @@ export class SessionHistoryService {
         userId,
         refreshStateMode: options?.refreshStateMode ?? "inline"
       }
-    }).promise;
+    });
+
+    if (options?.signal) {
+      return await awaitTaskHandleWithSignal(handle, options.signal);
+    }
+
+    return await handle.promise;
   }
 
   requestWorkspaceDiscovery(
