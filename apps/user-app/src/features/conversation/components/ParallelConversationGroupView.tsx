@@ -6,8 +6,7 @@ import { ModalActions, ModalSection } from "../../../components/ModalAtoms";
 import {
   openFilesExternalWindow,
   openGitExternalWindow,
-  openProcessesExternalWindow,
-  openTerminalsExternalWindow
+  openProcessesExternalWindow
 } from "../../../platform/desktop/window-openers";
 import { resolveMacOsNativeTitlebarDragRegion } from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -23,7 +22,6 @@ import {
   buildWorkspaceSessionIndexPath,
   buildNavigationSessionTree,
   buildWorkspaceSessionPath,
-  buildWorkspaceTerminalsPath,
   flattenNavigationSessions,
   type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
@@ -51,7 +49,6 @@ import {
   useLiveSessionController
 } from "../runtime/use-live-session-controller";
 import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
-import { TerminalPage } from "../../terminal/pages/TerminalPage";
 import {
   createParallelGroupTransitionSpec,
   type ParallelGroupTransitionSpec,
@@ -788,7 +785,7 @@ function ParallelConversationMemberPane({
         ?? entry.workspaceId;
   const sessionId = activePaneSession.sessionId;
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes" | "terminals">("files");
+  const [activeToolPanel, setActiveToolPanel] = useState<"files" | "git" | "processes">("files");
   const [toolsPinned, setToolsPinned] = useState(false);
   const [toolsFrame, setToolsFrame] = useState<ParallelToolsPanelFrame | null>(null);
   const [infoPopoverFrame, setInfoPopoverFrame] = useState<ParallelInfoPopoverFrame | null>(null);
@@ -1018,30 +1015,6 @@ function ParallelConversationMemberPane({
     };
   }, [toolsOpen]);
 
-  async function openWorkspaceTerminal() {
-    if (toolWorkspaceId === navigationWorkspaceId) {
-      selectWorkspace(navigationWorkspaceId);
-    }
-
-    if (platform.isDesktop && platform.bridge.supported) {
-      const result = await openTerminalsExternalWindow(platform, {
-        workspaceId: toolWorkspaceId,
-        workspaceName: toolWorkspaceName,
-        focusOwner: "terminal-page"
-      });
-
-      if (!result.ok) {
-        showToast({
-          title: result.detail ?? t("terminalManager.openExternalFailed"),
-          tone: "error"
-        });
-      }
-      return;
-    }
-
-    navigate(buildWorkspaceTerminalsPath(toolWorkspaceId));
-  }
-
   async function openActiveToolInExternalWindow() {
     if (!platform.isDesktop || !platform.bridge.supported) {
       return;
@@ -1080,23 +1053,18 @@ function ParallelConversationMemberPane({
       return;
     }
 
-    if (activeToolPanel === "processes") {
-      const result = await openProcessesExternalWindow(platform, {
-        workspaceId: toolWorkspaceId,
-        workspaceName: toolWorkspaceName,
-        focusOwner: "terminal-manager-panel"
+    const result = await openProcessesExternalWindow(platform, {
+      workspaceId: toolWorkspaceId,
+      workspaceName: toolWorkspaceName,
+      focusOwner: "terminal-manager-panel"
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("terminalManager.openExternalFailed"),
+        tone: "error"
       });
-
-      if (!result.ok) {
-        showToast({
-          title: result.detail ?? t("terminalManager.openExternalFailed"),
-          tone: "error"
-        });
-      }
-      return;
     }
-
-    await openWorkspaceTerminal();
   }
 
   function openToolsPanel() {
@@ -1194,7 +1162,7 @@ function ParallelConversationMemberPane({
                 role="tablist"
                 aria-label={t("shell.parallelPaneToolsAction")}
               >
-                {(["files", "git", "processes", "terminals"] as const).map((panelId) => (
+                {(["files", "git", "processes"] as const).map((panelId) => (
                   <button
                     key={panelId}
                     type="button"
@@ -1209,9 +1177,7 @@ function ParallelConversationMemberPane({
                       ? t("shell.filesEntry")
                       : panelId === "git"
                         ? t("shell.gitEntry")
-                        : panelId === "processes"
-                          ? t("shell.parallelPaneProcessesEntry")
-                          : t("shell.terminalsEntry")}
+                        : t("shell.parallelPaneProcessesEntry")}
                   </button>
                 ))}
               </div>
@@ -1278,21 +1244,11 @@ function ParallelConversationMemberPane({
                   panelActive
                   workspaceId={toolWorkspaceId}
                 />
-              ) : activeToolPanel === "processes" ? (
+              ) : (
                 <TerminalManagerPanel
                   className="parallel-pane-tools-surface parallel-pane-tools-process-panel"
                   currentWorkspaceId={toolWorkspaceId}
                   navigationGroups={navigationGroups}
-                />
-              ) : (
-                <TerminalPage
-                  embeddedMode
-                  externalWindowWorkspaceId={toolWorkspaceId}
-                  workbenchShellOverrides={{
-                    navigationGroups,
-                    currentWorkspaceId: toolWorkspaceId,
-                    selectWorkspace
-                  }}
                 />
               )}
             </div>

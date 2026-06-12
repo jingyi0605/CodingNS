@@ -340,7 +340,6 @@ describe("ParallelConversationGroupView", () => {
     expect(await screen.findByText(t("shell.filesEntry"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.gitEntry"))).toBeInTheDocument();
     expect(screen.getByText(t("shell.parallelPaneProcessesEntry"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.terminalsEntry"))).toBeInTheDocument();
     expect(screen.getByTestId("parallel-tools-files")).toBeInTheDocument();
     expect(screen.getByTestId("parallel-tools-files")).toHaveAttribute("data-workspace-id", "workspace-isolated-1");
 
@@ -351,13 +350,6 @@ describe("ParallelConversationGroupView", () => {
     await user.click(screen.getByRole("tab", { name: t("shell.parallelPaneProcessesEntry") }));
     expect(screen.getByTestId("parallel-tools-processes")).toBeInTheDocument();
     expect(screen.getByTestId("parallel-tools-processes")).toHaveAttribute(
-      "data-workspace-id",
-      "workspace-isolated-1"
-    );
-
-    await user.click(screen.getByRole("tab", { name: t("shell.terminalsEntry") }));
-    expect(screen.getByTestId("parallel-tools-terminal")).toBeInTheDocument();
-    expect(screen.getByTestId("parallel-tools-terminal")).toHaveAttribute(
       "data-workspace-id",
       "workspace-isolated-1"
     );

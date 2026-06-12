@@ -5863,10 +5863,7 @@ function SidebarContent({
   lightweightArchivedChatSessionsByWorkspaceId,
   activeLightweightChatId,
   isConversationActive,
-  isTerminalActive,
   isButlerActive,
-  terminalDockOpen,
-  currentWorkspaceTerminalCount,
   isSearchOpen,
   navigationLoading,
   navigationError,
@@ -5875,7 +5872,6 @@ function SidebarContent({
   onRefreshNavigation,
   onSessionUpdated,
   onNavigateConversation,
-  onNavigateTerminals,
   onOpenTerminalDock,
   onNavigateButler,
   onOpenSearch,
@@ -5922,10 +5918,7 @@ function SidebarContent({
   lightweightArchivedChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
   activeLightweightChatId: string | null;
   isConversationActive: boolean;
-  isTerminalActive: boolean;
   isButlerActive: boolean;
-  terminalDockOpen: boolean;
-  currentWorkspaceTerminalCount: number;
   isSearchOpen: boolean;
   navigationLoading: boolean;
   navigationError: string | null;
@@ -5934,7 +5927,6 @@ function SidebarContent({
   onRefreshNavigation: () => Promise<void>;
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onNavigateConversation: () => void;
-  onNavigateTerminals: () => void;
   onOpenTerminalDock: (workspaceId?: string | null, workspaceRef?: WorkspaceRef | null) => void;
   onNavigateButler: () => void;
   onOpenSearch: () => void;
@@ -16716,10 +16708,7 @@ export function WorkbenchLayout({
       lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
       activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
       isConversationActive={activeCenterTab === "conversation"}
-      isTerminalActive={false}
       isButlerActive={activeCenterTab === "butler"}
-      terminalDockOpen={codeTerminalDockState?.open === true}
-      currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
       isSearchOpen={searchModalOpen}
       navigationLoading={navigationLoading}
       navigationError={navigationError}
@@ -16728,14 +16717,6 @@ export function WorkbenchLayout({
       onRefreshNavigation={refreshNavigation}
       onSessionUpdated={upsertNavigationSession}
       onNavigateConversation={goToConversationTab}
-      onNavigateTerminals={() => {
-        setMobileNavOpen(false);
-        navigate(
-          currentWorkspaceId
-            ? buildWorkspaceTerminalsPath(currentWorkspaceId, currentWorkspaceRef)
-            : buildWorkspaceHomePath()
-        );
-      }}
       onOpenTerminalDock={() => {
         setMobileNavOpen(false);
         openCodeTerminalDock();
@@ -16914,10 +16895,7 @@ export function WorkbenchLayout({
                     lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
                     activeLightweightChatId={resolveRouteLightweightChatMatch(location.pathname)?.chatId ?? null}
                     isConversationActive={activeCenterTab === "conversation"}
-                    isTerminalActive={false}
                     isButlerActive={activeCenterTab === "butler"}
-                    terminalDockOpen={codeTerminalDockState?.open === true}
-                    currentWorkspaceTerminalCount={currentWorkspaceTerminalCount}
                     isSearchOpen={searchModalOpen}
                     navigationLoading={navigationLoading}
                     navigationError={navigationError}
@@ -16926,13 +16904,6 @@ export function WorkbenchLayout({
                     onRefreshNavigation={refreshNavigation}
                     onSessionUpdated={upsertNavigationSession}
                     onNavigateConversation={goToConversationTab}
-                    onNavigateTerminals={() =>
-                      navigate(
-                        currentWorkspaceId
-                          ? buildWorkspaceTerminalsPath(currentWorkspaceId, currentWorkspaceRef)
-                          : buildWorkspaceHomePath()
-                      )
-                    }
                     onOpenTerminalDock={openCodeTerminalDock}
                     onNavigateButler={() =>
                       navigate(

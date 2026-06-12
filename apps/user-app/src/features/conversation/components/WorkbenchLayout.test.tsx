@@ -1891,11 +1891,9 @@ describe("WorkbenchLayout", () => {
     renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     const conversationTab = await screen.findByRole("tab", { name: t("shell.conversationEntry") });
-    const terminalTab = screen.getByRole("tab", { name: t("shell.terminalsEntry") });
     const [searchButton] = screen.getAllByRole("button", { name: t("shell.searchEntry") });
 
     expect(conversationTab.className).toContain("active");
-    expect(terminalTab.className).not.toContain("active");
     expect(searchButton).toHaveAttribute("data-open", "false");
 
     await userEvent.click(searchButton);
@@ -5980,7 +5978,7 @@ describe("WorkbenchLayout", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("在终端管理页点击项目切换按钮时跳到对应项目的终端管理页", async () => {
+  it("桌面端旧终端页路由会回到代码工作台并打开终端抽屉", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -6007,13 +6005,22 @@ describe("WorkbenchLayout", () => {
 
     const targetWorkspaceGroup = await findWorkspaceGroupByName("项目二");
     const targetWorkspaceScope = within(targetWorkspaceGroup);
+    const workbenchView = document.querySelector(".code-workbench-view");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/landing");
+      expect(workbenchView).toHaveAttribute("data-terminal-open", "true");
+      expect(workbenchView).toHaveAttribute("data-terminal-orientation", "vertical");
+    });
 
     await userEvent.click(
       targetWorkspaceScope.getByRole("button", { name: t("shell.switchWorkspace") })
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-2/terminals");
+      expect(screen.getByTestId("current-path").textContent).toBe("/landing");
+      expect(workbenchView).toHaveAttribute("data-terminal-open", "true");
+      expect(workbenchView).toHaveAttribute("data-terminal-orientation", "vertical");
     });
 
     expect(window.localStorage.getItem("workbench.workspace.selected.id")).toBe("workspace-2");
