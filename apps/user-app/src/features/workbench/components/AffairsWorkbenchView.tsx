@@ -93,6 +93,7 @@ import type {
   AffairsTagRuleDto,
   ProviderCapabilitiesDto,
   ProviderId,
+  SessionProviderConfigMode,
   SessionSummaryDto,
   WorkspaceDto,
 } from "../../conversation/api/conversation-api";
@@ -7582,6 +7583,8 @@ function useAffairsLightweightSessionController(input: {
         clientRequestId?: string;
         model?: string;
         reasoningLevel?: string;
+        providerConfigMode?: SessionProviderConfigMode;
+        providerPresetId?: string | null;
         attachments?: AttachmentPayload[];
         attachmentMeta?: HistoryMessageDto["attachments"];
       }

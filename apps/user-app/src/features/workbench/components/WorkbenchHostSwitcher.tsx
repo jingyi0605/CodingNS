@@ -1396,7 +1396,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                       value={hostAliasDraft}
                       maxLength={4}
                       disabled={addingHost}
-                      onChange={(event) => setHostAliasDraft(normalizeHostAlias(event.target.value))}
+                      onChange={(event) => setHostAliasDraft(normalizeEditableHostAlias(event.target.value))}
                       placeholder={t("shell.hostSwitcherAliasPlaceholder")}
                     />
                   </label>
