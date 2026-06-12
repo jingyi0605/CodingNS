@@ -151,9 +151,24 @@ export class WorkbenchService {
 
     if (!options?.awaitRefresh) {
       const current = this.getAffairsAssistantSessionsSnapshot(workspaceId, userId);
-      this.affairsAssistantSessionSnapshotService.scheduleRefresh(workspaceId, userId, {
+      const handle = this.affairsAssistantSessionSnapshotService.scheduleRefresh(workspaceId, userId, {
         force: options?.force ?? false,
         source: "workbench.refresh_affairs_assistant_sessions.background"
+      });
+      void handle?.promise.catch((error) => {
+        logPerformance(
+          "workbench.refresh_affairs_assistant_sessions.background_failed",
+          0,
+          {
+            workspaceId,
+            userId,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
       });
       return current;
     }

@@ -215,7 +215,8 @@ export class AffairsAssistantSessionSnapshotService {
       await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
         includeArchived: true,
         force,
-        mode: "blocking"
+        mode: "background",
+        signal
       });
 
       const sessions = this.butlerSessionService.listByProject(project.id, userId, {

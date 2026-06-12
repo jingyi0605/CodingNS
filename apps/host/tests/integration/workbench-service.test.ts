@@ -490,6 +490,67 @@ describe("WorkbenchService", () => {
     expect(scheduleRefresh).not.toHaveBeenCalled();
   });
 
+  it("事务助手会话后台刷新失败时会吃掉异常并立即返回缓存", async () => {
+    const scheduleRefresh = vi.fn(() => ({
+      promise: Promise.reject(new Error("background refresh failed"))
+    }));
+    const refreshNow = vi.fn();
+    const service = new WorkbenchService(
+      createWorkspaceRepositoryStub([]),
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never,
+      undefined,
+      undefined,
+      undefined,
+      {
+        readSnapshot: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          projectId: "project-1",
+          projectWorkspaceId: "agent-workspace-1",
+          agentWorkspacePath: "/repo",
+          sessions: [
+            {
+              sessionId: "session-cached",
+              title: "缓存里的会话"
+            }
+          ],
+          updatedAt: "2026-06-06T10:00:00.000Z"
+        })),
+        refreshNow,
+        scheduleRefresh,
+        shouldRefresh: vi.fn(() => true)
+      } as never
+    );
+
+    const snapshot = await service.refreshAffairsAssistantSessionsSnapshot("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(snapshot.sessions).toMatchObject([
+      {
+        sessionId: "session-cached",
+        title: "缓存里的会话"
+      }
+    ]);
+    expect(scheduleRefresh).toHaveBeenCalledTimes(1);
+    expect(refreshNow).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
   it("workbench 刷新会优先调度可见根工作区，并限制单轮 discovery 数量", async () => {
     const requestWorkspaceDiscovery = vi.fn();
     const workspaces = Array.from({ length: 8 }, (_, index) => ({

@@ -85,4 +85,67 @@ describe("AffairsAssistantSessionSnapshotService", () => {
       activityState: "idle"
     });
   });
+
+  it("刷新事务助手会话快照时只安排后台同步，不阻塞等待 workspace discovery", async () => {
+    const records = new Map<string, AffairsAssistantSessionSnapshotRecord>();
+    const repository = {
+      findByWorkspaceAndUserId: vi.fn((workspaceId: string, userId: string) => (
+        records.get(`${workspaceId}:${userId}`) ?? null
+      )),
+      upsert: vi.fn((record: AffairsAssistantSessionSnapshotRecord) => {
+        records.set(`${record.workspaceId}:${record.userId}`, record);
+        return record;
+      })
+    } satisfies Pick<AffairsAssistantSessionSnapshotRepository, "findByWorkspaceAndUserId" | "upsert">;
+
+    const project: ButlerProject = {
+      id: "project-1",
+      workspaceId: "agent-workspace-1",
+      name: "事务助手项目",
+      repoRoot: "/Users/jackson/SynologyDrive/Obsidian",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {},
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-06-06T10:00:00.000Z",
+      updatedAt: "2026-06-06T10:00:00.000Z",
+      archivedAt: null
+    };
+
+    const ensureProjectSessionsSynced = vi.fn(async () => undefined);
+    const service = new AffairsAssistantSessionSnapshotService(
+      repository as unknown as AffairsAssistantSessionSnapshotRepository,
+      {
+        getBinding: vi.fn(() => ({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          enabled: true,
+          rootDir: "/Users/jackson/SynologyDrive/Obsidian",
+          mirrorRoot: null,
+          createdAt: "2026-06-06T10:00:00.000Z",
+          updatedAt: "2026-06-06T10:00:00.000Z"
+        }))
+      },
+      {
+        list: vi.fn(() => [project])
+      },
+      {
+        ensureProjectSessionsSynced,
+        listByProject: vi.fn(() => [])
+      }
+    );
+
+    await service.refreshNow("workspace-1", "user-1", { force: true });
+
+    expect(ensureProjectSessionsSynced).toHaveBeenCalledWith(project.id, "user-1", {
+      includeArchived: true,
+      force: true,
+      mode: "background",
+      signal: expect.any(AbortSignal)
+    });
+  });
 });
