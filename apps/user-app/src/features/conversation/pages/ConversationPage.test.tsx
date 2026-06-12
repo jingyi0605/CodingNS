@@ -373,6 +373,79 @@ describe("ConversationPage", () => {
     mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
   });
 
+  it("H5 会话预览列表右键会显示菜单并触发收藏", async () => {
+    const toggleFavoriteSession = vi.fn().mockResolvedValue(undefined);
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        toggleFavoriteSession
+      })
+    );
+
+    const view = renderLiveConversationPage();
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 140, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 140, clientY: 184 }]
+    });
+
+    const item = await screen.findByRole("button", { name: /父会话/ });
+    fireEvent.contextMenu(item);
+
+    const favoriteAction = await screen.findByRole("button", { name: t("shell.favoriteAction") });
+    expect(screen.getByRole("button", { name: t("shell.renameAction") })).toBeInTheDocument();
+
+    await userEvent.click(favoriteAction);
+
+    await waitFor(() => {
+      expect(toggleFavoriteSession).toHaveBeenCalledWith("session-live-1");
+    });
+  });
+
+  it("H5 会话预览列表右键重命名会调用 shell renameSession", async () => {
+    const renameSession = vi.fn().mockResolvedValue({
+      ...createBaseLiveSession(),
+      sessionId: "session-live-1",
+      title: "新标题"
+    });
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("新标题");
+
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        renameSession
+      })
+    );
+
+    const view = renderLiveConversationPage();
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 140, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 140, clientY: 184 }]
+    });
+
+    const item = await screen.findByRole("button", { name: /父会话/ });
+    fireEvent.contextMenu(item);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.renameAction") }));
+
+    await waitFor(() => {
+      expect(renameSession).toHaveBeenCalledWith("session-live-1", "新标题");
+    });
+
+    promptSpy.mockRestore();
+  });
+
   it("Codex 运行态由 runtime 快照维持时，发送队列仍会显示引导入口", async () => {
     mockLiveRuntimeState.session = {
       ...mockLiveRuntimeState.session,

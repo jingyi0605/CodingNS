@@ -1,13 +1,16 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
   type TouchEvent as ReactTouchEvent
 } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { DesktopModal } from "../../../components/DesktopModal";
@@ -25,6 +28,7 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
+  deleteSession,
   getProviderCapabilities,
   startLiveSession,
   type HistoryMessageDto,
@@ -108,6 +112,10 @@ import {
   flattenMobileWorkspaceOptions
 } from "../../workbench/utils/mobile-workspace-tree";
 import {
+  resolveContextMenuPosition,
+  type ContextMenuAnchorPoint
+} from "../../workbench/utils/context-menu-position";
+import {
   buildWorkspaceVisualContextMap,
   createWorkspaceToneStyle,
   createFallbackWorkspaceVisualContext
@@ -136,6 +144,7 @@ const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 36;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
 const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 34;
 const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 96;
+const MOBILE_PREVIEW_MENU_ESTIMATED_HEIGHT_PX = 196;
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -256,8 +265,10 @@ function LiveConversationPage({
     setSessionWorkspace,
     markNavigationSessionSeen,
     favoriteSessions,
+    toggleFavoriteSession,
     archiveSession,
     unarchiveSession,
+    renameSession,
     startDraftSession,
     upsertNavigationSession,
     currentWorkspaceRef,
@@ -728,6 +739,49 @@ function LiveConversationPage({
               const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
               selectWorkspace(entry.workspace.id, workspaceRef);
               navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
+            }}
+            onToggleFavoriteSession={(targetSessionId) => toggleFavoriteSession(targetSessionId)}
+            onArchiveSession={(targetSessionId) => archiveSession(targetSessionId)}
+            onUnarchiveSession={(targetSessionId) => unarchiveSession(targetSessionId)}
+            onRenameSession={(targetSessionId, title) => renameSession(targetSessionId, title)}
+            onDeleteSession={async (targetSessionId) => {
+              await deleteSession(targetSessionId, {
+                targetHostId: currentTargetHostId
+              });
+              await requestNavigationRefresh();
+
+              if (targetSessionId !== sessionId) {
+                return;
+              }
+
+              if (mobileNavigationWorkspaceId) {
+                selectWorkspace(
+                  mobileNavigationWorkspaceId,
+                  buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                );
+                writeMobileConversationPreviewMode("preview");
+                if (nextMobileSessionEntry) {
+                  const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+                  navigate(
+                    buildWorkspaceSessionPath(
+                      nextMobileSessionEntry.workspace.id,
+                      nextMobileSessionEntry.session.sessionId,
+                      workspaceRef
+                    )
+                  );
+                  return;
+                }
+
+                navigate(
+                  buildWorkspaceSessionIndexPath(
+                    mobileNavigationWorkspaceId,
+                    buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                  )
+                );
+                return;
+              }
+
+              navigate("/workspaces");
             }}
           />
         ) : null}
@@ -1334,6 +1388,11 @@ function DraftConversationPage({
             selectWorkspace(entry.workspace.id, workspaceRef);
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
           }}
+          onToggleFavoriteSession={async () => undefined}
+          onArchiveSession={async () => undefined}
+          onUnarchiveSession={async () => undefined}
+          onRenameSession={async () => session}
+          onDeleteSession={async () => undefined}
         />
       ) : null}
       <div className="mobile-conversation-stage" {...(mobileMainGestureHandlers ?? {})}>
@@ -2531,7 +2590,12 @@ function MobileConversationPreviewRail({
   onArchiveActiveSession,
   onOpenArchiveFolder,
   onToggleSubsessions,
-  onActivate
+  onActivate,
+  onToggleFavoriteSession,
+  onArchiveSession,
+  onUnarchiveSession,
+  onRenameSession,
+  onDeleteSession
 }: {
   visible: boolean;
   widthPx: number;
@@ -2550,6 +2614,11 @@ function MobileConversationPreviewRail({
   onOpenArchiveFolder?: (() => void) | null;
   onToggleSubsessions: (sessionId: string) => void;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
+  onToggleFavoriteSession: (sessionId: string) => Promise<void>;
+  onArchiveSession: (sessionId: string) => Promise<void>;
+  onUnarchiveSession: (sessionId: string) => Promise<void>;
+  onRenameSession: (sessionId: string, title: string) => Promise<SessionSummaryDto>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
 }) {
   if (!visible) {
     return null;
@@ -2624,6 +2693,7 @@ function MobileConversationPreviewRail({
             hasSubsessions={allowToggle}
             subsessionsExpanded={isExpanded}
             workspaceName={workspaceName}
+            isFavorite={Boolean(node.item.session.isFavorite)}
             onToggleSubsessions={
               allowToggle
                 ? () => {
@@ -2632,6 +2702,11 @@ function MobileConversationPreviewRail({
                 : undefined
             }
             onActivate={onActivate}
+            onToggleFavoriteSession={onToggleFavoriteSession}
+            onArchiveSession={onArchiveSession}
+            onUnarchiveSession={onUnarchiveSession}
+            onRenameSession={onRenameSession}
+            onDeleteSession={onDeleteSession}
           />
         </div>
         {childNodes.length > 0 && isExpanded ? (
@@ -2741,24 +2816,226 @@ function MobileConversationPreviewRail({
 function MobileConversationPreviewEntryButton({
   entry,
   activeSessionId,
+  isFavorite,
   hasSubsessions = false,
   subsessionsExpanded = false,
   onActivate,
   onToggleSubsessions,
-  workspaceName
+  workspaceName,
+  onToggleFavoriteSession,
+  onArchiveSession,
+  onUnarchiveSession,
+  onRenameSession,
+  onDeleteSession
 }: {
   entry: WorkbenchNavigationEntry;
   activeSessionId: string;
+  isFavorite: boolean;
   hasSubsessions?: boolean;
   subsessionsExpanded?: boolean;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
   onToggleSubsessions?: () => void;
   workspaceName?: string;
+  onToggleFavoriteSession: (sessionId: string) => Promise<void>;
+  onArchiveSession: (sessionId: string) => Promise<void>;
+  onUnarchiveSession: (sessionId: string) => Promise<void>;
+  onRenameSession: (sessionId: string, title: string) => Promise<SessionSummaryDto>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
 }) {
+  const platform = usePlatform();
   const isActive = entry.session.sessionId === activeSessionId;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [menuAnchorPoint, setMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuAnchorPoint || typeof window === "undefined") {
+      setMenuPositionStyle(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const nextPosition = resolveContextMenuPosition(
+        menuAnchorPoint,
+        {
+          width: menuRef.current?.offsetWidth ?? 0,
+          height: menuRef.current?.offsetHeight ?? 0
+        },
+        {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        {
+          estimatedHeightPx: MOBILE_PREVIEW_MENU_ESTIMATED_HEIGHT_PX
+        }
+      );
+
+      setMenuPositionStyle({
+        position: "fixed",
+        left: `${Math.round(nextPosition.left)}px`,
+        top: `${Math.round(nextPosition.top)}px`,
+        width: `${Math.round(nextPosition.width)}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: `${Math.round(nextPosition.maxHeight)}px`,
+        transformOrigin: nextPosition.transformOrigin
+      });
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+
+      if (target && !menuRef.current?.contains(target)) {
+        closeMenu();
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    updateMenuPosition();
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [menuAnchorPoint, menuOpen]);
+
+  function openMenu(anchorPoint: ContextMenuAnchorPoint) {
+    setMenuAnchorPoint(anchorPoint);
+    setMenuOpen(true);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+    setMenuAnchorPoint(null);
+  }
+
+  async function handleRename() {
+    const currentTitle = entry.session.title || t("common.unknown");
+    const nextTitle = window.prompt(t("shell.renameModalDescription"), currentTitle);
+
+    if (!nextTitle?.trim()) {
+      return;
+    }
+
+    await onRenameSession(entry.session.sessionId, nextTitle.trim());
+    closeMenu();
+  }
+
+  async function handleArchive() {
+    if (entry.session.isArchived) {
+      await onUnarchiveSession(entry.session.sessionId);
+      closeMenu();
+      return;
+    }
+
+    await onArchiveSession(entry.session.sessionId);
+    closeMenu();
+  }
+
+  async function handleDelete() {
+    await onDeleteSession(entry.session.sessionId);
+    closeMenu();
+  }
+
+  function handleKeyboardContextMenu(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const anchorRect = event.currentTarget.getBoundingClientRect();
+    openMenu({
+      x: anchorRect.right,
+      y: anchorRect.bottom
+    });
+  }
+
+  const sessionActionMenu =
+    !platform.isDesktop && menuOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            className="workbench-session-menu"
+            role="menu"
+            aria-label={t("shell.sessionMoreAction")}
+            style={
+              menuPositionStyle ?? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                visibility: "hidden"
+              }
+            }
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void handleRename();
+              }}
+            >
+              <span>{t("shell.renameAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void onToggleFavoriteSession(entry.session.sessionId).then(() => {
+                  closeMenu();
+                });
+              }}
+            >
+              <span>{isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void handleArchive();
+              }}
+            >
+              <span>{entry.session.isArchived ? t("shell.unarchiveAction") : t("shell.archiveAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                void handleDelete();
+              }}
+            >
+              <span>{t("shell.deleteSessionAction")}</span>
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
-    <article className="mobile-conversation-preview-entry terminal-mobile-session-card" data-active={isActive}>
+    <article
+      className="mobile-conversation-preview-entry terminal-mobile-session-card"
+      data-active={isActive}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenu({
+          x: event.clientX,
+          y: event.clientY
+        });
+      }}
+    >
       {hasSubsessions ? (
         <button
           type="button"
@@ -2793,6 +3070,7 @@ function MobileConversationPreviewEntryButton({
         className="mobile-conversation-preview-item terminal-mobile-session-primary"
         data-active={isActive}
         onClick={() => onActivate(entry)}
+        onKeyDown={handleKeyboardContextMenu}
       >
         <div className="mobile-conversation-preview-item-body">
           <span className="mobile-conversation-preview-item-title">
@@ -2803,6 +3081,7 @@ function MobileConversationPreviewEntryButton({
           </span>
         </div>
       </button>
+      {sessionActionMenu}
     </article>
   );
 }
