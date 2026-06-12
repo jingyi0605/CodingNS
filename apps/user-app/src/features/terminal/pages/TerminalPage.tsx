@@ -726,7 +726,9 @@ export function TerminalPage({
       terminalReloadRequestIdRef.current = requestId;
 
       try {
-        const terminalResponse = await listWorkspaceTerminals(requestWorkspaceId, { targetHostId: currentTargetHostId });
+        const terminalResponse = await listWorkspaceTerminals(requestWorkspaceId, {
+          targetHostId: currentTargetHostId
+        });
 
         if (
           requestId !== terminalReloadRequestIdRef.current ||
@@ -748,7 +750,7 @@ export function TerminalPage({
         notifyTerminal(detail, "error");
       }
     },
-    [applyWorkspaceTerminalCollection, notifyTerminal]
+    [applyWorkspaceTerminalCollection, currentTargetHostId, notifyTerminal, requestWorkspaceId]
   );
   const requestReload = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -883,7 +885,10 @@ export function TerminalPage({
     }
 
     return addTerminalManagerSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== requestWorkspaceId) {
+      if (
+        snapshot.workspaceId !== requestWorkspaceId ||
+        !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)
+      ) {
         return;
       }
 
@@ -892,7 +897,8 @@ export function TerminalPage({
         terminals: snapshot.terminals,
         templates: snapshot.templates,
         templateStatuses: snapshot.templateStatuses,
-        shellOptions: snapshot.shellOptions
+        shellOptions: snapshot.shellOptions,
+        targetHostId: currentTargetHostId ?? null
       });
       setShellOptions(snapshot.shellOptions ?? []);
       applyWorkspaceTerminalCollection(selectedWorkspaceId, snapshot.terminals);
@@ -998,6 +1004,7 @@ export function TerminalPage({
       buildTerminalManagerSnapshotKey(selectedWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
+    const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
 
     if (cachedSnapshot) {
       setShellOptions(parseTerminalShellOptions(cachedSnapshot.shellOptions));
@@ -1013,48 +1020,44 @@ export function TerminalPage({
     }
 
     subscribeTerminalManagerSnapshot(requestWorkspaceId, {
-      knownRevision: cachedSnapshot?.revision ?? null,
+      knownRevision,
       targetHostId: currentTargetHostId
     });
-
-    if (cachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestTerminalManagerRefresh(requestWorkspaceId, {
-          knownRevision: cachedSnapshot.revision ?? null,
-          targetHostId: currentTargetHostId
-        });
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
-    }
-
     requestTerminalManagerRefresh(requestWorkspaceId, {
-      knownRevision: null,
+      knownRevision,
       targetHostId: currentTargetHostId
     });
-
-    if (externalWindowMode) {
-      void reloadWorkspaceResources(selectedWorkspaceId);
-
-      if (shellOptions.length === 0) {
-        void listTerminalShellOptions({ targetHostId: currentTargetHostId })
-          .then((response) => {
-            setShellOptions(response.items ?? []);
-          })
-          .catch(() => undefined);
-      }
-    }
   }, [
     applyWorkspaceTerminalCollection,
-    externalWindowMode,
+    currentTargetHostId,
     requestTerminalManagerRefresh,
-    reloadWorkspaceResources,
     requestWorkspaceId,
     selectedWorkspaceId,
-    shellOptions.length,
     subscribeTerminalManagerSnapshot
+  ]);
+
+  useEffect(() => {
+    if (!externalWindowMode || !selectedWorkspaceId) {
+      return;
+    }
+
+    void reloadWorkspaceResources(selectedWorkspaceId);
+
+    if (shellOptions.length > 0) {
+      return;
+    }
+
+    void listTerminalShellOptions({ targetHostId: currentTargetHostId })
+      .then((response) => {
+        setShellOptions(response.items ?? []);
+      })
+      .catch(() => undefined);
+  }, [
+    currentTargetHostId,
+    externalWindowMode,
+    reloadWorkspaceResources,
+    selectedWorkspaceId,
+    shellOptions.length
   ]);
 
   useEffect(() => {
@@ -5178,6 +5181,16 @@ function createTerminalViewportRuntime(input: {
       input.container.replaceChildren();
     }
   };
+}
+
+function readSnapshotTargetHostId(snapshot: unknown): string | null {
+  return snapshot && typeof snapshot === "object" && "targetHostId" in snapshot
+    ? ((snapshot as { targetHostId?: unknown }).targetHostId as string | null | undefined) ?? null
+    : null;
+}
+
+function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
+  return (left ?? null) === (right ?? null);
 }
 
 function truncateTowardZero(value: number): number {

@@ -519,6 +519,7 @@ function renderPage(
       onChangeOrientation: (orientation: "vertical" | "horizontal") => void;
       onClose: () => void;
     };
+    workbenchShellOverrides?: Record<string, unknown>;
   }
 ) {
   return render(
@@ -787,7 +788,114 @@ describe("TerminalPage", () => {
         expect.objectContaining({
           workspaceId: "workspace-1",
           shell: "C:\\Program Files\\Git\\bin\\bash.exe"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
         })
+      );
+    });
+  });
+
+  it("命中缓存后进入终端页也会立刻请求刷新，而不是等延迟定时器", async () => {
+    const cachedTerminal = buildTerminal({
+      id: "terminal-cached",
+      name: "缓存终端"
+    });
+    setTerminalManagerSnapshot("workspace-1", [cachedTerminal]);
+
+    renderPage();
+
+    await screen.findByRole("tab", { name: /缓存终端/ });
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith("workspace-1");
+    });
+  });
+
+  it("targetHostId 变更后会按新的 host 重新订阅并刷新终端快照", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    const { rerender } = renderPage("/workspaces/workspace-1/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentTargetHostId: null,
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+
+    subscribeTerminalManagerSnapshot.mockClear();
+    requestTerminalManagerRefresh.mockClear();
+
+    rerender(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/terminals"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/terminals"
+              element={(
+                <TerminalPage
+                  workbenchShellOverrides={{
+                    navigationGroups,
+                    currentWorkspaceId: "workspace-1",
+                    currentTargetHostId: "peer-host-1",
+                    selectWorkspace: vi.fn(),
+                    subscribeTerminalManagerSnapshot,
+                    requestTerminalManagerRefresh,
+                    addTerminalManagerSnapshotListener
+                  } as never}
+                />
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({ targetHostId: "peer-host-1" })
+      );
+    });
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({ targetHostId: "peer-host-1" })
       );
     });
   });
@@ -872,6 +980,9 @@ describe("TerminalPage", () => {
       expect(mockCreateTerminal).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: "workspace-isolated-1"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
         })
       );
     });
@@ -938,7 +1049,7 @@ describe("TerminalPage", () => {
     await waitFor(() => {
       expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
     });
-    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).not.toBeVisible();
+    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).toBeNull();
     expect(desktopShell?.querySelector(".terminal-desktop-rail")).not.toBeNull();
   });
 
@@ -1377,7 +1488,10 @@ describe("TerminalPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "关闭终端" }));
 
-    expect(mockCloseTerminal).toHaveBeenCalledWith("terminal-running");
+    expect(mockCloseTerminal).toHaveBeenCalledWith(
+      "terminal-running",
+      expect.objectContaining({ targetHostId: undefined })
+    );
     expect(await screen.findByText("关闭中")).toBeInTheDocument();
 
     closeDeferred.resolve({
@@ -1388,7 +1502,10 @@ describe("TerminalPage", () => {
       expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-running");
+      expect(mockDeleteTerminalRecord).toHaveBeenCalledWith(
+        "terminal-running",
+        expect.objectContaining({ targetHostId: undefined })
+      );
     });
     expect(await screen.findByText("删除中")).toBeInTheDocument();
 
@@ -1429,7 +1546,10 @@ describe("TerminalPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
 
-    expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-error");
+    expect(mockDeleteTerminalRecord).toHaveBeenCalledWith(
+      "terminal-error",
+      expect.objectContaining({ targetHostId: undefined })
+    );
     expect(await screen.findByText("删除中")).toBeInTheDocument();
 
     deleteDeferred.resolve({
@@ -1584,6 +1704,9 @@ describe("TerminalPage", () => {
           workspaceId: "workspace-1",
           shell: "/bin/zsh",
           runtimeType: "embedded-pty"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
         })
       );
     });
