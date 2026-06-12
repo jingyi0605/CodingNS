@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalLogFileRepository } from "../../src/storage/repositories/terminal-log-file-repository.js";
 import { TerminalLogSegmentRepository } from "../../src/storage/repositories/terminal-log-segment-repository.js";
@@ -197,7 +197,81 @@ describe("TerminalLogSpooler", () => {
       database.close();
     }
   });
+
+  it("日志写入进程关闭后不会继续安排重复 flush", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-worker-closed-"));
+    const databasePath = path.join(tempDir, "terminal.db");
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(databasePath);
+    seedTerminalDependencies(database.db, "terminal-4");
+
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+    const spooler = new TerminalLogSpooler({
+      databasePath,
+      logRootDir: tempDir,
+      fileRepository,
+      segmentRepository,
+      flushIntervalMs: 20,
+      maxBatchBytes: 1024
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await closeWriterClientForTest(spooler);
+      spooler.appendChunks("terminal-4", [
+        {
+          terminalId: "terminal-4",
+          cursor: "1",
+          stream: "stdout",
+          content: "closed\n",
+          timestamp: "2026-03-28T11:00:00.000Z"
+        }
+      ]);
+
+      await spooler.flushTerminal("terminal-4");
+      await delay(80);
+      spooler.appendChunks("terminal-4", [
+        {
+          terminalId: "terminal-4",
+          cursor: "2",
+          stream: "stdout",
+          content: "ignored\n",
+          timestamp: "2026-03-28T11:00:01.000Z"
+        }
+      ]);
+      await delay(80);
+
+      const flushFailedWarnings = warnSpy.mock.calls.filter(
+        ([scope]) => scope === "[terminal-log-flush-failed]"
+      );
+
+      expect(flushFailedWarnings).toHaveLength(1);
+      expect(fileRepository.findActiveByTerminalId("terminal-4")).toBeNull();
+      expect(segmentRepository.findLatestByTerminalId("terminal-4")).toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      await spooler.dispose();
+      database.close();
+    }
+  });
 });
+
+async function closeWriterClientForTest(spooler: TerminalLogSpooler): Promise<void> {
+  const writerClient = (
+    spooler as unknown as {
+      writerClient: {
+        close(): Promise<void>;
+      };
+    }
+  ).writerClient;
+
+  await writerClient.close();
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function seedTerminalDependencies(db: ReturnType<typeof createDatabaseClient>["db"], terminalId: string): void {
   db.exec(`

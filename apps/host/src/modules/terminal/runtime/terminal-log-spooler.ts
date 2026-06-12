@@ -26,6 +26,10 @@ interface PendingTerminalLogBatch {
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000;
 const DEFAULT_MAX_BATCH_BYTES = 256 * 1024;
+const CLOSED_WRITER_ERROR_MARKERS = [
+  "terminal log writer 已关闭",
+  "terminal log writer 已退出"
+] as const;
 
 export class TerminalLogSpooler {
   private readonly fileStore: TerminalLogFileStore;
@@ -33,6 +37,8 @@ export class TerminalLogSpooler {
   private readonly flushIntervalMs: number;
   private readonly maxBatchBytes: number;
   private readonly writerClient: TerminalLogWriterClient | null;
+  private disposed = false;
+  private writerUnavailable = false;
 
   constructor(private readonly options: TerminalLogSpoolerOptions) {
     this.fileStore = new TerminalLogFileStore(options.logRootDir);
@@ -45,7 +51,7 @@ export class TerminalLogSpooler {
   }
 
   appendChunks(terminalId: string, chunks: TerminalOutputChunk[]): void {
-    if (chunks.length === 0) {
+    if (this.disposed || this.writerUnavailable || chunks.length === 0) {
       return;
     }
 
@@ -64,6 +70,11 @@ export class TerminalLogSpooler {
   }
 
   async flushTerminal(terminalId: string): Promise<void> {
+    if (this.disposed) {
+      this.clearTerminal(terminalId);
+      return;
+    }
+
     const batch = this.pendingByTerminalId.get(terminalId);
 
     if (!batch) {
@@ -111,8 +122,6 @@ export class TerminalLogSpooler {
         });
       })
       .catch((error) => {
-        batch.chunks = [...flushingChunks, ...batch.chunks];
-        batch.totalBytes += flushingBytes;
         console.warn("[terminal-log-flush-failed]", {
           terminalId,
           error: error instanceof Error ? error.message : String(error)
@@ -125,13 +134,23 @@ export class TerminalLogSpooler {
           error: error instanceof Error ? error.message : String(error),
           mode: this.writerClient ? "worker" : "inline"
         });
+
+        if (this.isWriterClosedError(error)) {
+          this.writerUnavailable = true;
+          this.clearAllBatchTimers();
+          this.pendingByTerminalId.clear();
+          return;
+        }
+
+        batch.chunks = [...flushingChunks, ...batch.chunks];
+        batch.totalBytes += flushingBytes;
         this.scheduleFlush(terminalId, this.flushIntervalMs);
       })
       .finally(() => {
         batch.flushing = false;
         batch.flushPromise = null;
 
-        if (batch.chunks.length > 0) {
+        if (!this.disposed && !this.writerUnavailable && batch.chunks.length > 0) {
           this.scheduleFlush(
             terminalId,
             batch.totalBytes >= this.maxBatchBytes ? 0 : this.flushIntervalMs
@@ -180,18 +199,36 @@ export class TerminalLogSpooler {
       }
     }
 
-    if (this.writerClient) {
-      await this.writerClient.deleteTerminalLogs(terminalId);
-      return;
+    if (this.writerClient && !this.writerUnavailable) {
+      try {
+        await this.writerClient.deleteTerminalLogs(terminalId);
+        return;
+      } catch (error) {
+        if (!this.isWriterClosedError(error)) {
+          throw error;
+        }
+
+        this.writerUnavailable = true;
+      }
     }
 
+    this.deleteTerminalLogsInline(terminalId);
+  }
+
+  private deleteTerminalLogsInline(terminalId: string): void {
     this.options.segmentRepository.deleteByTerminalId(terminalId);
     this.options.fileRepository.deleteByTerminalId(terminalId);
     this.fileStore.deleteTerminalLogs(terminalId);
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
     await this.flushAll();
+    this.disposed = true;
+    this.clearAllBatchTimers();
     await this.writerClient?.close();
   }
 
@@ -286,6 +323,10 @@ export class TerminalLogSpooler {
   }
 
   private scheduleFlush(terminalId: string, delayMs: number): void {
+    if (this.disposed) {
+      return;
+    }
+
     const batch = this.pendingByTerminalId.get(terminalId);
 
     if (!batch) {
@@ -305,6 +346,21 @@ export class TerminalLogSpooler {
       clearTimeout(batch.timer);
       batch.timer = null;
     }
+  }
+
+  private clearAllBatchTimers(): void {
+    for (const batch of this.pendingByTerminalId.values()) {
+      this.clearBatchTimer(batch);
+    }
+  }
+
+  private isWriterClosedError(error: unknown): boolean {
+    if (!this.writerClient) {
+      return false;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    return CLOSED_WRITER_ERROR_MARKERS.some((marker) => message.includes(marker));
   }
 }
 
