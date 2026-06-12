@@ -15,7 +15,8 @@ import {
   AffairsSectionMenu,
   AffairsSidebarPanel,
   AffairsWorkbenchProvider,
-  AffairsWorkbenchView
+  AffairsWorkbenchView,
+  resetAffairsLightweightRuntimeMemoryForTests
 } from "./AffairsWorkbenchView";
 import { useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store";
 import type { AffairsViewState } from "../types/workbench-mode";
@@ -1115,6 +1116,7 @@ beforeEach(() => {
   window.sessionStorage.clear();
   clearProviderCatalogStore();
   clearSessionProviderPickerCapabilityCache();
+  resetAffairsLightweightRuntimeMemoryForTests();
 
   conversationApiMock.listAffairsLightweightSessions.mockReset();
   conversationApiMock.getAffairsAssistantSessionsSnapshot.mockReset();

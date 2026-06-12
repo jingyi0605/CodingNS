@@ -1496,8 +1496,13 @@ function resolveHtmlSourceScopeOption(
 
 const AFFAIRS_LIGHTWEIGHT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
 const AFFAIRS_ASSISTANT_PROVIDER_IDS: ProviderId[] = ["codex", "claude-code"];
+const affairsLightweightRuntimeMemory = new Map<string, AffairsLightweightRuntimeSnapshot>();
 
 const AffairsWorkbenchContext = createContext<AffairsWorkbenchContextValue | null>(null);
+
+export function resetAffairsLightweightRuntimeMemoryForTests(): void {
+  affairsLightweightRuntimeMemory.clear();
+}
 
 export function AffairsWorkbenchProvider({
   workspaceId,
@@ -1548,7 +1553,15 @@ export function AffairsWorkbenchProvider({
   const [conversationDeletingSessionId, setConversationDeletingSessionId] = useState<string | null>(null);
   const [conversationExportingSessionId, setConversationExportingSessionId] = useState<string | null>(null);
   const [conversationExportRenderJob, setConversationExportRenderJob] = useState<AffairsConversationExportRenderJob>(null);
-  const [lightweightRuntimeBySessionId, setLightweightRuntimeBySessionId] = useState<Record<string, AffairsLightweightRuntimeSnapshot>>({});
+  const [lightweightRuntimeBySessionId, setLightweightRuntimeBySessionId] = useState<Record<string, AffairsLightweightRuntimeSnapshot>>(() => {
+    const next: Record<string, AffairsLightweightRuntimeSnapshot> = {};
+
+    for (const [sessionId, snapshot] of affairsLightweightRuntimeMemory.entries()) {
+      next[sessionId] = snapshot;
+    }
+
+    return next;
+  });
   const initialLightweightConversationSessions = useMemo(
     () => readCachedAffairsLightweightConversationSessions(workspaceId) ?? [],
     [workspaceId]
@@ -1732,7 +1745,9 @@ export function AffairsWorkbenchProvider({
     setAgentConversationSessions([]);
     setAgentConversationSessionsReady(false);
     setAgentConversationSessionsLoading(false);
-    setLightweightRuntimeBySessionId({});
+    const scopedRuntimeEntries = Array.from(affairsLightweightRuntimeMemory.entries())
+      .filter(([, snapshot]) => snapshot.session?.workspaceId === workspaceId);
+    setLightweightRuntimeBySessionId(Object.fromEntries(scopedRuntimeEntries));
   }, [initialLightweightConversationSessions, workspaceId]);
 
   useEffect(() => {
@@ -1776,12 +1791,13 @@ export function AffairsWorkbenchProvider({
     updater: AffairsLightweightRuntimeSnapshot | null | ((current: AffairsLightweightRuntimeSnapshot | null) => AffairsLightweightRuntimeSnapshot | null)
   ) => {
     setLightweightRuntimeBySessionId((current) => {
-      const currentSnapshot = current[sessionId] ?? null;
+      const currentSnapshot = current[sessionId] ?? affairsLightweightRuntimeMemory.get(sessionId) ?? null;
       const nextSnapshot = typeof updater === "function"
         ? updater(currentSnapshot)
         : updater;
 
       if (!nextSnapshot) {
+        affairsLightweightRuntimeMemory.delete(sessionId);
         if (!(sessionId in current)) {
           return current;
         }
@@ -1789,6 +1805,7 @@ export function AffairsWorkbenchProvider({
         return rest;
       }
 
+      affairsLightweightRuntimeMemory.set(sessionId, nextSnapshot);
       return {
         ...current,
         [sessionId]: nextSnapshot
