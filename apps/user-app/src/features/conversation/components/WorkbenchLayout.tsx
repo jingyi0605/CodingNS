@@ -256,6 +256,7 @@ import {
   AffairsLibraryIcon,
   AffairsLightweightConversationCreateModalLauncher,
   AffairsShortcutAppsRail,
+  AffairsSidebarPanel,
   AffairsWorkbenchIcon,
   AffairsWorkbenchProvider,
   AffairsWorkbenchView,
@@ -5851,6 +5852,7 @@ function waitForSessionExportImage(image: HTMLImageElement): Promise<void> {
 }
 
 function SidebarContent({
+  navigationGroups,
   workspaceGroups,
   workspaceVisualContextMap,
   sessionDisplaySortMode,
@@ -5858,6 +5860,7 @@ function SidebarContent({
   favoriteSessionIds,
   activeWorkspaceId,
   codeEmbeddedAffairsState,
+  onCodeEmbeddedAffairsStateChange,
   affairsLibraryEnabled,
   lightweightChatSessionsByWorkspaceId,
   lightweightArchivedChatSessionsByWorkspaceId,
@@ -5906,6 +5909,7 @@ function SidebarContent({
   onToggleCollapse,
   codeShortcutRailSlot
 }: {
+  navigationGroups: WorkspaceSessionGroup[];
   workspaceGroups: WorkspaceSidebarGroup[];
   workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
   sessionDisplaySortMode: SessionDisplaySortMode;
@@ -5913,6 +5917,7 @@ function SidebarContent({
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
   codeEmbeddedAffairsState?: AffairsViewState | null;
+  onCodeEmbeddedAffairsStateChange?: (nextState: AffairsViewState) => void;
   affairsLibraryEnabled: boolean;
   lightweightChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
   lightweightArchivedChatSessionsByWorkspaceId: Record<string, SessionSummaryDto[]>;
@@ -5971,6 +5976,7 @@ function SidebarContent({
   const macOsNativeTitlebarDragRegion = resolveMacOsNativeTitlebarDragRegion(platform);
   const { showToast } = useToast();
   const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
+  const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
   const runtimeConfig = useClientConfigSelector((state) => state);
   const routeWorkspaceRef = useMemo(() => readWorkspaceRefFromLocation(location), [location.pathname, location.search]);
   const activeHost = getActiveHost(runtimeConfig);
@@ -6002,6 +6008,80 @@ function SidebarContent({
     hostId: string;
     peerHostId: string;
   } | null>(null);
+
+  const currentAffairsWorkspace = useMemo(
+    () => (
+      activeWorkspaceId
+        ? workspaceGroups.find((group) => group.workspace.id === activeWorkspaceId)?.workspace ?? null
+        : null
+    ),
+    [activeWorkspaceId, workspaceGroups]
+  );
+  const embeddedAffairsSidebarState = useMemo(() => {
+    if (!activeWorkspaceId) {
+      return null;
+    }
+
+    const targetSection = routeCodeEmbeddedAffairsSection
+      ?? (
+        codeEmbeddedAffairsState?.primarySection === "library"
+        || codeEmbeddedAffairsState?.primarySection === "workbench"
+          ? codeEmbeddedAffairsState.primarySection
+          : null
+      );
+
+    if (!targetSection) {
+      return null;
+    }
+
+    if (
+      codeEmbeddedAffairsState
+      && codeEmbeddedAffairsState.workspaceId === activeWorkspaceId
+      && codeEmbeddedAffairsState.primarySection === targetSection
+    ) {
+      return codeEmbeddedAffairsState;
+    }
+
+    const baseState =
+      (codeEmbeddedAffairsState && codeEmbeddedAffairsState.workspaceId === activeWorkspaceId
+        ? codeEmbeddedAffairsState
+        : readAffairsViewState(activeWorkspaceId))
+      ?? createDefaultAffairsViewState(activeWorkspaceId);
+
+    if (targetSection === "library") {
+      return createDefaultAffairsLibraryLandingState(activeWorkspaceId, baseState);
+    }
+
+    return {
+      ...baseState,
+      workspaceId: activeWorkspaceId,
+      primarySection: "workbench" as const,
+      selectedNodeId: "workbench:overview",
+      selectedObjectId: null,
+      selectedDocumentId: null,
+      pendingLibraryPreview: null
+    };
+  }, [
+    activeWorkspaceId,
+    codeEmbeddedAffairsState,
+    routeCodeEmbeddedAffairsSection
+  ]);
+  const embeddedAffairsSidebarContent =
+    activeWorkspaceId && embeddedAffairsSidebarState && onCodeEmbeddedAffairsStateChange
+      ? (
+        <AffairsWorkbenchProvider
+          workspaceId={activeWorkspaceId}
+          workspaceName={currentAffairsWorkspace?.name ?? null}
+          navigationGroups={navigationGroups}
+          state={embeddedAffairsSidebarState}
+          onStateChange={onCodeEmbeddedAffairsStateChange}
+          onRefreshNavigation={onRefreshNavigation}
+          forceRoute={false}
+        >
+          <AffairsSidebarPanel />
+        </AffairsWorkbenchProvider>
+      )
+      : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -9696,8 +9776,10 @@ function SidebarContent({
           </div>
         ) : null}
 
-        {favoriteSessions.length > 0 ? (
-          <section className="workbench-section-block workbench-favorite-section">
+        {embeddedAffairsSidebarContent ?? (
+          <>
+            {favoriteSessions.length > 0 ? (
+              <section className="workbench-section-block workbench-favorite-section">
             <div className="workbench-section-heading">
               <div className="workbench-section-heading-main">
                 <StarIcon active className="workbench-favorite-heading-icon" />
@@ -9969,11 +10051,13 @@ function SidebarContent({
         })}
         </section>
 
-        {renderLightweightChatSection()}
+            {renderLightweightChatSection()}
+          </>
+        )}
       </div>
 
       <div className="workbench-nav-footer minimal">
-        {codeShortcutRailSlot ?? null}
+        {!embeddedAffairsSidebarContent ? codeShortcutRailSlot ?? null : null}
         <div className="workbench-nav-footer-actions">
           <WorkbenchUpdateBadge onOpenSoftwareUpdate={() => navigate("/settings/software-update")} />
         </div>
@@ -16696,6 +16780,7 @@ export function WorkbenchLayout({
   ]);
   const mobileNavigationPanel = isMobileShell ? (
     <SidebarContent
+      navigationGroups={navigationGroups}
       workspaceGroups={workspaceSidebarGroups}
       workspaceVisualContextMap={workspaceVisualContextMap}
       sessionDisplaySortMode={sessionDisplaySortMode}
@@ -16703,6 +16788,7 @@ export function WorkbenchLayout({
       favoriteSessionIds={favoriteSessionIdSet}
       activeWorkspaceId={currentWorkspaceId}
       codeEmbeddedAffairsState={codeEmbeddedAffairsState}
+      onCodeEmbeddedAffairsStateChange={setCodeEmbeddedAffairsState}
       affairsLibraryEnabled={affairsLibraryCapability.enabled}
       lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
       lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
@@ -16883,6 +16969,7 @@ export function WorkbenchLayout({
             <>
                 <aside className="workbench-nav surface-card" data-collapsed={effectiveLeftCollapsed}>
                   <SidebarContent
+                    navigationGroups={navigationGroups}
                     workspaceGroups={workspaceSidebarGroups}
                     workspaceVisualContextMap={workspaceVisualContextMap}
                     sessionDisplaySortMode={sessionDisplaySortMode}
@@ -16890,6 +16977,7 @@ export function WorkbenchLayout({
                   favoriteSessionIds={favoriteSessionIdSet}
                     activeWorkspaceId={currentWorkspaceId}
                     codeEmbeddedAffairsState={codeEmbeddedAffairsState}
+                    onCodeEmbeddedAffairsStateChange={setCodeEmbeddedAffairsState}
                     affairsLibraryEnabled={affairsLibraryCapability.enabled}
                     lightweightChatSessionsByWorkspaceId={lightweightChatSessionsByWorkspaceId}
                     lightweightArchivedChatSessionsByWorkspaceId={lightweightArchivedChatSessionsByWorkspaceId}
