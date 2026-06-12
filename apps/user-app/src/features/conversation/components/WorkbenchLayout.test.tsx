@@ -7155,6 +7155,120 @@ describe("WorkbenchLayout", () => {
     );
   });
 
+  it("H5 项目右键菜单会悬浮显示二级 HOST 菜单，而不是在一级菜单里嵌套展开", async () => {
+    clientConfigStore.hydrate({
+      platform: "web",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "CN",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXN"),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "会话一", workspaceId: "workspace-1" })],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 800
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 600
+    });
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await findWorkspaceGroupByName("GXN");
+
+    const titleCopy = view.container.querySelector<HTMLElement>(
+      ".workbench-workspace-group .workbench-workspace-title-copy"
+    );
+
+    if (!(titleCopy instanceof HTMLElement)) {
+      throw new Error("未找到工作区标题区域");
+    }
+
+    fireEvent.contextMenu(titleCopy, { clientX: 220, clientY: 140 });
+
+    const menu = await screen.findByRole("menu", { name: t("shell.manageWorkspaceTitle") });
+    const switchButton = within(menu).getByRole("button", { name: t("shell.workspaceSwitchHostAction") });
+    fireEvent.pointerEnter(switchButton.closest(".workbench-workspace-submenu") ?? switchButton);
+
+    await waitFor(() => {
+      expect(switchButton).toHaveAttribute("aria-expanded", "true");
+    });
+
+    const submenu = screen.getByRole("menu", { name: t("shell.workspaceSwitchHostAction") });
+    expect(submenu).toHaveAttribute("data-floating", "true");
+    expect(submenu).toHaveAttribute("data-open", "true");
+    expect(submenu).not.toHaveTextContent(t("shell.terminalsEntry"));
+    expect(within(submenu).getByRole("button", { name: t("shell.manageWorkspaceHostCurrentOption", { alias: "CN" }) }))
+      .toBeInTheDocument();
+    expect(within(submenu).getByRole("button", { name: t("shell.manageWorkspaceHostPeerOption", { alias: "WIN" }) }))
+      .toBeInTheDocument();
+  });
+
   it("重排工作区时会按目标位置生成新的顺序", () => {
     const groups = [
       {

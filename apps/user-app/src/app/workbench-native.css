@@ -1056,6 +1056,42 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
   text-align: left;
 }
 
+.workbench-workspace-submenu .workbench-session-menu-item[aria-expanded="true"] {
+  background: var(--panel-hover);
+  color: var(--text-primary);
+  border-color: var(--panel-border);
+}
+
+.workbench-workspace-submenu-panel[data-floating="true"] {
+  position: fixed;
+  z-index: 3201;
+  min-width: 176px;
+  margin-left: 0;
+  padding: 6px;
+  border-left: none;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workbench-workspace-submenu-panel[data-floating="true"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--workbench-submenu-bridge-left, -8px);
+  width: var(--workbench-submenu-bridge-width, 8px);
+  height: 100%;
+}
+
+.workbench-workspace-submenu-panel[data-floating="true"][data-open="false"] {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .workbench-archive-folder {
   display: flex;
   align-items: center;
@@ -7889,6 +7925,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-session-menu,
+body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-workspace-submenu-panel[data-floating="true"],
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-operations-menu,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-history-entry-menu,
 body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .git-selection-menu,
@@ -13712,6 +13749,10 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
   min-height: 54px;
   padding: 8px 10px;
   gap: 8px;
+}
+
+.workbench-host-switcher-item-main[data-static="true"] {
+  cursor: default;
 }
 
 .workbench-host-switcher-item-copy {

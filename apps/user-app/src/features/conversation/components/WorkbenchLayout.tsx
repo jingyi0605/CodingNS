@@ -6277,6 +6277,7 @@ function SidebarContent({
   const suppressWorkspaceToggleClickRef = useRef<string | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const [workspaceMenuPositionStyle, setWorkspaceMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [workspaceSubmenuPositionById, setWorkspaceSubmenuPositionById] = useState<Record<string, CSSProperties>>({});
   const [openWorkspaceMenuSubmenuId, setOpenWorkspaceMenuSubmenuId] = useState<string | null>(null);
   const expandedWorktreeNodeIdSet = useMemo(
     () => new Set(worktreeNodeExpansionState.expandedWorkspaceIds),
@@ -6329,6 +6330,7 @@ function SidebarContent({
   const closeWorkspaceMenu = useCallback(() => {
     setOpenWorkspaceMenuState(null);
     setOpenWorkspaceMenuSubmenuId(null);
+    setWorkspaceSubmenuPositionById({});
   }, []);
 
   const createSessionWorkspace =
@@ -6707,6 +6709,44 @@ function SidebarContent({
     ];
   }
 
+  function openWorkspaceSubmenuFromElement(submenuId: string, element: HTMLElement) {
+    if (typeof window === "undefined") {
+      setOpenWorkspaceMenuSubmenuId(submenuId);
+      return;
+    }
+
+    const itemRect = element.getBoundingClientRect();
+    const parentMenuRect = workspaceMenuRef.current?.getBoundingClientRect();
+    const parentMenuWidth = parentMenuRect?.width ?? 180;
+    const submenuWidth = 188;
+    const viewportMargin = 8;
+    const gap = 4;
+    const openLeft = itemRect.right + gap + submenuWidth > window.innerWidth - viewportMargin
+      && itemRect.left - gap - submenuWidth >= viewportMargin;
+    const left = openLeft
+      ? itemRect.left - gap - submenuWidth
+      : itemRect.right + gap;
+    const top = Math.min(
+      Math.max(itemRect.top - 6, viewportMargin),
+      Math.max(viewportMargin, window.innerHeight - viewportMargin - 96)
+    );
+
+    setWorkspaceSubmenuPositionById((current) => ({
+      ...current,
+      [submenuId]: {
+        position: "fixed",
+        top: `${Math.round(top)}px`,
+        left: `${Math.round(left)}px`,
+        width: `${submenuWidth}px`,
+        maxWidth: `min(${submenuWidth}px, calc(100vw - ${viewportMargin * 2}px))`,
+        transformOrigin: `${openLeft ? "right" : "left"} top`,
+        ["--workbench-submenu-bridge-left" as string]: openLeft ? `${submenuWidth}px` : `-${parentMenuWidth + gap}px`,
+        ["--workbench-submenu-bridge-width" as string]: `${Math.max(parentMenuWidth + gap, gap)}px`
+      }
+    }));
+    setOpenWorkspaceMenuSubmenuId(submenuId);
+  }
+
   async function openWorkspaceContextMenu(
     workspace: WorkspaceDto,
     options?: { pinDisabled?: boolean },
@@ -6724,6 +6764,7 @@ function SidebarContent({
     }
 
     setOpenWorkspaceMenuSubmenuId(null);
+    setWorkspaceSubmenuPositionById({});
     setOpenWorkspaceMenuState({
       workspace,
       anchorPoint,
@@ -6849,13 +6890,21 @@ function SidebarContent({
       });
     };
 
+    const handleViewportChanged = () => {
+      if (openWorkspaceMenuSubmenuId !== null) {
+        setOpenWorkspaceMenuSubmenuId(null);
+        setWorkspaceSubmenuPositionById({});
+      }
+      updateMenuPosition();
+    };
+
     updateMenuPosition();
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
+    window.addEventListener("resize", handleViewportChanged);
+    window.addEventListener("scroll", handleViewportChanged, true);
 
     return () => {
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
+      window.removeEventListener("resize", handleViewportChanged);
+      window.removeEventListener("scroll", handleViewportChanged, true);
     };
   }, [openWorkspaceMenuState, platform.isDesktop]);
 
@@ -6906,24 +6955,41 @@ function SidebarContent({
                 const submenuOpen = openWorkspaceMenuSubmenuId === item.id;
 
                 return (
-                  <div key={item.id} className="workbench-session-submenu" data-open={submenuOpen}>
+                  <div
+                    key={item.id}
+                    className="workbench-session-submenu workbench-workspace-submenu"
+                    data-open={submenuOpen}
+                    onPointerEnter={(event) => {
+                      openWorkspaceSubmenuFromElement(item.id, event.currentTarget);
+                    }}
+                    onFocusCapture={(event) => {
+                      openWorkspaceSubmenuFromElement(item.id, event.currentTarget);
+                    }}
+                  >
                     <button
                       type="button"
                       className="workbench-session-menu-item"
                       aria-haspopup="menu"
                       aria-expanded={submenuOpen}
                       disabled={item.disabled}
-                      onClick={() => {
-                        setOpenWorkspaceMenuSubmenuId((current) => current === item.id ? null : item.id);
+                      onClick={(event) => {
+                        openWorkspaceSubmenuFromElement(item.id, event.currentTarget);
                       }}
                     >
                       <span>{item.label}</span>
                       <span className="workbench-session-submenu-caret" aria-hidden="true">
-                        <ChevronIcon expanded={submenuOpen} />
+                        ›
                       </span>
                     </button>
-                    {submenuOpen ? (
-                      <div className="workbench-session-submenu-panel" role="menu" aria-label={item.label}>
+                    <div
+                      className="workbench-session-submenu-panel workbench-workspace-submenu-panel"
+                      role="menu"
+                      aria-label={item.label}
+                      data-floating="true"
+                      data-open={submenuOpen}
+                      aria-hidden={!submenuOpen}
+                      style={workspaceSubmenuPositionById[item.id]}
+                    >
                         {item.items.map((child) => {
                           if ("items" in child) {
                             return null;
@@ -6946,7 +7012,6 @@ function SidebarContent({
                           );
                         })}
                       </div>
-                    ) : null}
                   </div>
                 );
               }
@@ -6958,6 +7023,16 @@ function SidebarContent({
                   className="workbench-session-menu-item"
                   role="menuitem"
                   disabled={item.disabled}
+                  onPointerEnter={() => {
+                    if (openWorkspaceMenuSubmenuId !== null) {
+                      setOpenWorkspaceMenuSubmenuId(null);
+                    }
+                  }}
+                  onFocus={() => {
+                    if (openWorkspaceMenuSubmenuId !== null) {
+                      setOpenWorkspaceMenuSubmenuId(null);
+                    }
+                  }}
                   onClick={() => {
                     void item.onSelect();
                     closeWorkspaceMenu();
