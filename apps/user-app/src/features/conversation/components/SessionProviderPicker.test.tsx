@@ -112,6 +112,34 @@ describe("SessionProviderPicker", () => {
     });
   });
 
+  it("targetHostId 是 current 时会归一化成主 HOST 请求，不会把 current 当成真实 hostId", async () => {
+    mockListProviderCapabilities.mockResolvedValue({
+      gemini: createUnavailableCapabilities("gemini", "主 HOST 未检测到 Gemini CLI")
+    });
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-current-host"
+        targetHostId="current"
+        providers={["gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockListProviderCatalog).toHaveBeenCalledWith({
+        targetHostId: null
+      });
+    });
+    await waitFor(() => {
+      expect(mockListProviderCapabilities).toHaveBeenCalledWith(
+        ["gemini"],
+        "workspace-picker-current-host",
+        { targetHostId: null }
+      );
+    });
+  });
+
   it("清掉 provider picker 缓存后会重新请求能力", async () => {
     mockListProviderCapabilities.mockResolvedValue({
       gemini: createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")

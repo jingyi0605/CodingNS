@@ -49,15 +49,23 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
+  /**
+   * "current" 只是缓存 key 的约定值，不是有效的 peer host ID。
+   * 传给 httpClient 时必须归一化为 null，否则 buildTargetHostProxyPath
+   * 会拼出 /api/host-proxy/hosts/current/... 导致 404。
+   */
+  const targetHostIdForRequest =
+    targetHostId && targetHostId !== "current" ? targetHostId : null;
+
   const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(
     providers,
     true,
-    targetHostId
+    targetHostIdForRequest
   );
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
-  >(() => readCachedCapabilities(visibleProviders, workspaceId, targetHostId));
+  >(() => readCachedCapabilities(visibleProviders, workspaceId, targetHostIdForRequest));
   const sessionProviderDefinitions: SessionProviderDefinition[] = visibleProviders.map((provider) => ({ provider }));
 
   useEffect(() => {
@@ -75,7 +83,7 @@ export function SessionProviderPicker({
       return;
     }
 
-    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId, targetHostId);
+    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId, targetHostIdForRequest);
     setCapabilitiesByProvider(cachedCapabilities);
 
     const missingProviders = visibleProviders.filter((provider) => !cachedCapabilities[provider]);
@@ -87,9 +95,9 @@ export function SessionProviderPicker({
     let cancelled = false;
 
     void listProviderCapabilities(missingProviders, workspaceId, {
-      targetHostId
+      targetHostId: targetHostIdForRequest
     }).then((nextCapabilities) => {
-      writeCachedCapabilities(workspaceId, targetHostId, nextCapabilities);
+      writeCachedCapabilities(workspaceId, targetHostIdForRequest, nextCapabilities);
 
       if (!cancelled) {
         setCapabilitiesByProvider((current) => ({
@@ -102,7 +110,7 @@ export function SessionProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [providerCatalogReady, targetHostId, visibleProviders, workspaceId]);
+  }, [providerCatalogReady, targetHostIdForRequest, visibleProviders, workspaceId]);
 
   if (!providerCatalogReady) {
     return (
