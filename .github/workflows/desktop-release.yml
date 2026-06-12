@@ -253,8 +253,19 @@ jobs:
           set -euo pipefail
 
           version="$(tr -d '[:space:]' < VERSION)"
-          msi_count="$(find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi -maxdepth 1 -type f -name '*.msi' | wc -l | tr -d '[:space:]')"
-          exe_count="$(find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d '[:space:]')"
+          bundle_root="apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          msi_dir="${bundle_root}/msi"
+          nsis_dir="${bundle_root}/nsis"
+          msi_count="0"
+          exe_count="0"
+
+          if [[ -d "${msi_dir}" ]]; then
+            msi_count="$(find "${msi_dir}" -maxdepth 1 -type f -name '*.msi' | wc -l | tr -d '[:space:]')"
+          fi
+
+          if [[ -d "${nsis_dir}" ]]; then
+            exe_count="$(find "${nsis_dir}" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d '[:space:]')"
+          fi
 
           if [[ "${exe_count}" -eq 0 ]]; then
             echo "Windows 构建没有产出 NSIS 安装包" >&2
