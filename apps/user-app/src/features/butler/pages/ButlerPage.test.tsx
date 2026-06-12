@@ -164,6 +164,7 @@ vi.mock("../api/butler-api", () => ({
 
 import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
+import { resetButlerRuntimeBootstrapCacheForTests } from "../runtime/butler-runtime-store";
 import {
   analyzeButlerInboxItem,
   cancelAssistantAutomation,
@@ -246,6 +247,16 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+function renderPage() {
+  return render(
+    <MemoryRouter initialEntries={["/workspaces/workspace-1/butler"]}>
+      <Routes>
+        <Route path="/workspaces/:workspaceId/butler" element={<ButlerPage />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 describe("ButlerPage", () => {
   const showToastMock = vi.fn();
   const defaultAssistantState = {
@@ -266,6 +277,7 @@ describe("ButlerPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearProviderCatalogStore();
+    resetButlerRuntimeBootstrapCacheForTests();
     setAuxiliaryPanelMock.mockReset();
     navigateMock.mockReset();
     clipboardWriteTextMock.mockReset();
@@ -348,6 +360,61 @@ describe("ButlerPage", () => {
         verifications: []
       }
     });
+    mockedGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: false,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [],
+      limitations: []
+    } as never);
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession: null
+    } as never);
+    mockedGetSessionMessages.mockResolvedValue({
+      messages: [],
+      cursor: null,
+      nextCursor: null,
+      total: 0
+    } as never);
+    mockedGetSessionPermissionRequests.mockResolvedValue({
+      items: []
+    } as never);
+    mockedGetSessionRuntime.mockResolvedValue({
+      sessionId: "",
+      runningState: "idle",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: null,
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: null
+    } as never);
+    mockedListButlerInboxItems.mockResolvedValue({ items: [] } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValue({ items: [] } as never);
+    mockedListButlerControlSessions.mockResolvedValue({ items: [] } as never);
+    mockedListButlerControlTimers.mockResolvedValue({ items: [] } as never);
+    mockedListAssistantAutomations.mockResolvedValue({ payload: { items: [] } } as never);
+    mockedListRecentAssistantAutomationRuns.mockResolvedValue({ payload: { items: [] } } as never);
+    mockedListButlerPatrolPlans.mockResolvedValue({ items: [] } as never);
+    mockedListButlerControlEvents.mockResolvedValue({ items: [] } as never);
     mockedCancelButlerFollowUpTask.mockResolvedValue({
       task: {} as never
     });
@@ -369,7 +436,7 @@ describe("ButlerPage", () => {
         automation: {} as never
       }
     });
-  }
+  });
 
   function getLatestSidePanel() {
     const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
@@ -480,9 +547,7 @@ describe("ButlerPage", () => {
     expect(screen.queryByText(t("shell.butlerWorkspacePathLabel"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.butlerAgentsFilePathLabel"))).not.toBeInTheDocument();
     expect(screen.queryByText("AGENTS 规则内容")).not.toBeInTheDocument();
-    const initProviderSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") });
-    expect(within(initProviderSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
-    expect(within(initProviderSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: t("shell.butlerProviderLabel") })).not.toBeInTheDocument();
 
     const submitButton = screen.getByRole("button", { name: t("shell.butlerInitSubmit") });
     fireEvent.click(submitButton);
@@ -501,19 +566,13 @@ describe("ButlerPage", () => {
         value: "阿尔文"
       }
     });
-    fireEvent.change(initProviderSelect, {
-      target: {
-        value: "claude-code"
-      }
-    });
-
     fireEvent.click(submitButton);
 
     await waitFor(() => {
       expect(mockedInitButlerProfile).toHaveBeenCalledWith(
         expect.objectContaining({
           displayName: "阿尔文",
-          providerId: "claude-code"
+          providerId: "codex"
         })
       );
     });
@@ -539,10 +598,19 @@ describe("ButlerPage", () => {
       expect(screen.getByText(t("shell.butlerInitTitle"))).toBeInTheDocument();
     });
 
-    const initProviderSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") }) as HTMLSelectElement;
-    expect(initProviderSelect.value).toBe("claude-code");
-    expect(within(initProviderSelect).queryByRole("option", { name: "Codex" })).not.toBeInTheDocument();
-    expect(within(initProviderSelect).getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: /Butler Name/i }), {
+      target: { value: "阿尔文" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerInitSubmit") }));
+
+    await waitFor(() => {
+      expect(mockedInitButlerProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          displayName: "阿尔文",
+          providerId: "claude-code"
+        })
+      );
+    });
   });
 
   it("初始化后展示聚合概览和控制事件", async () => {
@@ -978,6 +1046,101 @@ describe("ButlerPage", () => {
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
+    mockedGetButlerFollowUpTask
+      .mockResolvedValueOnce({
+        task: {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-1",
+          sessionTitle: "登录页开发",
+          objective: "把验证码功能真正做完",
+          completionCriteria: "完成验证码开发并确认失败策略。",
+          maxAutoContinueCount: 5,
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T01:00:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T01:00:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "当前需要你确认验证码失败策略。",
+          lastAutomationAt: "2026-04-07T01:02:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "需要你确认失败策略。",
+          createdAt: "2026-04-07T00:50:00.000Z",
+          updatedAt: "2026-04-07T01:02:00.000Z",
+          completedAt: null,
+          rounds: [
+            {
+              roundNumber: 1,
+              kind: "started",
+              status: "completed",
+              summary: "第一轮先梳理现状。",
+              waitingReason: null,
+              continuePrompt: null,
+              observedRunningState: "running",
+              autoContinueCount: 0,
+              createdAt: "2026-04-07T00:55:00.000Z"
+            },
+            {
+              roundNumber: 2,
+              kind: "waiting_user",
+              status: "waiting_user",
+              summary: "当前需要你确认验证码失败策略。",
+              waitingReason: "需要你确认失败策略。",
+              continuePrompt: "请确认失败策略后我继续推进。",
+              observedRunningState: "completed",
+              autoContinueCount: 1,
+              createdAt: "2026-04-07T01:02:00.000Z"
+            }
+          ]
+        }
+      } as never)
+      .mockResolvedValueOnce({
+        task: {
+          id: "follow-up-2",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-2",
+          sessionId: "session-2",
+          sessionTitle: "注册页收尾",
+          objective: "补齐注册页收尾工作",
+          completionCriteria: "注册页问题全部关闭。",
+          maxAutoContinueCount: 5,
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T00:40:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T00:40:00.000Z",
+          lastObservedMessageCount: 8,
+          lastAutomationSummary: "注册页收尾已完成。",
+          lastAutomationAt: "2026-04-07T00:40:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-07T00:10:00.000Z",
+          updatedAt: "2026-04-07T00:40:00.000Z",
+          completedAt: "2026-04-07T00:40:00.000Z",
+          rounds: [
+            {
+              roundNumber: 1,
+              kind: "completed",
+              status: "completed",
+              summary: "注册页收尾已完成。",
+              waitingReason: null,
+              continuePrompt: null,
+              observedRunningState: "completed",
+              autoContinueCount: 2,
+              createdAt: "2026-04-07T00:40:00.000Z"
+            }
+          ]
+        }
+      } as never);
+
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: [
         {
