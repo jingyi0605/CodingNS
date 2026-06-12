@@ -4092,6 +4092,28 @@ body[data-runtime-platform="desktop"][data-os-family="macos"] .workbench-host-sw
   padding: 0;
 }
 
+/*
+ * 嵌入在会话底部的终端不是 macOS 原生标题栏。
+ * 这里不能套三色球对齐偏移，否则标题、工具、布局和关闭按钮会被推到可视区外；
+ * 右侧终端列表底部的新建按钮也不能被标题栏小按钮尺寸压成一个窄图标。
+ */
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-layout-embedded .terminal-tabbar {
+  min-height: 44px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-layout-embedded .terminal-tabbar-main {
+  transform: none;
+}
+
+[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-layout-embedded .terminal-desktop-rail .terminal-tab-control-rail {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+}
+
 .macos-traffic-lights {
   display: inline-flex;
   align-items: center;
