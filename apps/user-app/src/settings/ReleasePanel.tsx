@@ -14,6 +14,8 @@ import {
 } from "../platform/desktop/release-manager";
 import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
 import { ReleaseInstallReadyModal } from "./ReleaseInstallReadyModal";
+import { UpdateNotesModal } from "./UpdateNotesModal";
+import { releaseManifestToUpdateNotes } from "./update-notes-helpers";
 
 export function ReleasePanel() {
   const platform = createPlatformAdapter();
@@ -26,6 +28,7 @@ export function ReleasePanel() {
   const [downloadedVersion, setDownloadedVersion] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [dismissedRestartVersion, setDismissedRestartVersion] = useState<string | null>(null);
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const latestState = useDesktopUpdateSelector((state) => state.latestState);
   const pendingRestartVersion = useDesktopUpdateSelector((state) => state.pendingRestartVersion);
   const checkedVersion = latestState?.currentVersion ?? null;
@@ -162,6 +165,15 @@ export function ReleasePanel() {
           </p>
         ) : null}
         <div className="settings-update-actions">
+          {manifest?.notes ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setReleaseNotesOpen(true)}
+            >
+              {t("settings.releaseNotesView")}
+            </button>
+          ) : null}
           <button
             className="secondary-button"
             type="button"
@@ -201,6 +213,12 @@ export function ReleasePanel() {
         open={restartModalOpen}
         version={pendingRestartVersion}
         onClose={() => setDismissedRestartVersion(pendingRestartVersion)}
+      />
+      <UpdateNotesModal
+        open={releaseNotesOpen}
+        mobile={false}
+        summary={manifest ? releaseManifestToUpdateNotes(manifest) : null}
+        onClose={() => setReleaseNotesOpen(false)}
       />
     </>
   );

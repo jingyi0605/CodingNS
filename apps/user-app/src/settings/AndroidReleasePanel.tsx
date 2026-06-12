@@ -6,6 +6,8 @@ import {
   installAndroidUpdate
 } from "../platform/android/release-manager";
 import { t } from "../shared/i18n";
+import { UpdateNotesModal } from "./UpdateNotesModal";
+import { androidManifestToUpdateNotes } from "./update-notes-helpers";
 
 export function AndroidReleasePanel() {
   const [loading, setLoading] = useState(false);
@@ -15,6 +17,7 @@ export function AndroidReleasePanel() {
   const [manifest, setManifest] = useState<AndroidApkManifest | null>(null);
   const [hasUpdate, setHasUpdate] = useState(false);
   const [pendingInstallVersionCode, setPendingInstallVersionCode] = useState<number | null>(null);
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const resumeCheckStartedRef = useRef(false);
 
   useEffect(() => {
@@ -151,6 +154,15 @@ export function AndroidReleasePanel() {
         </p>
       ) : null}
       <div className="settings-update-actions">
+        {manifest?.notes ? (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setReleaseNotesOpen(true)}
+          >
+            {t("settings.releaseNotesView")}
+          </button>
+        ) : null}
         <button
           className="secondary-button"
           type="button"
@@ -168,6 +180,12 @@ export function AndroidReleasePanel() {
           {installing ? t("common.loading") : t("settings.releaseInstallNow")}
         </button>
       </div>
+      <UpdateNotesModal
+        open={releaseNotesOpen}
+        mobile
+        summary={manifest ? androidManifestToUpdateNotes(manifest) : null}
+        onClose={() => setReleaseNotesOpen(false)}
+      />
     </div>
   );
 }

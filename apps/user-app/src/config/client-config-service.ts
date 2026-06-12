@@ -426,6 +426,7 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
     activeDiscoveredHostId: null,
     localHostDiscovery: createDefaultLocalHostDiscoveryState(),
     releaseChannel: "stable",
+    betaChannelConsentAcceptedAt: null,
     autoReconnect: true,
     autoCheckUpdate: platform === "desktop",
     autoDownloadUpdate: false,
@@ -468,6 +469,10 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
       activeDiscoveredHostId: null,
       localHostDiscovery: baseConfig.localHostDiscovery,
       releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
+      betaChannelConsentAcceptedAt:
+        Object.prototype.hasOwnProperty.call(patch, "betaChannelConsentAcceptedAt")
+          ? (patch.betaChannelConsentAcceptedAt as string | null)
+          : baseConfig.betaChannelConsentAcceptedAt,
       autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
       autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
       autoDownloadUpdate: patch.autoDownloadUpdate ?? baseConfig.autoDownloadUpdate,
@@ -506,6 +511,7 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
         : null,
     localHostDiscovery: baseConfig.localHostDiscovery,
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
+    betaChannelConsentAcceptedAt: patch.betaChannelConsentAcceptedAt ?? baseConfig.betaChannelConsentAcceptedAt,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
     autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
     autoDownloadUpdate: patch.autoDownloadUpdate ?? baseConfig.autoDownloadUpdate,
@@ -525,6 +531,7 @@ function stripRuntimeConfigForPersistence(config: ClientRuntimeConfig): Omit<
     activeHostId: config.activeHostId,
     hosts: config.hosts,
     releaseChannel: config.releaseChannel,
+    betaChannelConsentAcceptedAt: config.betaChannelConsentAcceptedAt,
     autoReconnect: config.autoReconnect,
     autoCheckUpdate: config.autoCheckUpdate,
     autoDownloadUpdate: config.autoDownloadUpdate,

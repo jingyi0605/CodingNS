@@ -21,6 +21,9 @@ export interface ManagedServicePackageDto {
   packagePageUrl: string;
   currentVersion: string;
   latestVersion: string | null;
+  latestTitle: string | null;
+  latestNotes: string | null;
+  latestPublishedAt: string | null;
   hasUpdate: boolean;
   checkStatus: "ready" | "up_to_date" | "check_failed";
   checkError: string | null;
