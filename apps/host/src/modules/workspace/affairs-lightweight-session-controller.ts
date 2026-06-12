@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import type { SessionProviderConfigMode } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import type { AffairsLightweightAttachmentInput, AffairsLightweightSessionService } from "./affairs-lightweight-session-service.js";
 
@@ -23,9 +24,12 @@ interface AffairsLightweightAttachmentBody {
 interface AffairsLightweightStartBody {
   provider?: string;
   content?: string;
+  sourceWorkspaceId?: string | null;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
   attachments?: AffairsLightweightAttachmentBody[] | null;
 }
 
@@ -103,6 +107,26 @@ function requireTextOrAttachments(
     });
   }
   return normalized;
+}
+
+
+function normalizeProviderConfigMode(
+  value: string | null | undefined
+): SessionProviderConfigMode | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "global-default" || value === "cc-switch-preset") {
+    return value;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: "providerConfigMode 非法",
+    field: "providerConfigMode"
+  });
 }
 
 export class AffairsLightweightSessionController {
@@ -239,12 +263,15 @@ export class AffairsLightweightSessionController {
     reply.status(201).send(
       await this.affairsLightweightSessionService.startSession({
         workspaceId: request.params.workspaceId,
+        sourceWorkspaceId: request.body.sourceWorkspaceId ?? null,
         userId: requireUserId(request),
         provider,
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
         reasoningLevel: request.body.reasoningLevel ?? null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         attachments
       })
     );
@@ -276,12 +303,15 @@ export class AffairsLightweightSessionController {
     try {
       await this.affairsLightweightSessionService.startSessionStream({
         workspaceId: request.params.workspaceId,
+        sourceWorkspaceId: request.body.sourceWorkspaceId ?? null,
         userId: requireUserId(request),
         provider,
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
         reasoningLevel: request.body.reasoningLevel ?? null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         attachments
       }, async (event) => {
         reply.raw.write(`${JSON.stringify(event)}\n`);
@@ -313,12 +343,15 @@ export class AffairsLightweightSessionController {
     reply.status(201).send(
       await this.affairsLightweightSessionService.sendMessage({
         workspaceId: request.params.workspaceId,
+        sourceWorkspaceId: request.body.sourceWorkspaceId ?? null,
         userId: requireUserId(request),
         sessionId: request.params.sessionId,
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
         reasoningLevel: request.body.reasoningLevel ?? null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         attachments
       })
     );
@@ -345,12 +378,15 @@ export class AffairsLightweightSessionController {
     try {
       await this.affairsLightweightSessionService.sendMessageStream({
         workspaceId: request.params.workspaceId,
+        sourceWorkspaceId: request.body.sourceWorkspaceId ?? null,
         userId: requireUserId(request),
         sessionId: request.params.sessionId,
         content,
         clientRequestId: request.body.clientRequestId ?? null,
         model: request.body.model ?? null,
         reasoningLevel: request.body.reasoningLevel ?? null,
+        providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+        providerPresetId: request.body.providerPresetId?.trim() || null,
         attachments
       }, async (event) => {
         reply.raw.write(`${JSON.stringify(event)}\n`);

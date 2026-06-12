@@ -1457,20 +1457,26 @@ export interface SendSessionMessagePayload {
 }
 
 export interface StartAffairsLightweightSessionPayload {
+  sourceWorkspaceId?: string | null;
   provider: ProviderId;
   content: string;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
   attachments?: AttachmentPayload[];
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 export interface SendAffairsLightweightSessionMessagePayload {
+  sourceWorkspaceId?: string | null;
   content: string;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
   attachments?: AttachmentPayload[];
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
 }
 
 export interface ForkSessionPayload {

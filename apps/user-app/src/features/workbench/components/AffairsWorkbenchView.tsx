@@ -7221,12 +7221,15 @@ export function AffairsLightweightConversationDraftState(input: {
 
             try {
               const created = await startAffairsLightweightSessionStream(input.workspaceId, {
+                sourceWorkspaceId: input.workspaceId,
                 provider: input.draft.provider,
                 content,
                 clientRequestId,
                 model: options?.model ?? null,
                 reasoningLevel: options?.reasoningLevel ?? null,
-                attachments: options?.attachments ?? []
+                attachments: options?.attachments ?? [],
+                providerConfigMode: options?.providerConfigMode,
+                providerPresetId: options?.providerPresetId ?? null
               }, (event) => {
                 if (event.type === "started") {
                   activeSessionId = event.session.sessionId;
@@ -7434,8 +7437,8 @@ export function AffairsLightweightConversationLiveState(input: {
           capabilities={runtime.capabilities}
           draftStorageId={input.sessionId}
           workspaceId={session?.workspaceId ?? input.runtimeSeed?.session.workspaceId ?? null}
-          initialProviderConfigMode={"global-default"}
-          initialProviderPresetId={null}
+          initialProviderConfigMode={session?.providerConfigMode ?? input.runtimeSeed?.session.providerConfigMode ?? "global-default"}
+          initialProviderPresetId={session?.providerPresetId ?? input.runtimeSeed?.session.providerPresetId ?? null}
           hasActiveRun={false}
           canInterrupt={false}
           contextUsage={null}
@@ -7606,11 +7609,14 @@ function useAffairsLightweightSessionController(input: {
 
       try {
         const response = await sendAffairsLightweightSessionMessageStream(workspaceId, input.sessionId, {
+          sourceWorkspaceId: workspaceId,
           content,
           clientRequestId,
           model: options?.model ?? null,
           reasoningLevel: options?.reasoningLevel ?? null,
-          attachments: options?.attachments ?? []
+          attachments: options?.attachments ?? [],
+          providerConfigMode: options?.providerConfigMode,
+          providerPresetId: options?.providerPresetId ?? null
         }, (event) => {
           if (event.type === "started") {
             setLightweightRuntimeSnapshot(input.sessionId, (current) => ({

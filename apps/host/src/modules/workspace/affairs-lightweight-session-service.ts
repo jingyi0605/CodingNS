@@ -10,12 +10,15 @@ import type {
   SessionActivitySource,
   SessionActivityState,
   SessionRunningState,
-  SessionProviderConfigMode
+  SessionProviderConfigMode,
+  SessionBinding
 } from "../../types/domain.js";
+import type { SessionProviderConfigService } from "../sessions/session-provider-config-service.js";
+import type { WorkspaceService } from "./workspace-service.js";
 
 const LIGHTWEIGHT_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code"]);
 const LIGHTWEIGHT_STORAGE_VERSION = 1;
-const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const LIGHTWEIGHT_SESSION_TMP_FILE_SUFFIX = ".tmp";
@@ -33,6 +36,7 @@ const LIGHTWEIGHT_SYSTEM_PROMPT = [
 export interface AffairsLightweightSessionSummary {
   sessionId: string;
   workspaceId: string;
+  sourceWorkspaceId?: string;
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
@@ -84,23 +88,29 @@ interface AffairsLightweightRuntimeAttachment extends AffairsLightweightAttachme
 
 export interface StartAffairsLightweightSessionInput {
   workspaceId: string;
+  sourceWorkspaceId?: string | null;
   userId: string;
   provider: ProviderId;
   content: string;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
   attachments?: AffairsLightweightAttachmentInput[];
 }
 
 export interface SendAffairsLightweightSessionMessageInput {
   workspaceId: string;
+  sourceWorkspaceId?: string | null;
   userId: string;
   sessionId: string;
   content: string;
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
   attachments?: AffairsLightweightAttachmentInput[];
 }
 
@@ -147,6 +157,13 @@ export type AffairsLightweightSessionStreamEvent =
       detail: string;
     };
 
+interface LightweightProviderBinding {
+  provider: SessionBinding["provider"];
+  providerConfigMode: SessionProviderConfigMode;
+  providerPresetId: string | null;
+  runtimeHomeDir: string | null;
+}
+
 interface OpenAiRuntimeConfig {
   apiKey: string;
   baseUrl: string;
@@ -177,7 +194,11 @@ export class AffairsLightweightSessionService {
   private readonly sessionDocumentCache = new Map<string, AffairsLightweightSessionDocument>();
   private teableMirrorSyncNotifier: ((userId: string, reason: string) => void) | null = null;
 
-  constructor(private readonly hostDataRootDir: string) {}
+  constructor(
+    private readonly hostDataRootDir: string,
+    private readonly sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding" | "resolveLaunchContext"> | null = null,
+    private readonly workspaceService: Pick<WorkspaceService, "getWorkspaceOrThrow"> | null = null
+  ) {}
 
   configureTeableMirrorSyncNotifier(notifier: (userId: string, reason: string) => void): void {
     this.teableMirrorSyncNotifier = notifier;
@@ -301,14 +322,23 @@ export class AffairsLightweightSessionService {
     const acceptedAt = new Date().toISOString();
     const sessionFilePath = this.resolveSessionFilePath(input.workspaceId, sessionId);
     const providerSessionId = `affairs-lightweight:${input.provider}:${sessionId}`;
+    const providerBinding = this.prepareLightweightProviderBinding({
+      sessionId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      provider: input.provider,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null
+    });
     const session: AffairsLightweightSessionSummary = {
       sessionId,
       workspaceId: input.workspaceId,
+      sourceWorkspaceId: input.sourceWorkspaceId?.trim() || input.workspaceId,
       provider: input.provider,
       providerSessionId,
       rawStoreRef: sessionFilePath,
-      providerConfigMode: "global-default",
-      providerPresetId: null,
+      providerConfigMode: providerBinding.providerConfigMode,
+      providerPresetId: providerBinding.providerPresetId,
       parentSessionId: null,
       isSubagent: false,
       subagentLabel: null,
@@ -343,12 +373,15 @@ export class AffairsLightweightSessionService {
     this.notifyTeableSessionChanged(input.userId, `session_started:${input.workspaceId}:${sessionId}`);
     return this.runTurn(document, {
       workspaceId: input.workspaceId,
+      sourceWorkspaceId: input.sourceWorkspaceId ?? null,
       userId: input.userId,
       sessionId,
       content: input.content,
       clientRequestId,
       model: input.model ?? null,
       reasoningLevel: input.reasoningLevel ?? null,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null,
       attachments: input.attachments ?? []
     });
   }
@@ -370,14 +403,23 @@ export class AffairsLightweightSessionService {
     const acceptedAt = new Date().toISOString();
     const sessionFilePath = this.resolveSessionFilePath(input.workspaceId, sessionId);
     const providerSessionId = `affairs-lightweight:${input.provider}:${sessionId}`;
+    const providerBinding = this.prepareLightweightProviderBinding({
+      sessionId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      provider: input.provider,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null
+    });
     const session: AffairsLightweightSessionSummary = {
       sessionId,
       workspaceId: input.workspaceId,
+      sourceWorkspaceId: input.sourceWorkspaceId?.trim() || input.workspaceId,
       provider: input.provider,
       providerSessionId,
       rawStoreRef: sessionFilePath,
-      providerConfigMode: "global-default",
-      providerPresetId: null,
+      providerConfigMode: providerBinding.providerConfigMode,
+      providerPresetId: providerBinding.providerPresetId,
       parentSessionId: null,
       isSubagent: false,
       subagentLabel: null,
@@ -411,12 +453,15 @@ export class AffairsLightweightSessionService {
     await this.writeSessionDocument(document);
     await this.runTurn(document, {
       workspaceId: input.workspaceId,
+      sourceWorkspaceId: input.sourceWorkspaceId ?? null,
       userId: input.userId,
       sessionId,
       content: input.content,
       clientRequestId,
       model: input.model ?? null,
       reasoningLevel: input.reasoningLevel ?? null,
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null,
       attachments: input.attachments ?? []
     }, onEvent);
   }
@@ -464,6 +509,14 @@ export class AffairsLightweightSessionService {
     const now = new Date().toISOString();
     const document = await this.requireSessionDocument(input.workspaceId, input.sessionId, input.userId);
     const provider = document.session.provider;
+    const providerBinding = this.prepareLightweightProviderBinding({
+      sessionId: document.session.sessionId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      provider,
+      providerConfigMode: input.providerConfigMode ?? document.session.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? document.session.providerPresetId ?? null
+    });
     const userMessage = createUserMessage({
       provider,
       providerSessionId: document.session.providerSessionId,
@@ -485,6 +538,8 @@ export class AffairsLightweightSessionService {
         lastEventAt: now,
         runningState: "running",
         activityState: "running",
+        providerConfigMode: providerBinding.providerConfigMode,
+        providerPresetId: providerBinding.providerPresetId,
         completedAt: null,
         syncStatus: "syncing",
         lastSyncAt: now,
@@ -642,7 +697,7 @@ export class AffairsLightweightSessionService {
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string }
   ): Promise<string> {
-    const runtime = await this.readOpenAiRuntimeConfig(input.model?.trim() || null);
+    const runtime = await this.readOpenAiRuntimeConfig(document.session, input.model?.trim() || null, input.userId);
     const responsePayload = createOpenAiResponsesPayload({
       model: runtime.model,
       messages: document.messages,
@@ -707,7 +762,7 @@ export class AffairsLightweightSessionService {
     document: AffairsLightweightSessionDocument,
     input: SendAffairsLightweightSessionMessageInput & { clientRequestId: string }
   ): Promise<string> {
-    const runtime = await this.readAnthropicRuntimeConfig(input.model?.trim() || null);
+    const runtime = await this.readAnthropicRuntimeConfig(document.session, input.model?.trim() || null, input.userId);
     let messages = document.messages.map((message) => createAnthropicMessagePayload(
       message,
       input.clientRequestId,
@@ -780,7 +835,7 @@ export class AffairsLightweightSessionService {
     onDelta: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
-    const runtime = await this.readOpenAiRuntimeConfig(input.model?.trim() || null);
+    const runtime = await this.readOpenAiRuntimeConfig(document.session, input.model?.trim() || null, input.userId);
     const headers = {
       "content-type": "application/json",
       authorization: `Bearer ${runtime.apiKey}`
@@ -844,7 +899,7 @@ export class AffairsLightweightSessionService {
     onDelta: (delta: string) => Promise<void> | void,
     onTool?: (event: Extract<AffairsLightweightSessionStreamEvent, { type: "tool" }>) => Promise<void> | void
   ): Promise<string | null> {
-    const runtime = await this.readAnthropicRuntimeConfig(input.model?.trim() || null);
+    const runtime = await this.readAnthropicRuntimeConfig(document.session, input.model?.trim() || null, input.userId);
     const response = await postJsonWithFallbacks({
       baseUrl: runtime.baseUrl,
       pathCandidates: ["v1/messages", "messages"],
@@ -994,15 +1049,32 @@ export class AffairsLightweightSessionService {
     return cached ? cloneSessionDocument(cached) : null;
   }
 
-  private async readOpenAiRuntimeConfig(modelOverride: string | null): Promise<OpenAiRuntimeConfig> {
+  private async readOpenAiRuntimeConfig(
+    session: Pick<
+      AffairsLightweightSessionSummary,
+      "sessionId" | "workspaceId" | "sourceWorkspaceId" | "provider" | "providerConfigMode" | "providerPresetId"
+    >,
+    modelOverride: string | null,
+    userId: string
+  ): Promise<OpenAiRuntimeConfig> {
     const injectedConfig = await this.readLightweightRuntimeConfigFile();
-    const authPath = path.join(os.homedir(), ".codex", "auth.json");
-    const configPath = path.join(os.homedir(), ".codex", "config.toml");
+    const providerBinding = this.resolveLightweightProviderBinding({
+      ...session,
+      userId
+    });
+    const providerLaunchContext = providerBinding
+      ? this.sessionProviderConfigService?.resolveLaunchContext(providerBinding) ?? null
+      : null;
+    const runtimeEnv = providerLaunchContext?.runtimeEnv ?? {};
+    const runtimeHomeDir = providerLaunchContext?.runtimeHomeDir?.trim() || null;
+    const authPath = path.join(runtimeHomeDir ?? path.join(os.homedir(), ".codex"), "auth.json");
+    const configPath = path.join(runtimeHomeDir ?? path.join(os.homedir(), ".codex"), "config.toml");
     const auth = await readJsonFile<Record<string, unknown>>(authPath);
     const toml = await safeReadTextFile(configPath);
     const parsed = parseCodexTomlConfig(toml);
     const key = pickFirstText(
       process.env.CODINGNS_LIGHTWEIGHT_OPENAI_API_KEY,
+      runtimeEnv.OPENAI_API_KEY,
       process.env.OPENAI_API_KEY,
       injectedConfig?.openai?.apiKey,
       String(auth?.OPENAI_API_KEY ?? "")
@@ -1010,6 +1082,7 @@ export class AffairsLightweightSessionService {
     const baseUrl = normalizeBaseUrl(
       pickFirstText(
         process.env.CODINGNS_LIGHTWEIGHT_OPENAI_BASE_URL,
+        runtimeEnv.OPENAI_BASE_URL,
         injectedConfig?.openai?.baseUrl,
         process.env.OPENAI_BASE_URL,
         parsed.baseUrl,
@@ -1019,6 +1092,7 @@ export class AffairsLightweightSessionService {
     const model = modelOverride
       || pickFirstText(
         process.env.CODINGNS_LIGHTWEIGHT_OPENAI_MODEL,
+        runtimeEnv.OPENAI_MODEL,
         injectedConfig?.openai?.model,
         process.env.OPENAI_MODEL,
         parsed.model,
@@ -1040,15 +1114,38 @@ export class AffairsLightweightSessionService {
     };
   }
 
-  private async readAnthropicRuntimeConfig(modelOverride: string | null): Promise<AnthropicRuntimeConfig> {
+  private async readAnthropicRuntimeConfig(
+    session: Pick<
+      AffairsLightweightSessionSummary,
+      "sessionId" | "workspaceId" | "sourceWorkspaceId" | "provider" | "providerConfigMode" | "providerPresetId"
+    >,
+    modelOverride: string | null,
+    userId: string
+  ): Promise<AnthropicRuntimeConfig> {
     const injectedConfig = await this.readLightweightRuntimeConfigFile();
-    const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
-    const configPath = path.join(os.homedir(), ".claude", "config.json");
+    const providerBinding = this.resolveLightweightProviderBinding({
+      ...session,
+      userId
+    });
+    const providerLaunchContext = providerBinding
+      ? this.sessionProviderConfigService?.resolveLaunchContext(providerBinding) ?? null
+      : null;
+    const runtimeEnv = providerLaunchContext?.runtimeEnv ?? {};
+    const runtimeHomeDir = providerLaunchContext?.runtimeHomeDir?.trim() || null;
+    const settingsPath = path.join(runtimeHomeDir ?? path.join(os.homedir(), ".claude"), "settings.json");
+    const configPath = path.join(runtimeHomeDir ?? path.join(os.homedir(), ".claude"), "config.json");
     const settings = await readJsonFile<Record<string, any>>(settingsPath);
     const config = await readJsonFile<Record<string, unknown>>(configPath);
     const env = typeof settings?.env === "object" && settings.env ? settings.env : {};
+    const inferredWorkspaceModel = modelOverride
+      ? null
+      : await this.readLatestClaudeWorkspaceRuntimeModel(
+          session.sourceWorkspaceId?.trim() || session.workspaceId
+        );
     const key = pickFirstText(
       process.env.CODINGNS_LIGHTWEIGHT_ANTHROPIC_API_KEY,
+      runtimeEnv.ANTHROPIC_AUTH_TOKEN,
+      runtimeEnv.ANTHROPIC_API_KEY,
       process.env.ANTHROPIC_API_KEY,
       injectedConfig?.anthropic?.apiKey,
       String(env.ANTHROPIC_AUTH_TOKEN ?? config?.primaryApiKey ?? "")
@@ -1056,6 +1153,7 @@ export class AffairsLightweightSessionService {
     const baseUrl = normalizeBaseUrl(
       pickFirstText(
         process.env.CODINGNS_LIGHTWEIGHT_ANTHROPIC_BASE_URL,
+        runtimeEnv.ANTHROPIC_BASE_URL,
         injectedConfig?.anthropic?.baseUrl,
         String(env.ANTHROPIC_BASE_URL ?? ""),
         process.env.ANTHROPIC_BASE_URL,
@@ -1065,8 +1163,10 @@ export class AffairsLightweightSessionService {
     const model = modelOverride
       || pickFirstText(
         process.env.CODINGNS_LIGHTWEIGHT_ANTHROPIC_MODEL,
+        runtimeEnv.ANTHROPIC_MODEL,
         injectedConfig?.anthropic?.model,
         String(env.ANTHROPIC_MODEL ?? ""),
+        inferredWorkspaceModel,
         DEFAULT_CLAUDE_MODEL
       )
       || DEFAULT_CLAUDE_MODEL;
@@ -1083,6 +1183,92 @@ export class AffairsLightweightSessionService {
       baseUrl,
       model
     };
+  }
+
+  private prepareLightweightProviderBinding(input: {
+    sessionId: string;
+    workspaceId: string;
+    userId: string;
+    provider: ProviderId;
+    providerConfigMode?: SessionProviderConfigMode | null;
+    providerPresetId?: string | null;
+  }): LightweightProviderBinding {
+    if (!this.sessionProviderConfigService) {
+      return {
+        provider: input.provider as SessionBinding["provider"],
+        providerConfigMode: input.providerConfigMode ?? "global-default",
+        providerPresetId: input.providerPresetId?.trim() || null,
+        runtimeHomeDir: null
+      };
+    }
+
+    const binding = this.sessionProviderConfigService.prepareSessionBinding({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      provider: input.provider as SessionBinding["provider"],
+      providerConfigMode: input.providerConfigMode ?? null,
+      providerPresetId: input.providerPresetId ?? null
+    });
+
+    return {
+      provider: input.provider as SessionBinding["provider"],
+      providerConfigMode: binding.providerConfigMode,
+      providerPresetId: binding.providerPresetId,
+      runtimeHomeDir: binding.runtimeHomeDir
+    };
+  }
+
+  private resolveLightweightProviderBinding(
+    session: Pick<
+      AffairsLightweightSessionSummary,
+      "sessionId" | "workspaceId" | "sourceWorkspaceId" | "provider" | "providerConfigMode" | "providerPresetId"
+    > & { userId: string }
+  ): LightweightProviderBinding | null {
+    if (!this.sessionProviderConfigService) {
+      return null;
+    }
+
+    return this.prepareLightweightProviderBinding({
+      sessionId: session.sessionId,
+      workspaceId: session.sourceWorkspaceId?.trim() || session.workspaceId,
+      userId: session.userId,
+      provider: session.provider,
+      providerConfigMode: session.providerConfigMode ?? "global-default",
+      providerPresetId: session.providerPresetId ?? null
+    });
+  }
+
+  private async readLatestClaudeWorkspaceRuntimeModel(workspaceId: string): Promise<string | null> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId || !this.workspaceService) {
+      return null;
+    }
+
+    const workspace = this.workspaceService.getWorkspaceOrThrow(normalizedWorkspaceId);
+    const targetWorkspacePath = normalizeWorkspacePathForMatch(workspace.path);
+    const runtimeRootDir = path.join(this.hostDataRootDir, "workspace-session-runtime", normalizedWorkspaceId);
+    const runtimeEntries = await safeReadDir(runtimeRootDir);
+    let matchedModel: { model: string; timestamp: string } | null = null;
+
+    for (const runtimeEntry of runtimeEntries) {
+      if (!runtimeEntry.isFile()) {
+        const projectsRootDir = path.join(runtimeRootDir, runtimeEntry.name, "projects");
+        const projectFiles = await collectJsonlFiles(projectsRootDir);
+
+        for (const filePath of projectFiles) {
+          const candidate = await readLatestClaudeTranscriptModelCandidate(filePath, targetWorkspacePath);
+          if (!candidate) {
+            continue;
+          }
+          if (!matchedModel || candidate.timestamp > matchedModel.timestamp) {
+            matchedModel = candidate;
+          }
+        }
+      }
+    }
+
+    return matchedModel?.model ?? null;
   }
 
   private resolveWorkspaceDir(workspaceId: string): string {
@@ -2008,6 +2194,79 @@ async function safeReadDir(dirPath: string): Promise<Array<{ name: string; isFil
     }
     throw error;
   }
+}
+
+async function collectJsonlFiles(rootDir: string): Promise<string[]> {
+  const entries = await safeReadDir(rootDir);
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".jsonl")) {
+        results.push(fullPath);
+      }
+      continue;
+    }
+
+    results.push(...await collectJsonlFiles(fullPath));
+  }
+
+  return results;
+}
+
+async function readLatestClaudeTranscriptModelCandidate(
+  filePath: string,
+  targetWorkspacePath: string
+): Promise<{ model: string; timestamp: string } | null> {
+  const content = await safeReadTextFile(filePath);
+  if (!content) {
+    return null;
+  }
+
+  const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  let latest: { model: string; timestamp: string } | null = null;
+
+  for (const line of lines) {
+    let parsed: Record<string, any> | null = null;
+    try {
+      parsed = JSON.parse(line) as Record<string, any>;
+    } catch {
+      continue;
+    }
+
+    const cwd = normalizeWorkspacePathForMatch(String(parsed?.cwd ?? ""));
+    if (!cwd || cwd !== targetWorkspacePath) {
+      continue;
+    }
+
+    const model = pickFirstText(
+      parsed?.message?.model,
+      parsed?.model
+    );
+    const timestamp = normalizeOptionalTimestamp(String(parsed?.timestamp ?? "")) ?? "";
+    if (!model || !timestamp) {
+      continue;
+    }
+
+    if (!latest || timestamp > latest.timestamp) {
+      latest = { model, timestamp };
+    }
+  }
+
+  return latest;
+}
+
+function normalizeWorkspacePathForMatch(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const normalized = trimmed.replaceAll("\\", "/");
+  if (/^[a-z]:(?:\/|$)/i.test(normalized) || normalized.startsWith("//")) {
+    return normalized.replace(/\/+$/, "").toLowerCase();
+  }
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
 }
 
 async function postJsonWithFallbacks(input: {

@@ -1462,7 +1462,9 @@ export function createServer(config: HostConfig) {
     config.filePreviewTokenSecret
   );
   const affairsLightweightSessionService = new AffairsLightweightSessionService(
-    path.dirname(config.databasePath)
+    path.dirname(config.databasePath),
+    sessionProviderConfigService,
+    workspaceService
   );
   const teableCredentialService = new TeableCredentialService(
     repositories.userTeableCredentialRepository,
