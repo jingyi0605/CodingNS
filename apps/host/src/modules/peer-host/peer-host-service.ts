@@ -347,6 +347,42 @@ export class PeerHostService {
     return toSessionView(record);
   }
 
+  async reconnect(
+    ownerUserId: string,
+    peerHostId: string,
+  ): Promise<PeerHostRecord> {
+    const checked = await this.check(ownerUserId, peerHostId);
+
+    if (checked.status !== "reachable") {
+      return checked;
+    }
+
+    try {
+      await this.getAccessTokenForProxy(ownerUserId, checked);
+      return this.persistCheckResult(peerHostId, ownerUserId, {
+        status: "reachable",
+        remoteVersion: checked.remoteVersion,
+        remoteApiCompatibility: checked.remoteApiCompatibility,
+        remoteHostFingerprint: checked.remoteHostFingerprint,
+        lastCheckedAt: new Date().toISOString(),
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      return this.persistCheckResult(peerHostId, ownerUserId, {
+        status: resolveReconnectFailureStatus(error),
+        remoteVersion: checked.remoteVersion,
+        remoteApiCompatibility: checked.remoteApiCompatibility,
+        remoteHostFingerprint: checked.remoteHostFingerprint,
+        lastCheckedAt: new Date().toISOString(),
+        lastErrorCode: readErrorCode(error, "PEER_HOST_RECONNECT_FAILED"),
+        lastErrorDetail: readErrorDetail(error, "目标 HOST 重连失败"),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   deleteSession(
     ownerUserId: string,
     peerHostId: string,
@@ -811,6 +847,26 @@ function shouldRefreshPeerHostSession(session: PeerHostSessionRecord): boolean {
   }
 
   return expiresAt <= Date.now() + 15_000;
+}
+
+function resolveReconnectFailureStatus(error: unknown): PeerHostStatus {
+  if (error instanceof AppError) {
+    if (
+      error.errorCode === "PEER_HOST_VERSION_MISMATCH"
+      || error.errorCode === "PEER_HOST_IDENTITY_CHANGED"
+    ) {
+      return "version_mismatch";
+    }
+
+    if (
+      error.errorCode === "PEER_HOST_SESSION_REQUIRED"
+      || error.errorCode === "PEER_HOST_SESSION_INVALID"
+    ) {
+      return "unauthorized";
+    }
+  }
+
+  return "unreachable";
 }
 
 function toSessionView(record: PeerHostSessionRecord): PeerHostSessionView {

@@ -108,6 +108,18 @@ export class PeerHostController {
     );
   };
 
+  readonly reconnect = async (
+    request: FastifyRequest<{ Params: { peerHostId: string } }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    reply.send(
+      await this.peerHostService.reconnect(
+        requireUserId(request),
+        request.params.peerHostId,
+      ),
+    );
+  };
+
   readonly login = async (
     request: FastifyRequest<{
       Params: { peerHostId: string };

@@ -24,6 +24,7 @@ export async function registerPeerHostRoutes(
   app.put("/api/peer-hosts/:peerHostId", peerHostController.update);
   app.delete("/api/peer-hosts/:peerHostId", peerHostController.delete);
   app.post("/api/peer-hosts/:peerHostId/check", peerHostController.check);
+  app.post("/api/peer-hosts/:peerHostId/reconnect", peerHostController.reconnect);
   app.post("/api/peer-hosts/:peerHostId/login", peerHostController.login);
   app.delete(
     "/api/peer-hosts/:peerHostId/session",
