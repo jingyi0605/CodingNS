@@ -1428,6 +1428,7 @@ export const enUS = {
     hostSwitcherDetailAction: "Details",
     hostSwitcherDetailAriaLabel: "{name} details",
     hostSwitcherAddAction: "Add HOST",
+    hostSwitcherAddDirectHostAction: "Add Direct HOST",
     hostSwitcherAddPeerHostAction: "Add Peer Host",
     hostSwitcherNameLabel: "HOST name",
     hostSwitcherNamePlaceholder: "For example: Office HOST",
@@ -1436,6 +1437,7 @@ export const enUS = {
     hostSwitcherSaveAction: "Save HOST",
     hostSwitcherDetailTitle: "HOST details",
     hostSwitcherPrimaryHostTitle: "Primary HOST",
+    hostSwitcherDirectSectionTitle: "Direct HOST",
     hostSwitcherDetailStatusLabel: "Connection",
     hostSwitcherDetailStatusDirect: "Direct",
     hostSwitcherDetailStatusRelay: "Relay",
@@ -1460,7 +1462,10 @@ export const enUS = {
     hostSwitcherPeerSectionTitle: "Peer HOST",
     hostSwitcherPeerDescription:
       "Before enabling, the primary HOST checks network reachability, version compatibility, and sign-in. Only then can workspaces use this HOST through the primary HOST.",
+    hostSwitcherPeerReconnectDescription:
+      "This Peer HOST is already connected. You can reconnect manually to re-check the target HOST and restore proxy access with the saved sign-in state.",
     hostSwitcherPeerStatusLabel: "Peer status",
+    hostSwitcherPeerFailureReasonLabel: "Failure reason",
     hostSwitcherPeerEnableAction: "Enable Peer",
     hostSwitcherPeerReconnectAction: "Reconnect",
     hostSwitcherPeerDisableAction: "Disable Peer",

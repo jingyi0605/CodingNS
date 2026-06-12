@@ -209,11 +209,14 @@ function buildDefaultHostAlias(baseUrl: string): string {
 
 function createHostProfile(baseUrl: string, now: string, overrides: Partial<HostProfile> = {}): HostProfile {
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
+  const hasAliasOverride = Object.prototype.hasOwnProperty.call(overrides, "alias");
 
   return {
     id: normalizeString(overrides.id) ?? DEFAULT_HOST_PROFILE_ID,
     name: normalizeString(overrides.name) ?? buildDefaultHostName(normalizedBaseUrl),
-    alias: normalizeHostAlias(overrides.alias) ?? buildDefaultHostAlias(normalizedBaseUrl),
+    alias: hasAliasOverride
+      ? normalizeHostAlias(overrides.alias)
+      : buildDefaultHostAlias(normalizedBaseUrl),
     baseUrl: normalizedBaseUrl,
     kind: overrides.kind ?? classifyHostKind(normalizedBaseUrl),
     peerEnabled: overrides.peerEnabled === true,

@@ -2898,7 +2898,16 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-host-switcher-form-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.workbench-host-switcher-form-actions[data-layout="peer-connected"] {
+  justify-content: space-between;
+}
+
+.workbench-host-switcher-form-actions[data-layout="peer-connected"] > .workbench-host-switcher-compact-button {
+  flex: 1 1 0;
 }
 
 .workbench-host-switcher-state-row {

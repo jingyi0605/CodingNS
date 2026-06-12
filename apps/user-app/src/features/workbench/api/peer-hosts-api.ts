@@ -102,6 +102,12 @@ export function checkPeerHost(peerHostId: string): Promise<PeerHostDto> {
   });
 }
 
+export function reconnectPeerHost(peerHostId: string): Promise<PeerHostDto> {
+  return httpClient.request<PeerHostDto>(`/api/peer-hosts/${encodeURIComponent(peerHostId)}/reconnect`, {
+    method: "POST"
+  });
+}
+
 export function loginPeerHost(
   peerHostId: string,
   payload: PeerHostLoginPayload

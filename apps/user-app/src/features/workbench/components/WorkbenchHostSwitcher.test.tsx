@@ -137,7 +137,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
+    await user.click(screen.getByRole("button", { name: /添加直连 HOST/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "演示机房");
     await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.8:3002");
     await user.click(screen.getByRole("button", { name: "保存 HOST" }));
@@ -145,6 +145,126 @@ describe("WorkbenchHostSwitcher", () => {
     await waitFor(() => {
       const nextHost = clientConfigStore.getState().hosts.find((host) => host.name === "演示机房");
       expect(nextHost?.baseUrl).toBe("http://10.0.0.8:3002");
+    });
+  });
+
+  it("主 HOST 的详情里会显示添加 Peer Host 按钮", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 本地 Host 连接详情" }));
+
+    expect(await screen.findByRole("button", { name: "添加 Peer Host" })).toBeInTheDocument();
+  });
+
+  it("从主 HOST 详情进入添加 Peer Host 表单后会走独立 Peer 接入流程", async () => {
+    const user = userEvent.setup();
+    const requestSpy = vi.spyOn(httpClient, "request").mockImplementation(async (path: string, options?: any) => {
+      if (path === "/api/peer-hosts") {
+        if (options?.method === "POST") {
+          return buildPeerHostDto({ id: "peer-new", status: "unknown", baseUrl: "http://10.0.0.9:3002", name: "机房 Peer" }) as never;
+        }
+
+        return { items: [] } as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-new/check" && options?.method === "POST") {
+        return buildPeerHostDto({ id: "peer-new", status: "reachable", baseUrl: "http://10.0.0.9:3002", name: "机房 Peer" }) as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-new/login" && options?.method === "POST") {
+        return {
+          exists: true,
+          username: "admin",
+          remoteUserId: "remote-user-1",
+          remoteUsername: "admin",
+          expiresAt: "2026-06-10T01:00:00.000Z",
+          savedAt: "2026-06-10T00:00:00.000Z",
+          updatedAt: "2026-06-10T00:00:00.000Z"
+        } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 本地 Host 连接详情" }));
+    await user.click(await screen.findByRole("button", { name: "添加 Peer Host" }));
+
+    await user.type(screen.getByLabelText("添加 Peer Host"), "机房 Peer");
+    await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.9:3002");
+    await user.type(screen.getByLabelText("用户名"), "admin");
+    await user.type(screen.getByLabelText("密码"), "Secret123!");
+    await user.click(screen.getAllByRole("button", { name: "添加 Peer Host" }).at(-1)!);
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith("/api/peer-hosts", expect.objectContaining({ method: "POST" }));
+      expect(requestSpy).toHaveBeenCalledWith("/api/peer-hosts/peer-new/check", { method: "POST" });
+      expect(requestSpy).toHaveBeenCalledWith(
+        "/api/peer-hosts/peer-new/login",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    await waitFor(() => {
+      const nextHost = clientConfigStore.getState().hosts.find((host) => host.baseUrl === "http://10.0.0.9:3002");
+      expect(nextHost).toMatchObject({
+        peerEnabled: true,
+        peerHostId: "peer-new"
+      });
+    });
+  });
+
+  it("HOST 别名输入框允许清空，不会在编辑时自动补回 HOST", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 本地 Host 连接详情" }));
+
+    const aliasInput = screen.getByDisplayValue("HOST");
+    await user.clear(aliasInput);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("HOST 别名")).toHaveValue("");
+    });
+  });
+
+  it("保存空别名后，输入框保持为空，不会自动把 HOST 回填到编辑框", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 本地 Host 连接详情" }));
+
+    const aliasInput = screen.getByDisplayValue("HOST");
+    await user.clear(aliasInput);
+    await user.click(screen.getByRole("button", { name: "保存别名" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("HOST 别名")).toHaveValue("");
     });
   });
 
@@ -158,7 +278,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
+    await user.click(screen.getByRole("button", { name: /添加直连 HOST/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "机房 Host");
     await user.type(screen.getByLabelText("HOST 地址"), "10.0.0.9:3002");
     await user.type(screen.getByLabelText("用户名"), "root");
@@ -192,7 +312,7 @@ describe("WorkbenchHostSwitcher", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "切换 HOST" }));
-    await user.click(screen.getByRole("button", { name: /添加 Peer Host/ }));
+    await user.click(screen.getByRole("button", { name: /添加直连 HOST/ }));
     await user.type(screen.getByLabelText("HOST 名称"), "远程机房");
     await user.type(screen.getByLabelText("HOST 地址"), "https://demo.channel.codingns.com:1443");
     await user.click(screen.getByRole("button", { name: "保存 HOST" }));
@@ -330,6 +450,87 @@ describe("WorkbenchHostSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "查看 HOST 办公室 Host 连接详情" }));
 
     expect(await screen.findByRole("button", { name: "手动重连" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停用 Peer" })).toBeInTheDocument();
+    expect(screen.getByText("失败原因")).toBeInTheDocument();
+    expect(screen.getByText("办公室 Host 当前不可用")).toBeInTheDocument();
+  });
+
+  it("已保存的 Peer HOST 手动重连时会调用后端 reconnect 接口", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      hosts: clientConfigStore.getState().hosts.map((host) =>
+        host.id === "host-2"
+          ? { ...host, peerHostId: "peer-2", peerEnabled: true }
+          : host
+      )
+    });
+
+    const requestSpy = vi.spyOn(httpClient, "request").mockImplementation(async (path: string, options?: any) => {
+      if (path === "/api/peer-hosts") {
+        return {
+          items: [buildPeerHostDto({ id: "peer-2", status: "unreachable", lastErrorDetail: "目标 HOST 探活超时" })]
+        } as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-2" && options?.method === "PUT") {
+        return buildPeerHostDto({ id: "peer-2", status: "unreachable", lastErrorDetail: "目标 HOST 探活超时" }) as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-2/reconnect" && options?.method === "POST") {
+        return buildPeerHostDto({ id: "peer-2", status: "reachable", lastErrorDetail: null }) as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "查看 HOST 办公室 Host 连接详情" }));
+    await user.click(screen.getByRole("button", { name: "手动重连" }));
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith("/api/peer-hosts/peer-2/reconnect", { method: "POST" });
+    });
+  });
+
+  it("已添加的 Peer HOST 不再显示切换箭头，也不会触发 HOST 切换", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      hosts: clientConfigStore.getState().hosts.map((host) =>
+        host.id === "host-2"
+          ? { ...host, peerHostId: "peer-2", peerEnabled: true }
+          : host
+      )
+    });
+
+    vi.spyOn(httpClient, "request").mockImplementation(async (path: string) => {
+      if (path === "/api/peer-hosts") {
+        return {
+          items: [buildPeerHostDto({ id: "peer-2", status: "reachable" })]
+        } as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+
+    expect(screen.queryByRole("button", { name: /办公室 Host.*10\\.10\\.1\\.8:3002/ })).not.toBeInTheDocument();
+    expect(screen.getByText("办公室 Host")).toBeInTheDocument();
+    expect(switchHostMock).not.toHaveBeenCalled();
   });
 
   it("后端残留旧 Peer HOST 记录时，会复用旧记录继续启用", async () => {
@@ -387,7 +588,7 @@ describe("WorkbenchHostSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "查看 HOST 办公室 Host 连接详情" }));
     await user.type(screen.getByLabelText("用户名"), "admin");
     await user.type(screen.getByLabelText("密码"), "Secret123!");
-    await user.click(screen.getByRole("button", { name: "启用 Peer" }));
+    await user.click(screen.getByRole("button", { name: "添加 Peer Host" }));
 
     await waitFor(() => {
       const nextHost = clientConfigStore.getState().hosts.find((host) => host.id === "host-2");
