@@ -14364,7 +14364,7 @@ export function WorkbenchLayout({
             badge: currentWorkspaceTerminalCount > 99 ? "99+" : String(currentWorkspaceTerminalCount),
             badgeLabel: `${t("terminalManager.terminalCountLabel")}: ${currentWorkspaceTerminalCount}`,
             actionLabel: t("shell.codeShortcutTerminalAction"),
-            onClick: openCodeTerminalDock
+            onClick: () => openCodeTerminalDock()
           },
           {
             id: "skills",
