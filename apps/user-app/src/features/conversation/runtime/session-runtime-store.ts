@@ -4017,7 +4017,8 @@ function buildConversationTimelineStateItems(
     sessionRunningState: session?.runningState ?? null,
     sessionSyncStatus: session?.syncStatus ?? null,
     sessionLastErrorCode: session?.lastErrorCode ?? null,
-    sessionLastErrorDetail: session?.lastErrorDetail ?? null
+    sessionLastErrorDetail: session?.lastErrorDetail ?? null,
+    sessionDetail: session?.detail ?? null
   });
 }
 

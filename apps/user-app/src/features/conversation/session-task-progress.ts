@@ -20,6 +20,10 @@ export interface ConversationTaskSnapshot {
   provider: ProviderId | null;
   source: "plan" | "todo";
   explanation: string | null;
+  allowedPrompts?: Array<{
+    tool: string;
+    prompt: string;
+  }>;
   items: ConversationTaskItem[];
   updatedAt: string;
 }
@@ -43,6 +47,7 @@ interface ParsedStructuredValue {
 }
 
 const CODEX_PLAN_TOOL_NAMES = new Set(["updateplan"]);
+const CLAUDE_PLAN_TOOL_NAMES = new Set(["exitplanmode"]);
 const TODO_WRITE_TOOL_NAMES = new Set([
   "todowrite"
 ]);
@@ -62,7 +67,7 @@ export function buildConversationTaskSnapshot(
   messages: SessionMessageViewModel[],
   provider: ProviderId | null
 ): ConversationTaskSnapshot | null {
-  const planSnapshot = buildCodexPlanSnapshot(messages, provider);
+  const planSnapshot = buildPlanSnapshot(messages, provider);
 
   if (planSnapshot) {
     return planSnapshot;
@@ -95,14 +100,8 @@ export function buildConversationTaskSnapshotFromToolCall(
     return null;
   }
 
-  if (isCodexPlanTool(toolCall.name)) {
-    const payload = parseStructuredPayload(toolCall);
-
-    if (!payload || !isRecord(payload.value)) {
-      return null;
-    }
-
-    const parsed = parsePlanPayload(payload.value, updatedAt);
+  if (isPlanTool(toolCall.name)) {
+    const parsed = parsePlanSnapshotFromToolCall(toolCall, updatedAt);
 
     if (!parsed || parsed.items.length === 0) {
       return null;
@@ -112,6 +111,7 @@ export function buildConversationTaskSnapshotFromToolCall(
       provider,
       source: "plan",
       explanation: parsed.explanation,
+      allowedPrompts: parsed.allowedPrompts,
       items: parsed.items,
       updatedAt
     };
@@ -164,14 +164,14 @@ export function buildConversationTaskSnapshotFromToolCall(
 
   return {
     provider,
-    source: isCodexPlanTool(toolCall.name) ? "plan" : "todo",
+    source: "todo",
     explanation: null,
     items,
     updatedAt
   };
 }
 
-function buildCodexPlanSnapshot(
+function buildPlanSnapshot(
   messages: SessionMessageViewModel[],
   provider: ProviderId | null
 ): ConversationTaskSnapshot | null {
@@ -180,18 +180,11 @@ function buildCodexPlanSnapshot(
   for (const message of messages) {
     const toolCall = message.toolCall;
 
-    if (!toolCall || normalizeToolName(toolCall.name) === "" || !isCodexPlanTool(toolCall.name)) {
+    if (!toolCall || normalizeToolName(toolCall.name) === "" || !isPlanTool(toolCall.name)) {
       continue;
     }
 
-    const payload = parseStructuredPayload(toolCall);
-
-    if (!payload || typeof payload.value !== "object" || payload.value === null) {
-      continue;
-    }
-
-    const parsed = parsePlanPayload(payload.value as Record<string, unknown>, message.timestamp);
-
+    const parsed = parsePlanSnapshotFromToolCall(toolCall, message.timestamp);
     if (!parsed || parsed.items.length === 0) {
       continue;
     }
@@ -200,6 +193,7 @@ function buildCodexPlanSnapshot(
       provider,
       source: "plan",
       explanation: parsed.explanation,
+      allowedPrompts: parsed.allowedPrompts,
       items: parsed.items,
       updatedAt: message.timestamp
     };
@@ -308,6 +302,14 @@ function isCodexPlanTool(name: string): boolean {
   return CODEX_PLAN_TOOL_NAMES.has(normalizeToolName(name));
 }
 
+function isClaudePlanTool(name: string): boolean {
+  return CLAUDE_PLAN_TOOL_NAMES.has(normalizeToolName(name));
+}
+
+function isPlanTool(name: string): boolean {
+  return isCodexPlanTool(name) || isClaudePlanTool(name);
+}
+
 function parsePlanPayload(
   payload: Record<string, unknown>,
   timestamp: string
@@ -334,6 +336,178 @@ function parsePlanPayload(
   return {
     items,
     explanation: readNonEmptyText(payload.explanation)
+  };
+}
+
+function parsePlanSnapshotFromToolCall(
+  toolCall: ToolCallDto,
+  updatedAt: string
+): Pick<ConversationTaskSnapshot, "items" | "explanation" | "allowedPrompts"> | null {
+  if (isCodexPlanTool(toolCall.name)) {
+    const payload = parseStructuredPayload(toolCall);
+
+    if (!payload || !isRecord(payload.value)) {
+      return null;
+    }
+
+    const parsed = parsePlanPayload(payload.value, updatedAt);
+
+    if (!parsed) {
+      return null;
+    }
+
+    return {
+      ...parsed,
+      allowedPrompts: []
+    };
+  }
+
+  if (!isClaudePlanTool(toolCall.name)) {
+    return null;
+  }
+
+  return parseClaudePlanSnapshot(toolCall, updatedAt);
+}
+
+function parseClaudePlanSnapshot(
+  toolCall: ToolCallDto,
+  updatedAt: string
+): Pick<ConversationTaskSnapshot, "items" | "explanation" | "allowedPrompts"> | null {
+  const inputPayload = parseStructuredPayload(toolCall, "prefer-input");
+  const outputPayload = parseStructuredPayload(toolCall, "prefer-output");
+  const inputRecord = isRecord(inputPayload?.value) ? inputPayload.value : null;
+  const outputRecord = isRecord(outputPayload?.value) ? outputPayload.value : null;
+  const allowedPrompts =
+    readClaudePlanAllowedPrompts(inputRecord)
+    ?? readClaudePlanAllowedPrompts(outputRecord)
+    ?? [];
+
+  for (const record of [outputRecord, inputRecord]) {
+    if (!record) {
+      continue;
+    }
+
+    const parsed = parsePlanPayload(record, updatedAt);
+
+    if (parsed && parsed.items.length > 0) {
+      return {
+        items: parsed.items,
+        explanation: parsed.explanation ?? readClaudePlanExplanation(record),
+        allowedPrompts
+      };
+    }
+
+    const planText =
+      readNonEmptyText(record.plan)
+      ?? readNonEmptyText(record.content)
+      ?? readNonEmptyText(record.message);
+
+    if (!planText) {
+      continue;
+    }
+
+    const textSnapshot = parseClaudePlanText(planText, updatedAt);
+
+    if (textSnapshot) {
+      return {
+        ...textSnapshot,
+        allowedPrompts
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseClaudePlanText(
+  planText: string,
+  updatedAt: string
+): Pick<ConversationTaskSnapshot, "items" | "explanation"> | null {
+  const lines = planText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const explanationLines: string[] = [];
+  const items: ParsedTaskItem[] = [];
+
+  for (const line of lines) {
+    const taskItem = parseClaudePlanLine(line, updatedAt, items.length);
+
+    if (taskItem) {
+      items.push(taskItem);
+      continue;
+    }
+
+    explanationLines.push(stripMarkdownHeading(line));
+  }
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    items,
+    explanation: explanationLines.length > 0 ? explanationLines.join(" ") : null
+  };
+}
+
+function parseClaudePlanLine(
+  line: string,
+  updatedAt: string,
+  index: number
+): ParsedTaskItem | null {
+  const normalized = line.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const explicitStatusMatch = normalized.match(
+    /^(?:[-*+]|\d+[.)])\s+\[(pending|in[_\s-]?progress|completed|failed|cancelled)\]\s+(.+)$/i
+  );
+
+  if (explicitStatusMatch) {
+    return {
+      id: `plan:${index + 1}`,
+      title: explicitStatusMatch[2].trim(),
+      status: normalizeTaskStatus(explicitStatusMatch[1], "pending"),
+      detail: null,
+      updatedAt,
+      hasExplicitTitle: true
+    };
+  }
+
+  const checkboxMatch = normalized.match(/^(?:[-*+]|\d+[.)])\s+\[(x| )\]\s+(.+)$/i);
+
+  if (checkboxMatch) {
+    return {
+      id: `plan:${index + 1}`,
+      title: checkboxMatch[2].trim(),
+      status: checkboxMatch[1].toLowerCase() === "x" ? "completed" : "pending",
+      detail: null,
+      updatedAt,
+      hasExplicitTitle: true
+    };
+  }
+
+  const bulletMatch = normalized.match(/^(?:[-*+]|\d+[.)])\s+(.+)$/);
+
+  if (!bulletMatch) {
+    return null;
+  }
+
+  return {
+    id: `plan:${index + 1}`,
+    title: bulletMatch[1].trim(),
+    status: "pending",
+    detail: null,
+    updatedAt,
+    hasExplicitTitle: true
   };
 }
 
@@ -933,6 +1107,45 @@ function buildTaskIdFallbackTitle(id: string, fallbackTitle: string): string {
   }
 
   return `Task #${ordinal}`;
+}
+
+function readClaudePlanAllowedPrompts(
+  payload: Record<string, unknown> | null
+): Array<{ tool: string; prompt: string }> | null {
+  if (!payload || !Array.isArray(payload.allowedPrompts)) {
+    return null;
+  }
+
+  const items = payload.allowedPrompts
+    .map((value) => {
+      if (!isRecord(value)) {
+        return null;
+      }
+
+      const tool = readNonEmptyText(value.tool);
+      const prompt = readNonEmptyText(value.prompt);
+
+      if (!tool || !prompt) {
+        return null;
+      }
+
+      return { tool, prompt };
+    })
+    .filter((item): item is { tool: string; prompt: string } => item !== null);
+
+  return items.length > 0 ? items : null;
+}
+
+function readClaudePlanExplanation(payload: Record<string, unknown>): string | null {
+  return (
+    readNonEmptyText(payload.explanation)
+    ?? readNonEmptyText(payload.summary)
+    ?? readNonEmptyText(payload.title)
+  );
+}
+
+function stripMarkdownHeading(line: string): string {
+  return line.replace(/^#+\s*/, "").trim();
 }
 
 function toPublicTaskItem(item: MutableTaskRecord): ConversationTaskItem {

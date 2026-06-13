@@ -1085,6 +1085,60 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"plan":/)).toBeInTheDocument();
   });
 
+  it("会把 Claude 的 ExitPlanMode 渲染成计划卡片，并展示后续执行提示", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-call-1",
+            callId: "exit-plan-call-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: [
+                { step: "检查现有 Hook 设置", status: "completed" },
+                { step: "补 Host 计划审批", status: "in_progress" }
+              ],
+              explanation: "先把计划审批主链路打通，再补前端展示。"
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardPlanTitle"))).toBeInTheDocument();
+    expect(screen.getByText("检查现有 Hook 设置")).toBeInTheDocument();
+    expect(screen.getByText("补 Host 计划审批")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskProgressExplanationTitle"))).toBeInTheDocument();
+    expect(screen.getByText("先把计划审批主链路打通，再补前端展示。")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskCardAllowedPromptsTitle"))).toBeInTheDocument();
+    expect(screen.getByText("run tests")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.taskCardRawExpand") }));
+
+    expect(screen.getByText(t("conversation.toolInputLabel"))).toBeInTheDocument();
+    expect(screen.getByText(/"allowedPrompts":/)).toBeInTheDocument();
+  });
+
   it("Claude TaskUpdate 只有 taskId 时也会渲染成任务卡片", async () => {
     render(
       <MessageTimeline
@@ -1993,6 +2047,26 @@ describe("MessageTimeline", () => {
       "runtime-thinking",
       "session-error"
     ]);
+  });
+
+  it("主要 Claude 运行态会按 Ask Question 同款只读卡片展示", () => {
+    render(
+      <MessageTimeline
+        items={buildConversationTimelineSourceItems({
+          messages: [createAssistantTextMessage("我先继续处理这一轮。", "assistant-runtime-notice-1")],
+          sessionDetail: "Claude 正在执行初始化：/tmp/workspace"
+        })}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Claude 正在处理当前任务")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.runtimeNoticeDescription"))).toBeInTheDocument();
+    expect(screen.getByText("运行状态")).toBeInTheDocument();
+    expect(screen.getByText("Claude 正在执行初始化：/tmp/workspace")).toBeInTheDocument();
+    expect(document.querySelector(".runtime-notice-card")).not.toBeNull();
   });
 
   it("会给代码块和 text 文本块渲染复制按钮", async () => {

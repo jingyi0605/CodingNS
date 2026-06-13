@@ -1011,6 +1011,7 @@ export interface SessionSummaryDto {
   activityResolutionSource?: SessionActivityResolutionSource;
   activityConfidence?: SessionActivityConfidence;
   runId?: string | null;
+  detail?: string | null;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
@@ -1106,7 +1107,8 @@ export type SessionPermissionRequestKind =
   | "command"
   | "file_change"
   | "permissions"
-  | "user_input";
+  | "user_input"
+  | "plan_approval";
 export type SessionPermissionRequestStatus =
   | "pending"
   | "approved"

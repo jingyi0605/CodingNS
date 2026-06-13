@@ -26,6 +26,8 @@ export function ConversationTaskProgressCard({
   onToggleExpanded
 }: ConversationTaskProgressCardProps) {
   const summary = countConversationTasksByStatus(snapshot.items);
+  const normalizedToolName = toolName.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+  const shouldShowClaudePlanNotes = normalizedToolName === "exitplanmode";
   const rawLabel = expanded
     ? t("conversation.taskCardRawCollapse")
     : t("conversation.taskCardRawExpand");
@@ -59,6 +61,30 @@ export function ConversationTaskProgressCard({
           </button>
         ) : null}
       </div>
+
+      {shouldShowClaudePlanNotes && (snapshot.explanation || (snapshot.allowedPrompts?.length ?? 0) > 0) ? (
+        <div className="task-tool-notes">
+          {snapshot.explanation ? (
+            <div className="task-tool-note-block">
+              <span className="task-tool-note-label">{t("conversation.taskProgressExplanationTitle")}</span>
+              <p className="task-tool-note-text">{snapshot.explanation}</p>
+            </div>
+          ) : null}
+          {(snapshot.allowedPrompts?.length ?? 0) > 0 ? (
+            <div className="task-tool-note-block">
+              <span className="task-tool-note-label">{t("conversation.taskCardAllowedPromptsTitle")}</span>
+              <ul className="task-tool-note-list">
+                {snapshot.allowedPrompts?.map((item, index) => (
+                  <li key={`${item.tool}:${item.prompt}:${index}`} className="task-tool-note-list-item">
+                    <strong>{item.tool}</strong>
+                    <span>{item.prompt}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <ol className="task-tool-list">
         {snapshot.items.map((item) => (

@@ -40,6 +40,50 @@ describe("buildConversationTaskSnapshot", () => {
     ]);
   });
 
+  it("会解析 Claude Code 的 ExitPlanMode 计划输出", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-06-13T11:00:00.000Z",
+        toolCall: {
+          callId: "exit-plan-1",
+          name: "ExitPlanMode",
+          input: JSON.stringify({
+            allowedPrompts: [
+              {
+                tool: "Bash",
+                prompt: "run tests"
+              }
+            ]
+          }),
+          output: JSON.stringify({
+            plan: [
+              { step: "检查现有 Hook 设置", status: "completed" },
+              { step: "补 Host 计划审批", status: "in_progress" },
+              { step: "回归关键测试", status: "pending" }
+            ],
+            explanation: "先把计划审批主链路打通，再补前端展示。"
+          }),
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.source).toBe("plan");
+    expect(snapshot?.explanation).toBe("先把计划审批主链路打通，再补前端展示。");
+    expect(snapshot?.allowedPrompts).toEqual([
+      {
+        tool: "Bash",
+        prompt: "run tests"
+      }
+    ]);
+    expect(snapshot?.items.map((item) => `${item.title}:${item.status}`)).toEqual([
+      "检查现有 Hook 设置:completed",
+      "补 Host 计划审批:in_progress",
+      "回归关键测试:pending"
+    ]);
+  });
+
   it("会解析 Claude Code 的 TodoWrite 全量任务", () => {
     const snapshot = buildConversationTaskSnapshot([
       createToolMessage({

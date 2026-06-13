@@ -319,6 +319,11 @@ type TimelineRenderItem =
       type: "session_error";
       key: string;
       error: Extract<ConversationTimelineSourceItem, { type: "session_error" }>["error"];
+    }
+  | {
+      type: "runtime_notice";
+      key: string;
+      notice: Extract<ConversationTimelineSourceItem, { type: "runtime_notice" }>["notice"];
     };
 
 function normalizeMessagePathSeparators(value: string): string {
@@ -5790,6 +5795,28 @@ function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "sessi
   );
 }
 
+function renderRuntimeNoticeItem(item: Extract<TimelineRenderItem, { type: "runtime_notice" }>) {
+  return (
+    <article key={item.key} className="message-item assistant-message">
+      <div className="message-avatar"><DefaultAssistantAvatar /></div>
+      <section className="permission-request-card permission-request-card-inline permission-request-card-readonly runtime-notice-card">
+        <header className="permission-request-card-header">
+          <div className="permission-request-provider">
+            <div className="permission-request-provider-copy">
+              <strong>{item.notice.title}</strong>
+              <span>{t("conversation.runtimeNoticeDescription")}</span>
+            </div>
+          </div>
+          <span className="permission-request-kind">{item.notice.kindLabel}</span>
+        </header>
+        <div className="permission-request-card-body">
+          <p className="permission-request-summary">{item.notice.summary}</p>
+        </div>
+      </section>
+    </article>
+  );
+}
+
 export function ConversationTranscriptExport({
   sessionId,
   sessionSummary = null,
@@ -5843,6 +5870,8 @@ export function ConversationTranscriptExport({
             </article>
           ) : item.type === "runtime_thinking" ? (
             renderRuntimeThinkingItem(item)
+          ) : item.type === "runtime_notice" ? (
+            renderRuntimeNoticeItem(item)
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
@@ -6065,6 +6094,14 @@ export function MessageTimeline({
         key: item.key,
         code: item.error.code,
         summary: item.error.summary
+      };
+    }
+
+    if (item.type === "runtime_notice") {
+      return {
+        type: item.type,
+        key: item.key,
+        summary: item.notice.summary
       };
     }
 
@@ -6833,6 +6870,8 @@ export function MessageTimeline({
             </article>
           ) : item.type === "runtime_thinking" ? (
             renderRuntimeThinkingItem(item)
+          ) : item.type === "runtime_notice" ? (
+            renderRuntimeNoticeItem(item)
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
@@ -6934,6 +6973,16 @@ function buildMessageSignature(
         type: item.type,
         key: item.key,
         label: item.label
+      });
+    }
+
+    if (item.type === "runtime_notice") {
+      return JSON.stringify({
+        type: item.type,
+        key: item.key,
+        title: item.notice.title,
+        summary: item.notice.summary,
+        kindLabel: item.notice.kindLabel
       });
     }
 
