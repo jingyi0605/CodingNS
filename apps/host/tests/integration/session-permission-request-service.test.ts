@@ -12,7 +12,8 @@ import {
 describe("session-permission-request-service normalizers", () => {
   it("Claude 完整权限模式下仍然注入 AskUserQuestion hook", () => {
     expect(resolveClaudePreToolUseHookMatchers("bypassPermissions")).toEqual([
-      "AskUserQuestion"
+      "AskUserQuestion",
+      "ExitPlanMode"
     ]);
   });
 
@@ -23,7 +24,40 @@ describe("session-permission-request-service normalizers", () => {
       "Write",
       "MultiEdit",
       "NotebookEdit",
-      "AskUserQuestion"
+      "AskUserQuestion",
+      "ExitPlanMode"
+    ]);
+  });
+
+  it("会把 Claude ExitPlanMode 映射成独立的计划审批请求", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
+      sessionId: "session-plan-1",
+      providerSessionId: "claude-session-plan-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "claude-session-plan-1",
+        cwd: "/tmp/workspace",
+        tool_name: "ExitPlanMode",
+        tool_input: {
+          allowedPrompts: [
+            {
+              tool: "Bash",
+              prompt: "run tests"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(request.kind).toBe("plan_approval");
+    expect(request.toolName).toBe("ExitPlanMode");
+    expect(request.title).toBe("Claude 请求确认执行计划");
+    expect(request.summary).toContain("run tests");
+    expect(request.actions.map((action) => action.value)).toEqual([
+      "allow",
+      "deny"
     ]);
   });
 
@@ -141,7 +175,7 @@ describe("session-permission-request-service normalizers", () => {
     ]);
   });
 
-  it("会按 Claude AskUserQuestion 协议把答案转成问题顺序下标", () => {
+  it("会按 Claude AskUserQuestion 协议把答案转成问题文本键", () => {
     const answers = buildClaudeAskUserQuestionAnswers(
       {
         language: ["Python"],
@@ -171,8 +205,8 @@ describe("session-permission-request-service normalizers", () => {
     );
 
     expect(answers).toEqual({
-      "0": "Python",
-      "1": ["测试", "重构"]
+      "选语言": "Python",
+      "选功能": "测试, 重构"
     });
   });
 

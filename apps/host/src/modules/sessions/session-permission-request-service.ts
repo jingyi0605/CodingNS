@@ -22,7 +22,8 @@ export type SessionPermissionRequestKind =
   | "command"
   | "file_change"
   | "permissions"
-  | "user_input";
+  | "user_input"
+  | "plan_approval";
 export type SessionPermissionRequestStatus =
   | "pending"
   | "approved"
@@ -305,6 +306,15 @@ export class SessionPermissionRequestService {
         });
       }
 
+      if (request.kind === "plan_approval" && action === "allow_session") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "计划审批不支持设置整场会话默认允许",
+          field: "action"
+        });
+      }
+
       if (request.source.timer) {
         clearTimeout(request.source.timer);
       }
@@ -566,6 +576,11 @@ export class SessionPermissionRequestService {
             payload.tool_input,
             buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
           )
+        : normalized.kind === "plan_approval"
+          ? buildClaudeExitPlanModeBridgeResponse(
+              decision.action,
+              buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+            )
         : buildClaudePreToolUseBridgeResponse(
             decision.action,
             buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
@@ -1885,6 +1900,13 @@ function buildClaudeAskUserQuestionBridgeResponse(
   return response;
 }
 
+function buildClaudeExitPlanModeBridgeResponse(
+  action: "allow" | "deny" | "ask",
+  reason: string
+): Record<string, unknown> {
+  return buildClaudePreToolUseBridgeResponse(action, reason);
+}
+
 function buildClaudePermissionRequestBridgeResponse(
   action: "allow" | "deny",
   message: string
@@ -2098,6 +2120,7 @@ function buildClaudeKind(
     normalizeText(inputRecord?.command) ||
     normalizeText(inputRecord?.cmd) ||
     null;
+  const allowedPrompts = readClaudeAllowedPrompts(inputRecord);
 
   if (normalizedToolName === "bash" || normalizedToolName === "shell") {
     return {
@@ -2121,6 +2144,26 @@ function buildClaudeKind(
       command: null,
       paths: [],
       questions
+    };
+  }
+
+  if (normalizedToolName === "exitplanmode") {
+    const summary =
+      normalizeText(inputRecord?.plan) ||
+      normalizeText(inputRecord?.summary) ||
+      normalizeText(inputRecord?.title) ||
+      (allowedPrompts[0]
+        ? `Claude 准备按计划继续执行：${allowedPrompts[0].prompt}`
+        : "Claude 准备退出计划模式并继续执行");
+
+    return {
+      kind: "plan_approval",
+      title: "Claude 请求确认执行计划",
+      summary,
+      detail: stringifyPayload(toolInput),
+      command: null,
+      paths: [],
+      questions: []
     };
   }
 
@@ -2255,10 +2298,10 @@ function readClaudeAskUserQuestionOptions(value: unknown): SessionPermissionRequ
 export function buildClaudeAskUserQuestionAnswers(
   answers: Record<string, string[]>,
   questions: SessionPermissionRequestQuestionView[]
-): Record<string, string | string[]> {
+): Record<string, string> {
   return Object.fromEntries(
     questions
-      .map((question, index) => {
+      .map((question) => {
         const values = Array.isArray(answers[question.id])
           ? answers[question.id].map((value) => normalizeText(value)).filter(Boolean)
           : [];
@@ -2268,12 +2311,34 @@ export function buildClaudeAskUserQuestionAnswers(
         }
 
         return [
-          String(index),
-          question.multiSelect ? values : values[0] ?? ""
+          question.question,
+          question.multiSelect ? values.join(", ") : values[0] ?? ""
         ] as const;
       })
-      .filter((entry): entry is readonly [string, string | string[]] => entry !== null)
+      .filter((entry): entry is readonly [string, string] => entry !== null)
   );
+}
+
+function readClaudeAllowedPrompts(
+  inputRecord: Record<string, unknown> | null
+): Array<{ tool: string; prompt: string }> {
+  if (!inputRecord || !Array.isArray(inputRecord.allowedPrompts)) {
+    return [];
+  }
+
+  return inputRecord.allowedPrompts
+    .map((value) => {
+      const record = toRecord(value);
+      const tool = normalizeText(record?.tool);
+      const prompt = normalizeText(record?.prompt);
+
+      if (!tool || !prompt) {
+        return null;
+      }
+
+      return { tool, prompt };
+    })
+    .filter((item): item is { tool: string; prompt: string } => item !== null);
 }
 
 function buildOpenCodeKind(
@@ -2449,6 +2514,13 @@ function buildClaudeActions(request: Pick<SessionPermissionRequestInternalRecord
   if (request.kind === "user_input") {
     return [
       createAction("submit", "提交选择", "primary", "把选择结果交给 Claude 继续处理")
+    ];
+  }
+
+  if (request.kind === "plan_approval") {
+    return [
+      createAction("allow", "批准计划", "primary", "允许 Claude 按当前计划继续执行"),
+      createAction("deny", "退回计划", "danger", "拒绝这次计划，要求 Claude 停在计划阶段")
     ];
   }
 

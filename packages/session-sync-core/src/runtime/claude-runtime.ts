@@ -761,8 +761,8 @@ function createClaudeHookSettingsFile(input: {
 
 export function resolveClaudePreToolUseHookMatchers(permissionMode: string | null): string[] {
   return permissionMode === "bypassPermissions"
-    ? ["AskUserQuestion"]
-    : ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion"];
+    ? ["AskUserQuestion", "ExitPlanMode"]
+    : ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion", "ExitPlanMode"];
 }
 
 function buildClaudeHookBridgeCommand(input: {
