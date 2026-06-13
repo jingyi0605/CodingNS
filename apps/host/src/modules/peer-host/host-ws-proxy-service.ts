@@ -133,10 +133,10 @@ export class HostWsProxyService {
 
       closed = true;
       if (remoteSocket.readyState === WebSocket.OPEN || remoteSocket.readyState === WebSocket.CONNECTING) {
-        remoteSocket.close(code, reason);
+        closeSocketSafely(remoteSocket, code, reason);
       }
       if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-        client.close(code, reason);
+        closeSocketSafely(client, code, reason);
       }
     };
 
@@ -220,16 +220,25 @@ function connectRemoteWorkbenchSocket(
   const remoteSocket = new WebSocket(buildRemoteWsUrl(baseUrl, accessToken));
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timedOut = false;
+
+    const rejectOnce = (error: AppError) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       cleanup();
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      timedOut = true;
       remoteSocket.terminate();
-      reject(
-        new AppError({
-          statusCode: 504,
-          errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
-          detail: "连接目标 HOST 实时通道超时",
-        }),
-      );
     }, 5_000);
 
     const cleanup = () => {
@@ -239,12 +248,27 @@ function connectRemoteWorkbenchSocket(
       remoteSocket.off("close", handleClose);
     };
     const handleOpen = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       cleanup();
       resolve(remoteSocket);
     };
     const handleError = (error: Error) => {
-      cleanup();
-      reject(
+      if (timedOut) {
+        rejectOnce(
+          new AppError({
+            statusCode: 504,
+            errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
+            detail: "连接目标 HOST 实时通道超时",
+          }),
+        );
+        return;
+      }
+
+      rejectOnce(
         new AppError({
           statusCode: 502,
           errorCode: "HOST_PROXY_WS_UPSTREAM_FAILED",
@@ -253,8 +277,18 @@ function connectRemoteWorkbenchSocket(
       );
     };
     const handleClose = () => {
-      cleanup();
-      reject(
+      if (timedOut) {
+        rejectOnce(
+          new AppError({
+            statusCode: 504,
+            errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
+            detail: "连接目标 HOST 实时通道超时",
+          }),
+        );
+        return;
+      }
+
+      rejectOnce(
         new AppError({
           statusCode: 502,
           errorCode: "HOST_PROXY_WS_UPSTREAM_CLOSED",
@@ -291,6 +325,57 @@ function sendWsError(client: WebSocket, errorCode: string, detail: string): void
       detail,
       timestamp: new Date().toISOString(),
     }),
+  );
+}
+
+function closeSocketSafely(
+  socket: WebSocket,
+  code?: number,
+  reason?: string,
+): void {
+  const sanitizedCode = sanitizeCloseCode(code);
+  const sanitizedReason = sanitizeCloseReason(reason);
+
+  if (sanitizedCode === undefined) {
+    socket.close();
+    return;
+  }
+
+  socket.close(sanitizedCode, sanitizedReason);
+}
+
+function sanitizeCloseCode(code?: number): number | undefined {
+  if (typeof code !== "number" || !Number.isInteger(code)) {
+    return undefined;
+  }
+
+  if (!isValidWsCloseCode(code)) {
+    return undefined;
+  }
+
+  return code;
+}
+
+function sanitizeCloseReason(reason?: string): string | undefined {
+  if (!reason) {
+    return undefined;
+  }
+
+  const bytes = Buffer.byteLength(reason);
+  if (bytes <= 123) {
+    return reason;
+  }
+
+  return Buffer.from(reason, "utf8").subarray(0, 123).toString("utf8");
+}
+
+function isValidWsCloseCode(code: number): boolean {
+  return (
+    ((code >= 1000 && code <= 1014) &&
+      code !== 1004 &&
+      code !== 1005 &&
+      code !== 1006) ||
+    (code >= 3000 && code <= 4999)
   );
 }
 
