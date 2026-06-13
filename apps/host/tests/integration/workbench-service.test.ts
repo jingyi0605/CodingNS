@@ -65,7 +65,7 @@ describe("WorkbenchService", () => {
         listByUserId: vi.fn(() => [])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => []),
+        listWorkspaceSessions: vi.fn(() => [createRunningSession("session-active")]),
         requestWorkspaceDiscovery: vi.fn()
       } as never,
       {
@@ -255,7 +255,7 @@ describe("WorkbenchService", () => {
         listByUserId: vi.fn(() => [])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => []),
+        listWorkspaceSessions: vi.fn(() => [createRunningSession("session-active")]),
         requestWorkspaceDiscovery: vi.fn(),
         syncWorkspaceSessionTitles: vi.fn(async (_workspaceId: string, _userId: string, _concurrency: number, signal?: AbortSignal) => {
           receivedSignal = signal ?? null;
@@ -306,7 +306,7 @@ describe("WorkbenchService", () => {
         listByUserId: vi.fn(() => [])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => []),
+        listWorkspaceSessions: vi.fn(() => [createRunningSession("session-active")]),
         requestWorkspaceDiscovery
       } as never,
       {
@@ -344,7 +344,7 @@ describe("WorkbenchService", () => {
         listByUserId: vi.fn(() => [])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => []),
+        listWorkspaceSessions: vi.fn(() => [createRunningSession("session-active")]),
         requestWorkspaceDiscovery,
         discoverWorkspaceSessions
       } as never,
@@ -551,7 +551,7 @@ describe("WorkbenchService", () => {
     await Promise.resolve();
   });
 
-  it("workbench 刷新会优先调度可见根工作区，并限制单轮 discovery 数量", async () => {
+  it("workbench 刷新只调度活动工作区，并限制单轮 discovery 数量", async () => {
     const requestWorkspaceDiscovery = vi.fn();
     const workspaces = Array.from({ length: 8 }, (_, index) => ({
       id: `workspace-${index + 1}`,
@@ -564,7 +564,13 @@ describe("WorkbenchService", () => {
         listByUserId: vi.fn(() => [])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => []),
+        listWorkspaceSessions: vi.fn((workspaceId: string) => {
+          const index = Number(workspaceId.replace("workspace-", ""));
+
+          return index >= 1 && index <= 5
+            ? [createRunningSession(`session-${workspaceId}`)]
+            : [];
+        }),
         requestWorkspaceDiscovery,
         needsWorkspaceDiscovery: vi.fn(() => true),
         getWorkspaceDiscoveryStatusSummary: vi.fn(() => null)
@@ -581,18 +587,15 @@ describe("WorkbenchService", () => {
       force: true
     });
 
-    expect(requestWorkspaceDiscovery).toHaveBeenCalledTimes(6);
+    expect(requestWorkspaceDiscovery).toHaveBeenCalledTimes(3);
     expect(requestWorkspaceDiscovery.mock.calls.map((call) => call[0])).toEqual([
       "workspace-1",
       "workspace-2",
-      "workspace-3",
-      "workspace-4",
-      "workspace-5",
-      "workspace-6"
+      "workspace-3"
     ]);
   });
 
-  it("冷工作区会用更大的 maxAgeMs，热工作树会优先刷新", async () => {
+  it("冷工作区不会被 workbench 自动刷新，运行中的工作树会优先刷新", async () => {
     const requestWorkspaceDiscovery = vi.fn();
     const service = new WorkbenchService(
       createWorkspaceRepositoryStub([
@@ -650,28 +653,10 @@ describe("WorkbenchService", () => {
 
     expect(requestWorkspaceDiscovery.mock.calls).toEqual([
       [
-        "workspace-root",
-        "user-1",
-        {
-          maxAgeMs: 15_000,
-          force: false,
-          refreshStateMode: "deferred"
-        }
-      ],
-      [
         "workspace-child-hot",
         "user-1",
         {
-          maxAgeMs: 60_000,
-          force: false,
-          refreshStateMode: "deferred"
-        }
-      ],
-      [
-        "workspace-child-cold",
-        "user-1",
-        {
-          maxAgeMs: 120_000,
+          maxAgeMs: 15_000,
           force: false,
           refreshStateMode: "deferred"
         }
@@ -695,4 +680,14 @@ function createWorkspaceRepositoryStub(
   return {
     listByOwnerUserId: vi.fn(() => workspaces)
   } as never;
+}
+
+function createRunningSession(sessionId: string) {
+  return {
+    sessionId,
+    activityState: "running",
+    runningState: "running",
+    lastMessageAt: "2026-06-10T10:00:00.000Z",
+    updatedAt: "2026-06-10T10:00:00.000Z"
+  };
 }

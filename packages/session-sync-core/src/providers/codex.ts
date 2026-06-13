@@ -54,6 +54,10 @@ interface CodexAdapterOptions {
   threadControlTransportFactory?: () => CodexThreadControlTransport;
 }
 
+const CODEX_DISCOVERY_RECENT_FILE_LIMIT = 24;
+const CODEX_DISCOVERY_RECENT_DIRECTORY_LIMIT = 12;
+const CODEX_DISCOVERY_ARCHIVED_FILE_LIMIT = 8;
+
 export interface CodexForkTransport {
   initialize(): Promise<void>;
   forkThread(
@@ -1594,7 +1598,14 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     if (threadMetadataIndex.size === 0 || hasWorkspaceMetadataWithoutPath || hasSuspiciousKnownSessions) {
-      return walkJsonlFiles(join(this.options.homeDir, "sessions"));
+      return this.limitRecentSessionFiles(
+        [
+          ...existingFiles,
+          ...this.listRecentKnownSessionFiles(targetPath, knownSessions, false, CODEX_DISCOVERY_RECENT_FILE_LIMIT),
+          ...this.listRecentDirectorySessionFiles(CODEX_DISCOVERY_RECENT_DIRECTORY_LIMIT)
+        ],
+        CODEX_DISCOVERY_RECENT_FILE_LIMIT
+      );
     }
 
     return existingFiles;
@@ -1679,10 +1690,83 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     if (threadMetadataIndex.size === 0) {
-      return walkJsonlFiles(join(this.options.homeDir, "archived_sessions"));
+      return this.listRecentKnownSessionFiles(
+        targetPath,
+        knownSessions,
+        true,
+        CODEX_DISCOVERY_ARCHIVED_FILE_LIMIT
+      );
     }
 
     return [];
+  }
+
+  private listRecentKnownSessionFiles(
+    targetPath: string,
+    knownSessions: ProviderSessionSummary[],
+    archived: boolean,
+    limit: number
+  ): string[] {
+    const candidates = knownSessions
+      .filter((session) =>
+        session.isArchived === archived
+        && normalizeWorkspacePath(session.workspacePath) === targetPath
+        && Boolean(session.rawStoreRef)
+        && existsSync(session.rawStoreRef)
+      )
+      .sort((left, right) =>
+        resolveProviderSessionActivityMs(right) - resolveProviderSessionActivityMs(left)
+      )
+      .slice(0, limit)
+      .map((session) => session.rawStoreRef);
+
+    return uniqueExistingFiles(candidates);
+  }
+
+  private listRecentDirectorySessionFiles(limit: number): string[] {
+    const sessionsRoot = join(this.options.homeDir, "sessions");
+
+    if (!existsSync(sessionsRoot)) {
+      return [];
+    }
+
+    const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
+
+    for (const dayDir of listRecentCodexSessionDayDirectories(sessionsRoot, 7)) {
+      for (const filePath of listJsonlFilesInDirectory(dayDir)) {
+        try {
+          const stats = statSync(filePath);
+          candidates.push({ filePath, mtimeMs: stats.mtimeMs });
+        } catch {
+          // 发现链路不能被单个坏文件拖垮。
+        }
+      }
+
+      if (candidates.length >= limit * 2) {
+        break;
+      }
+    }
+
+    return candidates
+      .sort((left, right) => right.mtimeMs - left.mtimeMs)
+      .slice(0, limit)
+      .map((entry) => entry.filePath);
+  }
+
+  private limitRecentSessionFiles(files: string[], limit: number): string[] {
+    return uniqueExistingFiles(files)
+      .map((filePath) => {
+        try {
+          const stats = statSync(filePath);
+          return { filePath, mtimeMs: stats.mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is { filePath: string; mtimeMs: number } => entry !== null)
+      .sort((left, right) => right.mtimeMs - left.mtimeMs)
+      .slice(0, limit)
+      .map((entry) => entry.filePath);
   }
 
   private resolveArchivedSessionCandidate(filePath: string): string | null {
@@ -4540,4 +4624,71 @@ function isCodexThreadLoadError(error: unknown): boolean {
     normalized.includes("thread not loaded") ||
     normalized.includes("no rollout found for thread id")
   );
+}
+
+function resolveProviderSessionActivityMs(session: ProviderSessionSummary): number {
+  return Math.max(safeTimeMs(session.lastMessageAt), session.sourceMtimeMs ?? 0);
+}
+
+function safeTimeMs(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : 0;
+}
+
+function uniqueExistingFiles(files: string[]): string[] {
+  const unique = new Set<string>();
+
+  for (const filePath of files) {
+    if (filePath && existsSync(filePath)) {
+      unique.add(filePath);
+    }
+  }
+
+  return [...unique];
+}
+
+function listRecentCodexSessionDayDirectories(rootDir: string, limit: number): string[] {
+  const dayDirs: string[] = [];
+
+  for (const year of listDirectoryNames(rootDir).sort((left, right) => right.localeCompare(left))) {
+    const yearDir = join(rootDir, year);
+
+    for (const month of listDirectoryNames(yearDir).sort((left, right) => right.localeCompare(left))) {
+      const monthDir = join(yearDir, month);
+
+      for (const day of listDirectoryNames(monthDir).sort((left, right) => right.localeCompare(left))) {
+        dayDirs.push(join(monthDir, day));
+
+        if (dayDirs.length >= limit) {
+          return dayDirs;
+        }
+      }
+    }
+  }
+
+  return dayDirs;
+}
+
+function listDirectoryNames(dirPath: string): string[] {
+  try {
+    return readdirSync(dirPath, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function listJsonlFilesInDirectory(dirPath: string): string[] {
+  try {
+    return readdirSync(dirPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+      .map((entry) => join(dirPath, entry.name));
+  } catch {
+    return [];
+  }
 }

@@ -4198,6 +4198,85 @@ test("CodexAdapter 在 metadata 已经给出当前工作区 active transcript �
   }
 });
 
+test("CodexAdapter 元数据缺失时只扫描最近少量活动会话文件", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-recent-only-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const recentDir = join(tempDir, "sessions", "2026", "06", "13");
+  const oldDir = join(tempDir, "sessions", "2026", "05", "01");
+  const recentFiles = Array.from({ length: 30 }, (_, index) =>
+    join(recentDir, `rollout-recent-${String(index).padStart(2, "0")}.jsonl`)
+  );
+  const oldFile = join(oldDir, "rollout-old.jsonl");
+
+  try {
+    mkdirSync(recentDir, { recursive: true });
+    mkdirSync(oldDir, { recursive: true });
+
+    for (const [index, filePath] of recentFiles.entries()) {
+      writeFileSync(
+        filePath,
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: `recent-${index}`,
+              cwd: workspacePath
+            }
+          }),
+          JSON.stringify({
+            timestamp: `2026-06-13T08:${String(index).padStart(2, "0")}:00.000Z`,
+            type: "event_msg",
+            payload: {
+              type: "user_message",
+              message: `最近会话 ${index}`
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      const mtime = new Date(Date.parse("2026-06-13T08:00:00.000Z") + index * 1000);
+      utimesSync(filePath, mtime, mtime);
+    }
+
+    writeFileSync(
+      oldFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "old-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-01T08:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "旧会话不该被默认扫描"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    const oldMtime = new Date("2026-05-01T08:00:00.000Z");
+    utimesSync(oldFile, oldMtime, oldMtime);
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessionsDetailed(workspacePath);
+    const diagnostic = sessions.providerDiagnostics?.find((entry) => entry.provider === "codex");
+
+    assert.equal(diagnostic?.scannedFiles, 12);
+    assert.equal(sessions.sessions.length, 12);
+    assert.equal(
+      sessions.sessions.some((session) => session.providerSessionId === "old-thread"),
+      false
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 不会把只有 forked_from_id 的普通分支会话误判成子 Agent", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-thread-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

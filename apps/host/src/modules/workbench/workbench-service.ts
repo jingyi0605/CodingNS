@@ -20,7 +20,7 @@ import type {
   AffairsAssistantSessionSnapshotService
 } from "./affairs-assistant-session-snapshot-service.js";
 
-const WORKBENCH_DISCOVERY_REFRESH_BUDGET = 6;
+const WORKBENCH_DISCOVERY_REFRESH_BUDGET = 3;
 const WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS = 15_000;
 const WORKBENCH_DISCOVERY_HOT_MAX_AGE_MS = 60_000;
 const WORKBENCH_DISCOVERY_WARM_MAX_AGE_MS = 120_000;
@@ -354,6 +354,10 @@ export class WorkbenchService {
     const selected: WorkbenchDiscoveryCandidate[] = [];
 
     for (const candidate of this.buildDiscoveryCandidates(userId)) {
+      if (!candidate.hasRunningSession && !candidate.hasRecentActivity) {
+        continue;
+      }
+
       if (
         !force
         && !this.sessionHistoryService.needsWorkspaceDiscovery(candidate.workspace.id, candidate.maxAgeMs)
@@ -586,15 +590,15 @@ function resolveDiscoveryPriorityBand(input: {
   isDirty: boolean;
   favorite: boolean;
 }): 0 | 1 | 2 | 3 {
-  if (input.isDirty || input.isVisibleRoot) {
+  if (input.hasRunningSession) {
     return 0;
   }
 
-  if (input.hasRunningSession || input.hasRecentActivity) {
+  if (input.hasRecentActivity) {
     return 1;
   }
 
-  if (input.favorite || input.isChildWorkspace) {
+  if (input.isDirty || input.isVisibleRoot || input.favorite || input.isChildWorkspace) {
     return 2;
   }
 
