@@ -1085,6 +1085,37 @@ function buildCodexAgentToolRows(
   return rows.slice(0, 5);
 }
 
+function buildClaudeAgentToolSnapshot(
+  tool: ResolvedToolCall
+): AssistantCapabilitySnapshot | null {
+  if (tool.name !== "Agent") {
+    return null;
+  }
+
+  const input = parseToolInputRecord(tool.input);
+  if (!input) {
+    return null;
+  }
+
+  const subagentType = readText(input, "subagent_type");
+  const description = readText(input, "description");
+
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+  pushAssistantCapabilityRow(rows, t("conversation.claudeAgentToolLabelType"), subagentType);
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), resolveToolStatusLabel(tool.status));
+  if (description) {
+    pushAssistantCapabilityRow(rows, t("conversation.claudeAgentToolLabelDescription"), description);
+  }
+
+  return {
+    kind: "session",
+    badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+    title: t("conversation.claudeAgentToolTitle"),
+    summary: description || subagentType || "",
+    rows
+  };
+}
+
 function resolveCodexAgentNickname(
   output: Record<string, unknown> | null
 ): string | null {
@@ -4128,6 +4159,10 @@ function ToolCallItem({
     () => buildCodexAgentToolSnapshot(tool),
     [tool]
   );
+  const claudeAgentToolSnapshot = useMemo(
+    () => buildClaudeAgentToolSnapshot(tool),
+    [tool]
+  );
   const taskSnapshot = useMemo(
     () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
     [group.updatedAt, tool]
@@ -4190,6 +4225,22 @@ function ToolCallItem({
       <AssistantCapabilityToolItem
         tool={tool}
         snapshot={codexAgentToolSnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        exportMode={exportMode}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
+  }
+
+  if (claudeAgentToolSnapshot) {
+    return (
+      <AssistantCapabilityToolItem
+        tool={tool}
+        snapshot={claudeAgentToolSnapshot}
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}

@@ -23,18 +23,7 @@ export function isRealSubagentSession(session: {
 export function resolveSubagentDisplayLabel(session: {
   subagentLabel?: string | null;
 }): string {
-  const rawLabel = session.subagentLabel?.trim();
-
-  if (!rawLabel) {
-    return t("shell.subagentBadge");
-  }
-
-  const parts = rawLabel
-    .split("·")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  return parts.at(-1) || rawLabel;
+  return t("shell.subagentBadge");
 }
 
 export function isArchivedSessionVisibleInArchive(session: {
