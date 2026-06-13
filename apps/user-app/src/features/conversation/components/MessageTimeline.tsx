@@ -2759,6 +2759,10 @@ function resolveClaudeTaskToolLifecycleKey(
     }
   }
 
+  if (normalizedName === "tasklist" || normalizedName === "taskget") {
+    return `claude-task-list:${normalizedName}`;
+  }
+
   return message.toolCall?.callId.trim() ? null : null;
 }
 

@@ -1085,7 +1085,7 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"plan":/)).toBeInTheDocument();
   });
 
-  it("Claude TaskUpdate 只有 taskId 时不会在消息流里渲染成新的任务卡片", async () => {
+  it("Claude TaskUpdate 只有 taskId 时也会渲染成任务卡片", async () => {
     render(
       <MessageTimeline
         historyState="ready"
@@ -1126,10 +1126,10 @@ describe("MessageTimeline", () => {
       />
     );
 
-    expect(screen.getAllByText(t("conversation.taskCardTodoTitle"))).toHaveLength(1);
+    expect(screen.getAllByText(t("conversation.taskCardTodoTitle"))).toHaveLength(2);
     expect(screen.getByText("补时间线卡片")).toBeInTheDocument();
-    expect(screen.queryByText("Task 1")).not.toBeInTheDocument();
-    expect(screen.getByText("TaskUpdate")).toBeInTheDocument();
+    expect(screen.getByText("Task #1")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskProgressStatusInProgress"))).toBeInTheDocument();
   });
 
   it("会把 Claude 纯文本 TaskCreate 输出渲染成任务卡片", async () => {
@@ -1272,9 +1272,93 @@ describe("MessageTimeline", () => {
     );
 
     expect(previews).toHaveLength(2);
-    expect(previews[0]).toContain("TaskUpdate");
-    expect(previews[0]).toContain("Updated task #1 status");
-    expect(previews[1]).toContain("Updated task #2 status");
+    expect(previews[0]).toContain(t("conversation.taskCardTodoTitle"));
+    expect(previews[0]).toContain("Task #1");
+    expect(previews[0]).toContain(t("conversation.taskProgressStatusCompleted"));
+    expect(previews[1]).toContain(t("conversation.taskCardTodoTitle"));
+    expect(previews[1]).toContain("Task #2");
+    expect(previews[1]).toContain(t("conversation.taskProgressStatusInProgress"));
+  });
+
+  it("会把 Claude TaskList 的调用和结果合并成一张任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-list-call-1",
+            callId: "task-list-call-1",
+            name: "TaskList",
+            kind: "tool_call",
+            content: "{}",
+            toolInput: "{}",
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "task-list-result-1",
+            callId: "task-list-result-1",
+            name: "TaskList",
+            kind: "tool_result",
+            content: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            toolOutput: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            sequence: 2
+          })
+        ]}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
+    expect(screen.getByText("配置中文搜索与部署流程")).toBeInTheDocument();
+  });
+
+  it("会把 Claude 纯文本 TaskList 输出渲染成完整任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-list-result-1",
+            callId: "task-list-result-1",
+            name: "TaskList",
+            kind: "tool_result",
+            content: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            toolInput: "{}",
+            toolOutput: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n")
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
+    expect(screen.getByText("翻译核心章节并校对术语")).toBeInTheDocument();
+    expect(screen.getByText("配置中文搜索与部署流程")).toBeInTheDocument();
   });
 
   it("会把 Claude TodoWrite 渲染成任务卡片", async () => {

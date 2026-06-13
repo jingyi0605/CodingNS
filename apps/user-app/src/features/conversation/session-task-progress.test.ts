@@ -242,6 +242,34 @@ describe("buildConversationTaskSnapshot", () => {
     ]);
   });
 
+  it("会解析 Claude Code 的纯文本 TaskList 输出", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-04-13T10:30:00.000Z",
+        toolCall: {
+          callId: "task-list-1",
+          name: "TaskList",
+          input: "{}",
+          output: [
+            "#1 [completed] 调研目标工具的文档结构",
+            "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+            "#3 [in_progress] 翻译核心章节并校对术语",
+            "#4 [pending] 配置中文搜索与部署流程"
+          ].join("\n"),
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.items.map((item) => `${item.id}:${item.status}:${item.title}`)).toEqual([
+      "1:completed:调研目标工具的文档结构",
+      "2:completed:初始化 Docusaurus 中文站点脚手架",
+      "3:in_progress:翻译核心章节并校对术语",
+      "4:pending:配置中文搜索与部署流程"
+    ]);
+  });
+
   it("会优先采用 OpenCode 的 todoread 结果作为当前任务快照", () => {
     const snapshot = buildConversationTaskSnapshot([
       createToolMessage({

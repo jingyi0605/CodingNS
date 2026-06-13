@@ -162,10 +162,6 @@ export function buildConversationTaskSnapshotFromToolCall(
     return null;
   }
 
-  if (isTitlelessIncrementalTaskUpdate(normalizedToolName, items)) {
-    return null;
-  }
-
   return {
     provider,
     source: isCodexPlanTool(toolCall.name) ? "plan" : "todo",
@@ -394,7 +390,17 @@ function extractTaskItemsFromToolCall(
   }
 
   const payload = parseStructuredPayload(toolCall, resolveTaskPayloadMode(normalizedToolName));
-  return payload ? extractTaskItemsFromPayload(payload.value, updatedAt) : [];
+  const items = payload ? extractTaskItemsFromPayload(payload.value, updatedAt) : [];
+
+  if (items.length > 0) {
+    return items;
+  }
+
+  if (normalizedToolName === "tasklist" || normalizedToolName === "taskget") {
+    return extractPlainTextTaskListItems(toolCall, updatedAt);
+  }
+
+  return [];
 }
 
 function extractClaudeTaskCreateItems(
@@ -490,6 +496,64 @@ function parseTaskCreateLine(line: string, updatedAt: string): ParsedTaskItem | 
     id,
     title,
     status: "pending",
+    detail: null,
+    updatedAt,
+    hasExplicitTitle: true
+  };
+}
+
+function extractPlainTextTaskListItems(
+  toolCall: ToolCallDto,
+  updatedAt: string
+): ParsedTaskItem[] {
+  const candidates = [
+    toolCall.output,
+    toolCall.input
+  ].filter((value): value is string => readNonEmptyText(value) !== null);
+
+  for (const candidate of candidates) {
+    const items = parseTaskListText(candidate, updatedAt);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [];
+}
+
+function parseTaskListText(text: string, updatedAt: string): ParsedTaskItem[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => parseTaskListLine(line, updatedAt))
+    .filter((item): item is ParsedTaskItem => item !== null);
+}
+
+function parseTaskListLine(line: string, updatedAt: string): ParsedTaskItem | null {
+  const normalized = line.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^#?(\d+)\s+\[([^\]]+)\]\s+(.+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const id = readNonEmptyText(match[1]);
+  const status = readNonEmptyText(match[2]);
+  const title = readNonEmptyText(match[3]);
+
+  if (!id || !title) {
+    return null;
+  }
+
+  return {
+    id,
+    title,
+    status: normalizeTaskStatus(status, "pending"),
     detail: null,
     updatedAt,
     hasExplicitTitle: true
@@ -640,10 +704,10 @@ function toTaskItem(
     ?? readNonEmptyText(payload.name)
     ?? readNonEmptyText(payload.subject)
     ?? readNonEmptyText(payload.description);
-  const title = explicitTitle ?? input.fallbackTitle;
   const id =
     readTaskId(payload)
-    ?? buildStableFallbackTaskId(input.fallbackIdPrefix, title);
+    ?? buildStableFallbackTaskId(input.fallbackIdPrefix, explicitTitle ?? input.fallbackTitle);
+  const title = explicitTitle ?? buildTaskIdFallbackTitle(id, input.fallbackTitle);
   const detail = resolveTaskDetail(payload, title);
 
   return {
@@ -838,13 +902,6 @@ function isIncrementalTaskMutationPayload(value: Record<string, unknown>): boole
   );
 }
 
-function isTitlelessIncrementalTaskUpdate(
-  normalizedToolName: string,
-  items: ParsedTaskItem[]
-): boolean {
-  return normalizedToolName === "taskupdate" && items.every((item) => !item.hasExplicitTitle);
-}
-
 function normalizeToolName(name: string): string {
   return name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
 }
@@ -866,6 +923,16 @@ function parsePositiveInteger(value: string): number | null {
   }
 
   return Number(value);
+}
+
+function buildTaskIdFallbackTitle(id: string, fallbackTitle: string): string {
+  const ordinal = parsePositiveInteger(id);
+
+  if (!ordinal) {
+    return fallbackTitle;
+  }
+
+  return `Task #${ordinal}`;
 }
 
 function toPublicTaskItem(item: MutableTaskRecord): ConversationTaskItem {
