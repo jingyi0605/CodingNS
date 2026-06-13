@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { PermissionRequestList } from "./PermissionRequestList";
@@ -74,6 +75,156 @@ describe("PermissionRequestList", () => {
         action: "allow",
         answers: {
           scope: ["本次会话不再读取"]
+        }
+      });
+    });
+  });
+
+  it("Claude 问题请求可以提交选项答案", async () => {
+    const onReply = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <PermissionRequestList
+        requests={[
+          {
+            id: "permission-ask-1",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "toolu-ask-1",
+            kind: "user_input",
+            status: "pending",
+            title: "Claude 需要你选择问题类型",
+            summary: "请选择任务类型",
+            detail: null,
+            reason: null,
+            toolName: "AskUserQuestion",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [
+              {
+                id: "intent",
+                header: "意图",
+                question: "你想做哪类工作？",
+                allowOther: true,
+                secret: false,
+                multiSelect: false,
+                options: [
+                  {
+                    label: "开发任务",
+                    description: "有具体功能要实现"
+                  },
+                  {
+                    label: "演示",
+                    description: "只看功能演示"
+                  }
+                ]
+              }
+            ],
+            actions: [
+              {
+                value: "submit",
+                label: "提交选择",
+                tone: "primary",
+                description: "把选择结果交给 Claude"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-13T09:00:00.000Z",
+            updatedAt: "2026-06-13T09:00:00.000Z",
+            resolvedAt: null
+          }
+        ]}
+        replyingRequestId={null}
+        onReply={onReply}
+      />
+    );
+
+    const submitButton = screen.getByRole("button", { name: "提交选择" });
+    expect(submitButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("radio", { name: /开发任务/ }));
+    fireEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(onReply).toHaveBeenCalledWith("permission-ask-1", {
+        action: "submit",
+        answers: {
+          intent: ["开发任务"]
+        }
+      });
+    });
+  });
+
+  it("Claude 问题请求可以提交其他答案", async () => {
+    const user = userEvent.setup();
+    const onReply = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <PermissionRequestList
+        requests={[
+          {
+            id: "permission-ask-2",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "toolu-ask-2",
+            kind: "user_input",
+            status: "pending",
+            title: "Claude 需要你选择问题类型",
+            summary: "请选择任务类型",
+            detail: null,
+            reason: null,
+            toolName: "AskUserQuestion",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [
+              {
+                id: "intent",
+                header: "意图",
+                question: "你想做哪类工作？",
+                allowOther: true,
+                secret: false,
+                multiSelect: false,
+                options: [
+                  {
+                    label: "开发任务",
+                    description: null
+                  }
+                ]
+              }
+            ],
+            actions: [
+              {
+                value: "submit",
+                label: "提交选择",
+                tone: "primary",
+                description: "把选择结果交给 Claude"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-13T09:00:00.000Z",
+            updatedAt: "2026-06-13T09:00:00.000Z",
+            resolvedAt: null
+          }
+        ]}
+        replyingRequestId={null}
+        onReply={onReply}
+      />
+    );
+
+    await user.type(screen.getByPlaceholderText("Type your answer"), "我想先看演示");
+    fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
+
+    await waitFor(() => {
+      expect(onReply).toHaveBeenCalledWith("permission-ask-2", {
+        action: "submit",
+        answers: {
+          intent: ["我想先看演示"]
         }
       });
     });

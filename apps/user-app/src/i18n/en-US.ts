@@ -1823,6 +1823,8 @@ export const enUS = {
     permissionRequestWriteLabel: "Write",
     permissionRequestNetworkLabel: "Network",
     permissionRequestQuestionsLabel: "Questions",
+    permissionRequestQuestionOtherLabel: "Other",
+    permissionRequestQuestionOtherPlaceholder: "Type your answer",
     permissionRequestDetailLabel: "Details",
     permissionRequestEmpty: "None",
     permissionRequestUnknown: "Unknown",

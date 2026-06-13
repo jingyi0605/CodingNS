@@ -733,7 +733,7 @@ function createClaudeHookSettingsFile(input: {
   const command = buildClaudeHookBridgeCommand(input, tempDir, debugLogPath);
   const settings = {
     hooks: {
-      PreToolUse: ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].map((matcher) => ({
+      PreToolUse: ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion"].map((matcher) => ({
         matcher,
         hooks: [
           {

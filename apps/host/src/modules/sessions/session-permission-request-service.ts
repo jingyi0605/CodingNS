@@ -49,6 +49,7 @@ export interface SessionPermissionRequestQuestionView {
   question: string;
   allowOther: boolean;
   secret: boolean;
+  multiSelect: boolean;
   options: SessionPermissionRequestQuestionOptionView[];
 }
 
@@ -271,11 +272,34 @@ export class SessionPermissionRequestService {
     if (request.source.kind === "claude-pre-tool-use") {
       const action = normalizeText(input.action);
 
-      if (action !== "allow" && action !== "allow_session" && action !== "deny") {
+      if (
+        action !== "allow" &&
+        action !== "allow_session" &&
+        action !== "deny" &&
+        action !== "submit"
+      ) {
         throw new AppError({
           statusCode: 400,
           errorCode: "INVALID_INPUT",
-        detail: "Claude 权限申请只支持 allow、allow_session 或 deny",
+          detail: "Claude 请求只支持 allow、allow_session、deny 或 submit",
+          field: "action"
+        });
+      }
+
+      if (request.kind === "user_input" && action !== "submit") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "Claude 问题请求只支持提交答案",
+          field: "action"
+        });
+      }
+
+      if (request.kind !== "user_input" && action === "submit") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "只有问题请求可以提交答案",
           field: "action"
         });
       }
@@ -295,7 +319,8 @@ export class SessionPermissionRequestService {
       }
 
       request.source.resolve({
-        action: action === "deny" ? "deny" : "allow"
+        action: action === "deny" ? "deny" : "allow",
+        answers: request.kind === "user_input" ? input.answers : undefined
       });
       return await this.markResolved(
         request,
@@ -532,10 +557,17 @@ export class SessionPermissionRequestService {
       accepted: true,
       ignored: false,
       sessionId: binding.sessionId,
-      bridgeResponse: buildClaudePreToolUseBridgeResponse(
-        decision.action,
-        buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
-      )
+      bridgeResponse: normalized.kind === "user_input"
+        ? buildClaudeAskUserQuestionBridgeResponse(
+            decision.action,
+            decision.answers ?? {},
+            payload.tool_input,
+            buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+          )
+        : buildClaudePreToolUseBridgeResponse(
+            decision.action,
+            buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+          )
     };
   }
 
@@ -1542,7 +1574,7 @@ export function normalizeClaudePreToolUseRequest(input: {
     cwd: normalizeText(toRecord(toolInput)?.cwd) || null,
     paths: normalized.paths,
     permissionProfile: null,
-    questions: [],
+    questions: normalized.questions,
     actions: buildClaudeActions({
       kind: normalized.kind,
       command: normalized.command,
@@ -1765,6 +1797,7 @@ export function normalizeCodexServerRequest(
             question: normalizeText(question.question) || "请输入答案",
             allowOther: Boolean(question.isOther),
             secret: Boolean(question.isSecret),
+            multiSelect: Boolean(question.multiSelect),
             options: Array.isArray(question.options)
               ? question.options
                   .map((option) => toRecord(option))
@@ -1823,6 +1856,30 @@ function buildClaudePreToolUseBridgeResponse(
       permissionDecisionReason: reason
     }
   };
+}
+
+function buildClaudeAskUserQuestionBridgeResponse(
+  action: "allow" | "deny" | "ask",
+  answers: Record<string, string[]>,
+  originalInput: unknown,
+  reason: string
+): Record<string, unknown> {
+  const response = buildClaudePreToolUseBridgeResponse(action, reason);
+  const originalInputRecord = toRecord(originalInput);
+
+  if (action === "allow") {
+    return {
+      hookSpecificOutput: {
+        ...(response.hookSpecificOutput as Record<string, unknown>),
+        updatedInput: {
+          ...(originalInputRecord ?? {}),
+          answers: buildClaudeAskUserQuestionAnswers(answers)
+        }
+      }
+    };
+  }
+
+  return response;
 }
 
 function buildClaudePermissionRequestBridgeResponse(
@@ -2029,6 +2086,7 @@ function buildClaudeKind(
   detail: string | null;
   command: string | null;
   paths: string[];
+  questions: SessionPermissionRequestQuestionView[];
 } {
   const normalizedToolName = toolName.trim().toLowerCase();
   const inputRecord = toRecord(toolInput);
@@ -2045,7 +2103,21 @@ function buildClaudeKind(
       summary: command ?? "Bash 工具需要确认",
       detail: stringifyPayload(toolInput),
       command,
-      paths: []
+      paths: [],
+      questions: []
+    };
+  }
+
+  if (normalizedToolName === "askuserquestion") {
+    const questions = readClaudeAskUserQuestionQuestions(inputRecord);
+    return {
+      kind: "user_input",
+      title: "Claude 需要你选择问题类型",
+      summary: questions[0]?.question ?? "Claude 需要你补充选择",
+      detail: stringifyPayload(toolInput),
+      command: null,
+      paths: [],
+      questions
     };
   }
 
@@ -2061,7 +2133,8 @@ function buildClaudeKind(
       summary: paths[0] ?? `${toolName} 工具需要确认`,
       detail: stringifyPayload(toolInput),
       command: null,
-      paths
+      paths,
+      questions: []
     };
   }
 
@@ -2071,8 +2144,120 @@ function buildClaudeKind(
     summary: toolName,
     detail: stringifyPayload(toolInput),
     command,
-    paths
+    paths,
+    questions: []
   };
+}
+
+function readClaudeAskUserQuestionQuestions(
+  inputRecord: Record<string, unknown> | null
+): SessionPermissionRequestQuestionView[] {
+  if (!inputRecord) {
+    return [];
+  }
+
+  const rawQuestions = Array.isArray(inputRecord.questions)
+    ? inputRecord.questions
+    : [
+        {
+          ...inputRecord,
+          id: normalizeText(inputRecord.id) || "question"
+        }
+      ];
+
+  return rawQuestions
+    .map((question, index) => normalizeClaudeAskUserQuestion(question, index))
+    .filter((question): question is SessionPermissionRequestQuestionView => question !== null);
+}
+
+function normalizeClaudeAskUserQuestion(
+  value: unknown,
+  index: number
+): SessionPermissionRequestQuestionView | null {
+  const record = toRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const questionText =
+    normalizeText(record.question) ||
+    normalizeText(record.prompt) ||
+    normalizeText(record.message) ||
+    "请选择一个选项";
+  const options = readClaudeAskUserQuestionOptions(
+    record.options ?? record.choices ?? record.answers
+  );
+
+  return {
+    id:
+      normalizeText(record.id) ||
+      normalizeText(record.name) ||
+      `question-${index + 1}`,
+    header:
+      normalizeText(record.header) ||
+      normalizeText(record.title) ||
+      `问题 ${index + 1}`,
+    question: questionText,
+    allowOther:
+      readBoolean(record.allowOther) ??
+      readBoolean(record.allow_other) ??
+      readBoolean(record.isOther) ??
+      readBoolean(record.allowFreeform) ??
+      readBoolean(record.allow_freeform) ??
+      true,
+    secret:
+      readBoolean(record.secret) ??
+      readBoolean(record.isSecret) ??
+      false,
+    multiSelect:
+      readBoolean(record.multiSelect) ??
+      readBoolean(record.multi_select) ??
+      false,
+    options
+  };
+}
+
+function readClaudeAskUserQuestionOptions(value: unknown): SessionPermissionRequestQuestionOptionView[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const label = item.trim();
+        return label ? { label, description: null } : null;
+      }
+
+      const record = toRecord(item);
+      const label =
+        normalizeText(record?.label) ||
+        normalizeText(record?.value) ||
+        normalizeText(record?.text) ||
+        normalizeText(record?.title);
+
+      if (!label) {
+        return null;
+      }
+
+      return {
+        label,
+        description: normalizeText(record?.description) || normalizeText(record?.detail) || null
+      };
+    })
+    .filter((option): option is SessionPermissionRequestQuestionOptionView => option !== null);
+}
+
+function buildClaudeAskUserQuestionAnswers(answers: Record<string, string[]>): Record<string, string | string[]> {
+  return Object.fromEntries(
+    Object.entries(answers)
+      .map(([questionId, values]) => [
+        questionId,
+        values.length === 1 ? values[0] ?? "" : values
+      ])
+      .filter(([questionId]) => Boolean(normalizeText(questionId)))
+  );
 }
 
 function buildOpenCodeKind(
@@ -2245,6 +2430,12 @@ function buildClaudeAllowedScopeKey(
 }
 
 function buildClaudeActions(request: Pick<SessionPermissionRequestInternalRecord, "kind" | "command" | "paths" | "toolName">): SessionPermissionRequestActionView[] {
+  if (request.kind === "user_input") {
+    return [
+      createAction("submit", "提交选择", "primary", "把选择结果交给 Claude 继续处理")
+    ];
+  }
+
   const actions: SessionPermissionRequestActionView[] = [
     createAction("allow", "允许", "primary", "只允许这一次")
   ];
@@ -2671,6 +2862,26 @@ function normalizeText(value: unknown): string | null {
 
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
+  }
+
+  return null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
   }
 
   return null;

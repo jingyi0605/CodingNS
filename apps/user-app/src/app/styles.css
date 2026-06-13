@@ -31286,6 +31286,27 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   color: var(--text-secondary, #5f6b7a);
 }
 
+.permission-request-question-option-other span {
+  width: 100%;
+}
+
+.permission-request-question-other-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--permission-panel-border);
+  background: var(--permission-panel-surface);
+  color: var(--text-primary, #122033);
+  font: inherit;
+}
+
+.permission-request-question-other-input:focus {
+  outline: none;
+  border-color: var(--permission-panel-border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .permission-request-card-footer {
   display: flex;
   flex-wrap: wrap;

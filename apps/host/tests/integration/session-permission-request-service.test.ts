@@ -62,6 +62,66 @@ describe("session-permission-request-service normalizers", () => {
     ]);
   });
 
+  it("会把 Claude AskUserQuestion 映射成可提交选项的问题请求", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
+      sessionId: "session-ask-1",
+      providerSessionId: "claude-session-ask-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "claude-session-ask-1",
+        cwd: "/tmp/workspace",
+        tool_name: "AskUserQuestion",
+        tool_input: {
+          questions: [
+            {
+              id: "intent",
+              header: "意图",
+              question: "你想做哪类工作？",
+              multiSelect: false,
+              options: [
+                {
+                  label: "开发任务",
+                  description: "有具体功能要实现"
+                },
+                {
+                  label: "演示",
+                  description: "只看功能演示"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    });
+
+    expect(request.kind).toBe("user_input");
+    expect(request.toolName).toBe("AskUserQuestion");
+    expect(request.title).toBe("Claude 需要你选择问题类型");
+    expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
+    expect(request.questions).toEqual([
+      {
+        id: "intent",
+        header: "意图",
+        question: "你想做哪类工作？",
+        allowOther: true,
+        secret: false,
+        multiSelect: false,
+        options: [
+          {
+            label: "开发任务",
+            description: "有具体功能要实现"
+          },
+          {
+            label: "演示",
+            description: "只看功能演示"
+          }
+        ]
+      }
+    ]);
+  });
+
   it("会保留 Claude 兼容 provider 的原始 providerId", () => {
     const request = normalizeClaudePreToolUseRequest({
       provider: "legna-code",

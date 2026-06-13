@@ -16,6 +16,7 @@ export function PermissionRequestList({
   onReply
 }: PermissionRequestListProps) {
   const [answersByRequestId, setAnswersByRequestId] = useState<Record<string, Record<string, string[]>>>({});
+  const [otherAnswersByRequestId, setOtherAnswersByRequestId] = useState<Record<string, Record<string, string>>>({});
   const pendingRequests = useMemo(
     () => requests.filter((request) => request.status === "pending"),
     [requests]
@@ -38,6 +39,7 @@ export function PermissionRequestList({
       <div className="permission-request-stack">
         {pendingRequests.map((request) => {
           const answers = answersByRequestId[request.id] ?? {};
+          const otherAnswers = otherAnswersByRequestId[request.id] ?? {};
           const primaryPaths = request.paths.filter(Boolean);
           const shouldShowCommand = request.kind === "command" && Boolean(request.command?.trim());
           const shouldShowSummary =
@@ -48,7 +50,9 @@ export function PermissionRequestList({
           const disableSubmit =
             request.kind === "user_input" &&
             request.questions.some(
-              (question) => (answers[question.id]?.filter(Boolean).length ?? 0) === 0
+              (question) =>
+                (answers[question.id]?.filter(Boolean).length ?? 0) === 0 &&
+                !otherAnswers[question.id]?.trim()
             );
 
           return (
@@ -103,19 +107,29 @@ export function PermissionRequestList({
                           <div className="permission-request-question-options">
                             {question.options.map((option) => {
                               const checked = answers[question.id]?.includes(option.label) ?? false;
+                              const inputType = question.multiSelect ? "checkbox" : "radio";
 
                               return (
                                 <label key={`${question.id}:${option.label}`} className="permission-request-question-option">
                                   <input
-                                    type="radio"
+                                    type={inputType}
                                     name={`${request.id}:${question.id}`}
                                     checked={checked}
                                     onChange={() => {
+                                      setOtherAnswersByRequestId((current) => ({
+                                        ...current,
+                                        [request.id]: {
+                                          ...(current[request.id] ?? {}),
+                                          [question.id]: ""
+                                        }
+                                      }));
                                       setAnswersByRequestId((current) => ({
                                         ...current,
                                         [request.id]: {
                                           ...(current[request.id] ?? {}),
-                                          [question.id]: [option.label]
+                                          [question.id]: question.multiSelect
+                                            ? toggleAnswerValue(current[request.id]?.[question.id] ?? [], option.label)
+                                            : [option.label]
                                         }
                                       }));
                                     }}
@@ -127,6 +141,50 @@ export function PermissionRequestList({
                                 </label>
                               );
                             })}
+                            {question.allowOther ? (
+                              <label className="permission-request-question-option permission-request-question-option-other">
+                                <input
+                                  type="radio"
+                                  name={`${request.id}:${question.id}`}
+                                  checked={Boolean(otherAnswers[question.id]?.trim())}
+                                  onChange={() => {
+                                    setAnswersByRequestId((current) => ({
+                                      ...current,
+                                      [request.id]: {
+                                        ...(current[request.id] ?? {}),
+                                        [question.id]: []
+                                      }
+                                    }));
+                                  }}
+                                />
+                                <span>
+                                  <strong>{t("conversation.permissionRequestQuestionOtherLabel")}</strong>
+                                  <input
+                                    className="permission-request-question-other-input"
+                                    type={question.secret ? "password" : "text"}
+                                    value={otherAnswers[question.id] ?? ""}
+                                    placeholder={t("conversation.permissionRequestQuestionOtherPlaceholder")}
+                                    onChange={(event) => {
+                                      const value = event.currentTarget.value;
+                                      setOtherAnswersByRequestId((current) => ({
+                                        ...current,
+                                        [request.id]: {
+                                          ...(current[request.id] ?? {}),
+                                          [question.id]: value
+                                        }
+                                      }));
+                                      setAnswersByRequestId((current) => ({
+                                        ...current,
+                                        [request.id]: {
+                                          ...(current[request.id] ?? {}),
+                                          [question.id]: []
+                                        }
+                                      }));
+                                    }}
+                                  />
+                                </span>
+                              </label>
+                            ) : null}
                           </div>
                         </div>
                       ))}
@@ -144,12 +202,13 @@ export function PermissionRequestList({
                     disabled={
                       replyingRequestId === request.id || (action.value === "submit" && disableSubmit)
                     }
-                    onClick={() =>
+                    onClick={() => {
+                      const mergedAnswers = mergeQuestionAnswers(answers, otherAnswers);
                       void onReply(request.id, {
                         action: action.value,
-                        answers: Object.keys(answers).length > 0 ? answers : undefined
-                      })
-                    }
+                        answers: Object.keys(mergedAnswers).length > 0 ? mergedAnswers : undefined
+                      });
+                    }}
                   >
                     {replyingRequestId === request.id
                       ? t("conversation.permissionRequestSubmitting")
@@ -163,6 +222,39 @@ export function PermissionRequestList({
       </div>
     </section>
   );
+}
+
+function toggleAnswerValue(values: string[], nextValue: string): string[] {
+  if (values.includes(nextValue)) {
+    return values.filter((value) => value !== nextValue);
+  }
+
+  return [...values, nextValue];
+}
+
+function mergeQuestionAnswers(
+  selectedAnswers: Record<string, string[]>,
+  otherAnswers: Record<string, string>
+): Record<string, string[]> {
+  const merged: Record<string, string[]> = {};
+
+  for (const [questionId, values] of Object.entries(selectedAnswers)) {
+    const normalizedValues = values.filter(Boolean);
+
+    if (normalizedValues.length > 0) {
+      merged[questionId] = normalizedValues;
+    }
+  }
+
+  for (const [questionId, value] of Object.entries(otherAnswers)) {
+    const normalized = value.trim();
+
+    if (normalized) {
+      merged[questionId] = [normalized];
+    }
+  }
+
+  return merged;
 }
 
 function resolvePermissionActionClassName(tone: SessionPermissionRequestDto["actions"][number]["tone"]) {
