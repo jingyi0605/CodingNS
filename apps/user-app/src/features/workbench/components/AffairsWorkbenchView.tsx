@@ -244,6 +244,7 @@ interface AffairsWorkbenchProviderProps {
   onRefreshNavigation?: () => Promise<void>;
   onConversationDraftSelected?: (draft: AffairsConversationDraftSelection) => void;
   forceRoute?: boolean;
+  targetHostId?: string | null;
   children: ReactNode;
 }
 
@@ -1514,12 +1515,14 @@ export function AffairsWorkbenchProvider({
   onRefreshNavigation,
   onConversationDraftSelected,
   forceRoute = false,
+  targetHostId,
   children
 }: AffairsWorkbenchProviderProps) {
   const navigationContext = useContext(UNSAFE_NavigationContext) as { navigator?: Navigator } | null;
   const navigate = useCallback((to: string) => {
     navigationContext?.navigator?.push(to);
   }, [navigationContext]);
+  const scopedRequestOptions = useMemo(() => ({ targetHostId }), [targetHostId]);
   const workspaceGroup = useMemo(
     () => navigationGroups.find((item) => item.workspace.id === workspaceId) ?? null,
     [navigationGroups, workspaceId]
@@ -3174,7 +3177,7 @@ export function AffairsWorkbenchProvider({
     void Promise.resolve(
       input.kind === "lightweight"
         ? markAffairsLightweightSessionSeen(workspaceId, nextSession.sessionId, seenAt)
-        : markSessionSeen(nextSession.sessionId)
+        : markSessionSeen(nextSession.sessionId, scopedRequestOptions)
     ).catch(() => undefined);
   }, [workspaceId]);
 
@@ -4019,7 +4022,7 @@ export function AffairsWorkbenchProvider({
     archiveConversationSession: async (input) => {
       const nextSession = input.kind === "lightweight"
         ? await updateAffairsLightweightSessionArchiveState(workspaceId, input.session.sessionId, true)
-        : await updateSessionArchiveState(input.session.sessionId, true);
+        : await updateSessionArchiveState(input.session.sessionId, true, scopedRequestOptions);
       if (input.kind === "lightweight") {
         setLightweightConversationSessions((current) => current.map((item) => (
           item.sessionId === nextSession.sessionId ? nextSession : item
@@ -4038,7 +4041,7 @@ export function AffairsWorkbenchProvider({
     unarchiveConversationSession: async (input) => {
       const nextSession = input.kind === "lightweight"
         ? await updateAffairsLightweightSessionArchiveState(workspaceId, input.session.sessionId, false)
-        : await updateSessionArchiveState(input.session.sessionId, false);
+        : await updateSessionArchiveState(input.session.sessionId, false, scopedRequestOptions);
       if (input.kind === "lightweight") {
         setLightweightConversationSessions((current) => upsertConversationSessionSummary(current, nextSession));
       } else {
@@ -4053,7 +4056,7 @@ export function AffairsWorkbenchProvider({
           input.session.sessionId,
           input.session.isFavorite !== true
         )
-        : await updateSessionFavoriteState(input.session.sessionId, input.session.isFavorite !== true);
+        : await updateSessionFavoriteState(input.session.sessionId, input.session.isFavorite !== true, scopedRequestOptions);
       if (input.kind === "lightweight") {
         setLightweightConversationSessions((current) => current.map((item) => (
           item.sessionId === nextSession.sessionId ? nextSession : item
@@ -4083,7 +4086,7 @@ export function AffairsWorkbenchProvider({
       ));
       void (kind === "lightweight"
         ? markAffairsLightweightSessionSeen(workspaceId, sessionId, nextSeenAt)
-        : markSessionSeen(sessionId)).catch(() => undefined);
+        : markSessionSeen(sessionId, scopedRequestOptions)).catch(() => undefined);
     },
     openConversationRenameModal: (input) => {
       setConversationRenameTarget(input);
@@ -4095,7 +4098,7 @@ export function AffairsWorkbenchProvider({
     renameConversationSession: async (input) => {
       const renamedSession = input.kind === "lightweight"
         ? await renameAffairsLightweightSessionTitle(workspaceId, input.session.sessionId, input.title.trim())
-        : await renameSessionTitle(input.session.sessionId, input.title.trim());
+        : await renameSessionTitle(input.session.sessionId, input.title.trim(), scopedRequestOptions);
       if (input.kind === "lightweight") {
         setLightweightConversationSessions((current) => current.map((item) => (
           item.sessionId === renamedSession.sessionId ? renamedSession : item
@@ -4120,7 +4123,7 @@ export function AffairsWorkbenchProvider({
         await deleteAffairsLightweightSession(workspaceId, input.session.sessionId);
         setLightweightConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
       } else {
-        await deleteSession(input.session.sessionId);
+        await deleteSession(input.session.sessionId, scopedRequestOptions);
         setAgentConversationSessions((current) => current.filter((item) => item.sessionId !== input.session.sessionId));
       }
       clearSelectedConversationSession({
@@ -4139,7 +4142,7 @@ export function AffairsWorkbenchProvider({
       try {
         const snapshot = activeLightweightConversationSessionIds.has(session.sessionId)
           ? await loadAffairsLightweightSessionExportSnapshot(workspaceId, session.sessionId)
-          : await loadSessionExportSnapshot(session.sessionId);
+          : await loadSessionExportSnapshot(session.sessionId, targetHostId);
         const exportLayout = captureAffairsSessionExportLayoutSnapshot();
 
         if (format === "md") {
@@ -4315,7 +4318,8 @@ ${AFFAIRS_STANDALONE_SESSION_EXPORT_OVERRIDES}`;
     showToast,
     workspaceId,
     workspaceName,
-    conversationExportingSessionId
+    conversationExportingSessionId,
+    scopedRequestOptions
   ]);
 
   useEffect(() => {

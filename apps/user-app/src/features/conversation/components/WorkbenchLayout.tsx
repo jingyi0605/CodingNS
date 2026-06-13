@@ -6077,6 +6077,7 @@ function SidebarContent({
           onStateChange={onCodeEmbeddedAffairsStateChange}
           onRefreshNavigation={onRefreshNavigation}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsSidebarPanel />
         </AffairsWorkbenchProvider>
@@ -14406,6 +14407,7 @@ export function WorkbenchLayout({
         state={codeShortcutAffairsState}
         onStateChange={(nextState) => setCodeShortcutAffairsState(nextState)}
         onRefreshNavigation={refreshNavigation}
+        targetHostId={currentTargetHostId}
       >
         <AffairsShortcutAppsRail
           systemItems={codeShortcutSystemItems}
@@ -14517,6 +14519,7 @@ export function WorkbenchLayout({
         onStateChange={setCodeEmbeddedAffairsState}
         onRefreshNavigation={refreshNavigation}
         forceRoute={false}
+        targetHostId={currentTargetHostId}
       >
         <AffairsWorkbenchView workspaceId={currentWorkspaceId} />
       </AffairsWorkbenchProvider>
@@ -16381,6 +16384,7 @@ export function WorkbenchLayout({
           onStateChange={setCodeEmbeddedAffairsState}
           onRefreshNavigation={refreshNavigation}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsAuxiliaryPanel workspaceId={currentWorkspaceId} onToggleCollapse={() => setRightCollapsed(true)} />
         </AffairsWorkbenchProvider>
@@ -17177,6 +17181,7 @@ export function WorkbenchLayout({
           onRefreshNavigation={refreshNavigation}
           onConversationDraftSelected={handleLightweightChatDraftSelected}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsLightweightConversationCreateModalLauncher onClose={closeLightweightChatCreateModal} />
         </AffairsWorkbenchProvider>
