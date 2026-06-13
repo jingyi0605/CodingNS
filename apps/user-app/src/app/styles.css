@@ -13975,11 +13975,6 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.workbench-workspace-toggle[data-reorder-enabled="true"] .workbench-workspace-title-copy {
-  cursor: context-menu;
-}
-
-
 .workbench-manage-host-select-row {
   display: flex;
   min-width: 0;
