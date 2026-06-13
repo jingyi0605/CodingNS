@@ -233,7 +233,7 @@ function LiveConversationPageGuard(props: {
     }
 
     navigate(missingSessionTarget, { replace: true });
-  }, [missingSessionTarget, navigate]);
+  }, [currentTargetHostId, currentWorkspaceRef, missingSessionTarget, navigate, props.sessionId]);
 
   if (missingSessionTarget) {
     return null;
@@ -300,15 +300,19 @@ function LiveConversationPage({
         : null)
       ?? flattenedNavigationEntries[0]
       ?? null;
-
-    navigate(
+    const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef, fallbackWorkspaceId);
+    const targetPath =
       fallbackSessionEntry
-        ? buildWorkspaceSessionPath(fallbackSessionEntry.workspace.id, fallbackSessionEntry.session.sessionId)
+        ? buildWorkspaceSessionPath(
+          fallbackSessionEntry.workspace.id,
+          fallbackSessionEntry.session.sessionId,
+          workspaceRef
+        )
         : fallbackWorkspaceId
-          ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId)
-          : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing"),
-      { replace: true }
-    );
+          ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId, workspaceRef)
+          : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing");
+
+    navigate(targetPath, { replace: true });
   };
   const {
     session,
@@ -3448,19 +3452,21 @@ function resolveMissingLiveSessionTarget(input: {
 
 function buildTargetWorkspaceRef(
   currentTargetHostId?: string | null,
-  workspaceRef?: WorkspaceRef | null
+  workspaceRef?: WorkspaceRef | null,
+  fallbackWorkspaceId?: string | null
 ): WorkspaceRef | null {
   if (!currentTargetHostId) {
     return null;
   }
 
-  if (!workspaceRef?.workspaceId) {
+  const workspaceId = workspaceRef?.workspaceId?.trim() || fallbackWorkspaceId?.trim() || null;
+  if (!workspaceId) {
     return null;
   }
 
   return {
     hostId: currentTargetHostId,
-    workspaceId: workspaceRef.workspaceId
+    workspaceId
   };
 }
 

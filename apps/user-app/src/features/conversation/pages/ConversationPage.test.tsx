@@ -337,6 +337,8 @@ describe("ConversationPage", () => {
         rawRef: "store://session-live-1#1"
       }
     });
+    mockLiveRuntimeState.errorCode = null;
+    mockLiveRuntimeState.errorDetail = null;
     mockLiveRuntimeState.session = {
       ...createBaseLiveSession(),
       provider: "codex",
@@ -528,6 +530,85 @@ describe("ConversationPage", () => {
 
     expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
     expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
+  });
+
+  it("PeerHOST live 会话缺失时，自动跳转仍保留 targetHostId", async () => {
+    mockLiveRuntimeState.session = null;
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-fallback-1",
+              workspaceId: "remote-workspace-1",
+              title: "可用远端会话"
+            }
+          ],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-missing-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-fallback-1?targetHostId=peer-host-1"
+      );
+    });
+
+    expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
+    expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
+  });
+
+  it("PeerHOST live 会话收到 SESSION_NOT_FOUND 时，会跳到带 targetHostId 的会话列表", async () => {
+    mockLiveRuntimeState.errorCode = "SESSION_NOT_FOUND";
+    mockLiveRuntimeState.errorDetail = "session 不存在";
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-2",
+            name: "工作区二",
+            path: "/Users/jackson/workspace-2"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-live-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-2/sessions?targetHostId=peer-host-1"
+      );
+    });
+
+    expect(mockRuntimeStoreSessionIds).toContain("session-live-1");
   });
 
   it("桌面端并行会话会切到并行分屏视图", () => {
