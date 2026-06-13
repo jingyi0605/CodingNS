@@ -484,4 +484,78 @@ describe("MessageTimeline structured question", () => {
     expect(screen.queryByText(/```question/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
   });
+
+  it("会把 Claude AskUserQuestion 工具输入渲染成可选择的问题卡片", async () => {
+    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MessageTimeline
+        messages={[
+          createToolMessage({
+            id: "tool-ask-1",
+            callId: "toolu-ask-1",
+            name: "AskUserQuestion",
+            kind: "tool_call",
+            content: JSON.stringify({
+              questions: [
+                {
+                  id: "language",
+                  header: "编程语言",
+                  question: "如果让你今天开始学习一门新的编程语言，你会选择哪一个？",
+                  multiSelect: false,
+                  options: [
+                    {
+                      label: "Python",
+                      description: "简洁优雅，适合数据科学、AI 和自动化脚本"
+                    },
+                    {
+                      label: "JavaScript/TypeScript",
+                      description: "适合 Web 开发"
+                    }
+                  ]
+                }
+              ]
+            }),
+            toolInput: JSON.stringify({
+              questions: [
+                {
+                  id: "language",
+                  header: "编程语言",
+                  question: "如果让你今天开始学习一门新的编程语言，你会选择哪一个？",
+                  multiSelect: false,
+                  options: [
+                    {
+                      label: "Python",
+                      description: "简洁优雅，适合数据科学、AI 和自动化脚本"
+                    },
+                    {
+                      label: "JavaScript/TypeScript",
+                      description: "适合 Web 开发"
+                    }
+                  ]
+                }
+              ]
+            })
+          })
+        ]}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+      />
+    );
+
+    expect(screen.getByText("如果让你今天开始学习一门新的编程语言，你会选择哪一个？")).toBeInTheDocument();
+    expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: /Python/ }));
+    await userEvent.click(screen.getByRole("button", { name: /confirm|确认|common\.confirm/i }));
+
+    expect(onSubmitStructuredQuestion).toHaveBeenCalledWith({
+      messageId: "tool-ask-1",
+      answers: {
+        language: ["Python"]
+      }
+    });
+  });
 });

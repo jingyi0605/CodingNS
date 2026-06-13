@@ -46,6 +46,7 @@ describe("parseMessageRichContent", () => {
             question: "你想把笑话保存到哪个文件名？",
             allowOther: false,
             secret: false,
+            multiSelect: false,
             options: [
               {
                 label: "jokes.md",
@@ -90,6 +91,7 @@ describe("parseMessageRichContent", () => {
             question: "spec 目录下的 requirements.md 是否存在？",
             allowOther: false,
             secret: false,
+            multiSelect: false,
             options: [
               {
                 label: "帮我创建",

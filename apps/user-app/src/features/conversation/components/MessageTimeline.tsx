@@ -4321,18 +4321,24 @@ function ToolCallItem({
   sessionId,
   workspaceId,
   workspacePath,
-  exportMode = false
+  exportMode = false,
+  onSubmitStructuredQuestion = null
 }: {
   group: ToolMessageGroup;
   sessionId?: string | null;
   workspaceId?: string | null;
   workspacePath?: string | null;
   exportMode?: boolean;
+  onSubmitStructuredQuestion?: ((payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void) | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
+  const askUserQuestionPrompt = useMemo(
+    () => resolveAskUserQuestionPrompt(tool),
+    [tool]
+  );
   const viewImageSnapshot = useMemo(
     () => resolveViewImageToolSnapshot(tool, workspacePath, sessionId),
     [sessionId, tool, workspacePath]
@@ -4365,6 +4371,16 @@ function ToolCallItem({
     () => buildEditableToolPreview(tool),
     [tool.input, tool.name]
   );
+
+  if (askUserQuestionPrompt && onSubmitStructuredQuestion) {
+    return (
+      <StructuredQuestionCard
+        messageId={group.messageIds[0] ?? tool.callId}
+        prompt={askUserQuestionPrompt}
+        onSubmit={onSubmitStructuredQuestion}
+      />
+    );
+  }
 
   if (viewImageSnapshot) {
     return (
@@ -5419,9 +5435,12 @@ function StructuredQuestionCard({
   onSubmit: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const disableSubmit = prompt.questions.some(
-    (question) => (answers[question.id]?.filter(Boolean).length ?? 0) === 0
+    (question) =>
+      (answers[question.id]?.filter(Boolean).length ?? 0) === 0 &&
+      !otherAnswers[question.id]?.trim()
   );
 
   return (
@@ -5449,17 +5468,24 @@ function StructuredQuestionCard({
                 <div className="permission-request-question-options">
                   {question.options.map((option) => {
                     const checked = answers[question.id]?.includes(option.label) ?? false;
+                    const inputType = question.multiSelect ? "checkbox" : "radio";
 
                     return (
                       <label key={`${question.id}:${option.label}`} className="permission-request-question-option">
                         <input
-                          type="radio"
+                          type={inputType}
                           name={`${messageId}:${question.id}`}
                           checked={checked}
                           onChange={() => {
+                            setOtherAnswers((current) => ({
+                              ...current,
+                              [question.id]: ""
+                            }));
                             setAnswers((current) => ({
                               ...current,
-                              [question.id]: [option.label]
+                              [question.id]: question.multiSelect
+                                ? toggleStructuredQuestionAnswer(current[question.id] ?? [], option.label)
+                                : [option.label]
                             }));
                           }}
                         />
@@ -5470,6 +5496,41 @@ function StructuredQuestionCard({
                       </label>
                     );
                   })}
+                  {question.allowOther ? (
+                    <label className="permission-request-question-option permission-request-question-option-other">
+                      <input
+                        type="radio"
+                        name={`${messageId}:${question.id}`}
+                        checked={Boolean(otherAnswers[question.id]?.trim())}
+                        onChange={() => {
+                          setAnswers((current) => ({
+                            ...current,
+                            [question.id]: []
+                          }));
+                        }}
+                      />
+                      <span>
+                        <strong>{t("conversation.permissionRequestQuestionOtherLabel")}</strong>
+                        <input
+                          className="permission-request-question-other-input"
+                          type={question.secret ? "password" : "text"}
+                          value={otherAnswers[question.id] ?? ""}
+                          placeholder={t("conversation.permissionRequestQuestionOtherPlaceholder")}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setOtherAnswers((current) => ({
+                              ...current,
+                              [question.id]: value
+                            }));
+                            setAnswers((current) => ({
+                              ...current,
+                              [question.id]: []
+                            }));
+                          }}
+                        />
+                      </span>
+                    </label>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -5488,7 +5549,7 @@ function StructuredQuestionCard({
             try {
               await onSubmit({
                 messageId,
-                answers
+                answers: mergeStructuredQuestionAnswers(answers, otherAnswers)
               });
             } finally {
               setSubmitting(false);
@@ -5500,6 +5561,58 @@ function StructuredQuestionCard({
       </footer>
     </section>
   );
+}
+
+function resolveAskUserQuestionPrompt(tool: ResolvedToolCall): StructuredQuestionPrompt | null {
+  if (tool.name.trim().toLowerCase() !== "askuserquestion") {
+    return null;
+  }
+
+  const parsed = parseMessageRichContent(tool.input).structuredQuestions;
+
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    questions: parsed.questions.map((question) => ({
+      ...question,
+      allowOther: true
+    }))
+  };
+}
+
+function toggleStructuredQuestionAnswer(values: string[], nextValue: string): string[] {
+  if (values.includes(nextValue)) {
+    return values.filter((value) => value !== nextValue);
+  }
+
+  return [...values, nextValue];
+}
+
+function mergeStructuredQuestionAnswers(
+  selectedAnswers: Record<string, string[]>,
+  otherAnswers: Record<string, string>
+): Record<string, string[]> {
+  const merged: Record<string, string[]> = {};
+
+  for (const [questionId, values] of Object.entries(selectedAnswers)) {
+    const normalizedValues = values.filter(Boolean);
+
+    if (normalizedValues.length > 0) {
+      merged[questionId] = normalizedValues;
+    }
+  }
+
+  for (const [questionId, value] of Object.entries(otherAnswers)) {
+    const normalized = value.trim();
+
+    if (normalized) {
+      merged[questionId] = [normalized];
+    }
+  }
+
+  return merged;
 }
 
 function renderRuntimeThinkingItem(item: Extract<TimelineRenderItem, { type: "runtime_thinking" }>) {
@@ -5609,6 +5722,7 @@ export function ConversationTranscriptExport({
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 exportMode
+                onSubmitStructuredQuestion={null}
               />
             </article>
           ) : item.type === "runtime_thinking" ? (
@@ -6598,6 +6712,7 @@ export function MessageTimeline({
                 sessionId={sessionId}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
+                onSubmitStructuredQuestion={onSubmitStructuredQuestion}
               />
             </article>
           ) : item.type === "runtime_thinking" ? (

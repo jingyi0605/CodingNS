@@ -22,6 +22,7 @@ export interface StructuredQuestionPromptItem {
   question: string;
   allowOther: boolean;
   secret: boolean;
+  multiSelect: boolean;
   options: StructuredQuestionPromptOption[];
 }
 
@@ -211,6 +212,7 @@ function normalizeStructuredQuestionItem(
     question,
     allowOther: Boolean(record.allowOther ?? record.isOther),
     secret: Boolean(record.secret ?? record.isSecret),
+    multiSelect: Boolean(record.multiSelect ?? record.multi_select),
     options
   };
 }
