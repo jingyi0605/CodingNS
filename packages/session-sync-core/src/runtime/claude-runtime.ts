@@ -194,8 +194,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     const instructionFilePath = normalizeOptionalInstructionFilePath(
       request.options.providerInstructionFilePath
     );
-    const hookSettings = shouldInjectClaudeHookBridge(request.options.permissionMode) && this.options.hookBridge
-      ? createClaudeHookSettingsFile(this.options.hookBridge)
+    const hookSettings = this.options.hookBridge
+      ? createClaudeHookSettingsFile({
+          ...this.options.hookBridge,
+          permissionMode: request.options.permissionMode ?? null
+        })
       : null;
     const attachmentDirectories = Array.from(
       new Set(
@@ -683,10 +686,6 @@ export function buildClaudePermissionArgs(permissionMode: string | null): string
   return [];
 }
 
-function shouldInjectClaudeHookBridge(permissionMode: string | null): boolean {
-  return permissionMode !== "bypassPermissions";
-}
-
 function buildClaudeRuntimeEnv(homeDir: string): NodeJS.ProcessEnv {
   const resolvedHomeDir = join(homeDir);
   const xdgConfigHome = join(resolvedHomeDir, "xdg-config");
@@ -726,14 +725,16 @@ function createClaudeHookSettingsFile(input: {
   url: string;
   token: string;
   scriptPath: string;
+  permissionMode: string | null;
 }): { filePath: string; cleanup: () => void; debugLogPath: string; json: string } {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-hooks-"));
   const filePath = join(tempDir, "settings.json");
   const debugLogPath = join(tmpdir(), "codingns-claude-hook-bridge.log");
   const command = buildClaudeHookBridgeCommand(input, tempDir, debugLogPath);
+  const preToolUseMatchers = resolveClaudePreToolUseHookMatchers(input.permissionMode);
   const settings = {
     hooks: {
-      PreToolUse: ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion"].map((matcher) => ({
+      PreToolUse: preToolUseMatchers.map((matcher) => ({
         matcher,
         hooks: [
           {
@@ -756,6 +757,12 @@ function createClaudeHookSettingsFile(input: {
       rmSync(tempDir, { recursive: true, force: true });
     }
   };
+}
+
+export function resolveClaudePreToolUseHookMatchers(permissionMode: string | null): string[] {
+  return permissionMode === "bypassPermissions"
+    ? ["AskUserQuestion"]
+    : ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion"];
 }
 
 function buildClaudeHookBridgeCommand(input: {

@@ -188,6 +188,7 @@ interface CodexCommandActionRecord {
 }
 
 const CLAUDE_PRE_TOOL_USE_TIMEOUT_MS = 90_000;
+const CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS = 90_000;
 const OPENCODE_RECONNECT_DELAY_MS = 1_500;
 
 export class SessionPermissionRequestService {
@@ -520,7 +521,7 @@ export class SessionPermissionRequestService {
       const timer = setTimeout(() => {
         resolvedByTimeout = true;
         resolve({ action: "ask" });
-      }, CLAUDE_PRE_TOOL_USE_TIMEOUT_MS);
+      }, normalized.kind === "user_input" ? CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS : CLAUDE_PRE_TOOL_USE_TIMEOUT_MS);
       const record: SessionPermissionRequestInternalRecord = {
         ...normalized,
         source: {
@@ -561,6 +562,7 @@ export class SessionPermissionRequestService {
         ? buildClaudeAskUserQuestionBridgeResponse(
             decision.action,
             decision.answers ?? {},
+            normalized.questions,
             payload.tool_input,
             buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
           )
@@ -1861,6 +1863,7 @@ function buildClaudePreToolUseBridgeResponse(
 function buildClaudeAskUserQuestionBridgeResponse(
   action: "allow" | "deny" | "ask",
   answers: Record<string, string[]>,
+  questions: SessionPermissionRequestQuestionView[],
   originalInput: unknown,
   reason: string
 ): Record<string, unknown> {
@@ -1873,7 +1876,7 @@ function buildClaudeAskUserQuestionBridgeResponse(
         ...(response.hookSpecificOutput as Record<string, unknown>),
         updatedInput: {
           ...(originalInputRecord ?? {}),
-          answers: buildClaudeAskUserQuestionAnswers(answers)
+          answers: buildClaudeAskUserQuestionAnswers(answers, questions)
         }
       }
     };
@@ -2112,7 +2115,7 @@ function buildClaudeKind(
     const questions = readClaudeAskUserQuestionQuestions(inputRecord);
     return {
       kind: "user_input",
-      title: "Claude 需要你选择问题类型",
+      title: "Claude 需要你回答问题",
       summary: questions[0]?.question ?? "Claude 需要你补充选择",
       detail: stringifyPayload(toolInput),
       command: null,
@@ -2249,14 +2252,27 @@ function readClaudeAskUserQuestionOptions(value: unknown): SessionPermissionRequ
     .filter((option): option is SessionPermissionRequestQuestionOptionView => option !== null);
 }
 
-function buildClaudeAskUserQuestionAnswers(answers: Record<string, string[]>): Record<string, string | string[]> {
+export function buildClaudeAskUserQuestionAnswers(
+  answers: Record<string, string[]>,
+  questions: SessionPermissionRequestQuestionView[]
+): Record<string, string | string[]> {
   return Object.fromEntries(
-    Object.entries(answers)
-      .map(([questionId, values]) => [
-        questionId,
-        values.length === 1 ? values[0] ?? "" : values
-      ])
-      .filter(([questionId]) => Boolean(normalizeText(questionId)))
+    questions
+      .map((question, index) => {
+        const values = Array.isArray(answers[question.id])
+          ? answers[question.id].map((value) => normalizeText(value)).filter(Boolean)
+          : [];
+
+        if (values.length === 0) {
+          return null;
+        }
+
+        return [
+          String(index),
+          question.multiSelect ? values : values[0] ?? ""
+        ] as const;
+      })
+      .filter((entry): entry is readonly [string, string | string[]] => entry !== null)
   );
 }
 

@@ -2983,6 +2983,7 @@ const extensionZhCN = {
     permissionRequestSectionTitle: "待处理审批",
     permissionRequestSectionDescription: "这里把供应商原生的权限申请统一收口，不再让你面对三套不同的确认框。",
     permissionRequestToastTitle: "需要审批",
+    permissionQuestionToastTitle: "需要你选择",
     backgroundPermissionToastDescription: "{title} · {requestTitle}",
     backgroundCompletionToastTitle: "会话已完成",
     backgroundCompletionToastDescription: "{title}",
@@ -6237,6 +6238,7 @@ const extensionEnUS = {
     permissionRequestSectionDescription:
       "Provider-side approvals are unified here so you do not need to learn three different dialogs.",
     permissionRequestToastTitle: "Approval needed",
+    permissionQuestionToastTitle: "Input needed",
     backgroundPermissionToastDescription: "{title} · {requestTitle}",
     backgroundCompletionToastTitle: "Session completed",
     backgroundCompletionToastDescription: "{title}",

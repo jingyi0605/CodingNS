@@ -259,9 +259,10 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
         continue;
       }
 
+      const toastTitle = getPermissionRequestToastTitle(request.kind);
       showToast({
         id: `${input.permissionToastIdPrefix ?? "permission-request"}-${request.id}`,
-        title: t("conversation.permissionRequestToastTitle"),
+        title: toastTitle,
         description: request.title,
         tone: "warning",
         durationMs: 8_000,
@@ -276,7 +277,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
             : undefined
       });
       void platform.bridge.showNotification(
-        t("conversation.permissionRequestToastTitle"),
+        toastTitle,
         request.title
       );
     }
@@ -606,6 +607,12 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     deleteQueuedMessage,
     steerQueuedMessage
   };
+}
+
+function getPermissionRequestToastTitle(kind: string): string {
+  return kind === "user_input"
+    ? t("conversation.permissionQuestionToastTitle")
+    : t("conversation.permissionRequestToastTitle");
 }
 
 function createClientRequestId(): string {

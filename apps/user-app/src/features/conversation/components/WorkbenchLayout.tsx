@@ -13915,10 +13915,13 @@ export function WorkbenchLayout({
               title: result.session.title,
               requestTitle: request.title
             });
+            const toastTitle = request.kind === "user_input"
+              ? t("conversation.permissionQuestionToastTitle")
+              : t("conversation.permissionRequestToastTitle");
 
             showToastRef.current({
               id: `workbench-permission-request-${request.id}`,
-              title: t("conversation.permissionRequestToastTitle"),
+              title: toastTitle,
               description,
               tone: "warning",
               durationMs: 8_000,
@@ -13928,7 +13931,7 @@ export function WorkbenchLayout({
               }
             });
             void platformBridgeRef.current.showNotification(
-              t("conversation.permissionRequestToastTitle"),
+              toastTitle,
               description
             );
           });

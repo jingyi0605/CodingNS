@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { resolveClaudePreToolUseHookMatchers } from "@codingns/session-sync-core/runtime/claude-runtime";
 
 import {
+  buildClaudeAskUserQuestionAnswers,
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
   normalizeOpenCodePermissionRequest,
@@ -8,6 +10,23 @@ import {
 } from "../../src/modules/sessions/session-permission-request-service.js";
 
 describe("session-permission-request-service normalizers", () => {
+  it("Claude 完整权限模式下仍然注入 AskUserQuestion hook", () => {
+    expect(resolveClaudePreToolUseHookMatchers("bypassPermissions")).toEqual([
+      "AskUserQuestion"
+    ]);
+  });
+
+  it("Claude 非完整权限模式下继续注入权限申请和问题 hook", () => {
+    expect(resolveClaudePreToolUseHookMatchers("default")).toEqual([
+      "Bash",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "AskUserQuestion"
+    ]);
+  });
+
   it("会把 Claude PreToolUse 的 Bash 请求映射成统一命令审批", () => {
     const request = normalizeClaudePreToolUseRequest({
       provider: "claude-code",
@@ -98,7 +117,7 @@ describe("session-permission-request-service normalizers", () => {
 
     expect(request.kind).toBe("user_input");
     expect(request.toolName).toBe("AskUserQuestion");
-    expect(request.title).toBe("Claude 需要你选择问题类型");
+    expect(request.title).toBe("Claude 需要你回答问题");
     expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
     expect(request.questions).toEqual([
       {
@@ -120,6 +139,41 @@ describe("session-permission-request-service normalizers", () => {
         ]
       }
     ]);
+  });
+
+  it("会按 Claude AskUserQuestion 协议把答案转成问题顺序下标", () => {
+    const answers = buildClaudeAskUserQuestionAnswers(
+      {
+        language: ["Python"],
+        features: ["测试", "重构"],
+        ignored: ["不会透传"]
+      },
+      [
+        {
+          id: "language",
+          header: "语言",
+          question: "选语言",
+          allowOther: true,
+          secret: false,
+          multiSelect: false,
+          options: []
+        },
+        {
+          id: "features",
+          header: "功能",
+          question: "选功能",
+          allowOther: true,
+          secret: false,
+          multiSelect: true,
+          options: []
+        }
+      ]
+    );
+
+    expect(answers).toEqual({
+      "0": "Python",
+      "1": ["测试", "重构"]
+    });
   });
 
   it("会保留 Claude 兼容 provider 的原始 providerId", () => {

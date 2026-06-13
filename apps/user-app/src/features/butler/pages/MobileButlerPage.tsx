@@ -544,7 +544,9 @@ export function MobileButlerPage() {
 
         showToast({
           id: `mobile-butler-permission-request-${request.id}`,
-          title: t("conversation.permissionRequestToastTitle"),
+          title: request.kind === "user_input"
+            ? t("conversation.permissionQuestionToastTitle")
+            : t("conversation.permissionRequestToastTitle"),
           description: t("conversation.backgroundPermissionToastDescription", {
             title: sessionTitle,
             requestTitle: request.title

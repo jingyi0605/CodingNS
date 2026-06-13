@@ -1811,6 +1811,7 @@ export const enUS = {
     permissionRequestSectionDescription:
       "Provider-side approvals are unified here so you do not need to learn three different dialogs.",
     permissionRequestToastTitle: "Approval needed",
+    permissionQuestionToastTitle: "Input needed",
     permissionRequestReplyFailed: "Failed to reply to the approval request.",
     permissionRequestSubmitting: "Submitting...",
     permissionRequestReasonLabel: "Reason",
