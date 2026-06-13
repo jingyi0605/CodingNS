@@ -2676,7 +2676,7 @@ function mergeClaudeTaskToolMessageBlock(messages: SessionMessageViewModel[]): T
 
   for (const message of messages) {
     const tool = resolveToolCall(message);
-    const taskKey = resolveClaudeTaskToolLifecycleKey(message, tool);
+    const taskKey = tool ? resolveClaudeTaskToolLifecycleKey(message, tool) : null;
 
     if (!tool || !taskKey) {
       const merged = mergeToolMessages([message]);
@@ -4372,12 +4372,11 @@ function ToolCallItem({
     [tool.input, tool.name]
   );
 
-  if (askUserQuestionPrompt && onSubmitStructuredQuestion) {
+  if (askUserQuestionPrompt) {
     return (
-      <StructuredQuestionCard
-        messageId={group.messageIds[0] ?? tool.callId}
+      <StructuredQuestionResultCard
         prompt={askUserQuestionPrompt}
-        onSubmit={onSubmitStructuredQuestion}
+        tool={tool}
       />
     );
   }
@@ -5382,12 +5381,8 @@ function MessageItem({
               exportMode={exportMode}
             />
           )}
-          {structuredQuestions && onSubmitStructuredQuestion ? (
-            <StructuredQuestionCard
-              messageId={message.id}
-              prompt={structuredQuestions}
-              onSubmit={onSubmitStructuredQuestion}
-            />
+          {structuredQuestions ? (
+            <StructuredQuestionPromptPreviewCard prompt={structuredQuestions} />
           ) : null}
           <MessageMetadataBar
             text={visibleContent}
@@ -5422,6 +5417,71 @@ function MessageItem({
         />
       </div>
     </article>
+  );
+}
+
+function StructuredQuestionPromptPreviewCard({
+  prompt
+}: {
+  prompt: StructuredQuestionPrompt;
+}) {
+  return (
+    <section className="permission-request-card permission-request-card-inline permission-request-card-readonly">
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <div className="permission-request-provider-copy">
+            <strong>{t("conversation.permissionQuestionPendingTitle")}</strong>
+            <span>{t("conversation.permissionQuestionPendingDescription")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{t("conversation.permissionRequestKindUserInput")}</span>
+      </header>
+      <div className="permission-request-card-body">
+        <div className="permission-request-question-result-list">
+          {prompt.questions.map((question) => (
+            <div key={question.id} className="permission-request-question-result">
+              <span>{question.question}</span>
+              <strong>{t("conversation.permissionQuestionPendingEmpty")}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StructuredQuestionResultCard({
+  prompt,
+  tool
+}: {
+  prompt: StructuredQuestionPrompt;
+  tool: ResolvedToolCall;
+}) {
+  const answers = resolveStructuredQuestionResultAnswers(prompt, tool);
+  const hasAnswered = answers.some((answer) => Boolean(answer.answer.trim()));
+
+  return (
+    <section className="permission-request-card permission-request-card-inline permission-request-card-readonly">
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <div className="permission-request-provider-copy">
+            <strong>{hasAnswered ? t("conversation.permissionQuestionResultTitle") : t("conversation.permissionQuestionPendingTitle")}</strong>
+            <span>{hasAnswered ? t("conversation.permissionQuestionResultDescription") : t("conversation.permissionQuestionPendingDescription")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{t("conversation.permissionRequestKindUserInput")}</span>
+      </header>
+      <div className="permission-request-card-body">
+        <div className="permission-request-question-result-list">
+          {answers.map((answer) => (
+            <div key={answer.questionId} className="permission-request-question-result">
+              <span>{answer.question}</span>
+              <strong>{answer.answer || t("conversation.permissionQuestionPendingEmpty")}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -5561,6 +5621,62 @@ function StructuredQuestionCard({
       </footer>
     </section>
   );
+}
+
+function resolveStructuredQuestionResultAnswers(
+  prompt: StructuredQuestionPrompt,
+  tool: ResolvedToolCall
+): Array<{ questionId: string; question: string; answer: string }> {
+  const inputRecord = parseToolJsonObject(tool.input);
+  const outputRecord = parseToolJsonObject(tool.output);
+  const inputAnswers = isRecord(inputRecord?.answers) ? inputRecord.answers : null;
+  const outputAnswers = isRecord(outputRecord?.answers) ? outputRecord.answers : null;
+  const answersRecord = outputAnswers ?? inputAnswers;
+
+  return prompt.questions.map((question, index) => {
+    const value = answersRecord
+      ? readStructuredQuestionAnswerValue(answersRecord, [
+          question.question,
+          question.id,
+          String(index)
+        ])
+      : tool.output?.trim() ?? "";
+
+    return {
+      questionId: question.id,
+      question: question.question,
+      answer: value
+    };
+  });
+}
+
+function readStructuredQuestionAnswerValue(
+  answers: Record<string, unknown>,
+  keys: string[]
+): string {
+  for (const key of keys) {
+    const raw = answers[key];
+
+    if (Array.isArray(raw)) {
+      const values = raw
+        .map((item) => (typeof item === "string" || typeof item === "number" ? String(item).trim() : ""))
+        .filter(Boolean);
+
+      if (values.length > 0) {
+        return values.join(", ");
+      }
+    }
+
+    if (typeof raw === "string" || typeof raw === "number") {
+      const value = String(raw).trim();
+
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  return "";
 }
 
 function resolveAskUserQuestionPrompt(tool: ResolvedToolCall): StructuredQuestionPrompt | null {

@@ -1,6 +1,5 @@
 import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
@@ -393,7 +392,7 @@ describe("MessageTimeline structured question", () => {
     });
   });
 
-  it("会把结构化问题渲染成可选择卡片并提交答案", async () => {
+  it("会把结构化问题渲染成只读等待卡片", async () => {
     const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -429,17 +428,12 @@ describe("MessageTimeline structured question", () => {
     );
 
     expect(screen.getByText("你想把笑话保存到哪个文件名？")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.permissionQuestionPendingTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.permissionQuestionPendingEmpty"))).toBeInTheDocument();
     expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getAllByRole("radio")[0]!);
-    await userEvent.click(screen.getByRole("button", { name: /confirm|确认|common\.confirm/i }));
-
-    expect(onSubmitStructuredQuestion).toHaveBeenCalledWith({
-      messageId: "assistant-1",
-      answers: {
-        file_name: ["jokes.md"]
-      }
-    });
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm|确认|common\.confirm/i })).not.toBeInTheDocument();
+    expect(onSubmitStructuredQuestion).not.toHaveBeenCalled();
   });
 
   it("会识别正文后面的 question 代码块并渲染成问题卡片", async () => {
@@ -485,7 +479,7 @@ describe("MessageTimeline structured question", () => {
     expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
   });
 
-  it("会把 Claude AskUserQuestion 工具输入渲染成可选择的问题卡片", async () => {
+  it("会把 Claude AskUserQuestion 工具输入渲染成只读待选择卡片", async () => {
     const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -546,16 +540,69 @@ describe("MessageTimeline structured question", () => {
     );
 
     expect(screen.getByText("如果让你今天开始学习一门新的编程语言，你会选择哪一个？")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.permissionQuestionPendingTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.permissionQuestionPendingEmpty"))).toBeInTheDocument();
     expect(screen.queryByText(/"questions"/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Python/ })).not.toBeInTheDocument();
+    expect(onSubmitStructuredQuestion).not.toHaveBeenCalled();
+  });
 
-    await userEvent.click(screen.getByRole("radio", { name: /Python/ }));
-    await userEvent.click(screen.getByRole("button", { name: /confirm|确认|common\.confirm/i }));
-
-    expect(onSubmitStructuredQuestion).toHaveBeenCalledWith({
-      messageId: "tool-ask-1",
+  it("历史 Claude AskUserQuestion 只显示已提交的选择结果", () => {
+    const onSubmitStructuredQuestion = vi.fn().mockResolvedValue(undefined);
+    const input = JSON.stringify({
+      questions: [
+        {
+          id: "language",
+          header: "编程语言",
+          question: "如果让你今天开始学习一门新的编程语言，你会选择哪一个？",
+          multiSelect: false,
+          options: [
+            {
+              label: "Python",
+              description: "简洁优雅"
+            }
+          ]
+        }
+      ],
       answers: {
-        language: ["Python"]
+        "如果让你今天开始学习一门新的编程语言，你会选择哪一个？": "Python"
       }
     });
+
+    render(
+      <MessageTimeline
+        messages={[
+          createToolMessage({
+            id: "tool-ask-call-1",
+            callId: "toolu-ask-1",
+            name: "AskUserQuestion",
+            kind: "tool_call",
+            content: input,
+            toolInput: input,
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "tool-ask-result-1",
+            callId: "toolu-ask-1",
+            name: "AskUserQuestion",
+            kind: "tool_result",
+            content: JSON.stringify({ answers: { "如果让你今天开始学习一门新的编程语言，你会选择哪一个？": "Python" } }),
+            toolInput: input,
+            toolOutput: JSON.stringify({ answers: { "如果让你今天开始学习一门新的编程语言，你会选择哪一个？": "Python" } }),
+            sequence: 2
+          })
+        ]}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.permissionQuestionResultTitle"))).toBeInTheDocument();
+    expect(screen.getByText("Python")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Python/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm|确认|common\\.confirm/i })).not.toBeInTheDocument();
+    expect(onSubmitStructuredQuestion).not.toHaveBeenCalled();
   });
 });

@@ -108,9 +108,14 @@ export function PermissionRequestList({
                             {question.options.map((option) => {
                               const checked = answers[question.id]?.includes(option.label) ?? false;
                               const inputType = question.multiSelect ? "checkbox" : "radio";
+                              const shouldUseSingleColumn =
+                                option.label.length > 18 || (option.description?.length ?? 0) > 34;
 
                               return (
-                                <label key={`${question.id}:${option.label}`} className="permission-request-question-option">
+                                <label
+                                  key={`${question.id}:${option.label}`}
+                                  className={`permission-request-question-option${shouldUseSingleColumn ? " single-column" : ""}`}
+                                >
                                   <input
                                     type={inputType}
                                     name={`${request.id}:${question.id}`}
@@ -142,7 +147,7 @@ export function PermissionRequestList({
                               );
                             })}
                             {question.allowOther ? (
-                              <label className="permission-request-question-option permission-request-question-option-other">
+                              <label className="permission-request-question-option permission-request-question-option-other single-column">
                                 <input
                                   type="radio"
                                   name={`${request.id}:${question.id}`}
@@ -284,6 +289,10 @@ function getRequestKindLabel(kind: SessionPermissionRequestDto["kind"]) {
 
   if (kind === "user_input") {
     return t("conversation.permissionRequestKindUserInput");
+  }
+
+  if (kind === "plan_approval") {
+    return t("conversation.permissionRequestKindPlanApproval");
   }
 
   return t("conversation.permissionRequestKindToolCall");
