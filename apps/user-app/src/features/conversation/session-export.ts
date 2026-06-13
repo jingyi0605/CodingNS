@@ -8,10 +8,11 @@ export interface SessionExportSnapshot {
   messages: SessionMessageViewModel[];
 }
 
-export async function loadSessionExportSnapshot(sessionId: string): Promise<SessionExportSnapshot> {
+export async function loadSessionExportSnapshot(sessionId: string, targetHostId?: string | null): Promise<SessionExportSnapshot> {
   const messages: SessionMessageViewModel[] = [];
   const visitedCursors = new Set<string>();
   let cursor: string | null = null;
+  const options = targetHostId ? { targetHostId } : undefined;
 
   while (true) {
     if (cursor && visitedCursors.has(cursor)) {
@@ -22,7 +23,7 @@ export async function loadSessionExportSnapshot(sessionId: string): Promise<Sess
       visitedCursors.add(cursor);
     }
 
-    const page = await getSessionMessages(sessionId, cursor, SESSION_EXPORT_PAGE_SIZE, "forward");
+    const page = await getSessionMessages(sessionId, cursor, SESSION_EXPORT_PAGE_SIZE, "forward", options);
     const pageMessages = page.messages.map((message) => toViewMessage(sessionId, message));
     messages.push(...pageMessages);
 

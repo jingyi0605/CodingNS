@@ -8939,7 +8939,7 @@ function SidebarContent({
     setExportingSessionId(session.sessionId);
 
     try {
-      const snapshot = await loadSessionExportSnapshot(session.sessionId);
+      const snapshot = await loadSessionExportSnapshot(session.sessionId, currentTargetHostId);
       const exportLayout = captureSessionExportLayoutSnapshot();
 
       if (format === "md") {
@@ -9026,7 +9026,7 @@ function SidebarContent({
     closeSessionMenu();
 
     try {
-      await deleteSession(session.sessionId);
+      await deleteSession(session.sessionId, { targetHostId: currentTargetHostId });
       setSelectedSessionIds((current) => current.filter((item) => item !== session.sessionId));
       setSessionDeletionTarget(null);
 
@@ -9065,7 +9065,7 @@ function SidebarContent({
       const results = await Promise.allSettled(
         targetSessionIds.map(async (sessionId) => ({
           sessionId,
-          session: await updateSessionArchiveState(sessionId, true)
+          session: await updateSessionArchiveState(sessionId, true, { targetHostId: currentTargetHostId })
         }))
       );
 
@@ -9132,7 +9132,7 @@ function SidebarContent({
     try {
       const results = await Promise.allSettled(
         targetSessionIds.map(async (sessionId) => {
-          await deleteSession(sessionId);
+          await deleteSession(sessionId, { targetHostId: currentTargetHostId });
           return sessionId;
         })
       );
@@ -9273,7 +9273,7 @@ function SidebarContent({
     setRenamingSessionId(renameTarget.session.sessionId);
 
     try {
-      const renamedSession = await renameSessionTitle(renameTarget.session.sessionId, nextTitle);
+      const renamedSession = await renameSessionTitle(renameTarget.session.sessionId, nextTitle, { targetHostId: currentTargetHostId });
       onSessionUpdated(renamedSession);
       setRenameTarget(null);
       setRenameTitleValue("");
@@ -13158,6 +13158,8 @@ export function WorkbenchLayout({
     );
   }, []);
 
+  const currentTargetHostIdRef = useRef<string | null>(null);
+
   const commitNavigationArchiveState = useCallback(
     async (sessionId: string, isArchived: boolean) => {
       pendingArchiveStateBySessionIdRef.current.set(sessionId, isArchived);
@@ -13166,7 +13168,7 @@ export function WorkbenchLayout({
       );
 
       try {
-        const session = await updateSessionArchiveState(sessionId, isArchived);
+        const session = await updateSessionArchiveState(sessionId, isArchived, { targetHostId: currentTargetHostIdRef.current });
         const nextArchivedState = isArchivedSession(session);
 
         if (nextArchivedState === isArchived) {
@@ -14100,6 +14102,7 @@ export function WorkbenchLayout({
     currentWorkspaceRef && currentWorkspaceRef.hostId !== "current"
       ? currentWorkspaceRef.hostId
       : activeTargetHostId;
+  currentTargetHostIdRef.current = currentTargetHostId;
   const currentWorkspace = useMemo(
     () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null,
     [currentWorkspaceId, navigationGroups]
@@ -15767,7 +15770,7 @@ export function WorkbenchLayout({
       );
 
       try {
-        const session = await updateSessionFavoriteState(sessionId, nextFavorite);
+        const session = await updateSessionFavoriteState(sessionId, nextFavorite, { targetHostId: currentTargetHostId });
         upsertNavigationSession(session);
         requestNavigationRefresh();
       } catch (error) {
@@ -15777,7 +15780,7 @@ export function WorkbenchLayout({
         throw error;
       }
     },
-    [flattenedSessions, requestNavigationRefresh, upsertNavigationSession]
+    [flattenedSessions, requestNavigationRefresh, upsertNavigationSession, currentTargetHostId]
   );
 
   const startDraftSession = useCallback(
@@ -15843,11 +15846,11 @@ export function WorkbenchLayout({
 
   const renameNavigationSession = useCallback(
     async (sessionId: string, title: string) => {
-      const renamedSession = await renameSessionTitle(sessionId, title.trim());
+      const renamedSession = await renameSessionTitle(sessionId, title.trim(), { targetHostId: currentTargetHostId });
       upsertNavigationSession(renamedSession);
       return renamedSession;
     },
-    [upsertNavigationSession]
+    [upsertNavigationSession, currentTargetHostId]
   );
 
   const toggleLightweightChatFavorite = useCallback(
