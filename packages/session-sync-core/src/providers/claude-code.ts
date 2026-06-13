@@ -655,15 +655,26 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string
   ): Promise<void> {
-    const targetFilePath = this.resolveForkSourceFilePath(rawStoreRef, providerSessionId);
+    const candidateFilePaths = this.collectSessionDeleteCandidatePaths(
+      providerSessionId,
+      rawStoreRef
+    );
+    let deletedAny = false;
 
-    if (!existsSync(targetFilePath)) {
-      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    for (const filePath of candidateFilePaths) {
+      if (!existsSync(filePath)) {
+        continue;
+      }
+
+      rmSync(filePath, { force: true });
+      this.historyCache.delete(filePath);
+      this.sessionSummaryCache.delete(filePath);
+      deletedAny = true;
     }
 
-    rmSync(targetFilePath, { force: true });
-    this.historyCache.delete(targetFilePath);
-    this.sessionSummaryCache.delete(targetFilePath);
+    if (!deletedAny) {
+      throw new Error("PROVIDER_SESSION_NOT_FOUND");
+    }
   }
 
   getProviderCapabilities(): ProviderCapabilities {
@@ -819,6 +830,30 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     }
 
     throw new Error("PROVIDER_SESSION_NOT_FOUND");
+  }
+
+  private collectSessionDeleteCandidatePaths(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): string[] {
+    const candidates = new Set<string>();
+    const normalizedRawStoreRef = rawStoreRef.trim();
+
+    if (normalizedRawStoreRef) {
+      candidates.add(normalizedRawStoreRef);
+    }
+
+    const discoveredSourceFilePath = this.getSessionStoreProfile().findSessionFile(
+      this.options.homeDir,
+      "",
+      providerSessionId
+    );
+
+    if (discoveredSourceFilePath) {
+      candidates.add(discoveredSourceFilePath);
+    }
+
+    return Array.from(candidates);
   }
 
   private locateForkTarget(

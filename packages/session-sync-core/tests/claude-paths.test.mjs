@@ -488,6 +488,68 @@ test("ClaudeCodeAdapter 会扫描额外 projects 根里的运行时子代理 tra
   }
 });
 
+test("ClaudeCodeAdapter 删除会同时清掉 runtime 绑定文件和真实 projects 根里的源 transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-delete-"));
+  const runtimeHomeDir = mkdtempSync(join(tmpdir(), "codingns-claude-delete-runtime-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionId = "6a3f1f5a-5f60-4d72-b29c-4f83f2c44d02";
+  const projectSlug = "-Users-jackson-Documents-Code-CodingNS";
+  const sourceProjectDir = join(tempDir, "projects", projectSlug);
+  const runtimeProjectDir = join(runtimeHomeDir, "projects", projectSlug);
+  const sourceRawStoreRef = join(sourceProjectDir, `${sessionId}.jsonl`);
+  const runtimeRawStoreRef = join(runtimeProjectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(sourceProjectDir, { recursive: true });
+    mkdirSync(runtimeProjectDir, { recursive: true });
+    writeFileSync(
+      sourceRawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-06-13T04:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "真实源 transcript" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      runtimeRawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-06-13T04:00:01.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "runtime 绑定 transcript" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({
+      homeDir: tempDir,
+      extraProjectRoots: [join(runtimeHomeDir, "projects")]
+    });
+
+    await adapter.deleteSession(sessionId, runtimeRawStoreRef);
+
+    assert.equal(existsSync(runtimeRawStoreRef), false);
+    assert.equal(existsSync(sourceRawStoreRef), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(runtimeHomeDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-string-content-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
