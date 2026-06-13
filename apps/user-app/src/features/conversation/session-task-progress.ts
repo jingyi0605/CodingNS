@@ -30,6 +30,11 @@ interface MutableTaskRecord {
   status: ConversationTaskStatus;
   detail: string | null;
   updatedAt: string;
+  hasExplicitTitle: boolean;
+}
+
+interface ParsedTaskItem extends ConversationTaskItem {
+  hasExplicitTitle: boolean;
 }
 
 interface ParsedStructuredValue {
@@ -122,16 +127,16 @@ export function buildConversationTaskSnapshotFromToolCall(
     return null;
   }
 
-  const payload = parseStructuredPayload(
-    toolCall,
-    TODO_READ_TOOL_NAMES.has(normalizedToolName) ? "prefer-output" : "prefer-output"
-  );
-
-  if (!payload) {
-    return null;
-  }
-
   if (normalizedToolName === "taskdelete" || normalizedToolName === "taskremove") {
+    const payload = parseStructuredPayload(
+      toolCall,
+      resolveTaskPayloadMode(normalizedToolName)
+    );
+
+    if (!payload) {
+      return null;
+    }
+
     const deletedIds = extractTaskIds(payload.value);
 
     return deletedIds.length > 0
@@ -151,9 +156,13 @@ export function buildConversationTaskSnapshotFromToolCall(
       : null;
   }
 
-  const items = extractTaskItemsFromPayload(payload.value, updatedAt);
+  const items = extractTaskItemsFromToolCall(toolCall, normalizedToolName, updatedAt);
 
   if (items.length === 0) {
+    return null;
+  }
+
+  if (isTitlelessIncrementalTaskUpdate(normalizedToolName, items)) {
     return null;
   }
 
@@ -220,8 +229,7 @@ function buildTodoSnapshot(
     const normalizedToolName = normalizeToolName(toolCall.name);
 
     if (TODO_WRITE_TOOL_NAMES.has(normalizedToolName)) {
-      const payload = parseStructuredPayload(toolCall);
-      const items = payload ? extractTaskItemsFromPayload(payload.value, message.timestamp) : [];
+      const items = extractTaskItemsFromToolCall(toolCall, normalizedToolName, message.timestamp);
 
       if (items.length > 0) {
         replaceTaskMap(taskMap, items);
@@ -231,8 +239,7 @@ function buildTodoSnapshot(
     }
 
     if (TODO_READ_TOOL_NAMES.has(normalizedToolName)) {
-      const payload = parseStructuredPayload(toolCall, "prefer-output");
-      const items = payload ? extractTaskItemsFromPayload(payload.value, message.timestamp) : [];
+      const items = extractTaskItemsFromToolCall(toolCall, normalizedToolName, message.timestamp);
 
       if (items.length > 0) {
         replaceTaskMap(taskMap, items);
@@ -245,14 +252,8 @@ function buildTodoSnapshot(
       continue;
     }
 
-    const payload = parseStructuredPayload(toolCall, "prefer-output");
-
-    if (!payload) {
-      continue;
-    }
-
     if (normalizedToolName === "tasklist" || normalizedToolName === "taskget") {
-      const items = extractTaskItemsFromPayload(payload.value, message.timestamp);
+      const items = extractTaskItemsFromToolCall(toolCall, normalizedToolName, message.timestamp);
 
       if (items.length > 0) {
         replaceTaskMap(taskMap, items);
@@ -262,18 +263,24 @@ function buildTodoSnapshot(
     }
 
     if (normalizedToolName === "taskdelete" || normalizedToolName === "taskremove") {
+      const payload = parseStructuredPayload(toolCall, resolveTaskPayloadMode(normalizedToolName));
+
+      if (!payload) {
+        continue;
+      }
+
       const ids = extractTaskIds(payload.value);
 
       if (ids.length > 0) {
         for (const id of ids) {
-          taskMap.delete(id);
+          taskMap.delete(resolveExistingTaskId(taskMap, id));
         }
         latestUpdatedAt = message.timestamp;
       }
       continue;
     }
 
-    const items = extractTaskItemsFromPayload(payload.value, message.timestamp);
+    const items = extractTaskItemsFromToolCall(toolCall, normalizedToolName, message.timestamp);
 
     if (items.length === 0) {
       continue;
@@ -286,8 +293,7 @@ function buildTodoSnapshot(
   }
 
   const items = Array.from(taskMap.values())
-    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
-    .map((item) => ({ ...item }));
+    .map((item) => toPublicTaskItem(item));
 
   if (items.length === 0 || !latestUpdatedAt) {
     return null;
@@ -323,7 +329,7 @@ function parsePlanPayload(
       fallbackStatus: "pending",
       updatedAt: timestamp
     }))
-    .filter((item): item is ConversationTaskItem => item !== null);
+    .filter((item): item is ParsedTaskItem => item !== null);
 
   if (items.length === 0) {
     return null;
@@ -362,6 +368,132 @@ function parseStructuredPayload(
   }
 
   return null;
+}
+
+function resolveTaskPayloadMode(
+  normalizedToolName: string
+): "prefer-input" | "prefer-output" {
+  if (
+    normalizedToolName === "todoread"
+    || normalizedToolName === "tasklist"
+    || normalizedToolName === "taskget"
+  ) {
+    return "prefer-output";
+  }
+
+  return "prefer-input";
+}
+
+function extractTaskItemsFromToolCall(
+  toolCall: ToolCallDto,
+  normalizedToolName: string,
+  updatedAt: string
+): ParsedTaskItem[] {
+  if (normalizedToolName === "taskcreate") {
+    return extractClaudeTaskCreateItems(toolCall, updatedAt);
+  }
+
+  const payload = parseStructuredPayload(toolCall, resolveTaskPayloadMode(normalizedToolName));
+  return payload ? extractTaskItemsFromPayload(payload.value, updatedAt) : [];
+}
+
+function extractClaudeTaskCreateItems(
+  toolCall: ToolCallDto,
+  updatedAt: string
+): ParsedTaskItem[] {
+  const inputPayload = parseStructuredPayload(toolCall, "prefer-input");
+  const inputItems = inputPayload ? extractTaskItemsFromPayload(inputPayload.value, updatedAt) : [];
+
+  if (inputItems.length === 0) {
+    const outputPayload = parseStructuredPayload(toolCall, "prefer-output");
+    const outputItems = outputPayload ? extractTaskItemsFromPayload(outputPayload.value, updatedAt) : [];
+
+    if (outputItems.length > 0) {
+      return outputItems;
+    }
+
+    return extractPlainTextTaskCreateItems(toolCall, updatedAt);
+  }
+
+  const outputPayload = parseStructuredPayload(toolCall, "prefer-output");
+  const outputIds = outputPayload ? extractTaskIds(outputPayload.value) : [];
+
+  if (outputIds.length === 0) {
+    return inputItems;
+  }
+
+  return inputItems.map((item, index) => {
+    const outputId = outputIds[index] ?? (outputIds.length === 1 ? outputIds[0] : null);
+
+    if (!outputId || item.id === outputId || !isFallbackTaskId(item.id)) {
+      return item;
+    }
+
+    return {
+      ...item,
+      id: outputId
+    };
+  });
+}
+
+function extractPlainTextTaskCreateItems(
+  toolCall: ToolCallDto,
+  updatedAt: string
+): ParsedTaskItem[] {
+  const candidates = [
+    toolCall.output,
+    toolCall.input
+  ].filter((value): value is string => readNonEmptyText(value) !== null);
+
+  for (const candidate of candidates) {
+    const items = parseTaskCreateText(candidate, updatedAt);
+
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  return [];
+}
+
+function parseTaskCreateText(text: string, updatedAt: string): ParsedTaskItem[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => parseTaskCreateLine(line, updatedAt))
+    .filter((item): item is ParsedTaskItem => item !== null);
+}
+
+function parseTaskCreateLine(line: string, updatedAt: string): ParsedTaskItem | null {
+  const normalized = line.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const match =
+    normalized.match(/^Task\s*#?(\d+)\s+created\s+successfully\s*:\s*(.+)$/i)
+    ?? normalized.match(/^Created\s+task\s*#?(\d+)\s*:\s*(.+)$/i)
+    ?? normalized.match(/^Task\s*#?(\d+)\s+created\s*:\s*(.+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const id = readNonEmptyText(match[1]);
+  const title = readNonEmptyText(match[2]);
+
+  if (!id || !title) {
+    return null;
+  }
+
+  return {
+    id,
+    title,
+    status: "pending",
+    detail: null,
+    updatedAt,
+    hasExplicitTitle: true
+  };
 }
 
 function parseJsonLikeText(text: string | null): unknown {
@@ -419,7 +551,7 @@ function tryParseJson(text: string): unknown {
 function extractTaskItemsFromPayload(
   payload: unknown,
   updatedAt: string
-): ConversationTaskItem[] {
+): ParsedTaskItem[] {
   const taskNodes = collectTaskNodes(payload);
 
   return taskNodes
@@ -429,7 +561,7 @@ function extractTaskItemsFromPayload(
       fallbackStatus: "pending",
       updatedAt
     }))
-    .filter((item): item is ConversationTaskItem => item !== null);
+    .filter((item): item is ParsedTaskItem => item !== null);
 }
 
 function collectTaskNodes(payload: unknown): Record<string, unknown>[] {
@@ -441,7 +573,7 @@ function collectTaskNodes(payload: unknown): Record<string, unknown>[] {
     return [];
   }
 
-  if (isTaskLikeRecord(payload)) {
+  if (isTaskLikeRecord(payload) || isIncrementalTaskMutationPayload(payload)) {
     return [payload];
   }
 
@@ -463,6 +595,12 @@ function collectTaskNodes(payload: unknown): Record<string, unknown>[] {
 }
 
 function extractTaskIds(payload: unknown): string[] {
+  const directScalarId = readTextOrNumber(payload);
+
+  if (directScalarId) {
+    return [directScalarId];
+  }
+
   const taskNodes = collectTaskNodes(payload);
   const ids = taskNodes
     .map((node) => readTaskId(node))
@@ -488,12 +626,12 @@ function toTaskItem(
     fallbackStatus: ConversationTaskStatus;
     updatedAt: string;
   }
-): ConversationTaskItem | null {
+): ParsedTaskItem | null {
   if (!isRecord(payload)) {
     return null;
   }
 
-  const title =
+  const explicitTitle =
     readNonEmptyText(payload.step)
     ?? readNonEmptyText(payload.title)
     ?? readNonEmptyText(payload.content)
@@ -501,8 +639,8 @@ function toTaskItem(
     ?? readNonEmptyText(payload.text)
     ?? readNonEmptyText(payload.name)
     ?? readNonEmptyText(payload.subject)
-    ?? readNonEmptyText(payload.description)
-    ?? input.fallbackTitle;
+    ?? readNonEmptyText(payload.description);
+  const title = explicitTitle ?? input.fallbackTitle;
   const id =
     readTaskId(payload)
     ?? buildStableFallbackTaskId(input.fallbackIdPrefix, title);
@@ -513,33 +651,55 @@ function toTaskItem(
     title,
     status: normalizeTaskStatus(payload.status, input.fallbackStatus),
     detail,
-    updatedAt: input.updatedAt
+    updatedAt: input.updatedAt,
+    hasExplicitTitle: explicitTitle !== null
   };
 }
 
 function upsertTaskRecord(
   taskMap: Map<string, MutableTaskRecord>,
-  task: ConversationTaskItem
+  task: ParsedTaskItem
 ): void {
-  const existing = taskMap.get(task.id);
+  const taskId = resolveExistingTaskId(taskMap, task.id);
+  const normalizedTask = taskId === task.id ? task : { ...task, id: taskId };
+  const existing = taskMap.get(taskId);
 
   if (!existing) {
-    taskMap.set(task.id, { ...task });
+    taskMap.set(taskId, { ...normalizedTask });
     return;
   }
 
-  taskMap.set(task.id, {
+  taskMap.set(taskId, {
     id: existing.id,
-    title: task.title || existing.title,
-    status: task.status,
-    detail: task.detail ?? existing.detail,
-    updatedAt: task.updatedAt
+    title: normalizedTask.hasExplicitTitle ? normalizedTask.title : existing.title,
+    status: normalizedTask.status,
+    detail: normalizedTask.detail ?? existing.detail,
+    updatedAt: normalizedTask.updatedAt,
+    hasExplicitTitle: existing.hasExplicitTitle || normalizedTask.hasExplicitTitle
   });
+}
+
+function resolveExistingTaskId(
+  taskMap: Map<string, MutableTaskRecord>,
+  incomingId: string
+): string {
+  if (taskMap.has(incomingId)) {
+    return incomingId;
+  }
+
+  const ordinal = parsePositiveInteger(incomingId);
+
+  if (ordinal === null) {
+    return incomingId;
+  }
+
+  const taskIds = Array.from(taskMap.keys());
+  return taskIds[ordinal - 1] ?? incomingId;
 }
 
 function replaceTaskMap(
   taskMap: Map<string, MutableTaskRecord>,
-  items: ConversationTaskItem[]
+  items: ParsedTaskItem[]
 ): void {
   taskMap.clear();
 
@@ -620,7 +780,8 @@ function resolveTaskDetail(payload: Record<string, unknown>, title: string): str
     readNonEmptyText(payload.reason),
     readNonEmptyText(payload.summary),
     readNonEmptyText(payload.note),
-    readNonEmptyText(payload.priority)
+    readNonEmptyText(payload.priority),
+    readNonEmptyText(payload.activeForm)
   ].filter((value): value is string => value !== null);
 
   for (const candidate of candidates) {
@@ -634,16 +795,20 @@ function resolveTaskDetail(payload: Record<string, unknown>, title: string): str
 
 function readTaskId(payload: Record<string, unknown>): string | null {
   return (
-    readNonEmptyText(payload.id)
-    ?? readNonEmptyText(payload.taskId)
-    ?? readNonEmptyText(payload.task_id)
-    ?? readNonEmptyText(payload.uuid)
-    ?? readNonEmptyText(payload.key)
+    readTextOrNumber(payload.id)
+    ?? readTextOrNumber(payload.taskId)
+    ?? readTextOrNumber(payload.task_id)
+    ?? readTextOrNumber(payload.uuid)
+    ?? readTextOrNumber(payload.key)
   );
 }
 
 function buildStableFallbackTaskId(prefix: string, title: string): string {
   return `${prefix}:${title.trim().toLowerCase()}`;
+}
+
+function isFallbackTaskId(value: string): boolean {
+  return value.startsWith("task:") || value.startsWith("plan:");
 }
 
 function isTaskLikeRecord(value: Record<string, unknown>): boolean {
@@ -659,12 +824,58 @@ function isTaskLikeRecord(value: Record<string, unknown>): boolean {
   ].some((item) => readNonEmptyText(item) !== null);
 }
 
+function isIncrementalTaskMutationPayload(value: Record<string, unknown>): boolean {
+  const taskId = readTaskId(value);
+
+  if (!taskId) {
+    return false;
+  }
+
+  return (
+    readNonEmptyText(value.status) !== null
+    || readNonEmptyText(value.subject) !== null
+    || readNonEmptyText(value.activeForm) !== null
+  );
+}
+
+function isTitlelessIncrementalTaskUpdate(
+  normalizedToolName: string,
+  items: ParsedTaskItem[]
+): boolean {
+  return normalizedToolName === "taskupdate" && items.every((item) => !item.hasExplicitTitle);
+}
+
 function normalizeToolName(name: string): string {
   return name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readTextOrNumber(value: unknown): string | null {
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return readNonEmptyText(value);
+}
+
+function parsePositiveInteger(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) {
+    return null;
+  }
+
+  return Number(value);
+}
+
+function toPublicTaskItem(item: MutableTaskRecord): ConversationTaskItem {
+  return {
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    detail: item.detail,
+    updatedAt: item.updatedAt
+  };
 }
 
 function readNonEmptyText(value: unknown): string | null {

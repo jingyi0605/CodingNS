@@ -83,9 +83,75 @@ describe("buildConversationTaskSnapshot", () => {
           callId: "task-create-1",
           name: "TaskCreate",
           input: JSON.stringify({
+            title: "写 spec"
+          }),
+          output: JSON.stringify("1"),
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:21:00.000Z",
+        toolCall: {
+          callId: "task-create-2",
+          name: "TaskCreate",
+          input: JSON.stringify({
+            title: "写实现"
+          }),
+          output: JSON.stringify("2"),
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:25:00.000Z",
+        toolCall: {
+          callId: "task-update-1",
+          name: "TaskUpdate",
+          input: JSON.stringify({
+            status: "completed",
+            taskId: "1"
+          }),
+          output: "Updated task #1 status",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:26:00.000Z",
+        toolCall: {
+          callId: "task-update-2",
+          name: "TaskUpdate",
+          input: JSON.stringify({
+            status: "in_progress",
+            taskId: 2,
+            activeForm: "正在补按钮交互"
+          }),
+          output: "Updated task #2 status",
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.items.map((item) => `${item.id}:${item.status}:${item.title}`)).toEqual([
+      "1:completed:写 spec",
+      "2:in_progress:写实现"
+    ]);
+    expect(snapshot?.items.find((item) => item.id === "2")?.detail).toBe("正在补按钮交互");
+  });
+
+  it("Claude Code 的 TaskUpdate 会按创建顺序更新任务列表，不会把 taskId 当成新任务", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-04-13T10:20:00.000Z",
+        toolCall: {
+          callId: "task-create-list",
+          name: "TaskCreate",
+          input: JSON.stringify({
             tasks: [
-              { id: "spec", title: "写 spec", status: "pending" },
-              { id: "impl", title: "写实现", status: "pending" }
+              { title: "迁移索引状态指示器外观样式和弹窗数据模型", status: "pending" },
+              { title: "迁移标签任务状态指示器组件和轮询逻辑", status: "pending" }
             ]
           }),
           output: null,
@@ -99,23 +165,81 @@ describe("buildConversationTaskSnapshot", () => {
           callId: "task-update-1",
           name: "TaskUpdate",
           input: JSON.stringify({
-            tasks: [
-              { id: "spec", title: "写 spec", status: "completed" },
-              { id: "impl", title: "写实现", status: "in_progress", detail: "正在补按钮交互" }
-            ]
+            status: "completed",
+            taskId: "1"
           }),
-          output: null,
+          output: "Updated task #1 status",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:26:00.000Z",
+        toolCall: {
+          callId: "task-update-2",
+          name: "TaskUpdate",
+          input: JSON.stringify({
+            status: "in_progress",
+            taskId: 2
+          }),
+          output: "Updated task #2 status",
           error: null,
           status: "completed"
         }
       })
     ], "claude-code");
 
-    expect(snapshot?.items.map((item) => `${item.id}:${item.status}`)).toEqual([
-      "spec:completed",
-      "impl:in_progress"
+    expect(snapshot?.items).toHaveLength(2);
+    expect(snapshot?.items.map((item) => `${item.status}:${item.title}`)).toEqual([
+      "completed:迁移索引状态指示器外观样式和弹窗数据模型",
+      "in_progress:迁移标签任务状态指示器组件和轮询逻辑"
     ]);
-    expect(snapshot?.items.find((item) => item.id === "impl")?.detail).toBe("正在补按钮交互");
+  });
+
+  it("会解析 Claude Code 的纯文本 TaskCreate 输出", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-04-13T10:20:00.000Z",
+        toolCall: {
+          callId: "task-create-1",
+          name: "TaskCreate",
+          input: "",
+          output: "Task #1 created successfully: 调研目标工具的文档结构",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:21:00.000Z",
+        toolCall: {
+          callId: "task-create-2",
+          name: "TaskCreate",
+          input: "",
+          output: "Task #2 created successfully: 初始化 Docusaurus 中文站点脚手架",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createToolMessage({
+        timestamp: "2026-04-13T10:25:00.000Z",
+        toolCall: {
+          callId: "task-update-1",
+          name: "TaskUpdate",
+          input: JSON.stringify({
+            status: "completed",
+            taskId: "1"
+          }),
+          output: "Updated task #1 status",
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.items.map((item) => `${item.id}:${item.status}:${item.title}`)).toEqual([
+      "1:completed:调研目标工具的文档结构",
+      "2:pending:初始化 Docusaurus 中文站点脚手架"
+    ]);
   });
 
   it("会优先采用 OpenCode 的 todoread 结果作为当前任务快照", () => {
