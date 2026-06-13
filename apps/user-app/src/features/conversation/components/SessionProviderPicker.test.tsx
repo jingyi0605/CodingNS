@@ -8,7 +8,7 @@ import {
   SessionProviderPicker
 } from "./SessionProviderPicker";
 
-const mockListProviderCapabilities = vi.fn();
+const mockGetProviderCapabilities = vi.fn();
 const mockListProviderCatalog = vi.fn();
 
 vi.mock("../api/conversation-api", async () => {
@@ -16,7 +16,7 @@ vi.mock("../api/conversation-api", async () => {
   return {
     ...actual,
     listProviderCatalog: (...args: unknown[]) => mockListProviderCatalog(...args),
-    listProviderCapabilities: (...args: unknown[]) => mockListProviderCapabilities(...args)
+    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args)
   };
 });
 
@@ -30,7 +30,7 @@ describe("SessionProviderPicker", () => {
   beforeEach(() => {
     clearProviderCatalogStore();
     mockListProviderCatalog.mockReset();
-    mockListProviderCapabilities.mockReset();
+    mockGetProviderCapabilities.mockReset();
     mockListProviderCatalog.mockResolvedValue([
       {
         provider: "gemini",
@@ -44,9 +44,9 @@ describe("SessionProviderPicker", () => {
   });
 
   it("同一工作区重复挂载时会复用能力缓存，不再重复显示检查中", async () => {
-    mockListProviderCapabilities.mockResolvedValue({
-      gemini: createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")
-    });
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")
+    );
 
     const firstRender = render(
       <SessionProviderPicker
@@ -58,7 +58,7 @@ describe("SessionProviderPicker", () => {
 
     expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+      expect(mockGetProviderCapabilities).toHaveBeenCalledTimes(1);
     });
 
     await waitFor(() => {
@@ -66,7 +66,7 @@ describe("SessionProviderPicker", () => {
     });
 
     firstRender.unmount();
-    mockListProviderCapabilities.mockClear();
+    mockGetProviderCapabilities.mockClear();
 
     render(
       <SessionProviderPicker
@@ -80,14 +80,14 @@ describe("SessionProviderPicker", () => {
       expect(screen.getByText("未检测到 Gemini CLI")).toBeInTheDocument();
     });
     expect(screen.queryByText(/检查中|Checking/i)).not.toBeInTheDocument();
-    expect(mockListProviderCapabilities).not.toHaveBeenCalled();
+    expect(mockGetProviderCapabilities).not.toHaveBeenCalled();
   });
 
 
   it("PeerHOST 下 provider catalog 和能力请求都会带 targetHostId", async () => {
-    mockListProviderCapabilities.mockResolvedValue({
-      gemini: createUnavailableCapabilities("gemini", "远端未检测到 Gemini CLI")
-    });
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("gemini", "远端未检测到 Gemini CLI")
+    );
 
     render(
       <SessionProviderPicker
@@ -104,18 +104,19 @@ describe("SessionProviderPicker", () => {
       });
     });
     await waitFor(() => {
-      expect(mockListProviderCapabilities).toHaveBeenCalledWith(
-        ["gemini"],
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith(
+        "gemini",
         "remote-workspace-1",
+        undefined,
         { targetHostId: "peer-host-1" }
       );
     });
   });
 
   it("targetHostId 是 current 时会归一化成主 HOST 请求，不会把 current 当成真实 hostId", async () => {
-    mockListProviderCapabilities.mockResolvedValue({
-      gemini: createUnavailableCapabilities("gemini", "主 HOST 未检测到 Gemini CLI")
-    });
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("gemini", "主 HOST 未检测到 Gemini CLI")
+    );
 
     render(
       <SessionProviderPicker
@@ -132,18 +133,19 @@ describe("SessionProviderPicker", () => {
       });
     });
     await waitFor(() => {
-      expect(mockListProviderCapabilities).toHaveBeenCalledWith(
-        ["gemini"],
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith(
+        "gemini",
         "workspace-picker-current-host",
+        undefined,
         { targetHostId: null }
       );
     });
   });
 
   it("清掉 provider picker 缓存后会重新请求能力", async () => {
-    mockListProviderCapabilities.mockResolvedValue({
-      gemini: createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")
-    });
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("gemini", "未检测到 Gemini CLI")
+    );
 
     const firstRender = render(
       <SessionProviderPicker
@@ -159,7 +161,7 @@ describe("SessionProviderPicker", () => {
 
     firstRender.unmount();
     clearSessionProviderPickerCapabilityCache();
-    mockListProviderCapabilities.mockClear();
+    mockGetProviderCapabilities.mockClear();
 
     render(
       <SessionProviderPicker
@@ -171,18 +173,116 @@ describe("SessionProviderPicker", () => {
 
     expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(mockListProviderCapabilities).toHaveBeenCalledTimes(1);
+      expect(mockGetProviderCapabilities).toHaveBeenCalledTimes(1);
     });
   });
 
+  it("供应商能力请求失败时，不再永远显示检查中，而是用 fallback 让卡片可操作", async () => {
+    // 模拟供应商的能力请求失败
+    mockGetProviderCapabilities.mockRejectedValue(new Error("network error"));
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-all-failed"
+        providers={["gemini"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    // 初始阶段应该显示检查中
+    expect(screen.getByText(/检查中|Checking/i)).toBeInTheDocument();
+
+    // 等待请求完成后，检查中应该消失，卡片应该可点击（fallback 的 canStartSession = true）
+    await waitFor(() => {
+      expect(screen.queryByText(/检查中|Checking/i)).not.toBeInTheDocument();
+    });
+
+    const card = screen.getByRole("button", { name: "Gemini" });
+    expect(card).toBeEnabled();
+  });
+
+  it("逐个完成：每个供应商能力请求完成后立即刷新对应卡片", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      { provider: "gemini", enabled: true },
+      { provider: "codex", enabled: true }
+    ]);
+
+    // gemini 快速返回，codex 慢返回
+    let resolveCodex: ((value: ProviderCapabilitiesDto) => void) | null = null;
+    mockGetProviderCapabilities.mockImplementation((provider: string) => {
+      if (provider === "gemini") {
+        return Promise.resolve(createUnavailableCapabilities("gemini", "未检测到 Gemini CLI"));
+      }
+      return new Promise((resolve) => { resolveCodex = resolve; });
+    });
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-streaming"
+        providers={["gemini", "codex"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    // gemini 先完成，codex 还在检查中
+    await waitFor(() => {
+      expect(screen.getByText("未检测到 Gemini CLI")).toBeInTheDocument();
+    });
+    const codexCard = screen.getByRole("button", { name: "Codex" });
+    // codex 还没有能力数据，应该显示检查中
+    expect(codexCard).toHaveAttribute("data-pending", "false");
+
+    // codex 完成
+    resolveCodex?.(createUnavailableCapabilities("codex", "未检测到 Codex CLI"));
+
+    await waitFor(() => {
+      expect(screen.getByText("未检测到 Codex CLI")).toBeInTheDocument();
+    });
+    // 所有供应商都完成了，不再有任何检查中
+    expect(screen.queryByText(/检查中|Checking/i)).not.toBeInTheDocument();
+  });
+
+  it("部分供应商能力请求失败时，失败的供应商不会永远显示检查中", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      { provider: "gemini", enabled: true },
+      { provider: "codex", enabled: true }
+    ]);
+    // 按 provider 名称匹配，不受调用顺序影响
+    mockGetProviderCapabilities.mockImplementation((provider: string) => {
+      if (provider === "gemini") {
+        return Promise.reject(new Error("gemini timeout"));
+      }
+      return Promise.resolve(createUnavailableCapabilities("codex", "未检测到 Codex CLI"));
+    });
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-partial-failed"
+        providers={["gemini", "codex"]}
+        onSelect={() => undefined}
+      />
+    );
+
+    // 等待请求完成后，两个供应商都不应该显示检查中
+    await waitFor(() => {
+      expect(screen.queryByText(/检查中|Checking/i)).not.toBeInTheDocument();
+    });
+
+    // codex 成功获取到了能力，显示禁用原因
+    expect(screen.getByText("未检测到 Codex CLI")).toBeInTheDocument();
+    // gemini 请求失败用了 fallback（canStartSession = true），卡片可操作
+    const geminiCard = screen.getByRole("button", { name: "Gemini" });
+    expect(geminiCard).toBeEnabled();
+  });
+
   it("不同 targetHostId 不会复用同一份 provider 能力缓存", async () => {
-    mockListProviderCapabilities
-      .mockResolvedValueOnce({
-        gemini: createUnavailableCapabilities("gemini", "主 HOST 不可用")
-      })
-      .mockResolvedValueOnce({
-        gemini: createUnavailableCapabilities("gemini", "Peer HOST 不可用")
-      });
+    mockGetProviderCapabilities
+      .mockResolvedValueOnce(
+        createUnavailableCapabilities("gemini", "主 HOST 不可用")
+      )
+      .mockResolvedValueOnce(
+        createUnavailableCapabilities("gemini", "Peer HOST 不可用")
+      );
 
     const firstRender = render(
       <SessionProviderPicker
@@ -211,17 +311,19 @@ describe("SessionProviderPicker", () => {
     await waitFor(() => {
       expect(screen.getByText("Peer HOST 不可用")).toBeInTheDocument();
     });
-    expect(mockListProviderCapabilities).toHaveBeenCalledTimes(2);
-    expect(mockListProviderCapabilities).toHaveBeenNthCalledWith(
+    expect(mockGetProviderCapabilities).toHaveBeenCalledTimes(2);
+    expect(mockGetProviderCapabilities).toHaveBeenNthCalledWith(
       1,
-      ["gemini"],
+      "gemini",
       "workspace-picker-host-split",
+      undefined,
       { targetHostId: null }
     );
-    expect(mockListProviderCapabilities).toHaveBeenNthCalledWith(
+    expect(mockGetProviderCapabilities).toHaveBeenNthCalledWith(
       2,
-      ["gemini"],
+      "gemini",
       "workspace-picker-host-split",
+      undefined,
       { targetHostId: "peer-host-1" }
     );
   });
@@ -231,7 +333,9 @@ describe("SessionProviderPicker", () => {
       { provider: "codex", enabled: true },
       { provider: "gemini", enabled: false }
     ]);
-    mockListProviderCapabilities.mockResolvedValue({});
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("codex", "未检测到 Codex CLI")
+    );
 
     render(
       <SessionProviderPicker
@@ -255,7 +359,7 @@ describe("SessionProviderPicker", () => {
         resolveCatalog = resolve;
       })
     );
-    mockListProviderCapabilities.mockResolvedValue({});
+    mockGetProviderCapabilities.mockResolvedValue({});
 
     render(
       <SessionProviderPicker

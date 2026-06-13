@@ -2,10 +2,11 @@ import { useEffect } from "react";
 import { useState } from "react";
 
 import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-api";
-import { listProviderCapabilities } from "../api/conversation-api";
+import { getProviderCapabilities } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import {
+  createDraftCapabilities,
   getProviderDisplayName,
   getProviderIcon,
   SESSION_PROVIDER_PICKER_IDS,
@@ -94,18 +95,30 @@ export function SessionProviderPicker({
 
     let cancelled = false;
 
-    void listProviderCapabilities(missingProviders, workspaceId, {
-      targetHostId: targetHostIdForRequest
-    }).then((nextCapabilities) => {
-      writeCachedCapabilities(workspaceId, targetHostIdForRequest, nextCapabilities);
+    // 每个供应商单独请求，完成一个刷新一个，不用等最慢的
+    for (const provider of missingProviders) {
+      void getProviderCapabilities(provider, workspaceId, undefined, {
+        targetHostId: targetHostIdForRequest
+      }).then((capabilities) => {
+        if (cancelled) return;
 
-      if (!cancelled) {
+        writeCachedCapabilities(workspaceId, targetHostIdForRequest, { [provider]: capabilities });
         setCapabilitiesByProvider((current) => ({
           ...current,
-          ...nextCapabilities
+          [provider]: capabilities
         }));
-      }
-    });
+      }).catch(() => {
+        if (cancelled) return;
+
+        // 单个供应商请求失败，用 fallback 让卡片从"检查中"变为可操作
+        const fallback = createDraftCapabilities(provider);
+        writeCachedCapabilities(workspaceId, targetHostIdForRequest, { [provider]: fallback });
+        setCapabilitiesByProvider((current) => ({
+          ...current,
+          [provider]: fallback
+        }));
+      });
+    }
 
     return () => {
       cancelled = true;
