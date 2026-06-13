@@ -48,7 +48,8 @@ import {
   readFirstNonEmptyLine,
   readJsonLines,
   safeDate,
-  sliceHistory
+  sliceHistory,
+  walkJsonlFiles
 } from "./utils.js";
 import {
   CLAUDE_CODE_SESSION_STORE_PROFILE,
@@ -140,6 +141,30 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const startedAt = Date.now();
     const targetPath = normalizeWorkspacePath(workspacePath);
     const files = this.listWorkspaceFiles(workspacePath);
+
+    // 已知会话的 rawStoreRef 可能指向运行时目录（如 ~/.codingns/workspace-session-runtime/...），
+    // 这些路径不在标准 claude/legna 会话存储目录下，需要额外扫描。
+    // 从 knownSessions 的 rawStoreRef 中提取父目录，扫描其中的新文件（如子Agent JSONL）。
+    const knownSessionDirs = new Set<string>();
+    for (const session of options?.knownSessions ?? []) {
+      if (session.provider !== this.providerId || !session.rawStoreRef) {
+        continue;
+      }
+      const sessionDir = dirname(session.rawStoreRef);
+      if (!files.some((f) => f.startsWith(sessionDir))) {
+        knownSessionDirs.add(sessionDir);
+      }
+    }
+    for (const extraDir of knownSessionDirs) {
+      if (existsSync(extraDir)) {
+        for (const extraFile of walkJsonlFiles(extraDir)) {
+          if (!files.includes(extraFile)) {
+            files.push(extraFile);
+          }
+        }
+      }
+    }
+
     const subagentMetadataByFilePath = buildClaudeSubagentMetadataIndex(files);
     const knownByRawStoreRef = new Map(
       (options?.knownSessions ?? [])
@@ -186,6 +211,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
             ...cachedSummary.summary,
             provider: this.providerId,
             providerSessionId,
+            title: resolveSubagentTitle(subagentMetadata, cachedSummary.summary.title),
             rawStoreRef: filePath,
             parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
             isSubagent: subagentMetadata !== undefined,
@@ -212,10 +238,12 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         && normalizeWorkspacePath(known.workspacePath) === targetPath
       ) {
         skippedByMtimeSize += 1;
+        const knownSessionTitle = resolveSubagentTitle(subagentMetadata, known.title);
         sessions.push({
           ...known,
           provider: this.providerId,
           providerSessionId,
+          title: knownSessionTitle,
           rawStoreRef: filePath,
           parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
           isSubagent: subagentMetadata !== undefined,
@@ -232,6 +260,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
             ...known,
             provider: this.providerId,
             providerSessionId,
+            title: knownSessionTitle,
             rawStoreRef: filePath,
             parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
             isSubagent: subagentMetadata !== undefined,
@@ -265,7 +294,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       }
 
       const messages = this.parseMessages(filePath, typedRecords);
-      const title = this.resolveDetectedClaudeTitle(typedRecords, messages, filePath);
+      const resolvedTitle = this.resolveDetectedClaudeTitle(typedRecords, messages, filePath);
+      const title = resolveSubagentTitle(subagentMetadata, resolvedTitle);
       const lastMessageAt =
         messages.at(-1)?.timestamp ??
         (ensureText(typedRecords.at(-1)?.timestamp) || null);
@@ -1301,6 +1331,27 @@ function shouldPreserveClaudeForkRecord(record: Record<string, unknown>): boolea
   return record.type !== "ai-title";
 }
 
+/**
+ * 子Agent会话优先用 subagentLabel 的描述部分作为标题。
+ * subagentLabel 格式为 "type · description"，取最后一段 description 作为标题。
+ * 如果不是子Agent或 label 为空，回退到原始标题。
+ */
+function resolveSubagentTitle(
+  subagentMetadata: ClaudeSubagentMetadata | undefined,
+  fallbackTitle: string
+): string {
+  const rawLabel = subagentMetadata?.subagentLabel?.trim();
+  if (!rawLabel) {
+    return fallbackTitle;
+  }
+  const description = rawLabel
+    .split("·")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .at(-1);
+  return description || fallbackTitle;
+}
+
 function buildClaudeSubagentMetadataIndex(
   files: string[]
 ): Map<string, ClaudeSubagentMetadata> {
@@ -1406,13 +1457,21 @@ function parseClaudeTaskSpawnMetadata(
           continue;
         }
 
-        const childFilePath = join(parentDir, `${agentFileName}.jsonl`);
+        // 优先检查新格式（Agent 工具：{parentDir}/{sessionId}/subagents/{agentFileName}.jsonl），
+        // 回退旧格式（Task 工具：{parentDir}/{agentFileName}.jsonl）
+        const childFilePath = join(parentDir, sessionId, "subagents", `${agentFileName}.jsonl`);
+        const fallbackFilePath = join(parentDir, `${agentFileName}.jsonl`);
+        const resolvedFilePath = filePathSet.has(childFilePath)
+          ? childFilePath
+          : filePathSet.has(fallbackFilePath)
+            ? fallbackFilePath
+            : null;
 
-        if (!filePathSet.has(childFilePath)) {
+        if (!resolvedFilePath) {
           continue;
         }
 
-        taskSpawnMetadata.set(childFilePath, {
+        taskSpawnMetadata.set(resolvedFilePath, {
           providerSessionId: `${taskRequest.parentProviderSessionId}::${agentFileName}`,
           parentProviderSessionId: taskRequest.parentProviderSessionId,
           subagentLabel: taskRequest.subagentLabel
@@ -1468,7 +1527,7 @@ function extractClaudeTaskRequests(
     const toolUseId = ensureText(part.id).trim();
     const toolName = ensureText(part.name).trim();
 
-    if (partType !== "tool_use" || toolName !== "Task" || !toolUseId) {
+    if (partType !== "tool_use" || (toolName !== "Task" && toolName !== "Agent") || !toolUseId) {
       continue;
     }
 
