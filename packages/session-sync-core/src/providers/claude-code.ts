@@ -60,6 +60,7 @@ interface ClaudeCodeAdapterOptions {
   homeDir: string;
   providerId?: ProviderId;
   sessionStoreProfile?: ClaudeSessionStoreProfile;
+  extraProjectRoots?: string[];
   modelOptions?: ProviderModelOption[];
   defaultSessionTitle?: string;
   capabilityLimitations?: string[];
@@ -779,7 +780,23 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
   }
 
   private listWorkspaceFiles(workspacePath: string): string[] {
-    return this.getSessionStoreProfile().resolveWorkspaceFiles(this.options.homeDir, workspacePath);
+    const files = new Set(
+      this.getSessionStoreProfile().resolveWorkspaceFiles(this.options.homeDir, workspacePath)
+    );
+
+    for (const root of this.options.extraProjectRoots ?? []) {
+      const normalizedRoot = root.trim();
+
+      if (!normalizedRoot) {
+        continue;
+      }
+
+      for (const filePath of walkJsonlFiles(normalizedRoot)) {
+        files.add(filePath);
+      }
+    }
+
+    return Array.from(files);
   }
 
   private resolveForkSourceFilePath(

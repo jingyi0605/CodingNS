@@ -409,6 +409,85 @@ test("ClaudeCodeAdapter 会把顶层 Task 子代理 transcript 识别为子会�
   }
 });
 
+test("ClaudeCodeAdapter 会扫描额外 projects 根里的运行时子代理 transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-extra-root-"));
+  const runtimeHomeDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-home-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const runtimeProjectDir = join(
+    runtimeHomeDir,
+    "projects",
+    "-Users-jackson-Documents-Code-CodingNS"
+  );
+  const parentSessionId = "b3ef6814-9712-43cc-856f-b0bb7f88408d";
+  const childFileName = "agent-a9a656ce5a1659997";
+  const subagentDir = join(runtimeProjectDir, parentSessionId, "subagents");
+
+  try {
+    mkdirSync(subagentDir, { recursive: true });
+    writeFileSync(
+      join(runtimeProjectDir, `${parentSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: parentSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-06-13T03:09:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "检查设置页面更新逻辑" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(subagentDir, `${childFileName}.meta.json`),
+      JSON.stringify({
+        agentType: "Explore",
+        description: "查找设置页面更新相关代码"
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      join(subagentDir, `${childFileName}.jsonl`),
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: true,
+          cwd: workspacePath,
+          sessionId: parentSessionId,
+          agentId: "a9a656ce5a1659997",
+          type: "user",
+          message: {
+            role: "user",
+            content: "搜索设置页更新逻辑"
+          },
+          uuid: "child-user-1",
+          timestamp: "2026-06-13T03:09:09.000Z"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({
+      homeDir: tempDir,
+      extraProjectRoots: [join(runtimeHomeDir, "projects")]
+    });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((session) => session.rawStoreRef.includes("/subagents/"));
+
+    assert.equal(sessions.length, 2);
+    assert.equal(childSession?.providerSessionId, `${parentSessionId}::${childFileName}`);
+    assert.equal(childSession?.parentProviderSessionId, parentSessionId);
+    assert.equal(childSession?.isSubagent, true);
+    assert.equal(childSession?.subagentLabel, "explore · 查找设置页面更新相关代码");
+    assert.equal(childSession?.title, "查找设置页面更新相关代码");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(runtimeHomeDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-string-content-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

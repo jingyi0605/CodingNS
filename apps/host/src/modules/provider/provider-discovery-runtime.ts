@@ -146,7 +146,10 @@ function getWorkspaceDiscoveryService(
 
   const enabledProviderSet = enabledProviders ? new Set(enabledProviders) : null;
   const registry = new ProviderRegistry([
-    new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
+    new ClaudeCodeAdapter({
+      homeDir: config.claudeCodeHomeDir,
+      extraProjectRoots: config.claudeExtraProjectRoots
+    }),
     new LegnaCodeAdapter({
       homeDir: config.legnaCodeHomeDir,
       legacyClaudeHomeDir: config.claudeCodeHomeDir

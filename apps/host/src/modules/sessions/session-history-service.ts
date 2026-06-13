@@ -660,14 +660,18 @@ export class SessionHistoryService {
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
         enabledProviders: string[];
+        claudeExtraProjectRoots: string[];
       }, ProviderSessionDiscovery>({
         taskType: HOST_TASK_TYPES.workspaceDiscoveryScan,
         executionLane: "helper_process",
         concurrency: WORKSPACE_DISCOVERY_SCAN_CONCURRENCY,
         helperProcessHandler: "session.workspace_discovery",
-        run: async ({ config, workspacePath, knownSessions, enabledProviders }, context) =>
+        run: async ({ config, workspacePath, knownSessions, enabledProviders, claudeExtraProjectRoots }, context) =>
           await discoverWorkspaceSessionsInRuntime(
-            config,
+            {
+              ...config,
+              claudeExtraProjectRoots
+            },
             workspacePath,
             knownSessions,
             enabledProviders,
@@ -2571,11 +2575,16 @@ export class SessionHistoryService {
         workspace.path,
         activeRepairScope
       );
+      const claudeExtraProjectRoots = this.collectClaudeDiscoveryProjectRoots(
+        workspaceId,
+        existingWorkspaceSessions
+      );
       const discoveryHandle = this.taskManager.enqueue<{
         config: ProviderSessionDiscoveryHelperConfig;
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
         enabledProviders: string[];
+        claudeExtraProjectRoots: string[];
       }, ProviderSessionDiscovery>(HOST_TASK_TYPES.workspaceDiscoveryScan, {
         key: workspaceId,
         source: "session_history.workspace_discovery.scan",
@@ -2583,7 +2592,8 @@ export class SessionHistoryService {
           config: this.providerSessionDiscoveryConfig,
           workspacePath: workspace.path,
           knownSessions,
-          enabledProviders
+          enabledProviders,
+          claudeExtraProjectRoots
         }
       });
       const discovery = await awaitTaskHandleWithSignal(discoveryHandle, signal).catch((error) => {
@@ -5414,6 +5424,31 @@ export class SessionHistoryService {
     }
 
     return [...merged.values()];
+  }
+
+  private collectClaudeDiscoveryProjectRoots(
+    workspaceId: string,
+    sessions: SessionListItem[]
+  ): string[] {
+    const roots = new Set<string>();
+
+    for (const session of sessions) {
+      if (session.provider !== "claude-code") {
+        continue;
+      }
+
+      const binding = this.sessionBindingRepository.findBySessionId(session.sessionId);
+
+      if (!binding || binding.workspaceId !== workspaceId) {
+        continue;
+      }
+
+      for (const root of collectClaudeProjectsRootsNearBinding(binding)) {
+        roots.add(root);
+      }
+    }
+
+    return Array.from(roots);
   }
 
   private persistSessionSourceIndexRecords(
