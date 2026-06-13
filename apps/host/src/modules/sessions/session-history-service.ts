@@ -3055,15 +3055,19 @@ export class SessionHistoryService {
           cursor,
           direction
         );
+        const orderedPage = this.offsetClaudeNativeForkRuntimePage(
+          sessionId,
+          sanitizedPage
+        );
         const messagesWithAttachments = this.sessionMessageAttachmentService.enrichMessages(
           sessionId,
-          sanitizedPage.messages
+          orderedPage.messages
         );
         const messages = this.enrichMessagesWithOrigin(sessionId, messagesWithAttachments);
         this.persistSessionChangedFiles(sessionId, messages);
 
         return {
-          ...sanitizedPage,
+          ...orderedPage,
           messages
         };
       })
@@ -3196,6 +3200,68 @@ export class SessionHistoryService {
         ...page.messages.slice(expectedInheritedCount + leakedInheritedCount)
       ],
       total: Math.max(0, page.total - leakedInheritedCount)
+    };
+  }
+
+  private offsetClaudeNativeForkRuntimePage(
+    sessionId: string,
+    page: HistoryPage
+  ): HistoryPage {
+    if (page.messages.length === 0) {
+      return page;
+    }
+
+    const forkRecord = this.sessionForkRepository.findBySessionId(sessionId);
+
+    if (
+      !forkRecord
+      || forkRecord.provider !== "claude-code"
+      || (
+        forkRecord.forkMethod !== "native_message_fork"
+        && forkRecord.forkMethod !== "native_session_fork"
+      )
+      || typeof forkRecord.inheritedPrefixMessageCount !== "number"
+    ) {
+      return page;
+    }
+
+    const inheritedPrefixMessageCount = Math.max(0, forkRecord.inheritedPrefixMessageCount);
+
+    if (inheritedPrefixMessageCount <= 0) {
+      return page;
+    }
+
+    const childSession = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const childCreatedAt = childSession?.createdAt?.trim() || null;
+
+    if (!childCreatedAt) {
+      return page;
+    }
+
+    const containsInheritedMessages = page.messages.some(
+      (message) =>
+        message.sequence <= inheritedPrefixMessageCount
+        && message.timestamp < childCreatedAt
+    );
+
+    if (containsInheritedMessages) {
+      return page;
+    }
+
+    const containsOnlyChildRuntimeMessages = page.messages.every(
+      (message) => message.timestamp >= childCreatedAt
+    );
+
+    if (!containsOnlyChildRuntimeMessages) {
+      return page;
+    }
+
+    return {
+      ...page,
+      messages: page.messages.map((message) => ({
+        ...message,
+        sequence: message.sequence + inheritedPrefixMessageCount
+      }))
     };
   }
 

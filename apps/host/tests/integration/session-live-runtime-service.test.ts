@@ -216,6 +216,10 @@ async function flushRuntimePersistence(service: SessionLiveRuntimeService, sessi
 
 describe("SessionLiveRuntimeService", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
     while (tempDirs.length > 0) {
@@ -1044,6 +1048,127 @@ describe("SessionLiveRuntimeService", () => {
         })
       })
     );
+  });
+
+  it("Claude 原生 fork 子会话的首条真实消息会重新 start，并注入 fork 上下文说明", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const startSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-runtime-session-1",
+        rawStoreRef: "/tmp/.claude/runtime-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-06-13T07:10:00.000Z",
+        lastEventAt: "2026-06-13T07:10:00.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: false
+      })),
+      attach: vi.fn()
+    }));
+    const continueSession = vi.fn(async () => {
+      throw new Error("should not continue native claude fork session");
+    });
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => true),
+      getSnapshot: vi.fn(() => null),
+      startSession,
+      continueSession
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-fork-child-1",
+      rawStoreRef: "/tmp/.claude/fork-child-1.jsonl",
+      messageCount: 2,
+      title: "父会话标题",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      inheritedPrefixMessageCount: 2
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.readAllTextHistoryMessages.mockResolvedValue([
+      {
+        role: "user",
+        kind: "text",
+        content: "先分析当前结构。",
+        timestamp: "2026-06-13T07:09:00.000Z"
+      },
+      {
+        role: "assistant",
+        kind: "text",
+        content: "已经拆成两层。",
+        timestamp: "2026-06-13T07:09:05.000Z"
+      }
+    ]);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "claude-runtime-session-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续把实现方案拆细。",
+      clientRequestId: null
+    });
+
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(continueSession).not.toHaveBeenCalled();
+    const runtimeRequest = startSession.mock.calls[0]?.[0];
+    expect(runtimeRequest).toMatchObject({
+      provider: "claude-code",
+      providerSessionId: null,
+      rawStoreRef: null,
+      sequenceBase: 2
+    });
+    expect(runtimeRequest?.options.content).toBe("继续把实现方案拆细。");
+    expect(runtimeRequest?.options.providerInstructionFilePath).toContain(".codingns-fork-bootstrap");
+    expect(sessionMessageAttachmentService.buildAcceptedContentCandidates).toHaveBeenCalledWith(
+      "继续把实现方案拆细。",
+      null
+    );
+    expect(sessionHistoryService.findLatestUserMessage).toHaveBeenCalledWith(
+      "session-1",
+      ["继续把实现方案拆细。"],
+      12,
+      expect.any(String)
+    );
+    const bootstrapContent = readFileSync(runtimeRequest.options.providerInstructionFilePath, "utf8");
+    expect(bootstrapContent).toContain("这是一个从既有 Claude Code 会话 fork 出来的子会话");
+    expect(bootstrapContent).toContain("先分析当前结构。");
+    expect(bootstrapContent).toContain("已经拆成两层。");
   });
 
   it("Codex 原始 rollout 文件丢失时，会改用 Host 文本历史生成 synthetic transcript 继续会话", async () => {
@@ -2601,7 +2726,6 @@ describe("SessionLiveRuntimeService", () => {
 
   it("Claude 会话仍标记为运行中时，加入队列不会立刻偷发", async () => {
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
-
     sessionHistoryService.getSession.mockReturnValue({
       sessionId: "session-1",
       workspaceId: "workspace-1",

@@ -284,6 +284,94 @@ describe("SessionHistoryService", () => {
       refreshStateMode: "deferred"
     });
   });
+
+  it("Claude 原生 fork 切到新运行时文件后，历史消息序号会接在继承消息后面", () => {
+    const service = Object.create(SessionHistoryService.prototype) as SessionHistoryService;
+    Object.assign(service as unknown as {
+      sessionForkRepository: {
+        findBySessionId: ReturnType<typeof vi.fn>;
+      };
+      sessionIndexRepository: {
+        findIndexRecordBySessionId: ReturnType<typeof vi.fn>;
+      };
+    }, {
+      sessionForkRepository: {
+        findBySessionId: vi.fn(() => ({
+          sessionId: "child-session",
+          parentSessionId: "parent-session",
+          provider: "claude-code",
+          forkSourceType: "message",
+          forkSourceSessionId: "parent-session",
+          forkSourceMessageId: "parent-message-1",
+          inheritedPrefixMessageCount: 9,
+          providerParentSessionId: "parent-provider-session",
+          providerSourceMessageId: "parent-provider-message",
+          forkMethod: "native_message_fork",
+          createdAt: "2026-06-13T08:19:35.000Z"
+        }))
+      },
+      sessionIndexRepository: {
+        findIndexRecordBySessionId: vi.fn(() => ({
+          sessionId: "child-session",
+          createdAt: "2026-06-13T08:19:35.000Z"
+        }))
+      }
+    });
+
+    const page = (service as unknown as {
+      offsetClaudeNativeForkRuntimePage: (sessionId: string, page: {
+        messages: Array<{
+          messageId: string;
+          provider: string;
+          providerSessionId: string;
+          role: "user" | "assistant";
+          kind: "text";
+          content: string;
+          toolCall: null;
+          timestamp: string;
+          sequence: number;
+          rawRef: string;
+        }>;
+        cursor: string | null;
+        nextCursor: string | null;
+        total: number;
+      }) => {
+        messages: Array<{ sequence: number }>;
+      };
+    }).offsetClaudeNativeForkRuntimePage("child-session", {
+      messages: [
+        {
+          messageId: "new-user",
+          provider: "claude-code",
+          providerSessionId: "new-provider-session",
+          role: "user",
+          kind: "text",
+          content: "总结成200字",
+          toolCall: null,
+          timestamp: "2026-06-13T08:19:40.000Z",
+          sequence: 1,
+          rawRef: "claude-code://new#1"
+        },
+        {
+          messageId: "new-assistant",
+          provider: "claude-code",
+          providerSessionId: "new-provider-session",
+          role: "assistant",
+          kind: "text",
+          content: "这是总结",
+          toolCall: null,
+          timestamp: "2026-06-13T08:19:45.000Z",
+          sequence: 2,
+          rawRef: "claude-code://new#2"
+        }
+      ],
+      cursor: null,
+      nextCursor: null,
+      total: 2
+    });
+
+    expect(page.messages.map((message) => message.sequence)).toEqual([10, 11]);
+  });
 });
 
 function createService(overrides?: {

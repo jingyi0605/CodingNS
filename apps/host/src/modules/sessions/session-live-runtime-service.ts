@@ -10,6 +10,7 @@ import {
   CodexRuntimeAdapter,
   GeminiRuntimeAdapter,
   type InRunInputMode,
+  type NormalizedMessage,
   KimiRuntimeAdapter,
   LegnaRuntimeAdapter,
   type NormalizedMessageAttachment,
@@ -311,6 +312,10 @@ interface ExternalRuntimeSnapshot {
   runningState: ExternalRuntimeStatus;
   detail: string | null;
   updatedAt: string;
+}
+
+interface ClaudeForkBootstrapDescriptor {
+  instructionFilePath: string;
 }
 
 export class SessionLiveRuntimeService {
@@ -1867,10 +1872,15 @@ export class SessionLiveRuntimeService {
         runtimeMode === "start"
           ? syntheticForkRawStoreRef
           : await this.resolveCodexRuntimeRequestRawStoreRef(session, providerBinding);
+      const sequenceBase = resolveRuntimeSequenceBase(session, runtimeMode);
       const nextUserSequence =
-        runtimeMode === "start"
-          ? 1
-          : await this.resolveNextUserSequence(input.sessionId, session.messageCount);
+        sequenceBase !== null
+          ? sequenceBase
+          : (
+              runtimeMode === "start"
+                ? 1
+                : await this.resolveNextUserSequence(input.sessionId, session.messageCount)
+            );
       const resolvedAttachments =
         persistedAttachments
         ?? this.persistMessageAttachments(
@@ -1907,10 +1917,21 @@ export class SessionLiveRuntimeService {
         providerLaunchRuntimeHomeDir: providerLaunchContext.runtimeHomeDir,
         providerBindingRuntimeHomeDir: providerBinding.runtimeHomeDir
       });
+      const claudeForkBootstrap = await this.buildClaudeForkBootstrapDescriptor({
+        session,
+        runtimeMode,
+        baseInstructionFilePath:
+          input.runtimeOptions?.providerInstructionFilePath
+          ?? workspaceRuntimeContext.instructionFilePath
+          ?? providerLaunchContext.providerInstructionFilePath
+          ?? null,
+        runtimeHomeDir: effectiveRuntimeHomeDir
+      });
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
-        input.runtimeOptions?.providerInstructionFilePath
+        claudeForkBootstrap?.instructionFilePath
+          ?? input.runtimeOptions?.providerInstructionFilePath
           ?? workspaceRuntimeContext.instructionFilePath
           ?? providerLaunchContext.providerInstructionFilePath
           ?? null
@@ -2673,6 +2694,70 @@ export class SessionLiveRuntimeService {
     mkdirSync(syntheticDir, { recursive: true });
     writeFileSync(syntheticFilePath, `${serialized}\n`, "utf8");
     return syntheticFilePath;
+  }
+
+  private async buildClaudeForkBootstrapDescriptor(input: {
+    session: Pick<
+      SessionListItem,
+      | "sessionId"
+      | "provider"
+      | "messageCount"
+      | "forkMethod"
+      | "forkSourceType"
+      | "title"
+      | "inheritedPrefixMessageCount"
+    >;
+    runtimeMode: "start" | "continue";
+    baseInstructionFilePath: string | null;
+    runtimeHomeDir: string | null;
+  }): Promise<ClaudeForkBootstrapDescriptor | null> {
+    if (input.runtimeMode !== "start" || !shouldBootstrapClaudeForkSession(input.session)) {
+      return null;
+    }
+
+    const messages = await Promise.resolve(
+      this.sessionHistoryService.readAllTextHistoryMessages(input.session.sessionId)
+    ).catch(() => []);
+
+    const textMessages = Array.isArray(messages)
+      ? messages.filter(
+        (message): message is typeof message & { role: "user" | "assistant" } =>
+          (message.role === "user" || message.role === "assistant")
+          && message.kind === "text"
+          && message.content.trim().length > 0
+      )
+      : [];
+
+    if (textMessages.length === 0) {
+      return null;
+    }
+
+    const overlay = buildClaudeForkBootstrapInstructionOverlay({
+      sessionTitle: input.session.title,
+      messages: textMessages
+    });
+
+    if (!overlay) {
+      return null;
+    }
+
+    const baseInstructionContent = readInstructionFileSafe(input.baseInstructionFilePath);
+    const targetRoot =
+      input.runtimeHomeDir?.trim()
+      || path.resolve(path.dirname(this.config.databasePath), "runtime", "claude-fork-bootstrap");
+    const targetDir = path.join(targetRoot, ".codingns-fork-bootstrap");
+    const instructionFilePath = path.join(targetDir, `${input.session.sessionId}.md`);
+
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(
+      instructionFilePath,
+      composeForkBootstrapInstructionFile(baseInstructionContent, overlay),
+      "utf8"
+    );
+
+    return {
+      instructionFilePath
+    };
   }
 
   private buildBindingSnapshot(
@@ -3883,6 +3968,118 @@ function resolveRuntimeSessionTitle(
   return buildSessionTitleFromContent(content, "继续对话");
 }
 
+function shouldBootstrapClaudeForkSession(
+  session: Pick<
+    SessionListItem,
+    "provider" | "forkMethod" | "forkSourceType" | "messageCount" | "inheritedPrefixMessageCount"
+  >
+): boolean {
+  if (session.provider !== "claude-code") {
+    return false;
+  }
+
+  if (
+    session.forkMethod !== "native_message_fork"
+    && session.forkMethod !== "native_session_fork"
+  ) {
+    return false;
+  }
+
+  const inheritedCount =
+    typeof session.inheritedPrefixMessageCount === "number"
+      ? Math.max(0, session.inheritedPrefixMessageCount)
+      : null;
+
+  if (inheritedCount === null) {
+    return false;
+  }
+
+  return session.messageCount <= inheritedCount;
+}
+
+function resolveRuntimeSequenceBase(
+  session: Pick<
+    SessionListItem,
+    "provider" | "forkMethod" | "forkSourceType" | "inheritedPrefixMessageCount"
+  >,
+  runtimeMode: "start" | "continue"
+): number | null {
+  if (
+    runtimeMode !== "start"
+    || session.provider !== "claude-code"
+    || (
+      session.forkMethod !== "native_message_fork"
+      && session.forkMethod !== "native_session_fork"
+    )
+    || typeof session.inheritedPrefixMessageCount !== "number"
+  ) {
+    return null;
+  }
+
+  return Math.max(0, session.inheritedPrefixMessageCount);
+}
+
+function buildClaudeForkBootstrapInstructionOverlay(input: {
+  sessionTitle: string;
+  messages: Array<Pick<NormalizedMessage, "role" | "kind" | "content">>;
+}): string | null {
+  const title = input.sessionTitle.trim() || "未命名会话";
+  const lines = [
+    `这是一个从既有 Claude Code 会话 fork 出来的子会话，标题：${title}。`,
+    "下面这些历史内容已经发生过，只是给你恢复上下文。",
+    "不要把它们当成新的用户问题逐条重答，也不要重复总结。",
+    "真正需要处理的新用户输入，会在你看到这段说明之后单独发给你。",
+    ""
+  ];
+
+  let appended = 0;
+
+  for (const message of input.messages) {
+    if (message.kind !== "text") {
+      continue;
+    }
+
+    const normalizedContent = message.content.trim();
+
+    if (!normalizedContent) {
+      continue;
+    }
+
+    lines.push(message.role === "user" ? "[历史用户]" : "[历史助手]");
+    lines.push(normalizedContent);
+    lines.push("");
+    appended += 1;
+  }
+
+  if (appended === 0) {
+    return null;
+  }
+
+  return lines.join("\n").trim();
+}
+
+function readInstructionFileSafe(filePath: string | null): string | null {
+  const normalizedPath = filePath?.trim() || null;
+
+  if (!normalizedPath || !existsSync(normalizedPath)) {
+    return null;
+  }
+
+  try {
+    return readFileSync(normalizedPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function composeForkBootstrapInstructionFile(
+  baseInstructionContent: string | null,
+  overlay: string
+): string {
+  const sections = [baseInstructionContent?.trim() ?? "", overlay.trim()].filter((value) => value.length > 0);
+  return `${sections.join("\n\n")}\n`;
+}
+
 function isSyntheticRuntimeSessionTitle(provider: string, title: string): boolean {
   if (provider !== "codex") {
     return false;
@@ -3898,8 +4095,18 @@ function shouldStartNativeSessionOnFirstMessage(session: {
   provider: string;
   providerSessionId: string;
   messageCount: number;
+  forkMethod?: SessionListItem["forkMethod"] | null;
+  forkSourceType?: SessionListItem["forkSourceType"] | null;
+  inheritedPrefixMessageCount?: number | null;
 }): "start" | "continue" {
   if (session.provider !== "codex" && session.provider !== "opencode") {
+    if (
+      session.provider === "claude-code"
+      && shouldBootstrapClaudeForkSession(session)
+    ) {
+      return "start";
+    }
+
     return "continue";
   }
 
