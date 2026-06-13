@@ -69,7 +69,7 @@ function buildHostProfileFromPeer(peerHost: PeerHostDto, existing: HostProfile |
   return {
     id: existing?.id ?? `peer-host-${peerHost.id}`,
     name: peerHost.name || buildHostName(baseUrl),
-    alias: normalizeHostAliasLabel(peerHost.alias || peerHost.name),
+    alias: existing?.alias ?? normalizeHostAliasLabel(peerHost.alias || peerHost.name),
     baseUrl,
     kind: "lan",
     peerEnabled: peerHost.status === "reachable",

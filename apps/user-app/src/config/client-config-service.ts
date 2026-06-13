@@ -139,6 +139,20 @@ function normalizeTimestamp(value: unknown, fallback: string): string {
   return normalizeString(value) ?? fallback;
 }
 
+function compareIsoTimestamp(left: string, right: string): number {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) {
+    return left.localeCompare(right);
+  }
+
+  return leftTime - rightTime;
+}
+
+function hasOwnProperty(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
 
 function classifyHostKind(baseUrl: string): HostProfileKind {
   try {
@@ -209,7 +223,7 @@ function buildDefaultHostAlias(baseUrl: string): string {
 
 function createHostProfile(baseUrl: string, now: string, overrides: Partial<HostProfile> = {}): HostProfile {
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
-  const hasAliasOverride = Object.prototype.hasOwnProperty.call(overrides, "alias");
+  const hasAliasOverride = hasOwnProperty(overrides, "alias");
 
   return {
     id: normalizeString(overrides.id) ?? DEFAULT_HOST_PROFILE_ID,
@@ -234,7 +248,77 @@ function isHostRecord(value: unknown): value is Partial<HostProfile> {
   return typeof value === "object" && value !== null;
 }
 
-function normalizeHostProfiles(rawHosts: unknown, now: string): HostProfile[] {
+function findExistingHostForRawHost(
+  rawHost: Partial<HostProfile>,
+  fallbackId: string,
+  existingHosts: readonly HostProfile[]
+): HostProfile | null {
+  const rawId = normalizeString(rawHost.id) ?? fallbackId;
+  const byId = existingHosts.find((host) => host.id === rawId);
+
+  if (byId) {
+    return byId;
+  }
+
+  const rawBaseUrl = normalizeString(rawHost.baseUrl);
+
+  if (!rawBaseUrl) {
+    return null;
+  }
+
+  try {
+    const normalizedBaseUrl = normalizeServerBaseUrl(rawBaseUrl);
+    return existingHosts.find((host) => host.baseUrl === normalizedBaseUrl) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function buildHostProfileOverrides(
+  rawHost: Partial<HostProfile>,
+  fallbackId: string,
+  existingHost: HostProfile | null
+): Partial<HostProfile> {
+  const overrides: Partial<HostProfile> = {
+    ...rawHost,
+    id: normalizeString(rawHost.id) ?? existingHost?.id ?? fallbackId
+  };
+
+  if (existingHost) {
+    // 旧桌面桥曾经只保存 HOST 的少数字段，alias、Peer 信息会被裁掉。
+    // 对这种缺字段的旧配置，保留本地已有值，别把用户自定义别名洗回默认 HOST。
+    if (!hasOwnProperty(rawHost, "alias")) {
+      overrides.alias = existingHost.alias;
+    }
+    if (!hasOwnProperty(rawHost, "peerEnabled")) {
+      overrides.peerEnabled = existingHost.peerEnabled;
+    }
+    if (!hasOwnProperty(rawHost, "peerHostId")) {
+      overrides.peerHostId = existingHost.peerHostId;
+    }
+    if (!hasOwnProperty(rawHost, "relayTunnel")) {
+      overrides.relayTunnel = existingHost.relayTunnel;
+    }
+    if (!hasOwnProperty(rawHost, "lastConnectedAt")) {
+      overrides.lastConnectedAt = existingHost.lastConnectedAt;
+    }
+    if (!hasOwnProperty(rawHost, "lastUserId")) {
+      overrides.lastUserId = existingHost.lastUserId;
+    }
+    if (!hasOwnProperty(rawHost, "lastUsername")) {
+      overrides.lastUsername = existingHost.lastUsername;
+    }
+  }
+
+  return overrides;
+}
+
+function normalizeHostProfiles(
+  rawHosts: unknown,
+  now: string,
+  existingHosts: readonly HostProfile[] = [],
+  options: { preferExistingHostWhenNewer?: boolean } = {}
+): HostProfile[] {
   if (!Array.isArray(rawHosts)) {
     return [];
   }
@@ -257,10 +341,17 @@ function normalizeHostProfiles(rawHosts: unknown, now: string): HostProfile[] {
 
     try {
       const fallbackId = index === 0 ? DEFAULT_HOST_PROFILE_ID : `host-${index + 1}`;
-      const host = createHostProfile(baseUrlInput, now, {
-        ...rawHost,
-        id: normalizeString(rawHost.id) ?? fallbackId
-      });
+      const existingHost = findExistingHostForRawHost(rawHost, fallbackId, existingHosts);
+      const incomingUpdatedAt = normalizeTimestamp(rawHost.updatedAt, now);
+      const host = options.preferExistingHostWhenNewer
+          && existingHost
+          && compareIsoTimestamp(incomingUpdatedAt, existingHost.updatedAt) < 0
+        ? existingHost
+        : createHostProfile(
+            baseUrlInput,
+            now,
+            buildHostProfileOverrides(rawHost, fallbackId, existingHost)
+          );
 
       if (seenIds.has(host.id)) {
         continue;
@@ -435,7 +526,11 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
   };
 }
 
-function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatchInput): ClientRuntimeConfig {
+function mergeConfig(
+  baseConfig: ClientRuntimeConfig,
+  patch?: RuntimeConfigPatchInput,
+  options: { preferExistingHostWhenNewer?: boolean } = {}
+): ClientRuntimeConfig {
   if (!patch || !isRuntimeConfigPatchInput(patch)) {
     return baseConfig;
   }
@@ -446,7 +541,9 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
 
   if (!canConfigureHostBaseUrl(nextPlatform)) {
     let nextHosts =
-      patch.hosts !== undefined ? normalizeHostProfiles(patch.hosts, now) : defaultConfig.hosts;
+      patch.hosts !== undefined
+        ? normalizeHostProfiles(patch.hosts, now, baseConfig.hosts, options)
+        : defaultConfig.hosts;
 
     if (patch.hostBaseUrl) {
       nextHosts = replaceActiveHostBaseUrl(baseConfig, patch.hostBaseUrl, now);
@@ -470,7 +567,7 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
       localHostDiscovery: baseConfig.localHostDiscovery,
       releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
       betaChannelConsentAcceptedAt:
-        Object.prototype.hasOwnProperty.call(patch, "betaChannelConsentAcceptedAt")
+        hasOwnProperty(patch, "betaChannelConsentAcceptedAt")
           ? (patch.betaChannelConsentAcceptedAt as string | null)
           : baseConfig.betaChannelConsentAcceptedAt,
       autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
@@ -484,7 +581,9 @@ function mergeConfig(baseConfig: ClientRuntimeConfig, patch?: RuntimeConfigPatch
   }
 
   let nextHosts =
-    patch.hosts !== undefined ? normalizeHostProfiles(patch.hosts, now) : baseConfig.hosts;
+    patch.hosts !== undefined
+      ? normalizeHostProfiles(patch.hosts, now, baseConfig.hosts, options)
+      : baseConfig.hosts;
 
   if (patch.hostBaseUrl) {
     nextHosts = replaceActiveHostBaseUrl(baseConfig, patch.hostBaseUrl, now);
@@ -561,7 +660,12 @@ export async function loadClientRuntimeConfig(): Promise<ClientRuntimeConfig> {
     }
   }
 
-  const config = mergeConfig(mergeConfig(defaultConfig, localConfig as RuntimeConfigPatchInput), desktopPatch as RuntimeConfigPatchInput);
+  const localMergedConfig = mergeConfig(defaultConfig, localConfig as RuntimeConfigPatchInput);
+  const config = mergeConfig(
+    localMergedConfig,
+    desktopPatch as RuntimeConfigPatchInput,
+    { preferExistingHostWhenNewer: true }
+  );
   persistLocalConfig(config);
   return config;
 }
