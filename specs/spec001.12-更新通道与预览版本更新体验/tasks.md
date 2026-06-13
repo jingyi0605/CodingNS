@@ -218,6 +218,8 @@
     - 现有发布说明文档
   - 主要改哪里：
     - `specs/spec001.12-更新通道与预览版本更新体验/docs/20260612-开发版tag与版本号规则.md` ✅（新增，完整规则文档）
+  - 补充说明：
+    - 2026-06-13 已补充一条容易误解的真实行为：服务端 npm 在 `beta` 通道下，不再死盯 `dist-tags.beta`，而是会在 `beta` 和 `latest` 里选 semver 更高的目标版本，所以开发版用户能升级到后续稳定版。
     - `specs/spec001.12-更新通道与预览版本更新体验/docs/README.md` ✅（更新文件索引）
     - `docs/使用说明/20260325-GitHubActions桌面端发布说明.md` ✅（补充 beta tag 说明）
     - `scripts/sync-version.mjs` → 确认无需修改，已有 `isValidSemver` 正则已接受 `-beta.N` 格式

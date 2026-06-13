@@ -519,6 +519,59 @@ describe("client routes", () => {
     });
   }, SLOW_TEST_TIMEOUT_MS);
 
+  it("开发版通道会把更高的稳定版当成服务端更新目标", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          "dist-tags": {
+            latest: "1.0.0",
+            beta: "1.0.0-beta.2"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      )
+    ) as typeof fetch;
+
+    const hosted = createTestApp(fixture, {
+      serverUpdatePackageName: "placeholder-server-package",
+      npmRegistryBaseUrl: "https://registry.npmjs.org",
+      accessTokenTtlSeconds: 30
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "GET",
+      url: "/api/client/service-update?channel=beta",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      channel: "beta",
+      packages: [
+        expect.objectContaining({
+          packageName: "placeholder-server-package",
+          currentVersion: "1.0.0-beta.1",
+          latestVersion: "1.0.0",
+          hasUpdate: true,
+          checkStatus: "ready"
+        })
+      ]
+    });
+  }, SLOW_TEST_TIMEOUT_MS);
+
   it("支持触发服务端全局 npm 安装任务，并调度 PM2 自动重启", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -527,8 +580,8 @@ describe("client routes", () => {
       new Response(
         JSON.stringify({
           "dist-tags": {
-            latest: "0.8.1",
-            beta: "0.8.1-beta.1"
+            latest: "1.0.1",
+            beta: "1.0.1-beta.1"
           }
         }),
         {
@@ -584,7 +637,7 @@ describe("client routes", () => {
     expect(taskResponse.json()).toMatchObject({
       taskId: task.taskId,
       packageName: "placeholder-server-package",
-      targetVersion: "0.8.1",
+      targetVersion: "1.0.1",
       status: "succeeded",
       restartRequired: false,
       restartScheduled: true,
@@ -604,7 +657,7 @@ describe("client routes", () => {
       packages: [
         expect.objectContaining({
           packageName: "placeholder-server-package",
-          latestVersion: "0.8.1",
+          latestVersion: "1.0.1",
           hasUpdate: true,
           restartRequired: false,
           installTask: expect.objectContaining({
@@ -646,6 +699,89 @@ describe("client routes", () => {
         stdio: "ignore",
         windowsHide: true,
         detached: true
+      })
+    );
+  });
+
+  it("开发版通道安装服务端更新时会优先安装更高的稳定版", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          "dist-tags": {
+            latest: "1.0.0",
+            beta: "1.0.0-beta.2"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      )
+    ) as typeof fetch;
+    spawnMock.mockImplementation(() => createSuccessfulChildProcess("updated"));
+
+    const hosted = createTestApp(fixture, {
+      serverUpdatePackageName: "placeholder-server-package",
+      npmRegistryBaseUrl: "https://registry.npmjs.org",
+      accessTokenTtlSeconds: 30
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const installResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/client/service-update/install",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      },
+      payload: {
+        packageName: "placeholder-server-package",
+        channel: "beta"
+      }
+    });
+
+    expect(installResponse.statusCode).toBe(200);
+    const task = installResponse.json() as {
+      taskId: string;
+      packageName: string;
+      status: string;
+    };
+    expect(task.packageName).toBe("placeholder-server-package");
+
+    await flushAsyncWork();
+
+    const taskResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/client/service-update/tasks/${task.taskId}`,
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(taskResponse.statusCode).toBe(200);
+    expect(taskResponse.json()).toMatchObject({
+      taskId: task.taskId,
+      packageName: "placeholder-server-package",
+      channel: "beta",
+      targetVersion: "1.0.0",
+      status: "succeeded",
+      restartRequired: false,
+      restartScheduled: true,
+      restartDelayMs: 3000
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["install", "-g", "placeholder-server-package@latest"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
       })
     );
   });
