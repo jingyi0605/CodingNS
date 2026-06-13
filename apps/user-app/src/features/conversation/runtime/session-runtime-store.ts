@@ -4364,7 +4364,10 @@ function resolveRuntimeTransitionState(
   currentState: SessionRunningState | null | undefined,
   incomingState: SessionRunningState
 ): SessionRunningState {
-  if (isTerminalRuntimeState(currentState)) {
+  if (
+    isTerminalRuntimeState(currentState)
+    && (incomingState === "completed" || incomingState === "interrupted" || incomingState === "failed")
+  ) {
     return currentState;
   }
 

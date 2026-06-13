@@ -2682,6 +2682,47 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("failed 后收到新一轮 runtime_status: running 时，会恢复到运行态", async () => {
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "failed",
+      hasActiveRun: false,
+      canAttach: true,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: "上一轮失败",
+      errorCode: "CLAUDE_RESULT_ERROR_DURING_EXECUTION",
+      errorDetail: "上一轮失败",
+      updatedAt: "2026-06-13T07:00:00.000Z",
+      contextUsage: null
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+    const client = mocked.realtimeInstances[0];
+    expect(store.getState().session?.runningState).toBe("failed");
+
+    (client!.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "running",
+      detail: "new run started",
+      timestamp: "2026-06-13T07:00:10.000Z"
+    });
+
+    expect(store.getState().session?.runningState).toBe("running");
+    store.destroy();
+  });
+
   it("收到 session.runtime_message 时会直接合并正文，不等历史轮询", async () => {
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
