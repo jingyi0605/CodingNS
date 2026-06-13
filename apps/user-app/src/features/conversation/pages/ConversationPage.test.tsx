@@ -950,9 +950,68 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
-        "/workspaces/remote-workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
+        "/workspaces/workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
       );
     });
+  });
+
+  it("PeerHOST 草稿会话切到新建 live 会话时，不会立刻把新会话绑定清空并跳回旧会话", async () => {
+    const setSessionWorkspace = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      setSessionWorkspace
+    }));
+    mockStartLiveSession.mockResolvedValueOnce({
+      sessionId: "session-peer-1",
+      provider: "claude-code",
+      session: {
+        ...createBaseLiveSession(),
+        sessionId: "session-peer-1",
+        provider: "claude-code",
+        workspaceId: "remote-workspace-1"
+      },
+      message: {
+        messageId: "message-peer-1",
+        provider: "claude-code",
+        providerSessionId: "provider-session-peer-1",
+        role: "assistant",
+        content: "已创建 Claude Code 会话",
+        timestamp: "2026-04-25T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "store://session-peer-1#1"
+      }
+    });
+    mockLiveRuntimeState.session = null;
+
+    renderDraftConversationPage({
+      initialEntry:
+        "/workspaces/workspace-1/sessions/draft-codex-1?targetHostId=peer-host-1&provider=claude-code&workspaceId=remote-workspace-1",
+      withRouteProbe: true
+    });
+
+    fireEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "remote-workspace-1",
+          provider: "claude-code"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("session-peer-1");
+    });
+
+    expect(setSessionWorkspace).toHaveBeenCalledWith("session-peer-1", "remote-workspace-1");
+    expect(setSessionWorkspace).not.toHaveBeenCalledWith("session-peer-1", null);
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {

@@ -204,12 +204,21 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       return;
     }
 
-    input.onBindSessionWorkspace(input.sessionId, session?.workspaceId ?? null);
+    const boundWorkspaceId =
+      session?.workspaceId?.trim()
+      || input.externalSession?.workspaceId?.trim()
+      || null;
+
+    if (!boundWorkspaceId) {
+      return;
+    }
+
+    input.onBindSessionWorkspace(input.sessionId, boundWorkspaceId);
 
     return () => {
       input.onBindSessionWorkspace?.(input.sessionId, null);
     };
-  }, [input.onBindSessionWorkspace, input.sessionId, session?.workspaceId]);
+  }, [input.externalSession?.workspaceId, input.onBindSessionWorkspace, input.sessionId, session?.workspaceId]);
 
   useEffect(() => {
     if (input.enableCompletionHaptics === false) {

@@ -1478,10 +1478,12 @@ function DraftConversationPage({
 
                   const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draftTargetWorkspaceId;
                   const resolvedWorkspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+                  // peerhost 场景下 URL 路径必须用本地 workspaceId，否则路由上下文会断裂
+                  const pathWorkspaceId = draft.routeWorkspaceId || resolvedWorkspaceId;
 
                   setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
                   writeMobileConversationPreviewMode("preview");
-                  navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId, resolvedWorkspaceRef), {
+                  navigate(buildWorkspaceSessionPath(pathWorkspaceId, created.sessionId, resolvedWorkspaceRef), {
                     replace: true,
                     state: {
                       composer: {
@@ -1585,6 +1587,8 @@ function DraftConversationPage({
 interface DraftConversationContext {
   sessionId: string;
   workspaceId: string;
+  /** 路由路径中的本地 workspaceId，用于构建 URL 路径（peerhost 场景下和 workspaceId 不同） */
+  routeWorkspaceId: string | null;
   provider: ProviderId;
 }
 
@@ -1610,6 +1614,7 @@ function parseDraftContext(
   return {
     sessionId,
     workspaceId,
+    routeWorkspaceId: routeWorkspaceId,
     provider: provider as ProviderId
   };
 }
