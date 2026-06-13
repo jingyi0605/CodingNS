@@ -2399,6 +2399,20 @@ function buildUpdatePreview(
   };
 }
 
+
+function resolveToolPreviewSource(tool: ResolvedToolCall, hasResult: boolean): ResolvedToolCall {
+  const normalizedName = tool.name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+
+  if (hasResult && normalizedName === "taskupdate" && tool.output?.trim()) {
+    return {
+      ...tool,
+      input: ""
+    };
+  }
+
+  return tool;
+}
+
 function getToolPreview(tool: ResolvedToolCall): string {
   const parsedInput = parseToolInputRecord(tool.input);
   const command =
@@ -2595,6 +2609,12 @@ function fillSeparatedViewImageResults(messages: SessionMessageViewModel[]): Ses
 }
 
 function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] {
+  const claudeTaskGroups = mergeClaudeTaskToolMessageBlock(messages);
+
+  if (claudeTaskGroups) {
+    return claudeTaskGroups;
+  }
+
   const groups: ToolMessageGroup[] = [];
   let currentBlock: SessionMessageViewModel[] = [];
   let currentCallId: string | null = null;
@@ -2616,7 +2636,7 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
 
   for (const message of messages) {
     const tool = resolveToolCall(message);
-    const nextCallId = tool?.callId.trim() ?? "";
+    const nextCallId = resolveToolMessageMergeKey(message, tool);
 
     if (!tool || nextCallId.length === 0) {
       flushCurrentBlock();
@@ -2646,6 +2666,176 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
 
   flushCurrentBlock();
   return groups;
+}
+
+function mergeClaudeTaskToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] | null {
+  const groups: ToolMessageGroup[] = [];
+  const groupMessagesByKey = new Map<string, SessionMessageViewModel[]>();
+  const groupIndexByKey = new Map<string, number>();
+  let hasClaudeTaskTool = false;
+
+  for (const message of messages) {
+    const tool = resolveToolCall(message);
+    const taskKey = resolveClaudeTaskToolLifecycleKey(message, tool);
+
+    if (!tool || !taskKey) {
+      const merged = mergeToolMessages([message]);
+
+      if (merged) {
+        groups.push(merged);
+      }
+      continue;
+    }
+
+    hasClaudeTaskTool = true;
+
+    const groupMessages = groupMessagesByKey.get(taskKey);
+
+    if (!groupMessages) {
+      const nextMessages = [message];
+      const merged = mergeToolMessages(nextMessages);
+
+      if (merged) {
+        groupMessagesByKey.set(taskKey, nextMessages);
+        groupIndexByKey.set(taskKey, groups.length);
+        groups.push(merged);
+      }
+      continue;
+    }
+
+    groupMessages.push(message);
+    const merged = mergeToolMessages(groupMessages);
+    const existingIndex = groupIndexByKey.get(taskKey);
+
+    if (merged && existingIndex !== undefined) {
+      groups[existingIndex] = merged;
+    }
+  }
+
+  return hasClaudeTaskTool ? groups : null;
+}
+
+function resolveToolMessageMergeKey(
+  message: SessionMessageViewModel,
+  tool: ResolvedToolCall | null
+): string {
+  if (!tool) {
+    return "";
+  }
+
+  const taskLifecycleKey = resolveClaudeTaskToolLifecycleKey(message, tool);
+
+  if (taskLifecycleKey) {
+    return taskLifecycleKey;
+  }
+
+  return tool.callId.trim();
+}
+
+function resolveClaudeTaskToolLifecycleKey(
+  message: SessionMessageViewModel,
+  tool: ResolvedToolCall
+): string | null {
+  const normalizedName = tool.name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+
+  if (normalizedName === "taskcreate") {
+    const createTitle = extractClaudeTaskCreateTitle(tool);
+    const createId = extractClaudeTaskCreateId(tool);
+
+    if (createTitle) {
+      return `claude-task-create-title:${createTitle}`;
+    }
+
+    if (createId) {
+      return `claude-task-create:${createId}`;
+    }
+  }
+
+  if (normalizedName === "taskupdate") {
+    const updateId = extractClaudeTaskUpdateId(tool);
+
+    if (updateId) {
+      return `claude-task-update:${updateId}`;
+    }
+  }
+
+  return message.toolCall?.callId.trim() ? null : null;
+}
+
+function extractClaudeTaskCreateId(tool: ResolvedToolCall): string | null {
+  const text = [tool.input, tool.output].find((value) => value && /Task\s*#?\d+\s+created/i.test(value));
+  const match = text?.match(/Task\s*#?(\d+)\s+created/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractClaudeTaskCreateTitle(tool: ResolvedToolCall): string | null {
+  const structured = parseToolJsonObject(tool.input) ?? parseToolJsonObject(tool.output);
+  const title =
+    readToolTextOrNumber(structured?.title)
+    ?? readToolTextOrNumber(structured?.subject)
+    ?? readToolTextOrNumber(structured?.content)
+    ?? readToolTextOrNumber(structured?.task);
+
+  if (title) {
+    return title;
+  }
+
+  const text = [tool.input, tool.output].find((value) => value && /created\s+(?:successfully\s*)?:/i.test(value));
+  const match = text?.match(/created\s+(?:successfully\s*)?:\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractClaudeTaskUpdateId(tool: ResolvedToolCall): string | null {
+  const structured = parseToolJsonObject(tool.input) ?? parseToolJsonObject(tool.output);
+  const taskId = readToolTextOrNumber(structured?.taskId) ?? readToolTextOrNumber(structured?.task_id);
+
+  if (taskId) {
+    return taskId;
+  }
+
+  const text = [tool.input, tool.output].find((value) => value && /task\s*#?\d+/i.test(value));
+  const match = text?.match(/task\s*#?(\d+)/i);
+  return match?.[1]?.trim() || null;
+}
+
+function parseToolJsonObject(text: string | null): Record<string, unknown> | null {
+  const normalized = text?.trim() ?? "";
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    const objectStart = normalized.indexOf("{");
+    const objectEnd = normalized.lastIndexOf("}");
+
+    if (objectStart < 0 || objectEnd <= objectStart) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(normalized.slice(objectStart, objectEnd + 1)) as unknown;
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function readToolTextOrNumber(value: unknown): string | null {
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function buildTimelineRenderItems(
@@ -4268,7 +4458,7 @@ function ToolCallItem({
     );
   }
 
-  const preview = getToolPreview(tool);
+  const preview = getToolPreview(resolveToolPreviewSource(tool, hasResult));
   const webSearchResult = parseWebSearchToolResult(tool);
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
   const canToggleExpanded = hasDetails && !exportMode;

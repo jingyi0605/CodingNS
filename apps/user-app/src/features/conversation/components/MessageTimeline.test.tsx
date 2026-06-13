@@ -1156,6 +1156,127 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
   });
 
+  it("会把 Claude TaskCreate 的调用和结果按任务语义合并，避免同一任务显示两次", async () => {
+    const taskTitles = [
+      "调研目标工具的文档结构",
+      "初始化 Docusaurus 中文站点脚手架",
+      "翻译核心章节并校对术语",
+      "配置中文搜索与部署流程"
+    ];
+    const messages = taskTitles.flatMap((title, index) => {
+      const taskNo = index + 1;
+
+      return [
+        createToolMessage({
+          id: `task-create-call-${taskNo}`,
+          callId: `task-create-call-${taskNo}`,
+          name: "TaskCreate",
+          kind: "tool_call",
+          content: JSON.stringify({
+            title
+          }),
+          toolInput: JSON.stringify({
+            title
+          }),
+          sequence: taskNo * 2 - 1
+        }),
+        createToolMessage({
+          id: `task-create-result-${taskNo}`,
+          callId: `task-create-result-${taskNo}`,
+          name: "TaskCreate",
+          kind: "tool_result",
+          content: `Task #${taskNo} created successfully: ${title}`,
+          toolInput: "",
+          toolOutput: `Task #${taskNo} created successfully: ${title}`,
+          sequence: taskNo * 2
+        })
+      ];
+    });
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={messages}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(4);
+    expect(screen.getAllByText(t("conversation.taskCardTodoTitle"))).toHaveLength(4);
+    expect(screen.getAllByText("调研目标工具的文档结构")).toHaveLength(1);
+    expect(screen.getAllByText("配置中文搜索与部署流程")).toHaveLength(1);
+  });
+
+  it("会把 Claude TaskUpdate 的调用和结果按 taskId 合并", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-update-call-1",
+            callId: "task-update-call-1",
+            name: "TaskUpdate",
+            kind: "tool_call",
+            content: JSON.stringify({
+              status: "completed",
+              taskId: "1"
+            }),
+            toolInput: JSON.stringify({
+              status: "completed",
+              taskId: "1"
+            }),
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "task-update-result-1",
+            callId: "task-update-result-1",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: "Updated task #1 status",
+            toolOutput: "Updated task #1 status",
+            sequence: 2
+          }),
+          createToolMessage({
+            id: "task-update-call-2",
+            callId: "task-update-call-2",
+            name: "TaskUpdate",
+            kind: "tool_call",
+            content: JSON.stringify({
+              status: "in_progress",
+              taskId: "2"
+            }),
+            toolInput: JSON.stringify({
+              status: "in_progress",
+              taskId: "2"
+            }),
+            sequence: 3
+          }),
+          createToolMessage({
+            id: "task-update-result-2",
+            callId: "task-update-result-2",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: "Updated task #2 status",
+            toolOutput: "Updated task #2 status",
+            sequence: 4
+          })
+        ]}
+      />
+    );
+
+    const previews = Array.from(document.querySelectorAll(".tool-message-row")).map(
+      (node) => node.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    );
+
+    expect(previews).toHaveLength(2);
+    expect(previews[0]).toContain("TaskUpdate");
+    expect(previews[0]).toContain("Updated task #1 status");
+    expect(previews[1]).toContain("Updated task #2 status");
+  });
+
   it("会把 Claude TodoWrite 渲染成任务卡片", async () => {
     render(
       <MessageTimeline
