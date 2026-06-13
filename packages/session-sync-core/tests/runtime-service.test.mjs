@@ -166,3 +166,50 @@ test("ProviderRuntimeService 在运行中提交 guidance 时不会重启第二�
     await service.dispose();
   }
 });
+
+test("ProviderRuntimeService 会忽略已结束 active run 的迟到 binding 更新", async () => {
+  let lateUpdate = null;
+  let resolveCompleted;
+  const completed = new Promise((resolve) => {
+    resolveCompleted = resolve;
+  });
+
+  const adapter = {
+    providerId: "claude-code",
+    async startSession(_request, sink) {
+      lateUpdate = () =>
+        sink.updateSessionBinding({
+          providerSessionId: "claude-session-late",
+          rawStoreRef: "claude://late"
+        });
+
+      return {
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "claude://session-1",
+        completed
+      };
+    },
+    async continueSession() {
+      throw new Error("not used");
+    }
+  };
+
+  const service = new ProviderRuntimeService([adapter]);
+
+  try {
+    await service.startSession(
+      createRunRequest({
+        provider: "claude-code"
+      })
+    );
+
+    resolveCompleted();
+    await completed;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(service.getSnapshot("session-1"), null);
+    assert.doesNotThrow(() => lateUpdate?.());
+  } finally {
+    await service.dispose();
+  }
+});

@@ -324,6 +324,9 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     const bindingRefreshTimer = setInterval(() => {
       refreshBinding();
     }, 250);
+    const stopBindingRefreshTimer = () => {
+      clearInterval(bindingRefreshTimer);
+    };
     void submitDuringRun(request.options).catch((error) => {
       if (completed || interrupted) {
         return;
@@ -356,6 +359,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         }
 
         completed = true;
+        stopBindingRefreshTimer();
         const binding = refreshBinding();
         await sink.emit({
           type: "error",
@@ -373,6 +377,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         }
 
         completed = true;
+        stopBindingRefreshTimer();
         const binding = refreshBinding();
         await sink.emit({
           type: status,
@@ -440,14 +445,14 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       });
 
       proc.on("error", (error) => {
-        clearInterval(bindingRefreshTimer);
+        stopBindingRefreshTimer();
         stdinClosed = true;
         hookSettings?.cleanup();
         void emitRuntimeError(error.message, "CLAUDE_CLI_SPAWN_FAILED").finally(resolve);
       });
 
       proc.on("close", (code, signal) => {
-        clearInterval(bindingRefreshTimer);
+        stopBindingRefreshTimer();
         stdinClosed = true;
         hookSettings?.cleanup();
 
