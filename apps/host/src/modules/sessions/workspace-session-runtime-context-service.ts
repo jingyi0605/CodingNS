@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
@@ -401,9 +402,20 @@ function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): vo
   const configPath = path.join(runtimeHomeDir, ".claude.json");
   const parsed = readJsonObject(configPath);
   const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(authFilePath);
+
+  // 读取用户全局 ~/.claude.json 中的 mcpServers，合并到会话级配置中。
+  // 这样用户在原生 Claude Code CLI 中注册的 MCP 服务器（如 zai-mcp-server）
+  // 也能在工作区会话中自动可用，不需要手动重复配置。
+  const globalConfigPath = path.join(os.homedir(), ".claude.json");
+  const globalParsed = readJsonObject(globalConfigPath);
+  const globalMcpServers = isPlainObject(globalParsed.mcpServers) ? globalParsed.mcpServers as Record<string, unknown> : {};
+  // 排除 codingns-workspace-office，避免和会话级注入冲突
+  const { [WORKSPACE_OFFICE_MCP_NAME]: _, ...safeGlobalMcpServers } = globalMcpServers;
+
   const next = {
     ...parsed,
     mcpServers: {
+      ...safeGlobalMcpServers,
       ...(isPlainObject(parsed.mcpServers) ? parsed.mcpServers : {}),
       [WORKSPACE_OFFICE_MCP_NAME]: {
         type: "stdio",
