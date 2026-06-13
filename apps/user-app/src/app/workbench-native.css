@@ -2635,6 +2635,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 .workbench-host-switcher-item-trailing svg,
 .workbench-host-switcher-item-action svg,
 .workbench-host-switcher-add svg {
+  display: block;
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -2648,7 +2649,7 @@ html[data-workbench-window-resizing] .workbench-shell[data-runtime-platform="des
 }
 
 .workbench-toolbar-icon-settings {
-  transform: scale(0.86);
+  transform: translateY(0.75px) scale(0.86);
 }
 .workbench-host-switcher-item-copy {
   display: flex;
