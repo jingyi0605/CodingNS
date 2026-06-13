@@ -3,6 +3,7 @@ import { resolveClaudePreToolUseHookMatchers } from "@codingns/session-sync-core
 
 import {
   buildClaudeAskUserQuestionAnswers,
+  normalizeClaudeElicitationRequest,
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
   normalizeOpenCodePermissionRequest,
@@ -173,6 +174,43 @@ describe("session-permission-request-service normalizers", () => {
         ]
       }
     ]);
+  });
+
+  it("会把 Claude Elicitation 映射成可提交答案的问题请求", () => {
+    const request = normalizeClaudeElicitationRequest({
+      provider: "claude-code",
+      sessionId: "session-elicitation-1",
+      providerSessionId: "claude-session-elicitation-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "Elicitation",
+        session_id: "claude-session-elicitation-1",
+        cwd: "/tmp/workspace",
+        title: "需要确认环境",
+        prompt: "请选择本轮要使用的环境",
+        options: [
+          {
+            label: "开发环境",
+            description: "继续本地调试"
+          },
+          {
+            label: "测试环境",
+            description: "改成联调验证"
+          }
+        ]
+      }
+    });
+
+    expect(request.kind).toBe("user_input");
+    expect(request.toolName).toBe("Elicitation");
+    expect(request.title).toBe("需要确认环境");
+    expect(request.summary).toBe("请选择本轮要使用的环境");
+    expect(request.questions[0]).toMatchObject({
+      id: "elicitation",
+      header: "需要确认环境",
+      question: "请选择本轮要使用的环境"
+    });
+    expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
   });
 
   it("会按 Claude AskUserQuestion 协议把答案转成问题文本键", () => {

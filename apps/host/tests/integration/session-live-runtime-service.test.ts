@@ -3810,6 +3810,31 @@ describe("SessionLiveRuntimeService", () => {
     expect(config.bridgeUrl).toContain("/api/providers/claude-code/hook-bridge/events");
     expect(config.command).toContain("claude-hook-bridge.cjs");
     expect(config.supportedEvents).toContain("UserPromptSubmit");
+    expect(config.supportedEvents).toEqual(expect.arrayContaining([
+      "Elicitation",
+      "ElicitationResult",
+      "MessageDisplay",
+      "Notification",
+      "PostToolBatch",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "PermissionDenied",
+      "InstructionsLoaded",
+      "ConfigChange",
+      "CwdChanged",
+      "FileChanged",
+      "Setup",
+      "SubagentStart",
+      "TaskCreated",
+      "TaskCompleted",
+      "SubagentStop",
+      "TeammateIdle",
+      "UserPromptExpansion",
+      "WorktreeCreate",
+      "WorktreeRemove",
+      "PreCompact",
+      "PostCompact"
+    ]));
   });
 
   it("Claude 托管 active run 存在时会忽略 hook 推断的外部运行态", async () => {
@@ -4403,6 +4428,369 @@ describe("SessionLiveRuntimeService", () => {
         activitySource: "runtime"
       })
     );
+  });
+
+  it("Claude 关键运行态 Hook 会映射成可追踪的运行中状态", async () => {
+    useFakeNow("2026-03-26T10:00:00.000Z");
+
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionIndexRepository,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace",
+      ownerUserId: "user-1"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      createdAt: "2026-03-26T09:00:00.000Z",
+      updatedAt: "2026-03-26T09:00:00.000Z"
+    });
+    sessionIndexRepository.findIndexRecordBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "Claude 会话",
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: "2026-03-26T09:00:00.000Z",
+      createdAt: "2026-03-26T09:00:00.000Z",
+      updatedAt: "2026-03-26T09:00:00.000Z"
+    });
+    sessionStatusSnapshotRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      syncCursor: "cursor-1",
+      resumedAt: null
+    });
+    sessionStateRepository.findBySessionAndUser.mockReturnValue(null);
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      lastEventAt: "2026-03-26T10:00:00.000Z"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+
+    const cases = [
+      {
+        hookEventName: "Setup",
+        payload: {
+          permission_mode: "default"
+        },
+        detail: "Claude 正在执行初始化：/tmp/workspace"
+      },
+      {
+        hookEventName: "UserPromptExpansion",
+        payload: {
+          prompt: "请先整理需求，再给出实现步骤"
+        },
+        detail: "Claude 正在展开用户指令：请先整理需求，再给出实现步骤"
+      },
+      {
+        hookEventName: "PostToolUse",
+        payload: {
+          tool_name: "Bash"
+        },
+        detail: "Claude 已完成一次工具调用（Bash）"
+      },
+      {
+        hookEventName: "PostToolUseFailure",
+        payload: {
+          tool_name: "Write"
+        },
+        detail: "Claude 的一次工具调用失败（Write）"
+      },
+      {
+        hookEventName: "PermissionDenied",
+        payload: {
+          tool_name: "Read"
+        },
+        detail: "Claude 的工具权限请求被拒绝（Read）"
+      },
+      {
+        hookEventName: "Notification",
+        payload: {
+          title: "等待用户确认",
+          message: "Claude 需要你确认下一步"
+        },
+        detail: "Claude 发来一条通知：等待用户确认"
+      },
+      {
+        hookEventName: "MessageDisplay",
+        payload: {
+          message: "正在展示整理后的结论"
+        },
+        detail: "Claude 正在展示回复内容：正在展示整理后的结论"
+      },
+      {
+        hookEventName: "PostToolBatch",
+        payload: {
+          message: "本轮批量工具调用已完成"
+        },
+        detail: "Claude 已完成一批工具调用：本轮批量工具调用已完成"
+      },
+      {
+        hookEventName: "ElicitationResult",
+        payload: {
+          message: "用户选择了开发环境"
+        },
+        detail: "Claude 已收到补充信息结果：用户选择了开发环境"
+      },
+      {
+        hookEventName: "TaskCreated",
+        payload: {
+          title: "整理现有实现"
+        },
+        detail: "Claude 新建了一个任务：整理现有实现"
+      },
+      {
+        hookEventName: "TaskCompleted",
+        payload: {
+          title: "整理现有实现"
+        },
+        detail: "Claude 完成了一个任务：整理现有实现"
+      },
+      {
+        hookEventName: "SubagentStart",
+        payload: {
+          message: "子任务 worker-1 已启动"
+        },
+        detail: "Claude 子任务已启动：子任务 worker-1 已启动"
+      },
+      {
+        hookEventName: "SubagentStop",
+        payload: {
+          message: "子任务 worker-1 已结束"
+        },
+        detail: "Claude 子任务已结束：子任务 worker-1 已结束"
+      },
+      {
+        hookEventName: "TeammateIdle",
+        payload: {
+          message: "协作助手已等待下一步"
+        },
+        detail: "Claude 队友任务即将空闲：协作助手已等待下一步"
+      },
+      {
+        hookEventName: "PreCompact",
+        payload: {
+          reason: "上下文接近上限"
+        },
+        detail: "Claude 正在压缩上下文：上下文接近上限"
+      },
+      {
+        hookEventName: "PostCompact",
+        payload: {
+          message: "已保留摘要"
+        },
+        detail: "Claude 已完成上下文压缩：已保留摘要"
+      },
+      {
+        hookEventName: "InstructionsLoaded",
+        payload: {
+          rule_file: ".claude/CLAUDE.md"
+        },
+        detail: "Claude 已加载指令文件：.claude/CLAUDE.md"
+      },
+      {
+        hookEventName: "ConfigChange",
+        payload: {
+          config_path: ".claude/settings.json"
+        },
+        detail: "Claude 检测到配置变化：.claude/settings.json"
+      },
+      {
+        hookEventName: "CwdChanged",
+        payload: {
+          cwd: "/tmp/workspace/packages/app"
+        },
+        detail: "Claude 已切换工作目录：/tmp/workspace/packages/app"
+      },
+      {
+        hookEventName: "FileChanged",
+        payload: {
+          file_path: "/tmp/workspace/src/index.ts"
+        },
+        detail: "Claude 检测到文件变化：/tmp/workspace/src/index.ts"
+      },
+      {
+        hookEventName: "WorktreeCreate",
+        payload: {
+          worktree_path: "/tmp/workspace/.worktrees/feature-a"
+        },
+        detail: "Claude 正在创建工作树：/tmp/workspace/.worktrees/feature-a"
+      },
+      {
+        hookEventName: "WorktreeRemove",
+        payload: {
+          worktree_path: "/tmp/workspace/.worktrees/feature-a"
+        },
+        detail: "Claude 正在移除工作树：/tmp/workspace/.worktrees/feature-a"
+      }
+    ] as const;
+
+    for (const [index, testCase] of cases.entries()) {
+      vi.setSystemTime(new Date(`2026-03-26T10:00:${String(index).padStart(2, "0")}.000Z`));
+
+      const result = await service.ingestClaudeHookEvent({
+        hook_event_name: testCase.hookEventName,
+        session_id: "claude-session-1",
+        cwd: "/tmp/workspace",
+        transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+        ...testCase.payload
+      });
+
+      expect(result).toEqual({
+        accepted: true,
+        ignored: false,
+        sessionId: "session-1",
+        bridgeResponse: null
+      });
+
+      const runtime = await service.getSessionRuntime("session-1", "user-1");
+      expect(runtime).toMatchObject({
+        sessionId: "session-1",
+        runningState: "running",
+        hasActiveRun: true,
+        detail: testCase.detail,
+        provider: "claude-code",
+        providerSessionId: "claude-session-1"
+      });
+    }
+  });
+
+  it("Claude Elicitation 会创建可提交答案的问题请求", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const resultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "Elicitation",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      title: "需要补充环境信息",
+      prompt: "请选择要继续操作的环境",
+      options: [
+        {
+          label: "开发环境",
+          description: "继续本地开发"
+        },
+        {
+          label: "测试环境",
+          description: "切到联调验证"
+        }
+      ]
+    });
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      kind: "user_input",
+      toolName: "Elicitation",
+      title: "需要补充环境信息"
+    });
+    expect(requests[0]?.actions.map((action) => action.value)).toEqual(["submit"]);
+
+    await service.replyPermissionRequest("session-1", "user-1", requests[0]!.id, {
+      action: "submit",
+      answers: {
+        elicitation: ["开发环境"]
+      }
+    });
+
+    const result = await resultPromise;
+
+    expect(result.accepted).toBe(true);
+    expect(result.ignored).toBe(false);
+    expect(result.sessionId).toBe("session-1");
+    expect(result.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        permissionDecisionReason: "用户已提供补充信息",
+        updatedInput: {
+          answers: {
+            "请选择要继续操作的环境": "开发环境"
+          }
+        }
+      }
+    });
+  });
+
+  it("Claude 未支持的 Hook 事件仍会安全忽略", async () => {
+    const { service } = createService();
+
+    const result = await service.ingestClaudeHookEvent({
+      hook_event_name: "WorktreeArchive",
+      session_id: "claude-session-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl"
+    });
+
+    expect(result).toEqual({
+      accepted: true,
+      ignored: true,
+      sessionId: null,
+      bridgeResponse: null
+    });
   });
 
   it("subscribeRuntime 会把 runtime message 映射成带来源信息的 session.runtime_message", async () => {

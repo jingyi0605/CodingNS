@@ -143,6 +143,11 @@ interface ClaudeHookPermissionPayload {
   cwd?: string;
   tool_name?: string;
   tool_input?: unknown;
+  options?: unknown;
+  prompt?: string;
+  question?: string;
+  message?: string;
+  title?: string;
   permission_suggestions?: unknown;
   reason?: string;
   hook_event_name?: string;
@@ -748,6 +753,129 @@ export class SessionPermissionRequestService {
           : resolvedByTimeout
             ? "CodingNS 审批超时，拒绝本次权限申请"
             : "CodingNS 已拒绝本次权限申请"
+      )
+    };
+  }
+
+  async handleClaudeElicitation(
+    payload: ClaudeHookPermissionPayload,
+    provider: ClaudeCompatibleProviderId = "claude-code"
+  ): Promise<ClaudePreToolUseResult> {
+    logPermissionDebug("claude_permission.elicitation.begin", {
+      provider,
+      providerSessionId: payload.session_id ?? null,
+      cwd: payload.cwd ?? null,
+      transcriptPath: payload.transcript_path ?? null,
+      title: payload.title ?? null
+    });
+    const providerSessionId = requireNonEmptyText(payload.session_id, "session_id");
+    const workspacePath = requireNonEmptyText(payload.cwd, "cwd");
+    const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
+
+    if (!workspace) {
+      return {
+        accepted: true,
+        ignored: true,
+        sessionId: null,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse(
+          "ask",
+          "未匹配到工作区，回退 Claude 原生征询"
+        )
+      };
+    }
+
+    const transcriptPath = normalizeText(payload.transcript_path) || null;
+    const binding =
+      await this.resolveClaudeBinding(
+        provider,
+        providerSessionId,
+        workspace.id,
+        workspace.path,
+        transcriptPath,
+        workspace.ownerUserId ?? null
+      ).catch(() => null)
+      ?? this.resolveClaudeWorkspaceSessionFallback({
+        provider,
+        providerSessionId,
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        transcriptPath,
+        userId: workspace.ownerUserId ?? null
+      })
+      ?? (this.resolveActiveClaudeSession
+        ? await this.resolveActiveClaudeSession({
+            provider,
+            providerSessionId,
+            workspaceId: workspace.id,
+            workspacePath: workspace.path,
+            transcriptPath
+          }).catch(() => null)
+        : null);
+
+    if (!binding) {
+      return {
+        accepted: true,
+        ignored: true,
+        sessionId: null,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse(
+          "ask",
+          "未匹配到会话绑定，回退 Claude 原生征询"
+        )
+      };
+    }
+
+    const now = nowIso();
+    const normalized = normalizeClaudeElicitationRequest({
+      provider,
+      sessionId: binding.sessionId,
+      providerSessionId,
+      payload,
+      createdAt: now
+    });
+    let resolvedByTimeout = false;
+
+    const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
+      const timer = setTimeout(() => {
+        resolvedByTimeout = true;
+        resolve({ action: "deny" });
+      }, CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS);
+      const record: SessionPermissionRequestInternalRecord = {
+        ...normalized,
+        source: {
+          kind: "claude-pre-tool-use",
+          resolve,
+          timer
+        }
+      };
+
+      this.upsertRequest(record);
+      void this.emitEnvelope({
+        type: "session.permission_request",
+        sessionId: binding.sessionId,
+        request: this.toRequestView(record)
+      });
+    });
+
+    const existing = this.requestsById.get(normalized.id);
+
+    if (existing) {
+      await this.markResolved(existing, resolvedByTimeout ? "expired" : "approved");
+    }
+
+    return {
+      accepted: true,
+      ignored: false,
+      sessionId: binding.sessionId,
+      bridgeResponse: buildClaudeAskUserQuestionBridgeResponse(
+        decision.action,
+        decision.answers ?? {},
+        normalized.questions,
+        payload,
+        decision.action === "allow"
+          ? "用户已提供补充信息"
+          : resolvedByTimeout
+            ? "用户补充信息超时，回退 Claude 原生处理"
+            : "用户拒绝补充信息"
       )
     };
   }
@@ -1610,6 +1738,55 @@ export function normalizeClaudePreToolUseRequest(input: {
   };
 }
 
+export function normalizeClaudeElicitationRequest(input: {
+  provider: ClaudeCompatibleProviderId;
+  sessionId: string;
+  providerSessionId: string;
+  payload: ClaudeHookPermissionPayload;
+  createdAt: string;
+}): SessionPermissionRequestInternalRecord {
+  const rawPayload = stringifyPayload(input.payload);
+  const questions = readClaudeElicitationQuestions(input.payload);
+  const requestKey =
+    normalizeText(input.payload.title) ||
+    normalizeText(input.payload.prompt) ||
+    normalizeText(input.payload.question) ||
+    normalizeText(input.payload.message) ||
+    `Elicitation:${hashLike(rawPayload)}`;
+
+  return {
+    id: `permission-${createId()}`,
+    sessionId: input.sessionId,
+    provider: input.provider,
+    providerSessionId: input.providerSessionId,
+    requestKey,
+    kind: "user_input",
+    status: "pending",
+    title: normalizeText(input.payload.title) || "Claude 需要你补充信息",
+    summary: questions[0]?.question ?? "Claude 需要你补充信息后才能继续",
+    detail: rawPayload,
+    reason: normalizeText(input.payload.reason) || null,
+    toolName: "Elicitation",
+    command: null,
+    cwd: normalizeText(input.payload.cwd) || null,
+    paths: [],
+    permissionProfile: null,
+    questions,
+    actions: [
+      createAction("submit", "提交答案", "primary", "把补充信息交给 Claude 继续处理")
+    ],
+    rawPayload,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    resolvedAt: null,
+    source: {
+      kind: "claude-pre-tool-use",
+      resolve: () => undefined,
+      timer: null
+    }
+  };
+}
+
 export function normalizeOpenCodePermissionRequest(input: {
   sessionId: string;
   providerSessionId: string;
@@ -2293,6 +2470,29 @@ function readClaudeAskUserQuestionOptions(value: unknown): SessionPermissionRequ
       };
     })
     .filter((option): option is SessionPermissionRequestQuestionOptionView => option !== null);
+}
+
+function readClaudeElicitationQuestions(
+  payload: Pick<ClaudeHookPermissionPayload, "options" | "prompt" | "question" | "message" | "title">
+): SessionPermissionRequestQuestionView[] {
+  const options = readClaudeAskUserQuestionOptions(payload.options);
+  const questionText =
+    normalizeText(payload.question) ||
+    normalizeText(payload.prompt) ||
+    normalizeText(payload.message) ||
+    "请补充 Claude 继续执行所需的信息";
+
+  return [
+    {
+      id: "elicitation",
+      header: normalizeText(payload.title) || "补充信息",
+      question: questionText,
+      allowOther: true,
+      secret: false,
+      multiSelect: false,
+      options
+    }
+  ];
 }
 
 export function buildClaudeAskUserQuestionAnswers(

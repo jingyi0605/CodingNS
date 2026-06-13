@@ -294,6 +294,13 @@ interface ClaudeHookEventPayload {
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
+  path?: string;
+  file_path?: string;
+  worktree_path?: string;
+  config_path?: string;
+  rule_file?: string;
+  matcher?: string;
+  permission_mode?: string;
   reason?: string;
   stop_hook_active?: boolean;
   tool_name?: string;
@@ -301,6 +308,11 @@ interface ClaudeHookEventPayload {
   permission_suggestions?: unknown;
   title?: string;
   message?: string;
+  prompt?: string;
+  command_name?: string;
+  action?: string;
+  trigger?: string;
+  mcp_server_name?: string;
   notification_type?: string;
 }
 
@@ -880,6 +892,14 @@ export class SessionLiveRuntimeService {
         route: "handleClaudePermissionRequest"
       });
       return this.sessionPermissionRequestService.handleClaudePermissionRequest(resolvedPayload, provider);
+    }
+
+    if (hookEventName === "Elicitation") {
+      logPermissionDebug("claude_hook_event.route", {
+        hookEventName,
+        route: "handleClaudeElicitation"
+      });
+      return this.sessionPermissionRequestService.handleClaudeElicitation(resolvedPayload, provider);
     }
 
     const providerSessionId = normalizeRequiredText(resolvedPayload.session_id, "session_id");
@@ -3854,8 +3874,30 @@ function normalizeClaudeHookEventName(value: string | undefined): string | null 
 function isSupportedClaudeHookEvent(value: string): boolean {
   return (
     value === "PreToolUse" ||
+    value === "PostToolUse" ||
+    value === "PostToolUseFailure" ||
     value === "PermissionRequest" ||
+    value === "PermissionDenied" ||
+    value === "Elicitation" ||
+    value === "ElicitationResult" ||
+    value === "MessageDisplay" ||
     value === "Notification" ||
+    value === "PostToolBatch" ||
+    value === "TaskCreated" ||
+    value === "TaskCompleted" ||
+    value === "TeammateIdle" ||
+    value === "SubagentStart" ||
+    value === "SubagentStop" ||
+    value === "PreCompact" ||
+    value === "PostCompact" ||
+    value === "InstructionsLoaded" ||
+    value === "ConfigChange" ||
+    value === "CwdChanged" ||
+    value === "FileChanged" ||
+    value === "WorktreeCreate" ||
+    value === "WorktreeRemove" ||
+    value === "Setup" ||
+    value === "UserPromptExpansion" ||
     value === "UserPromptSubmit" ||
     value === "SessionStart" ||
     value === "Stop" ||
@@ -3909,6 +3951,182 @@ function mapClaudeHookToRuntimeUpdate(
     };
   }
 
+  if (hookEventName === "Setup") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在执行初始化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "UserPromptExpansion") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在展开用户指令", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolUse") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成一次工具调用", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolUseFailure") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 的一次工具调用失败", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PermissionDenied") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 的工具权限请求被拒绝", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "Notification") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 发来一条通知", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "MessageDisplay") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在展示回复内容", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "ElicitationResult") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已收到补充信息结果", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolBatch") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成一批工具调用", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TaskCreated") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 新建了一个任务", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TaskCompleted") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 完成了一个任务", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "SubagentStart") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 子任务已启动", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "SubagentStop") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 子任务已结束", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TeammateIdle") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 队友任务即将空闲", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PreCompact") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在压缩上下文", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostCompact") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成上下文压缩", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "InstructionsLoaded") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已加载指令文件", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "ConfigChange") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 检测到配置变化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "CwdChanged") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已切换工作目录", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "FileChanged") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 检测到文件变化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "WorktreeCreate") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在创建工作树", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "WorktreeRemove") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在移除工作树", payload),
+      timestamp
+    };
+  }
+
   if (hookEventName === "StopFailure") {
     return {
       runningState: "failed",
@@ -3942,6 +4160,41 @@ function mapClaudeHookToRuntimeUpdate(
   }
 
   return null;
+}
+
+function buildClaudeHookRunningDetail(
+  base: string,
+  payload: Pick<
+    ClaudeHookEventPayload,
+      "tool_name" | "title" | "message" | "reason" | "notification_type" | "prompt" | "command_name" | "action" | "trigger" | "mcp_server_name"
+      | "path" | "file_path" | "worktree_path" | "config_path" | "rule_file" | "matcher" | "cwd"
+  >
+): string {
+  const candidates = [
+    normalizeOptionalText(payload.title),
+    normalizeOptionalText(payload.message),
+    normalizeOptionalText(payload.reason),
+    normalizeOptionalText(payload.prompt),
+    normalizeOptionalText(payload.path),
+    normalizeOptionalText(payload.file_path),
+    normalizeOptionalText(payload.worktree_path),
+    normalizeOptionalText(payload.config_path),
+    normalizeOptionalText(payload.rule_file),
+    normalizeOptionalText(payload.cwd),
+    normalizeOptionalText(payload.command_name),
+    normalizeOptionalText(payload.notification_type),
+    normalizeOptionalText(payload.mcp_server_name),
+    normalizeOptionalText(payload.matcher),
+    normalizeOptionalText(payload.trigger),
+    normalizeOptionalText(payload.action)
+  ].filter((value): value is string => Boolean(value));
+  const suffix = payload.tool_name?.trim()
+    ? `（${payload.tool_name.trim()}）`
+    : candidates[0]
+      ? `：${candidates[0]}`
+      : "";
+
+  return `${base}${suffix}`;
 }
 
 
@@ -4466,8 +4719,30 @@ function buildClaudeHookBridgeConfig(
     command,
     supportedEvents: [
       "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "PostToolBatch",
       "PermissionRequest",
+      "PermissionDenied",
+      "Elicitation",
+      "ElicitationResult",
+      "MessageDisplay",
       "Notification",
+      "TaskCreated",
+      "TaskCompleted",
+      "TeammateIdle",
+      "SubagentStart",
+      "SubagentStop",
+      "PreCompact",
+      "PostCompact",
+      "InstructionsLoaded",
+      "ConfigChange",
+      "CwdChanged",
+      "FileChanged",
+      "WorktreeCreate",
+      "WorktreeRemove",
+      "Setup",
+      "UserPromptExpansion",
       "UserPromptSubmit",
       "SessionStart",
       "Stop",
