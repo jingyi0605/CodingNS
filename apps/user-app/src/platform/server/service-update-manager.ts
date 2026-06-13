@@ -5,6 +5,11 @@ import type {
 import { clientConfigStore } from "../../config/client-config-store";
 import { httpClient } from "../../network/http-client";
 
+export async function fetchCurrentHostVersion(): Promise<string> {
+  const result = await httpClient.request<{ version: string }>("/api/client/host-version");
+  return result.version;
+}
+
 export async function checkForServiceUpdate(): Promise<ServiceUpdateSnapshot> {
   const config = clientConfigStore.getState();
   return httpClient.request<ServiceUpdateSnapshot>(

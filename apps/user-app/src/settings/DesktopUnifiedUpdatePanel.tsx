@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { ManagedServicePackageInfo, ServiceUpdateTaskInfo } from "../config/client-config-types";
 import { useClientConfigSelector } from "../config/client-config-store";
@@ -9,6 +9,7 @@ import {
 } from "../platform/desktop/release-manager";
 import { useDesktopUpdateSelector } from "../platform/desktop/desktop-update-store";
 import {
+  fetchCurrentHostVersion,
   getServiceUpdateTask,
   installServiceUpdate
 } from "../platform/server/service-update-manager";
@@ -26,6 +27,7 @@ export function DesktopUnifiedUpdatePanel() {
   const latestState = useDesktopUpdateSelector((state) => state.latestState);
   const pendingRestartVersion = useDesktopUpdateSelector((state) => state.pendingRestartVersion);
   const [servicePackage, setServicePackage] = useState<ManagedServicePackageInfo | null>(null);
+  const [currentHostVersion, setCurrentHostVersion] = useState<string | null>(null);
   const [serviceTask, setServiceTask] = useState<ServiceUpdateTaskInfo | null>(null);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -40,6 +42,19 @@ export function DesktopUnifiedUpdatePanel() {
     downloadedVersion && !pendingRestartVersion && downloadedVersion === clientManifest?.version
   );
   const busy = checking || installing;
+
+  // 挂载时自动获取服务端当前版本（不查 NPM registry）
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCurrentHostVersion().then((version) => {
+      if (!cancelled) {
+        setCurrentHostVersion(version);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleCheckAll() {
     if (pendingRestartVersion) {
@@ -148,7 +163,7 @@ export function DesktopUnifiedUpdatePanel() {
         <div className="settings-update-summary">
           <div className="settings-update-field">
             <span className="settings-update-label">{t("settings.serverCurrentVersion")}</span>
-            <strong className="settings-update-value">{servicePackage?.currentVersion ?? "-"}</strong>
+            <strong className="settings-update-value">{servicePackage?.currentVersion ?? currentHostVersion ?? "-"}</strong>
           </div>
           <div className="settings-update-field">
             <span className="settings-update-label">{t("settings.serverTargetVersion")}</span>

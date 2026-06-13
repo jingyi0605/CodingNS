@@ -11,6 +11,7 @@ import type {
 import { createPlatformAdapter } from "../platform/platform-adapter";
 import {
   checkForServiceUpdate,
+  fetchCurrentHostVersion,
   getServiceUpdateTask,
   installServiceUpdate
 } from "../platform/server/service-update-manager";
@@ -30,10 +31,24 @@ export function ServiceUpdatePanel() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [currentHostVersion, setCurrentHostVersion] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ServiceUpdateSnapshot | null>(null);
   const [task, setTask] = useState<ServiceUpdateTaskInfo | null>(null);
   const packageInfo = snapshot?.packages[0] ?? null;
   const isRestarting = recovering || Boolean(task?.status === "succeeded" && task.restartScheduled);
+
+  // 挂载时自动获取服务端当前版本（不查 NPM registry）
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCurrentHostVersion().then((version) => {
+      if (!cancelled) {
+        setCurrentHostVersion(version);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!task || !isPendingTask(task.status)) {
@@ -206,7 +221,7 @@ export function ServiceUpdatePanel() {
         <div className="settings-update-summary">
           <div className="settings-update-field">
             <span className="settings-update-label">{t("settings.serverCurrentVersion")}</span>
-            <strong className="settings-update-value">{packageInfo?.currentVersion ?? "-"}</strong>
+            <strong className="settings-update-value">{packageInfo?.currentVersion ?? currentHostVersion ?? "-"}</strong>
           </div>
           <div className="settings-update-field">
             <span className="settings-update-label">{t("settings.serverTargetVersion")}</span>
