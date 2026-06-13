@@ -55,6 +55,14 @@ export class ClientController {
     reply.send(this.clientService.getReleaseManifest(channel, query.platform));
   };
 
+  readonly getHostVersion = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    ensureAuthenticated(request);
+    reply.send(this.clientService.getHostVersion());
+  };
+
   readonly getServiceUpdate = async (
     request: FastifyRequest,
     reply: FastifyReply
