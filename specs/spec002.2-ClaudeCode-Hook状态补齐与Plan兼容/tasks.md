@@ -251,7 +251,7 @@
 - [x] 2.2 给对话时间线补计划审批和 `allowedPrompts` 展示
   - 状态：DONE
   - 这一步到底做什么：在现有时间线/审批区域里，把 Claude Plan 审批和后续操作提示展示出来。
-  - 做完你能看到什么：用户能直接看懂 Claude 想怎么做，以及接下来可能跑哪类操作。
+  - 做完你能看到什么：用户能直接看懂 Claude 想怎么做，以及接下来可能跑哪类操作；如果当前就在看计划卡片，也能直接在卡片下面批准或退回，不用再回顶部找待处理区。
   - 先依赖什么：2.1
   - 开始前先看：
     - `requirements.md` 需求 2、需求 3
@@ -260,23 +260,27 @@
     - `docs/开发设计规范/20260419-模态框与按钮设计规范.md`（如果涉及模态结构调整）
   - 主要改哪里：
     - `apps/user-app/src/features/conversation/components/MessageTimeline.tsx`
+    - `apps/user-app/src/features/conversation/components/PermissionRequestList.tsx`
+    - `apps/user-app/src/features/conversation/components/ConversationTaskProgressCard.tsx`
+    - `apps/user-app/src/features/conversation/components/MessageMarkdown.tsx`
     - `apps/user-app/src/features/conversation/components/MessageTimeline.test.tsx`
-    - `apps/user-app/src/shared/i18n/index.ts`
     - `apps/user-app/src/app/styles.css`
   - 这一步先不做什么：不顺手改别的 provider 展示。
   - 怎么算完成：
     1. Claude 计划审批有单独可见说明
     2. `allowedPrompts` 能以用户看得懂的方式展示
-    3. 不出现硬编码文案
+    3. plan 说明正文支持 markdown，不再整段纯文本铺开
+    4. 不出现硬编码文案
   - 怎么验证：
-    - `CI=1 pnpm --dir apps/user-app test src/features/conversation/components/MessageTimeline.test.tsx`
+    - `CI=1 pnpm --dir apps/user-app test src/features/conversation/components/MessageTimeline.test.tsx src/features/conversation/components/PermissionRequestList.test.tsx`
+    - `pnpm --dir apps/user-app exec tsc -p tsconfig.json --noEmit`
   - 对应需求：`requirements.md` 需求 2、需求 3
   - 对应设计：`design.md` §4.2.2、§4.2.3
 
 - [x] 2.3 阶段检查：Claude Plan 从后端到前端已经能看见
   - 状态：DONE
-  - 这一步到底做什么：检查 Claude 计划审批和计划展示是不是已经形成一条完整主链路。
-  - 做完你能看到什么：不是只有后端能收，前端也真能看懂。
+  - 这一步到底做什么：检查 Claude 计划审批和计划展示是不是已经形成一条完整主链路，并确认 plan 卡片里的说明和审批入口都对得上用户实际视线。
+  - 做完你能看到什么：不是只有后端能收，前端也真能看懂；计划说明有 markdown 格式，计划审批也会跟在计划卡片下面。
   - 先依赖什么：2.1、2.2
   - 开始前先看：
     - `requirements.md`
