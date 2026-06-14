@@ -7,6 +7,7 @@ import {
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
   normalizeOpenCodePermissionRequest,
+  resolveClaudeBlockingRequestTimeoutMs,
   resolveClaudeSafeShellAutoApprovalReason
 } from "../../src/modules/sessions/session-permission-request-service.js";
 
@@ -211,6 +212,12 @@ describe("session-permission-request-service normalizers", () => {
       question: "请选择本轮要使用的环境"
     });
     expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
+  });
+
+  it("Claude 问题回答和计划审批的超时时间至少保留 600 秒", () => {
+    expect(resolveClaudeBlockingRequestTimeoutMs("user_input")).toBe(600_000);
+    expect(resolveClaudeBlockingRequestTimeoutMs("plan_approval")).toBe(600_000);
+    expect(resolveClaudeBlockingRequestTimeoutMs("command")).toBe(90_000);
   });
 
   it("会按 Claude AskUserQuestion 协议把答案转成问题文本键", () => {

@@ -194,7 +194,8 @@ interface CodexCommandActionRecord {
 }
 
 const CLAUDE_PRE_TOOL_USE_TIMEOUT_MS = 90_000;
-const CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS = 90_000;
+const CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS = 600_000;
+const CLAUDE_PLAN_APPROVAL_TIMEOUT_MS = 600_000;
 const OPENCODE_RECONNECT_DELAY_MS = 1_500;
 
 export class SessionPermissionRequestService {
@@ -536,7 +537,7 @@ export class SessionPermissionRequestService {
       const timer = setTimeout(() => {
         resolvedByTimeout = true;
         resolve({ action: "ask" });
-      }, normalized.kind === "user_input" ? CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS : CLAUDE_PRE_TOOL_USE_TIMEOUT_MS);
+      }, resolveClaudeBlockingRequestTimeoutMs(normalized.kind));
       const record: SessionPermissionRequestInternalRecord = {
         ...normalized,
         source: {
@@ -2517,6 +2518,20 @@ export function buildClaudeAskUserQuestionAnswers(
       })
       .filter((entry): entry is readonly [string, string] => entry !== null)
   );
+}
+
+export function resolveClaudeBlockingRequestTimeoutMs(
+  kind: SessionPermissionRequestKind
+): number {
+  if (kind === "user_input") {
+    return CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS;
+  }
+
+  if (kind === "plan_approval") {
+    return CLAUDE_PLAN_APPROVAL_TIMEOUT_MS;
+  }
+
+  return CLAUDE_PRE_TOOL_USE_TIMEOUT_MS;
 }
 
 function readClaudeAllowedPrompts(
