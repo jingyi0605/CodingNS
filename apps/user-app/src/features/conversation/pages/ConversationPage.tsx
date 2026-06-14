@@ -812,6 +812,9 @@ function LiveConversationPage({
                 onLoadOlderMessages={loadOlderMessages}
                 onRetryMessage={retryMessage}
                 onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
+                permissionRequests={permissionRequests}
+                replyingPermissionRequestId={replyingPermissionRequestId}
+                onReplyPermissionRequest={replyPermissionRequest}
                 onForkMessage={(message) => {
                   if (!session) {
                     return;

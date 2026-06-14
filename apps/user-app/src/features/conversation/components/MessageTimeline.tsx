@@ -7,7 +7,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type SetStateAction,
   type TouchEvent as ReactTouchEvent,
   type WheelEvent as ReactWheelEvent,
   type ReactNode
@@ -70,11 +72,13 @@ import type {
   AttachmentPayload,
   MessageAttachmentDto,
   ProviderId,
+  SessionPermissionRequestDto,
   SessionSummaryDto,
   SessionInterruptSource
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { shouldFoldRulesMessages } from "../capability/provider-ui";
+import { PermissionRequestCard } from "./PermissionRequestList";
 
 interface MessageTimelineProps {
   sessionId?: string;
@@ -93,6 +97,9 @@ interface MessageTimelineProps {
   assistantAvatar?: ReactNode;
   followTailUpdates?: boolean;
   onSubmitStructuredQuestion?: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
+  permissionRequests?: SessionPermissionRequestDto[];
+  replyingPermissionRequestId?: string | null;
+  onReplyPermissionRequest?: (requestId: string, payload: { action: string; answers?: Record<string, string[]> }) => Promise<void> | void;
 }
 
 interface MessageActionState {
@@ -4327,7 +4334,10 @@ function ToolCallItem({
   workspaceId,
   workspacePath,
   exportMode = false,
-  onSubmitStructuredQuestion = null
+  onSubmitStructuredQuestion = null,
+  permissionRequests = [],
+  replyingPermissionRequestId = null,
+  onReplyPermissionRequest = null
 }: {
   group: ToolMessageGroup;
   sessionId?: string | null;
@@ -4335,8 +4345,13 @@ function ToolCallItem({
   workspacePath?: string | null;
   exportMode?: boolean;
   onSubmitStructuredQuestion?: ((payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void) | null;
+  permissionRequests?: SessionPermissionRequestDto[];
+  replyingPermissionRequestId?: string | null;
+  onReplyPermissionRequest?: ((requestId: string, payload: { action: string; answers?: Record<string, string[]> }) => Promise<void> | void) | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [inlineAnswersByRequestId, setInlineAnswersByRequestId] = useState<Record<string, Record<string, string[]>>>({});
+  const [inlineOtherAnswersByRequestId, setInlineOtherAnswersByRequestId] = useState<Record<string, Record<string, string>>>({});
   const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
@@ -4371,6 +4386,10 @@ function ToolCallItem({
   const taskSnapshot = useMemo(
     () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
     [group.updatedAt, tool]
+  );
+  const inlinePlanApprovalRequest = useMemo(
+    () => resolveInlinePlanApprovalRequest(tool, permissionRequests),
+    [permissionRequests, tool]
   );
   const applyPatchPreview = useMemo(
     () => buildEditableToolPreview(tool),
@@ -4475,6 +4494,13 @@ function ToolCallItem({
         hasRequest={hasRequest}
         hasResult={hasResult}
         exportMode={exportMode}
+        inlinePlanApprovalRequest={inlinePlanApprovalRequest}
+        replyingPermissionRequestId={replyingPermissionRequestId}
+        onReplyPermissionRequest={onReplyPermissionRequest}
+        inlineAnswersByRequestId={inlineAnswersByRequestId}
+        inlineOtherAnswersByRequestId={inlineOtherAnswersByRequestId}
+        setInlineAnswersByRequestId={setInlineAnswersByRequestId}
+        setInlineOtherAnswersByRequestId={setInlineOtherAnswersByRequestId}
         onToggleExpanded={() => {
           setExpanded((current) => !current);
         }}
@@ -4753,7 +4779,14 @@ function TaskToolItem({
   hasRequest,
   hasResult,
   onToggleExpanded,
-  exportMode = false
+  exportMode = false,
+  inlinePlanApprovalRequest = null,
+  replyingPermissionRequestId = null,
+  onReplyPermissionRequest = null,
+  inlineAnswersByRequestId,
+  inlineOtherAnswersByRequestId,
+  setInlineAnswersByRequestId,
+  setInlineOtherAnswersByRequestId
 }: {
   tool: ResolvedToolCall;
   snapshot: ConversationTaskSnapshot;
@@ -4762,6 +4795,13 @@ function TaskToolItem({
   hasResult: boolean;
   onToggleExpanded: () => void;
   exportMode?: boolean;
+  inlinePlanApprovalRequest?: SessionPermissionRequestDto | null;
+  replyingPermissionRequestId?: string | null;
+  onReplyPermissionRequest?: ((requestId: string, payload: { action: string; answers?: Record<string, string[]> }) => Promise<void> | void) | null;
+  inlineAnswersByRequestId: Record<string, Record<string, string[]>>;
+  inlineOtherAnswersByRequestId: Record<string, Record<string, string>>;
+  setInlineAnswersByRequestId: Dispatch<SetStateAction<Record<string, Record<string, string[]>>>>;
+  setInlineOtherAnswersByRequestId: Dispatch<SetStateAction<Record<string, Record<string, string>>>>;
 }) {
   return (
     <ConversationTaskProgressCard
@@ -4771,6 +4811,18 @@ function TaskToolItem({
       exportMode={exportMode}
       onToggleExpanded={exportMode ? undefined : onToggleExpanded}
     >
+      {!exportMode && inlinePlanApprovalRequest && onReplyPermissionRequest ? (
+        <PermissionRequestCard
+          request={inlinePlanApprovalRequest}
+          className="permission-request-card-inline"
+          replyingRequestId={replyingPermissionRequestId}
+          answersByRequestId={inlineAnswersByRequestId}
+          otherAnswersByRequestId={inlineOtherAnswersByRequestId}
+          setAnswersByRequestId={setInlineAnswersByRequestId}
+          setOtherAnswersByRequestId={setInlineOtherAnswersByRequestId}
+          onReply={onReplyPermissionRequest}
+        />
+      ) : null}
       {!exportMode && expanded ? (
         <div className="tool-call-output">
           {hasRequest && tool.input ? (
@@ -4792,6 +4844,35 @@ function TaskToolItem({
       ) : null}
     </ConversationTaskProgressCard>
   );
+}
+
+function resolveInlinePlanApprovalRequest(
+  tool: ResolvedToolCall,
+  permissionRequests: SessionPermissionRequestDto[]
+): SessionPermissionRequestDto | null {
+  const normalizedToolName = tool.name.trim().toLowerCase();
+
+  if (normalizedToolName !== "exitplanmode") {
+    return null;
+  }
+
+  const inputText = tool.input?.trim() ?? "";
+
+  return permissionRequests.find((request) => {
+    if (request.kind !== "plan_approval" || request.status !== "pending") {
+      return false;
+    }
+
+    if (request.toolName?.trim().toLowerCase() !== "exitplanmode") {
+      return false;
+    }
+
+    if (!inputText) {
+      return true;
+    }
+
+    return request.detail?.includes(inputText) ?? false;
+  }) ?? null;
 }
 
 function getApplyPatchActionLabel(action: ApplyPatchFileChange["action"]) {
@@ -5943,7 +6024,10 @@ export function MessageTimeline({
   interruptedSource = null,
   assistantAvatar,
   followTailUpdates = false,
-  onSubmitStructuredQuestion
+  onSubmitStructuredQuestion,
+  permissionRequests = [],
+  replyingPermissionRequestId = null,
+  onReplyPermissionRequest
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -6866,6 +6950,9 @@ export function MessageTimeline({
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+                permissionRequests={permissionRequests}
+                replyingPermissionRequestId={replyingPermissionRequestId}
+                onReplyPermissionRequest={onReplyPermissionRequest}
               />
             </article>
           ) : item.type === "runtime_thinking" ? (

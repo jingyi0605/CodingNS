@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 import { t } from "../../../shared/i18n";
 import type { SessionPermissionRequestDto } from "../api/conversation-api";
@@ -38,194 +38,229 @@ export function PermissionRequestList({
 
       <div className="permission-request-stack">
         {pendingRequests.map((request) => {
-          const answers = answersByRequestId[request.id] ?? {};
-          const otherAnswers = otherAnswersByRequestId[request.id] ?? {};
-          const primaryPaths = request.paths.filter(Boolean);
-          const shouldShowCommand = request.kind === "command" && Boolean(request.command?.trim());
-          const shouldShowSummary =
-            request.questions.length === 0 &&
-            primaryPaths.length === 0 &&
-            !shouldShowCommand &&
-            Boolean(request.summary?.trim());
-          const disableSubmit =
-            request.kind === "user_input" &&
-            request.questions.some(
-              (question) =>
-                (answers[question.id]?.filter(Boolean).length ?? 0) === 0 &&
-                !otherAnswers[question.id]?.trim()
-            );
-
           return (
-            <article key={request.id} className="permission-request-card">
-              <header className="permission-request-card-header">
-                <div className="permission-request-provider">
-                  <span className="permission-request-provider-icon" aria-hidden="true">
-                    <img src={getProviderIcon(request.provider)} alt="" loading="lazy" />
-                  </span>
-                  <div className="permission-request-provider-copy">
-                    <strong>{request.title}</strong>
-                    <span>{getProviderDisplayName(request.provider, "full")}</span>
-                  </div>
-                </div>
-                <span className="permission-request-kind">{getRequestKindLabel(request.kind)}</span>
-              </header>
-
-              <div className="permission-request-card-body">
-                {primaryPaths.length > 0 ? (
-                  <div className="permission-request-block">
-                    <ul className="permission-request-target-list">
-                      {primaryPaths.map((path) => (
-                        <li key={`${request.id}:${path}`} className="permission-request-target-item">
-                          <strong>{getPathName(path)}</strong>
-                          <span>{path}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {shouldShowCommand ? (
-                  <div className="permission-request-block">
-                    <div className="permission-request-block-label">
-                      {t("conversation.permissionRequestCommandLabel")}
-                    </div>
-                    <pre>{request.command}</pre>
-                  </div>
-                ) : null}
-                {shouldShowSummary ? (
-                  <p className="permission-request-summary">{request.summary}</p>
-                ) : null}
-                {request.questions.length > 0 ? (
-                  <div className="permission-request-block">
-                    <div className="permission-request-block-label">
-                      {t("conversation.permissionRequestQuestionsLabel")}
-                    </div>
-                    <div className="permission-request-question-list">
-                      {request.questions.map((question) => (
-                        <div key={question.id} className="permission-request-question">
-                          <div className="permission-request-question-header">{question.header}</div>
-                          <p>{question.question}</p>
-                          <div className="permission-request-question-options">
-                            {question.options.map((option) => {
-                              const checked = answers[question.id]?.includes(option.label) ?? false;
-                              const inputType = question.multiSelect ? "checkbox" : "radio";
-                              const shouldUseSingleColumn =
-                                option.label.length > 18 || (option.description?.length ?? 0) > 34;
-
-                              return (
-                                <label
-                                  key={`${question.id}:${option.label}`}
-                                  className={`permission-request-question-option${shouldUseSingleColumn ? " single-column" : ""}`}
-                                >
-                                  <input
-                                    type={inputType}
-                                    name={`${request.id}:${question.id}`}
-                                    checked={checked}
-                                    onChange={() => {
-                                      setOtherAnswersByRequestId((current) => ({
-                                        ...current,
-                                        [request.id]: {
-                                          ...(current[request.id] ?? {}),
-                                          [question.id]: ""
-                                        }
-                                      }));
-                                      setAnswersByRequestId((current) => ({
-                                        ...current,
-                                        [request.id]: {
-                                          ...(current[request.id] ?? {}),
-                                          [question.id]: question.multiSelect
-                                            ? toggleAnswerValue(current[request.id]?.[question.id] ?? [], option.label)
-                                            : [option.label]
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                  <span>
-                                    <strong>{option.label}</strong>
-                                    {option.description ? <small>{option.description}</small> : null}
-                                  </span>
-                                </label>
-                              );
-                            })}
-                            {question.allowOther ? (
-                              <label className="permission-request-question-option permission-request-question-option-other single-column">
-                                <input
-                                  type="radio"
-                                  name={`${request.id}:${question.id}`}
-                                  checked={Boolean(otherAnswers[question.id]?.trim())}
-                                  onChange={() => {
-                                    setAnswersByRequestId((current) => ({
-                                      ...current,
-                                      [request.id]: {
-                                        ...(current[request.id] ?? {}),
-                                        [question.id]: []
-                                      }
-                                    }));
-                                  }}
-                                />
-                                <span>
-                                  <strong>{t("conversation.permissionRequestQuestionOtherLabel")}</strong>
-                                  <input
-                                    className="permission-request-question-other-input"
-                                    type={question.secret ? "password" : "text"}
-                                    value={otherAnswers[question.id] ?? ""}
-                                    placeholder={t("conversation.permissionRequestQuestionOtherPlaceholder")}
-                                    onChange={(event) => {
-                                      const value = event.currentTarget.value;
-                                      setOtherAnswersByRequestId((current) => ({
-                                        ...current,
-                                        [request.id]: {
-                                          ...(current[request.id] ?? {}),
-                                          [question.id]: value
-                                        }
-                                      }));
-                                      setAnswersByRequestId((current) => ({
-                                        ...current,
-                                        [request.id]: {
-                                          ...(current[request.id] ?? {}),
-                                          [question.id]: []
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                </span>
-                              </label>
-                            ) : null}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              <footer className="permission-request-card-footer">
-                {request.actions.map((action) => (
-                  <button
-                    key={`${request.id}:${action.value}`}
-                    type="button"
-                    className={resolvePermissionActionClassName(action.tone)}
-                    disabled={
-                      replyingRequestId === request.id || (action.value === "submit" && disableSubmit)
-                    }
-                    onClick={() => {
-                      const mergedAnswers = mergeQuestionAnswers(answers, otherAnswers);
-                      void onReply(request.id, {
-                        action: action.value,
-                        answers: Object.keys(mergedAnswers).length > 0 ? mergedAnswers : undefined
-                      });
-                    }}
-                  >
-                    {replyingRequestId === request.id
-                      ? t("conversation.permissionRequestSubmitting")
-                      : action.label}
-                  </button>
-                ))}
-              </footer>
-            </article>
+            <PermissionRequestCard
+              key={request.id}
+              request={request}
+              replyingRequestId={replyingRequestId}
+              answersByRequestId={answersByRequestId}
+              otherAnswersByRequestId={otherAnswersByRequestId}
+              setAnswersByRequestId={setAnswersByRequestId}
+              setOtherAnswersByRequestId={setOtherAnswersByRequestId}
+              onReply={onReply}
+            />
           );
         })}
       </div>
     </section>
+  );
+}
+
+interface PermissionRequestCardProps {
+  request: SessionPermissionRequestDto;
+  replyingRequestId: string | null;
+  answersByRequestId: Record<string, Record<string, string[]>>;
+  otherAnswersByRequestId: Record<string, Record<string, string>>;
+  setAnswersByRequestId: Dispatch<SetStateAction<Record<string, Record<string, string[]>>>>;
+  setOtherAnswersByRequestId: Dispatch<SetStateAction<Record<string, Record<string, string>>>>;
+  onReply: (requestId: string, payload: { action: string; answers?: Record<string, string[]> }) => Promise<void> | void;
+  className?: string;
+}
+
+export function PermissionRequestCard({
+  request,
+  replyingRequestId,
+  answersByRequestId,
+  otherAnswersByRequestId,
+  setAnswersByRequestId,
+  setOtherAnswersByRequestId,
+  onReply,
+  className
+}: PermissionRequestCardProps) {
+  const answers = answersByRequestId[request.id] ?? {};
+  const otherAnswers = otherAnswersByRequestId[request.id] ?? {};
+  const primaryPaths = request.paths.filter(Boolean);
+  const shouldShowCommand = request.kind === "command" && Boolean(request.command?.trim());
+  const shouldShowSummary =
+    request.questions.length === 0 &&
+    primaryPaths.length === 0 &&
+    !shouldShowCommand &&
+    Boolean(request.summary?.trim());
+  const disableSubmit =
+    request.kind === "user_input" &&
+    request.questions.some(
+      (question) =>
+        (answers[question.id]?.filter(Boolean).length ?? 0) === 0 &&
+        !otherAnswers[question.id]?.trim()
+    );
+
+  return (
+    <article className={className ? `permission-request-card ${className}` : "permission-request-card"}>
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <span className="permission-request-provider-icon" aria-hidden="true">
+            <img src={getProviderIcon(request.provider)} alt="" loading="lazy" />
+          </span>
+          <div className="permission-request-provider-copy">
+            <strong>{request.title}</strong>
+            <span>{getProviderDisplayName(request.provider, "full")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{getRequestKindLabel(request.kind)}</span>
+      </header>
+
+      <div className="permission-request-card-body">
+        {primaryPaths.length > 0 ? (
+          <div className="permission-request-block">
+            <ul className="permission-request-target-list">
+              {primaryPaths.map((path) => (
+                <li key={`${request.id}:${path}`} className="permission-request-target-item">
+                  <strong>{getPathName(path)}</strong>
+                  <span>{path}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {shouldShowCommand ? (
+          <div className="permission-request-block">
+            <div className="permission-request-block-label">
+              {t("conversation.permissionRequestCommandLabel")}
+            </div>
+            <pre>{request.command}</pre>
+          </div>
+        ) : null}
+        {shouldShowSummary ? (
+          <p className="permission-request-summary">{request.summary}</p>
+        ) : null}
+        {request.questions.length > 0 ? (
+          <div className="permission-request-block">
+            <div className="permission-request-block-label">
+              {t("conversation.permissionRequestQuestionsLabel")}
+            </div>
+            <div className="permission-request-question-list">
+              {request.questions.map((question) => (
+                <div key={question.id} className="permission-request-question">
+                  <div className="permission-request-question-header">{question.header}</div>
+                  <p>{question.question}</p>
+                  <div className="permission-request-question-options">
+                    {question.options.map((option) => {
+                      const checked = answers[question.id]?.includes(option.label) ?? false;
+                      const inputType = question.multiSelect ? "checkbox" : "radio";
+                      const shouldUseSingleColumn =
+                        option.label.length > 18 || (option.description?.length ?? 0) > 34;
+
+                      return (
+                        <label
+                          key={`${question.id}:${option.label}`}
+                          className={`permission-request-question-option${shouldUseSingleColumn ? " single-column" : ""}`}
+                        >
+                          <input
+                            type={inputType}
+                            name={`${request.id}:${question.id}`}
+                            checked={checked}
+                            onChange={() => {
+                              setOtherAnswersByRequestId((current) => ({
+                                ...current,
+                                [request.id]: {
+                                  ...(current[request.id] ?? {}),
+                                  [question.id]: ""
+                                }
+                              }));
+                              setAnswersByRequestId((current) => ({
+                                ...current,
+                                [request.id]: {
+                                  ...(current[request.id] ?? {}),
+                                  [question.id]: question.multiSelect
+                                    ? toggleAnswerValue(current[request.id]?.[question.id] ?? [], option.label)
+                                    : [option.label]
+                                }
+                              }));
+                            }}
+                          />
+                          <span>
+                            <strong>{option.label}</strong>
+                            {option.description ? <small>{option.description}</small> : null}
+                          </span>
+                        </label>
+                      );
+                    })}
+                    {question.allowOther ? (
+                      <label className="permission-request-question-option permission-request-question-option-other single-column">
+                        <input
+                          type="radio"
+                          name={`${request.id}:${question.id}`}
+                          checked={Boolean(otherAnswers[question.id]?.trim())}
+                          onChange={() => {
+                            setAnswersByRequestId((current) => ({
+                              ...current,
+                              [request.id]: {
+                                ...(current[request.id] ?? {}),
+                                [question.id]: []
+                              }
+                            }));
+                          }}
+                        />
+                        <span>
+                          <strong>{t("conversation.permissionRequestQuestionOtherLabel")}</strong>
+                          <input
+                            className="permission-request-question-other-input"
+                            type={question.secret ? "password" : "text"}
+                            value={otherAnswers[question.id] ?? ""}
+                            placeholder={t("conversation.permissionRequestQuestionOtherPlaceholder")}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              setOtherAnswersByRequestId((current) => ({
+                                ...current,
+                                [request.id]: {
+                                  ...(current[request.id] ?? {}),
+                                  [question.id]: value
+                                }
+                              }));
+                              setAnswersByRequestId((current) => ({
+                                ...current,
+                                [request.id]: {
+                                  ...(current[request.id] ?? {}),
+                                  [question.id]: []
+                                }
+                              }));
+                            }}
+                          />
+                        </span>
+                      </label>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <footer className="permission-request-card-footer">
+        {request.actions.map((action) => (
+          <button
+            key={`${request.id}:${action.value}`}
+            type="button"
+            className={resolvePermissionActionClassName(action.tone)}
+            disabled={
+              replyingRequestId === request.id || (action.value === "submit" && disableSubmit)
+            }
+            onClick={() => {
+              const mergedAnswers = mergeQuestionAnswers(answers, otherAnswers);
+              void onReply(request.id, {
+                action: action.value,
+                answers: Object.keys(mergedAnswers).length > 0 ? mergedAnswers : undefined
+              });
+            }}
+          >
+            {replyingRequestId === request.id
+              ? t("conversation.permissionRequestSubmitting")
+              : action.label}
+          </button>
+        ))}
+      </footer>
+    </article>
   );
 }
 

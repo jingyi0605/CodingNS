@@ -1139,6 +1139,112 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"allowedPrompts":/)).toBeInTheDocument();
   });
 
+  it("Claude 的 ExitPlanMode 说明会按 markdown 渲染，并在卡片内联展示计划审批", async () => {
+    const onReplyPermissionRequest = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        onReplyPermissionRequest={onReplyPermissionRequest}
+        replyingPermissionRequestId={null}
+        permissionRequests={[
+          {
+            id: "permission-plan-1",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "exit-plan-1",
+            kind: "plan_approval",
+            status: "pending",
+            title: "Claude 请求确认执行计划",
+            summary: "先确认方案，再继续改代码。",
+            detail: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            reason: null,
+            toolName: "ExitPlanMode",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [],
+            actions: [
+              {
+                value: "allow",
+                label: "批准计划",
+                tone: "primary",
+                description: "允许 Claude 按当前计划继续执行"
+              },
+              {
+                value: "deny",
+                label: "退回计划",
+                tone: "danger",
+                description: "拒绝这次计划，要求 Claude 停在计划阶段"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-14T09:00:00.000Z",
+            updatedAt: "2026-06-14T09:00:00.000Z",
+            resolvedAt: null
+          }
+        ]}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-call-2",
+            callId: "exit-plan-call-2",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: [
+                { step: "写清楚剩余 Hook", status: "completed" },
+                { step: "补 plan 审批 UI", status: "in_progress" }
+              ],
+              explanation: "## 本轮更新\n\n- 先把审批卡片贴到计划下面\n- 再补 markdown 展示"
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "本轮更新" })).toBeInTheDocument();
+    expect(screen.getByText("先把审批卡片贴到计划下面")).toBeInTheDocument();
+    expect(screen.getByText("再补 markdown 展示")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批准计划" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "退回计划" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "批准计划" }));
+
+    await waitFor(() => {
+      expect(onReplyPermissionRequest).toHaveBeenCalledWith("permission-plan-1", {
+        action: "allow",
+        answers: undefined
+      });
+    });
+  });
+
   it("Claude TaskUpdate 只有 taskId 时也会渲染成任务卡片", async () => {
     render(
       <MessageTimeline

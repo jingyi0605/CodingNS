@@ -5,6 +5,7 @@ import {
   countConversationTasksByStatus,
   type ConversationTaskSnapshot
 } from "../session-task-progress";
+import { MarkdownText } from "./MessageMarkdown";
 
 interface ConversationTaskProgressCardProps {
   snapshot: ConversationTaskSnapshot;
@@ -67,7 +68,11 @@ export function ConversationTaskProgressCard({
           {snapshot.explanation ? (
             <div className="task-tool-note-block">
               <span className="task-tool-note-label">{t("conversation.taskProgressExplanationTitle")}</span>
-              <p className="task-tool-note-text">{snapshot.explanation}</p>
+              <MarkdownText
+                content={snapshot.explanation}
+                className="task-tool-note-text markdown-content"
+                paragraphClassName="task-tool-note-paragraph"
+              />
             </div>
           ) : null}
           {(snapshot.allowedPrompts?.length ?? 0) > 0 ? (

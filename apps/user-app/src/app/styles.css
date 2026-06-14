@@ -16342,7 +16342,18 @@ textarea:focus-visible {
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.45;
-  white-space: pre-wrap;
+}
+
+.task-tool-note-text :where(p, ul, ol, blockquote, pre) {
+  margin: 0;
+}
+
+.task-tool-note-text :where(p + p, ul, ol, blockquote, pre) {
+  margin-top: 6px;
+}
+
+.task-tool-note-paragraph {
+  margin: 0;
 }
 
 .task-tool-note-list {
@@ -31113,6 +31124,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 
 .permission-request-card-inline {
   margin-top: 6px;
+}
+
+.task-tool-item .permission-request-card-inline {
+  margin: 2px 10px 8px;
+  border-radius: 12px;
 }
 
 .permission-request-card-header {
