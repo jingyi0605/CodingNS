@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 
 import {
@@ -19,6 +20,7 @@ import {
   type ProviderRuntimeAdapter,
   type ProviderRuntimeRunRequest,
   type ProviderSubscription,
+  resolveCodexPermissionResolution,
   type RuntimeEvent,
   type RuntimeRunState,
   type SendMessageResult
@@ -199,6 +201,61 @@ export interface SessionRuntimeStatusView {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageSnapshot | null;
+  permissionStatus: SessionRuntimePermissionStatusView | null;
+}
+
+export interface SessionRuntimePermissionStatusView {
+  requestedPermissionMode: string | null;
+  effectivePermissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  effectiveSandboxMode: "read-only" | "workspace-write" | "danger-full-access" | null;
+  effectiveApprovalPolicy: "never" | "cli-default" | null;
+  source: "codex-cli-default" | "codingns-override" | "provider-non-codex";
+  summary: string;
+  detail: string;
+}
+
+function buildSessionRuntimePermissionStatus(input: {
+  provider: string;
+  requestedPermissionMode: string | null;
+}): SessionRuntimePermissionStatusView | null {
+  if (input.provider !== "codex") {
+    return {
+      requestedPermissionMode: input.requestedPermissionMode,
+      effectivePermissionMode: "default",
+      effectiveSandboxMode: null,
+      effectiveApprovalPolicy: null,
+      source: "provider-non-codex",
+      summary: "当前 provider 不使用 Codex 沙箱权限映射。",
+      detail: "这份权限说明只对 Codex 会话生效，其他 provider 仍沿用各自的权限体系。"
+    };
+  }
+
+  const resolution = resolveCodexPermissionResolution(input.requestedPermissionMode);
+
+  if (resolution.effectivePermissionMode === "default") {
+    return {
+      requestedPermissionMode: input.requestedPermissionMode,
+      effectivePermissionMode: resolution.effectivePermissionMode,
+      effectiveSandboxMode: resolution.sandboxMode,
+      effectiveApprovalPolicy: resolution.approvalPolicy ? "never" : "cli-default",
+      source: "codex-cli-default",
+      summary: "当前会话跟随 Codex CLI 默认权限。",
+      detail: resolution.reasoning
+    };
+  }
+
+  return {
+    requestedPermissionMode: input.requestedPermissionMode,
+    effectivePermissionMode: resolution.effectivePermissionMode,
+    effectiveSandboxMode: resolution.sandboxMode,
+    effectiveApprovalPolicy: resolution.approvalPolicy ? "never" : "cli-default",
+    source: "codingns-override",
+    summary:
+      resolution.effectivePermissionMode === "acceptEdits"
+        ? "当前会话已切到工作区可写权限。"
+        : "当前会话已切到完整权限。",
+    detail: resolution.reasoning
+  };
 }
 
 export interface InterruptSessionResult {
@@ -330,6 +387,12 @@ interface ClaudeForkBootstrapDescriptor {
   instructionFilePath: string;
 }
 
+interface SessionPermissionRuntimeState {
+  requestedPermissionMode: string | null;
+  updatedAt: string;
+  source: "start_live" | "send_live" | "queue_dispatch" | "runtime_snapshot";
+}
+
 export class SessionLiveRuntimeService {
   private readonly providerRuntimeService: ProviderRuntimeService;
   private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
@@ -351,6 +414,7 @@ export class SessionLiveRuntimeService {
   private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingSendDebugTracesBySessionId = new Map<string, PendingSessionSendDebugTrace[]>();
   private readonly runtimePersistenceQueues = new Map<string, Promise<void>>();
+  private readonly sessionPermissionRuntimeStates = new Map<string, SessionPermissionRuntimeState>();
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
@@ -411,6 +475,11 @@ export class SessionLiveRuntimeService {
     });
 
     try {
+      this.rememberRequestedPermissionMode(
+        sessionId,
+        input.runtimeOptions?.permissionMode ?? null,
+        "start_live"
+      );
       const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
       const providerBinding = this.sessionProviderConfigService.prepareSessionBinding({
         sessionId,
@@ -989,6 +1058,12 @@ export class SessionLiveRuntimeService {
     this.maybeDispatchQueuedMessages(session);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
+    const requestedPermissionMode = this.resolveRequestedPermissionMode(sessionId);
+    const permissionStatus = buildSessionRuntimePermissionStatus({
+      provider: session.provider,
+      requestedPermissionMode
+    });
+    this.logSessionPermissionStatus(sessionId, session.provider, permissionStatus);
     const resolution = runtimeSnapshot
       ? this.sessionActivityAuthorityService.observe(
           createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot)
@@ -1024,7 +1099,8 @@ export class SessionLiveRuntimeService {
             : null,
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-        contextUsage
+        contextUsage,
+        permissionStatus
       };
     }
 
@@ -1047,7 +1123,8 @@ export class SessionLiveRuntimeService {
         errorDetail: resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null,
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-        contextUsage
+        contextUsage,
+        permissionStatus
       };
     }
 
@@ -1072,7 +1149,8 @@ export class SessionLiveRuntimeService {
       errorDetail: persistedErrorDetail,
       updatedAt: resolution.updatedAt,
       watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-      contextUsage
+      contextUsage,
+      permissionStatus
     };
   }
 
@@ -1373,6 +1451,67 @@ export class SessionLiveRuntimeService {
     }
 
     return snapshot;
+  }
+
+  private resolveRequestedPermissionMode(sessionId: string): string | null {
+    const runtimeState = this.sessionPermissionRuntimeStates.get(sessionId);
+
+    if (runtimeState?.requestedPermissionMode?.trim()) {
+      return runtimeState.requestedPermissionMode.trim();
+    }
+
+    const queuedItems = this.sessionSendQueueRepository.listBySessionId(sessionId);
+    const dispatchingItem = queuedItems.find((item) => item.status === "dispatching");
+
+    if (dispatchingItem?.permissionMode?.trim()) {
+      return dispatchingItem.permissionMode.trim();
+    }
+
+    const latestPermissionItem = [...queuedItems]
+      .reverse()
+      .find((item) => item.permissionMode?.trim());
+
+    if (latestPermissionItem?.permissionMode?.trim()) {
+      return latestPermissionItem.permissionMode.trim();
+    }
+
+    return null;
+  }
+
+  private rememberRequestedPermissionMode(
+    sessionId: string,
+    permissionMode: string | null,
+    source: SessionPermissionRuntimeState["source"]
+  ): void {
+    this.sessionPermissionRuntimeStates.set(sessionId, {
+      requestedPermissionMode: permissionMode?.trim() || null,
+      updatedAt: nowIso(),
+      source
+    });
+  }
+
+  private logSessionPermissionStatus(
+    sessionId: string,
+    provider: string,
+    permissionStatus: SessionRuntimePermissionStatusView | null
+  ): void {
+    if (!permissionStatus) {
+      return;
+    }
+
+    const runtimeState = this.sessionPermissionRuntimeStates.get(sessionId);
+
+    logPermissionDebug("session_runtime.permission_status", {
+      sessionId,
+      provider,
+      requestedPermissionMode: permissionStatus.requestedPermissionMode,
+      effectivePermissionMode: permissionStatus.effectivePermissionMode,
+      effectiveSandboxMode: permissionStatus.effectiveSandboxMode,
+      effectiveApprovalPolicy: permissionStatus.effectiveApprovalPolicy,
+      source: permissionStatus.source,
+      runtimeStateSource: runtimeState?.source ?? null,
+      runtimeStateUpdatedAt: runtimeState?.updatedAt ?? null
+    });
   }
 
   private demoteDeadRuntimeSnapshot(snapshot: ActiveRunSnapshot): void {
@@ -1781,6 +1920,11 @@ export class SessionLiveRuntimeService {
       runtimeHomeDir: string | null;
     }
   ): Promise<void> {
+    this.rememberRequestedPermissionMode(
+      request.sessionId,
+      request.options.permissionMode ?? null,
+      "runtime_snapshot"
+    );
     this.runtimeMessageSeenSessions.delete(request.sessionId);
     this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
     this.clearExternalRuntimeInterruptSuppression(request.sessionId);
@@ -1829,6 +1973,11 @@ export class SessionLiveRuntimeService {
     });
 
     try {
+      this.rememberRequestedPermissionMode(
+        input.sessionId,
+        input.runtimeOptions?.permissionMode ?? null,
+        "send_live"
+      );
       const capabilities = await this.sessionHistoryService.getSessionCapabilities(
         input.sessionId,
         input.userId
@@ -2165,6 +2314,11 @@ export class SessionLiveRuntimeService {
       };
 
       try {
+        this.rememberRequestedPermissionMode(
+          nextQueueItem.sessionId,
+          nextQueueItem.permissionMode,
+          "queue_dispatch"
+        );
         await this.sendLiveMessageDirect(
           {
             sessionId: nextQueueItem.sessionId,
@@ -4753,7 +4907,13 @@ function buildClaudeHookBridgeConfig(
 }
 
 function resolveClaudeHookBridgeScriptPath(): string {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFilePath);
+  const packageRoot = path.resolve(currentDir, "..", "..", "..", "..");
+  const workspaceRoot = path.resolve(packageRoot, "..", "..", "..");
   const candidates = [
+    path.resolve(packageRoot, "scripts", "claude-hook-bridge.cjs"),
+    path.resolve(workspaceRoot, "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "..", "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "..", "..", "scripts", "claude-hook-bridge.cjs")

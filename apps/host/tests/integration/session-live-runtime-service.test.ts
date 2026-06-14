@@ -77,6 +77,7 @@ function createService(
     recordMessages: vi.fn()
   };
   const sessionSendQueueRepository = {
+    listBySessionId: vi.fn(() => []),
     listBySessionAndUser: vi.fn(() => []),
     getNextOrderIndex: vi.fn(() => 1),
     insert: vi.fn(),
@@ -330,6 +331,50 @@ describe("SessionLiveRuntimeService", () => {
     expect(openCliSessionPromptService.buildPrompt).not.toHaveBeenCalled();
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
+  });
+
+  it("getSessionRuntime 会优先返回当前会话记住的 Codex 权限状态", async () => {
+    const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      runningState: "completed",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      runningState: "completed",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      inRunInputMode: "none"
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+    sessionSendQueueRepository.listBySessionId = vi.fn(() => []);
+
+    (service as any).rememberRequestedPermissionMode(
+      "session-1",
+      "acceptEdits",
+      "send_live"
+    );
+
+    const runtime = await service.getSessionRuntime("session-1", "user-1");
+
+    expect(runtime.permissionStatus).toMatchObject({
+      requestedPermissionMode: "acceptEdits",
+      effectivePermissionMode: "acceptEdits",
+      effectiveSandboxMode: "workspace-write",
+      effectiveApprovalPolicy: "never",
+      source: "codingns-override"
+    });
   });
 
   it("Claude active run 存在时切换 preset 会直接拒绝，且不会污染会话 binding", async () => {
@@ -3800,6 +3845,15 @@ describe("SessionLiveRuntimeService", () => {
         lastSyncAt: "2026-03-26T10:00:02.000Z"
       })
     );
+  });
+
+  it("Claude hook bridge 配置会优先返回当前包内脚本路径", () => {
+    const { service } = createService();
+    const config = service.getClaudeHookBridgeConfig("claude-code");
+
+    expect(path.basename(config.scriptPath)).toBe("claude-hook-bridge.cjs");
+    expect(readFileSync(config.scriptPath, "utf8")).toContain("x-codingns-hook-token");
+    expect(config.command).toContain(config.scriptPath);
   });
 
   it("Claude hook bridge 配置会导出本地脚本命令", () => {

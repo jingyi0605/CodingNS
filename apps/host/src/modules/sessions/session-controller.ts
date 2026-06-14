@@ -878,6 +878,7 @@ function createMissingSessionRuntimeSnapshot(sessionId: string): SessionRuntimeS
     errorDetail: "session 已删除或不存在",
     updatedAt: timestamp,
     watchdogTriggeredAt: null,
-    contextUsage: null
+    contextUsage: null,
+    permissionStatus: null
   };
 }

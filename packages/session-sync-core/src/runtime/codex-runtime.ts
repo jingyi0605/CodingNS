@@ -2928,6 +2928,10 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
+  }
+
 
   if (request.options.model) {
     params.model = request.options.model;
@@ -2949,6 +2953,10 @@ function createThreadResumeParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
   }
 
 
@@ -2996,6 +3004,10 @@ function createTurnStartParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxPolicy) {
+    params.sandboxPolicy = permissionOptions.sandboxPolicy;
   }
 
   if (request.options.model) {

@@ -779,6 +779,10 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
+  }
+
   if (request.options.model) {
     params.model = request.options.model;
   }
@@ -801,6 +805,10 @@ function createThreadResumeParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
   }
 
   if (request.options.model) {
@@ -849,6 +857,10 @@ function createTurnStartParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxPolicy) {
+    params.sandboxPolicy = permissionOptions.sandboxPolicy;
   }
 
   if (request.options.model) {
@@ -938,16 +950,28 @@ function createCodexThreadPermissionOptions(
   permissionMode: string | null
 ): {
   approvalPolicy?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  sandboxPolicy?: {
+    mode: "read-only" | "workspace-write" | "danger-full-access";
+  };
 } {
   if (permissionMode === "bypassPermissions") {
     return {
-      approvalPolicy: "never"
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      sandboxPolicy: {
+        mode: "danger-full-access"
+      }
     };
   }
 
   if (permissionMode === "acceptEdits") {
     return {
-      approvalPolicy: "never"
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      sandboxPolicy: {
+        mode: "workspace-write"
+      }
     };
   }
 

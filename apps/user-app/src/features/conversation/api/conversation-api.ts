@@ -1520,6 +1520,17 @@ export interface SessionRuntimeDto {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageDto | null;
+  permissionStatus: SessionRuntimePermissionStatusDto | null;
+}
+
+export interface SessionRuntimePermissionStatusDto {
+  requestedPermissionMode: string | null;
+  effectivePermissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  effectiveSandboxMode: "read-only" | "workspace-write" | "danger-full-access" | null;
+  effectiveApprovalPolicy: "never" | "cli-default" | null;
+  source: "codex-cli-default" | "codingns-override" | "provider-non-codex";
+  summary: string;
+  detail: string;
 }
 
 export interface SessionQueueItemDto {

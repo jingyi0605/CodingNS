@@ -31,6 +31,7 @@ import type {
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
   ProviderId,
+  SessionRuntimePermissionStatusDto,
   SessionProviderConfigMode
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
@@ -116,6 +117,7 @@ interface ComposerPanelProps {
   hasActiveRun?: boolean | null;
   canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
+  permissionStatus?: SessionRuntimePermissionStatusDto | null;
   taskProvider?: ProviderId | null;
   taskMessages?: SessionMessageViewModel[];
   hasPendingQueuedMessages?: boolean;
@@ -565,6 +567,7 @@ export function ComposerPanel({
   hasActiveRun = null,
   canInterrupt = null,
   contextUsage = null,
+  permissionStatus = null,
   taskProvider = null,
   taskMessages = [],
   hasPendingQueuedMessages = false,
@@ -2689,6 +2692,7 @@ export function ComposerPanel({
                 </button>
               ) : null}
 
+              <ComposerPermissionStatusBadge permissionStatus={permissionStatus} />
               <ContextUsageRing contextUsage={contextUsage} />
               <SessionTaskProgressButton
                 provider={taskProvider}
@@ -3172,6 +3176,211 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
         : null}
     </>
   );
+}
+
+function ComposerPermissionStatusBadge({
+  permissionStatus
+}: {
+  permissionStatus: SessionRuntimePermissionStatusDto | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
+  const tooltipId = useId();
+
+  if (!permissionStatus || permissionStatus.source === "provider-non-codex") {
+    return null;
+  }
+
+  const toneClassName =
+    permissionStatus.effectiveSandboxMode === "danger-full-access"
+      ? "is-full-access"
+      : permissionStatus.effectiveSandboxMode === "workspace-write"
+        ? "is-workspace-write"
+        : "is-readonly";
+
+  const updateTooltipStyle = useCallback(() => {
+    const trigger = triggerRef.current;
+
+    if (!trigger || typeof window === "undefined") {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const edgePadding = 12;
+    const gap = 10;
+    const width = Math.min(300, Math.max(220, viewportWidth - edgePadding * 2));
+    const left = Math.min(
+      Math.max(edgePadding, rect.left + rect.width / 2 - width / 2),
+      Math.max(edgePadding, viewportWidth - width - edgePadding)
+    );
+    const spaceAbove = rect.top - edgePadding;
+    const spaceBelow = viewportHeight - rect.bottom - edgePadding;
+    const shouldPlaceAbove = spaceAbove >= 180 || spaceAbove >= spaceBelow;
+
+    setTooltipStyle({
+      position: "fixed",
+      left,
+      width,
+      maxWidth: viewportWidth - edgePadding * 2,
+      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
+      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+
+      if (!triggerRef.current?.contains(target) && !tooltipRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updateTooltipStyle);
+    window.addEventListener("scroll", updateTooltipStyle, true);
+    updateTooltipStyle();
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updateTooltipStyle);
+      window.removeEventListener("scroll", updateTooltipStyle, true);
+    };
+  }, [open, updateTooltipStyle]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`composer-permission-badge ${toneClassName}`}
+        aria-label={t("conversation.permissionStatusTitle")}
+        aria-expanded={open}
+        aria-describedby={open ? tooltipId : undefined}
+        onClick={() => setOpen((current) => !current)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        <span className="composer-permission-badge-label">
+          {formatPermissionStatusLabel(permissionStatus)}
+        </span>
+      </button>
+
+      {open && tooltipStyle && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={tooltipRef}
+              id={tooltipId}
+              className="composer-permission-tooltip"
+              style={tooltipStyle}
+              role="tooltip"
+            >
+              <div className="composer-permission-tooltip-title">
+                {t("conversation.permissionStatusTitle")}
+              </div>
+              <div className="composer-permission-tooltip-summary">
+                {permissionStatus.summary}
+              </div>
+              <dl className="composer-permission-tooltip-grid">
+                <div>
+                  <dt>{t("conversation.permissionStatusRequestedMode")}</dt>
+                  <dd>{formatRequestedPermissionMode(permissionStatus.requestedPermissionMode)}</dd>
+                </div>
+                <div>
+                  <dt>{t("conversation.permissionStatusEffectiveSandbox")}</dt>
+                  <dd>{formatSandboxMode(permissionStatus.effectiveSandboxMode)}</dd>
+                </div>
+                <div>
+                  <dt>{t("conversation.permissionStatusEffectiveApproval")}</dt>
+                  <dd>{formatApprovalPolicy(permissionStatus.effectiveApprovalPolicy)}</dd>
+                </div>
+                <div>
+                  <dt>{t("conversation.permissionStatusSource")}</dt>
+                  <dd>{formatPermissionSource(permissionStatus.source)}</dd>
+                </div>
+              </dl>
+              <div className="composer-permission-tooltip-detail">
+                {permissionStatus.detail}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
+function formatPermissionStatusLabel(permissionStatus: SessionRuntimePermissionStatusDto): string {
+  switch (permissionStatus.effectiveSandboxMode) {
+    case "workspace-write":
+      return t("conversation.permissionStatusWorkspaceWrite");
+    case "danger-full-access":
+      return t("conversation.permissionStatusDangerFullAccess");
+    default:
+      return t("conversation.permissionStatusCliDefault");
+  }
+}
+
+function formatRequestedPermissionMode(permissionMode: string | null): string {
+  if (permissionMode === "acceptEdits") {
+    return t("conversation.permissionStatusRequestedAcceptEdits");
+  }
+
+  if (permissionMode === "bypassPermissions") {
+    return t("conversation.permissionStatusRequestedBypassPermissions");
+  }
+
+  return t("conversation.permissionStatusRequestedDefault");
+}
+
+function formatSandboxMode(
+  sandboxMode: SessionRuntimePermissionStatusDto["effectiveSandboxMode"]
+): string {
+  if (sandboxMode === "workspace-write") {
+    return t("conversation.permissionStatusWorkspaceWrite");
+  }
+
+  if (sandboxMode === "danger-full-access") {
+    return t("conversation.permissionStatusDangerFullAccess");
+  }
+
+  return t("conversation.permissionStatusCliDefault");
+}
+
+function formatApprovalPolicy(
+  approvalPolicy: SessionRuntimePermissionStatusDto["effectiveApprovalPolicy"]
+): string {
+  if (approvalPolicy === "never") {
+    return t("conversation.permissionStatusApprovalNever");
+  }
+
+  return t("conversation.permissionStatusApprovalCliDefault");
+}
+
+function formatPermissionSource(source: SessionRuntimePermissionStatusDto["source"]): string {
+  if (source === "codingns-override") {
+    return t("conversation.permissionStatusSourceCodingns");
+  }
+
+  return t("conversation.permissionStatusSourceCli");
 }
 
 function getContextUsageStateClassName(progress: number): string {

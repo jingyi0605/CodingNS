@@ -322,6 +322,7 @@ function LiveConversationPage({
     permissionRequests,
     queuedMessages,
     contextUsage,
+    permissionStatus,
     historyState,
     runtimeInterruptSource,
     loadingOlderMessages,
@@ -875,6 +876,7 @@ function LiveConversationPage({
                 portalContainer={!showInlineHeader ? composerPortalTarget : null}
                 hasActiveRun={composerHasActiveRun}
                 contextUsage={contextUsage}
+                permissionStatus={permissionStatus}
                 taskProvider={(session ?? navigationSession)?.provider ?? null}
                 taskMessages={messages}
                 hasPendingQueuedMessages={hasPendingQueuedMessages}
@@ -1428,6 +1430,7 @@ function DraftConversationPage({
               panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
               portalContainer={!showInlineHeader ? composerPortalTarget : null}
               contextUsage={null}
+              permissionStatus={null}
               taskProvider={draft.provider}
               taskMessages={draftMessages}
               isSubmitting={sending}

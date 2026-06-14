@@ -43,6 +43,7 @@ import {
   type SessionActivityState,
   type SessionActivityConfidence,
   type SessionActivityResolutionSource,
+  type SessionRuntimePermissionStatusDto,
   type SessionSummaryDto,
   type SessionRuntimeDto,
   type SessionRunningState,
@@ -96,6 +97,7 @@ interface SessionRuntimeSnapshot {
   runtimeHasActiveRun: boolean | null;
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
+  permissionStatus: SessionRuntimePermissionStatusDto | null;
   messages: SessionMessageViewModel[];
   timelineItems: ConversationTimelineSourceItem[];
   permissionRequests: SessionPermissionRequestDto[];
@@ -240,6 +242,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
+      permissionStatus: cachedSnapshot?.permissionStatus ?? null,
       messages: seededTimeline.messages,
       timelineItems: buildConversationTimelineStateItems(
         seededSession,
@@ -347,6 +350,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
+      permissionStatus: cachedSnapshot?.permissionStatus ?? null,
       messages: reloadedTimeline.messages,
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
       queuedMessages: cachedSnapshot?.queuedMessages ?? [],
@@ -1364,6 +1368,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
         runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
+        permissionStatus: runtime.permissionStatus,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
       await this.refreshQueue();
@@ -1499,6 +1504,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
         runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
+        permissionStatus: runtime.permissionStatus,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
       await this.refreshQueue();
@@ -1801,6 +1807,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: this.state.runtimeHasActiveRun,
       runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage,
+      permissionStatus: this.state.permissionStatus,
       messages: buildSnapshotMessages(this.authoritativeMessages),
       timelineItems: buildConversationTimelineStateItems(
         this.state.session,
