@@ -241,6 +241,103 @@ rl.on("line", (line) => {
   }
 });
 
+test("CodexRuntimeAdapter 不等待 turn/start 响应就返回运行句柄", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-fast-launch-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-fast.jsonl").replace(/\\/g, "/");
+
+  writeFileSync(threadPath, "", "utf8");
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-fast",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-fast",
+        turn: { id: "turn-fast", items: [], status: "inProgress" }
+      }
+    });
+    return;
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}"\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}"\n`,
+    "utf8"
+  );
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      commandPath: launcherPath
+    });
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-fast",
+        workspacePath: "C:/workspace-1"
+      }),
+      {
+        async emit() {},
+        updateSessionBinding() {}
+      }
+    );
+
+    assert.equal(launch.providerSessionId, "thread-fast");
+    await launch.interrupt();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 支持直接使用 Node 脚本作为 codex 命令入口", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-script-"));
   const scriptPath = join(tempDir, "fake-codex-app-server.cjs");

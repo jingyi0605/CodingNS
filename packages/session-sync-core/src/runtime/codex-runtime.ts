@@ -2019,26 +2019,41 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
     },
     async startTurn(request, providerSessionId) {
       const startedAtMs = performance.now();
-      const result = await sendJsonRpcRequest(
+      sendJsonRpcRequestDetached(
         child,
         pendingResponses,
         () => nextJsonRpcId("turn-start", () => ++requestSequence),
         {
           method: "turn/start",
           params: createTurnStartParams(request, providerSessionId)
-        }
+        },
+        (result) => {
+          const turn = toRecord(result.turn);
+          activeTurnId = ensureText(readProp(turn, "id")).trim() || activeTurnId;
+
+          const completionNotification = buildCodexTurnCompletionNotification(turn, providerSessionId);
+
+          if (completionNotification) {
+            void notificationHandler(completionNotification);
+          }
+        },
+        (error) => {
+          void notificationHandler({
+            method: "error",
+            params: {
+              error: {
+                message: error.message
+              }
+            }
+          });
+        },
+        { timeoutMs: null }
       );
-      const turn = toRecord(result.turn);
-      activeTurnId = ensureText(readProp(turn, "id")).trim() || activeTurnId;
       logCodexRuntimeStep("transport.turn_start", startedAtMs, {
         sessionId: request.sessionId,
         providerSessionId,
         turnId: activeTurnId
       });
-
-      return {
-        notification: buildCodexTurnCompletionNotification(turn, providerSessionId)
-      };
     },
     async steerTurn(options) {
       if (!activeThreadId || !activeTurnId) {
@@ -3362,23 +3377,34 @@ function sendJsonRpcRequest(
   input: {
     method: string;
     params: Record<string, unknown>;
-  }
+  },
+  options: { timeoutMs?: number | null } = {}
 ): Promise<Record<string, unknown>> {
   const id = createRequestId();
 
   return new Promise<Record<string, unknown>>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingResponses.delete(id);
-      reject(new Error("SERVER_TIMEOUT"));
-    }, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
+    const timeoutMs = options.timeoutMs === undefined
+      ? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS
+      : options.timeoutMs;
+    const timeout =
+      typeof timeoutMs === "number" && timeoutMs > 0
+        ? setTimeout(() => {
+            pendingResponses.delete(id);
+            reject(new Error("SERVER_TIMEOUT"));
+          }, timeoutMs)
+        : null;
 
     pendingResponses.set(id, {
       resolve: (value) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         resolve(value);
       },
       reject: (error) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         reject(error);
       }
     });
@@ -3391,11 +3417,38 @@ function sendJsonRpcRequest(
         params: input.params
       });
     } catch (error) {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       pendingResponses.delete(id);
       reject(error instanceof Error ? error : new Error("CODEX_APP_SERVER_REQUEST_WRITE_FAILED"));
     }
   });
+}
+
+function sendJsonRpcRequestDetached(
+  child: ReturnType<typeof spawn>,
+  pendingResponses: Map<
+    string,
+    {
+      resolve: (value: Record<string, unknown>) => void;
+      reject: (error: Error) => void;
+    }
+  >,
+  createRequestId: () => string,
+  input: {
+    method: string;
+    params: Record<string, unknown>;
+  },
+  onResolved: (value: Record<string, unknown>) => void,
+  onRejected: (error: Error) => void,
+  options: { timeoutMs?: number | null } = {}
+): void {
+  void sendJsonRpcRequest(child, pendingResponses, createRequestId, input, options)
+    .then(onResolved)
+    .catch((error) => {
+      onRejected(error instanceof Error ? error : new Error(String(error)));
+    });
 }
 
 function readJsonRpcParams(parsed: Record<string, unknown>): Record<string, unknown> {
