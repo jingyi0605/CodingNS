@@ -56,6 +56,15 @@ function prepareOutputDirectory() {
   fs.mkdirSync(outputRoot, { recursive: true });
   fs.cpSync(hostBuildRoot, path.join(outputRoot, "server"), { recursive: true });
   fs.cpSync(userAppBuildRoot, path.join(outputRoot, "public"), { recursive: true });
+
+  const sourceHookBridgeScriptPath = path.join(workspaceRoot, "scripts", "claude-hook-bridge.cjs");
+  const targetScriptsRoot = path.join(packageRoot, "scripts");
+  ensureDirectoryExists(sourceHookBridgeScriptPath, "Claude Hook Bridge 脚本");
+  fs.mkdirSync(targetScriptsRoot, { recursive: true });
+  fs.copyFileSync(
+    sourceHookBridgeScriptPath,
+    path.join(targetScriptsRoot, "claude-hook-bridge.cjs")
+  );
 }
 
 function bundleSessionSyncCore() {
