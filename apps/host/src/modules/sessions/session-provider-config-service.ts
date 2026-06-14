@@ -659,6 +659,7 @@ export class SessionProviderConfigService {
         ? fs.readFileSync(sourceConfigPath, "utf8")
         : "";
 
+    syncOptionalFile(path.join(sourceHomeDir, ".codex-global-state.json"), path.join(runtimeHomeDir, ".codex-global-state.json"));
     syncOptionalFile(path.join(sourceHomeDir, "auth.json"), path.join(runtimeHomeDir, "auth.json"));
     syncOptionalDirectory(path.join(sourceHomeDir, "skills"), path.join(runtimeHomeDir, "skills"));
     writeTextFile(

@@ -52,6 +52,11 @@ describe("SessionProviderConfigService", () => {
       ].join("\n"),
       "utf8"
     );
+    writeFileSync(
+      path.join(codexHomeDir, ".codex-global-state.json"),
+      "{\n  \"electron-persisted-atom-state\": {\n    \"agent-mode-by-host-id\": { \"local\": \"full-access\" }\n  }\n}\n",
+      "utf8"
+    );
     writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
 
     const config = resolveHostConfig({
@@ -110,6 +115,9 @@ describe("SessionProviderConfigService", () => {
     expect(generatedConfig).toMatch(/^model = "gpt-5-codex"$/m);
     expect(generatedConfig).toContain("[model_providers.gmn]");
     expect(generatedConfig).toContain("[model_providers.api]");
+    expect(
+      readFileSync(path.join(runtimeHomeDir, ".codex-global-state.json"), "utf8")
+    ).toContain("\"full-access\"");
     expect(runtimeMetadata.runtimeEnv).toMatchObject({
       OPENAI_API_KEY: "sk-test-deepseek"
     });
