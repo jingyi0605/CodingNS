@@ -19,7 +19,7 @@ test("Codex acceptEdits 会切到 workspace-write 并关闭审批", () => {
   assert.equal(options.approvalPolicy, "never");
   assert.equal(options.sandboxMode, "workspace-write");
   assert.equal(options.sandbox, "workspace-write");
-  assert.deepEqual(options.sandboxPolicy, { mode: "workspace-write" });
+  assert.deepEqual(options.sandboxPolicy, { type: "workspaceWrite" });
 });
 
 test("Codex bypassPermissions 会切到 danger-full-access 并关闭审批", () => {
@@ -28,7 +28,7 @@ test("Codex bypassPermissions 会切到 danger-full-access 并关闭审批", () 
   assert.equal(options.approvalPolicy, "never");
   assert.equal(options.sandboxMode, "danger-full-access");
   assert.equal(options.sandbox, "danger-full-access");
-  assert.deepEqual(options.sandboxPolicy, { mode: "danger-full-access" });
+  assert.deepEqual(options.sandboxPolicy, { type: "dangerFullAccess" });
 });
 
 test("Codex 权限解析会返回面向状态页的解释", () => {

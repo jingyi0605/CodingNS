@@ -4,9 +4,21 @@ export interface CodexThreadPermissionOptions {
   approvalPolicy?: "never";
   sandbox?: CodexSandboxMode;
   sandboxMode?: CodexSandboxMode;
-  sandboxPolicy?: {
-    mode: CodexSandboxMode;
-  };
+  sandboxPolicy?:
+    | {
+        type: "readOnly";
+        networkAccess?: boolean;
+      }
+    | {
+        type: "workspaceWrite";
+        networkAccess?: boolean;
+        writableRoots?: string[];
+        excludeTmpdirEnvVar?: boolean;
+        excludeSlashTmp?: boolean;
+      }
+    | {
+        type: "dangerFullAccess";
+      };
 }
 
 export interface CodexPermissionResolution {
@@ -62,10 +74,30 @@ export function createCodexThreadPermissionOptions(
     approvalPolicy: resolution.approvalPolicy ?? undefined,
     sandbox: resolution.sandboxMode ?? undefined,
     sandboxMode: resolution.sandboxMode ?? undefined,
-    sandboxPolicy: resolution.sandboxMode
-      ? {
-          mode: resolution.sandboxMode
-        }
-      : undefined
+    sandboxPolicy: mapSandboxModeToSandboxPolicy(resolution.sandboxMode)
   };
+}
+
+function mapSandboxModeToSandboxPolicy(
+  sandboxMode: CodexSandboxMode | null
+): CodexThreadPermissionOptions["sandboxPolicy"] {
+  if (sandboxMode === "workspace-write") {
+    return {
+      type: "workspaceWrite"
+    };
+  }
+
+  if (sandboxMode === "danger-full-access") {
+    return {
+      type: "dangerFullAccess"
+    };
+  }
+
+  if (sandboxMode === "read-only") {
+    return {
+      type: "readOnly"
+    };
+  }
+
+  return undefined;
 }

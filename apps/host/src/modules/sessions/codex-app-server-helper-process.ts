@@ -1011,16 +1011,28 @@ function createCodexThreadPermissionOptions(
 ): {
   approvalPolicy?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  sandboxPolicy?: {
-    mode: "read-only" | "workspace-write" | "danger-full-access";
-  };
+  sandboxPolicy?:
+    | {
+        type: "readOnly";
+        networkAccess?: boolean;
+      }
+    | {
+        type: "workspaceWrite";
+        networkAccess?: boolean;
+        writableRoots?: string[];
+        excludeTmpdirEnvVar?: boolean;
+        excludeSlashTmp?: boolean;
+      }
+    | {
+        type: "dangerFullAccess";
+      };
 } {
   if (permissionMode === "bypassPermissions") {
     return {
       approvalPolicy: "never",
       sandbox: "danger-full-access",
       sandboxPolicy: {
-        mode: "danger-full-access"
+        type: "dangerFullAccess"
       }
     };
   }
@@ -1030,7 +1042,7 @@ function createCodexThreadPermissionOptions(
       approvalPolicy: "never",
       sandbox: "workspace-write",
       sandboxPolicy: {
-        mode: "workspace-write"
+        type: "workspaceWrite"
       }
     };
   }
