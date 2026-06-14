@@ -12,7 +12,6 @@ import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type { ModelPresetRuntimeConfigDto } from "../../src/modules/model-switch/cc-switch-adapter.js";
 import { SessionProviderConfigService } from "../../src/modules/sessions/session-provider-config-service.js";
 import { WorkspaceSessionRuntimeContextService } from "../../src/modules/sessions/workspace-session-runtime-context-service.js";
-import { CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV } from "../../src/modules/sessions/workspace-office-mcp-config.js";
 import {
   appendSessionProviderErrorContext,
   mapSessionProviderError
@@ -484,8 +483,7 @@ describe("SessionProviderConfigService", () => {
     expect(launchContext.providerInstructionFilePath).toBeTruthy();
     expect(launchContext.runtimeEnv).toMatchObject({
       OPENAI_API_KEY: "sk-test-deepseek",
-      WORKSPACE_SESSION_AUTH_FILE: expect.stringContaining("WORKSPACE_SESSION_AUTH.json"),
-      [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+      WORKSPACE_SESSION_AUTH_FILE: expect.stringContaining("WORKSPACE_SESSION_AUTH.json")
     });
   });
 

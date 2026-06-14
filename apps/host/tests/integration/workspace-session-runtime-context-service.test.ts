@@ -82,9 +82,9 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       CODINGNS_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_ASSISTANT_FILE: result.instructionFilePath,
-      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath,
-      [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath
     });
+    expect(result.runtimeEnv).not.toHaveProperty(CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV);
     expect(existsSync(result.authFilePath)).toBe(true);
     expect(existsSync(result.instructionFilePath)).toBe(true);
     expect(
@@ -129,6 +129,56 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       workspaceId: "workspace-1",
       sessionId: "session-1"
     });
+  });
+
+  it("Codex 只有显式开启时才会注入 workspace-office MCP 启动开关", () => {
+    const previous = process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT;
+    const workspacePath = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-runtime-"));
+    const runtimeStorageRootDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-global-runtime-"));
+    tempDirs.push(workspacePath);
+    tempDirs.push(runtimeStorageRootDir);
+
+    try {
+      process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT = "1";
+      const service = new WorkspaceSessionRuntimeContextService({
+        ensureWorkspaceCredential: vi.fn(() => ({
+          apiBaseUrl: "http://127.0.0.1:3002",
+          accessToken: "workspace-token",
+          issuedAt: "2026-05-16T10:00:00.000Z",
+          expiresAt: "2026-05-23T10:00:00.000Z",
+          userId: "user-1",
+          workspaceId: "workspace-1",
+          projectId: null,
+          sessionId: "session-codex-mcp",
+          callerKind: "workspace_session" as const,
+          capabilityProfile: "workspace-scoped" as const
+        })),
+        getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+          path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+        )
+      }, {
+        runtimeStorageRootDir
+      });
+
+      const result = service.prepareWorkspaceInstructionBundle({
+        sessionId: "session-codex-mcp",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspacePath,
+        provider: "codex",
+        projectId: null
+      });
+
+      expect(result.runtimeEnv).toMatchObject({
+        [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT;
+      } else {
+        process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT = previous;
+      }
+    }
   });
 
   it("provider=opencode 时会写出可供托管 server 直接读取的 MCP 配置", () => {

@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
-import { CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV } from "../../src/modules/sessions/workspace-office-mcp-config.js";
 
 const tempDirs: string[] = [];
 
@@ -1772,8 +1771,7 @@ describe("SessionLiveRuntimeService", () => {
         runtimeEnv: {
           CODINGNS_AUTH_FILE: workspaceAuthFilePath,
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-          [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }
       }))
     };
@@ -1868,8 +1866,7 @@ describe("SessionLiveRuntimeService", () => {
         runtimeEnv: expect.objectContaining({
           CODINGNS_AUTH_FILE: workspaceAuthFilePath,
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-          [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }),
         runtimeHomeDir: null,
         options: expect.objectContaining({
@@ -2000,8 +1997,7 @@ describe("SessionLiveRuntimeService", () => {
         runtimeEnv: {
           CODINGNS_AUTH_FILE: workspaceAuthFilePath,
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-          [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }
       }))
     };
@@ -2102,8 +2098,7 @@ describe("SessionLiveRuntimeService", () => {
         runtimeEnv: expect.objectContaining({
           CODINGNS_AUTH_FILE: workspaceAuthFilePath,
           WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-          [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+          CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
         }),
         runtimeHomeDir: null,
         options: expect.objectContaining({
@@ -2146,8 +2141,7 @@ describe("SessionLiveRuntimeService", () => {
           runtimeEnv: {
             CODINGNS_AUTH_FILE: workspaceAuthFilePath,
             WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-            [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
           }
         };
       })
@@ -2279,8 +2273,7 @@ describe("SessionLiveRuntimeService", () => {
           runtimeEnv: {
             CODINGNS_AUTH_FILE: workspaceAuthFilePath,
             WORKSPACE_SESSION_AUTH_FILE: workspaceAuthFilePath,
-            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath,
-            [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+            CODINGNS_OFFICE_MCP_AUTH_FILE: workspaceAuthFilePath
           }
         };
       })

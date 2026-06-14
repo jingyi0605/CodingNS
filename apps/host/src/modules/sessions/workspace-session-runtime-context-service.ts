@@ -569,13 +569,19 @@ function buildWorkspaceSessionRuntimeEnv(
     [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: authFilePath
   };
 
-  if (provider === "codex") {
+  if (provider === "codex" && shouldInjectCodexWorkspaceOfficeMcp()) {
     runtimeEnv[CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV] = "1";
   }
 
   runtimeEnv[CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV] = "1";
 
   return runtimeEnv;
+}
+
+function shouldInjectCodexWorkspaceOfficeMcp(): boolean {
+  return /^(1|true|yes)$/i.test(
+    (process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT ?? "").trim()
+  );
 }
 
 function collectWorkspaceSessionRuntimeHomeDirs(input: {
