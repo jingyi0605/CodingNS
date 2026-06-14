@@ -3,6 +3,7 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { t } from "../../../shared/i18n";
 import type { SessionPermissionRequestDto } from "../api/conversation-api";
 import { getProviderDisplayName, getProviderIcon } from "../capability/provider-ui";
+import { MarkdownText } from "./MessageMarkdown";
 
 interface PermissionRequestListProps {
   requests: SessionPermissionRequestDto[];
@@ -29,10 +30,7 @@ export function PermissionRequestList({
   return (
     <section className="permission-request-list">
       <div className="permission-request-list-header">
-        <div>
-          <strong>{t("conversation.permissionRequestSectionTitle")}</strong>
-          <p>{t("conversation.permissionRequestSectionDescription")}</p>
-        </div>
+        <strong>{t("conversation.permissionRequestSectionTitle")}</strong>
         <span className="permission-request-count">{pendingRequests.length}</span>
       </div>
 
@@ -131,10 +129,20 @@ export function PermissionRequestCard({
           </div>
         ) : null}
         {shouldShowSummary ? (
-          <p className="permission-request-summary">{request.summary}</p>
+          request.kind === "plan_approval" ? (
+            <div className="permission-request-plan-summary-scroll">
+              <MarkdownText
+                content={request.summary}
+                className="permission-request-summary markdown-content"
+                paragraphClassName="permission-request-summary-paragraph"
+              />
+            </div>
+          ) : (
+            <p className="permission-request-summary">{request.summary}</p>
+          )
         ) : null}
         {request.questions.length > 0 ? (
-          <div className="permission-request-block">
+          <div className={`permission-request-block${request.questions.length > 1 ? " permission-request-scrollable-questions" : ""}`}>
             <div className="permission-request-block-label">
               {t("conversation.permissionRequestQuestionsLabel")}
             </div>

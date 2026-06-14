@@ -13,6 +13,7 @@ interface ConversationTaskProgressCardProps {
   expanded?: boolean;
   exportMode?: boolean;
   className?: string;
+  hideClaudePlanNotes?: boolean;
   children?: ReactNode;
   onToggleExpanded?: () => void;
 }
@@ -23,6 +24,7 @@ export function ConversationTaskProgressCard({
   expanded = false,
   exportMode = false,
   className,
+  hideClaudePlanNotes = false,
   children,
   onToggleExpanded
 }: ConversationTaskProgressCardProps) {
@@ -63,7 +65,7 @@ export function ConversationTaskProgressCard({
         ) : null}
       </div>
 
-      {shouldShowClaudePlanNotes && (snapshot.explanation || (snapshot.allowedPrompts?.length ?? 0) > 0) ? (
+      {!hideClaudePlanNotes && shouldShowClaudePlanNotes && (snapshot.explanation || (snapshot.allowedPrompts?.length ?? 0) > 0) ? (
         <div className="task-tool-notes">
           {snapshot.explanation ? (
             <div className="task-tool-note-block">

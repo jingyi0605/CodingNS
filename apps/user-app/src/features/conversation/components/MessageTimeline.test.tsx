@@ -1139,15 +1139,12 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"allowedPrompts":/)).toBeInTheDocument();
   });
 
-  it("Claude 的 ExitPlanMode 说明会按 markdown 渲染，并在卡片内联展示计划审批", async () => {
-    const onReplyPermissionRequest = vi.fn().mockResolvedValue(undefined);
-
+  it("Claude 的 ExitPlanMode 在顶部有待处理审批时，不再重复显示底部计划说明", async () => {
     render(
       <MessageTimeline
         historyState="ready"
         provider="claude-code"
         onRetryMessage={vi.fn()}
-        onReplyPermissionRequest={onReplyPermissionRequest}
         replyingPermissionRequestId={null}
         permissionRequests={[
           {
@@ -1229,20 +1226,9 @@ describe("MessageTimeline", () => {
       />
     );
 
-    expect(screen.getByRole("heading", { name: "本轮更新" })).toBeInTheDocument();
-    expect(screen.getByText("先把审批卡片贴到计划下面")).toBeInTheDocument();
-    expect(screen.getByText("再补 markdown 展示")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "批准计划" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "退回计划" })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "批准计划" }));
-
-    await waitFor(() => {
-      expect(onReplyPermissionRequest).toHaveBeenCalledWith("permission-plan-1", {
-        action: "allow",
-        answers: undefined
-      });
-    });
+    expect(screen.queryByRole("heading", { name: "本轮更新" })).not.toBeInTheDocument();
+    expect(screen.queryByText("先把审批卡片贴到计划下面")).not.toBeInTheDocument();
+    expect(screen.queryByText("再补 markdown 展示")).not.toBeInTheDocument();
   });
 
   it("Claude TaskUpdate 只有 taskId 时也会渲染成任务卡片", async () => {
