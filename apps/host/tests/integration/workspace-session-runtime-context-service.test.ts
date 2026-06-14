@@ -33,6 +33,11 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       "utf8"
     );
     mkdirSync(path.join(codexHomeDir, "skills", "demo"), { recursive: true });
+    writeFileSync(
+      path.join(codexHomeDir, ".codex-global-state.json"),
+      "{\n  \"electron-persisted-atom-state\": {\n    \"agent-mode-by-host-id\": { \"local\": \"full-access\" }\n  }\n}\n",
+      "utf8"
+    );
     writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
     writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5-codex\"\n", "utf8");
     writeFileSync(path.join(codexHomeDir, "skills", "demo", "SKILL.md"), "# Demo\n", "utf8");
@@ -102,6 +107,9 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     expect(instructionContent).toContain("必须走 `office.browser.*`");
     const codexConfigPath = path.join(result.runtimeHomeDir, "config.toml");
     const codexConfig = readFileSync(codexConfigPath, "utf8");
+    expect(
+      readFileSync(path.join(result.runtimeHomeDir, ".codex-global-state.json"), "utf8")
+    ).toContain("\"full-access\"");
     expect(readFileSync(path.join(result.runtimeHomeDir, "auth.json"), "utf8")).toContain("\"openai\": true");
     expect(codexConfig).toContain("model_instructions_file");
     expect(codexConfig).toContain("model = \"gpt-5-codex\"");
