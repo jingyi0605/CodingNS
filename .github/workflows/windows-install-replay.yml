@@ -39,7 +39,8 @@ env:
 jobs:
   replay-install:
     name: replay-install
-    runs-on: windows-latest
+    # 固定到已知可用的 Windows 2022 镜像，避免 windows-latest 升级后 node-gyp 探测失配
+    runs-on: windows-2022
     timeout-minutes: 45
     permissions:
       contents: read
