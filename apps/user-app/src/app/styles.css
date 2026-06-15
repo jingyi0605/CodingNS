@@ -31127,6 +31127,26 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   box-shadow: none;
 }
 
+.permission-request-card-user_input {
+  border-color: color-mix(in srgb, #d97706 18%, var(--permission-panel-border));
+  background:
+    linear-gradient(180deg, rgba(255, 248, 234, 0.98), rgba(255, 244, 223, 0.94)),
+    color-mix(in srgb, var(--permission-panel-surface) 88%, #fff6e7 12%);
+  box-shadow:
+    0 10px 24px rgba(217, 119, 6, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.permission-request-card-plan_approval {
+  border-color: color-mix(in srgb, #2563eb 16%, var(--permission-panel-border));
+  background:
+    linear-gradient(180deg, rgba(238, 246, 255, 0.98), rgba(230, 241, 255, 0.94)),
+    color-mix(in srgb, var(--permission-panel-surface) 88%, #eef6ff 12%);
+  box-shadow:
+    0 10px 24px rgba(37, 99, 235, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
 .permission-request-card-inline {
   margin-top: 6px;
 }
@@ -31194,6 +31214,16 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   color: var(--text-secondary, #5f6b7a);
   font-size: 10px;
   font-weight: 500;
+}
+
+.permission-request-card-user_input .permission-request-kind {
+  background: color-mix(in srgb, #f59e0b 16%, white 84%);
+  color: #a16207;
+}
+
+.permission-request-card-plan_approval .permission-request-kind {
+  background: color-mix(in srgb, #60a5fa 16%, white 84%);
+  color: #1d4ed8;
 }
 
 .permission-request-card-body {

@@ -385,4 +385,80 @@ describe("PermissionRequestList", () => {
     expect(questionBlock).not.toBeNull();
     expect(questionBlock?.classList.contains("permission-request-scrollable-questions")).toBe(true);
   });
+
+  it("问题审批和计划审批会带不同的视觉主题 class", () => {
+    render(
+      <PermissionRequestList
+        requests={[
+          {
+            id: "permission-theme-ask-1",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "ask-1",
+            kind: "user_input",
+            status: "pending",
+            title: "Claude 需要你回答问题",
+            summary: "请选择任务类型",
+            detail: null,
+            reason: null,
+            toolName: "AskUserQuestion",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [],
+            actions: [
+              {
+                value: "submit",
+                label: "提交选择",
+                tone: "primary",
+                description: "把选择结果交给 Claude"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-15T09:00:00.000Z",
+            updatedAt: "2026-06-15T09:00:00.000Z",
+            resolvedAt: null
+          },
+          {
+            id: "permission-theme-plan-1",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "plan-1",
+            kind: "plan_approval",
+            status: "pending",
+            title: "Claude 请求确认执行计划",
+            summary: "## 本轮计划",
+            detail: null,
+            reason: null,
+            toolName: "ExitPlanMode",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [],
+            actions: [
+              {
+                value: "allow",
+                label: "批准计划",
+                tone: "primary",
+                description: "允许继续执行"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-15T09:00:00.000Z",
+            updatedAt: "2026-06-15T09:00:00.000Z",
+            resolvedAt: null
+          }
+        ]}
+        replyingRequestId={null}
+        onReply={vi.fn()}
+      />
+    );
+
+    expect(document.querySelector(".permission-request-card-user_input")).not.toBeNull();
+    expect(document.querySelector(".permission-request-card-plan_approval")).not.toBeNull();
+  });
 });

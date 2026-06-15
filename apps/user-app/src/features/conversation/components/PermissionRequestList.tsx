@@ -93,7 +93,11 @@ export function PermissionRequestCard({
     );
 
   return (
-    <article className={className ? `permission-request-card ${className}` : "permission-request-card"}>
+    <article
+      className={className
+        ? `permission-request-card permission-request-card-${request.kind} ${className}`
+        : `permission-request-card permission-request-card-${request.kind}`}
+    >
       <header className="permission-request-card-header">
         <div className="permission-request-provider">
           <span className="permission-request-provider-icon" aria-hidden="true">
