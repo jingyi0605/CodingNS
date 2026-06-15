@@ -32,9 +32,6 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceNavigationHiddenColumn(db);
   ensureWorkspaceNavigationShortcutAppsColumns(db);
   ensureWorkspaceNavigationAffairsLibraryColumns(db);
-  ensureOpenCliProviderSchema(db);
-  ensureOpenCliCatalogSchema(db);
-  ensureOpenCliRuntimeProfileSchema(db);
   ensureSessionProviderSchema(db);
   ensureSessionBindingUserSchema(db);
   ensureSessionBindingPresetSchema(db);
@@ -82,7 +79,6 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensurePluginRuntimeSessionSchema(db);
   ensurePluginPermissionGrantSchema(db);
   ensurePluginRunSchema(db);
-  ensureOpsTargetWorkspaceSchema(db);
   ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureVerificationRunSchema(db);
@@ -104,7 +100,6 @@ function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   ensureSessionBindingUserSchema(db);
   ensureButlerOwnershipPreSchemaCompatibility(db);
   ensureUserTeableFormBindingsPreSchemaCompatibility(db);
-  ensureOpsTargetWorkspaceSchema(db);
   ensureManagedSkillScopeSchema(db);
   ensureAuthTokenCallerKindSchema(db);
 }
@@ -1931,72 +1926,6 @@ function ensureManagedSkillScopeSchema(db: BetterSqliteDatabase): void {
   `);
 }
 
-function ensureOpenCliProviderSchema(db: BetterSqliteDatabase): void {
-  const columns = db
-    .prepare("PRAGMA table_info(opencli_providers)")
-    .all() as Array<{ name: string }>;
-
-  if (columns.length === 0) {
-    return;
-  }
-
-  const columnNames = new Set(columns.map((column) => column.name));
-
-  if (!columnNames.has("catalog_refreshed_at")) {
-    db.exec("ALTER TABLE opencli_providers ADD COLUMN catalog_refreshed_at TEXT");
-  }
-
-  if (!columnNames.has("catalog_source")) {
-    db.exec(
-      "ALTER TABLE opencli_providers ADD COLUMN catalog_source TEXT CHECK (catalog_source IS NULL OR catalog_source IN ('manifest', 'cli_list', 'local_manifest', 'cache'))"
-    );
-  }
-}
-
-function ensureOpenCliCatalogSchema(db: BetterSqliteDatabase): void {
-  const columns = db
-    .prepare("PRAGMA table_info(opencli_catalog_entries)")
-    .all() as Array<{ name: string }>;
-
-  if (columns.length === 0) {
-    return;
-  }
-
-  const columnNames = new Set(columns.map((column) => column.name));
-
-  if (!columnNames.has("module_path")) {
-    db.exec("ALTER TABLE opencli_catalog_entries ADD COLUMN module_path TEXT");
-  }
-
-  if (!columnNames.has("source_file")) {
-    db.exec("ALTER TABLE opencli_catalog_entries ADD COLUMN source_file TEXT");
-  }
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_site_sort
-      ON opencli_catalog_entries(provider_id, site, sort_order, command_id)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_enabled
-      ON opencli_catalog_entries(provider_id, enabled, site)
-  `);
-}
-
-function ensureOpenCliRuntimeProfileSchema(db: BetterSqliteDatabase): void {
-  const columns = db
-    .prepare("PRAGMA table_info(opencli_runtime_profiles)")
-    .all() as Array<{ name: string }>;
-
-  if (columns.length === 0) {
-    return;
-  }
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_opencli_runtime_profiles_status
-      ON opencli_runtime_profiles(status, updated_at DESC)
-  `);
-}
-
 function ensureButlerControlSessionSchema(db: BetterSqliteDatabase): void {
   const columns = db
     .prepare("PRAGMA table_info(butler_control_sessions)")
@@ -2249,23 +2178,6 @@ function ensureOnlyOfficeSettingsSchema(db: BetterSqliteDatabase): void {
   if (!columnNames.has("user_avatar_url")) {
     db.exec("ALTER TABLE office_onlyoffice_settings ADD COLUMN user_avatar_url TEXT");
   }
-}
-
-function ensureOpsTargetWorkspaceSchema(db: BetterSqliteDatabase): void {
-  if (!tableExists(db, "ops_targets")) {
-    return;
-  }
-
-  const columns = db
-    .prepare("PRAGMA table_info(ops_targets)")
-    .all() as Array<{ name: string }>;
-  const columnNames = new Set(columns.map((column) => column.name));
-
-  if (!columnNames.has("workspace_id")) {
-    db.exec("ALTER TABLE ops_targets ADD COLUMN workspace_id TEXT");
-  }
-
-  db.exec("CREATE INDEX IF NOT EXISTS idx_ops_targets_workspace_id ON ops_targets(workspace_id)");
 }
 
 function ensureButlerInboxSchema(db: BetterSqliteDatabase): void {
