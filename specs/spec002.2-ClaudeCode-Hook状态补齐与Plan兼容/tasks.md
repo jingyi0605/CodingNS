@@ -166,8 +166,8 @@
 
 - [x] 1.1 给 Claude Hook settings 补上 `ExitPlanMode` matcher
   - 状态：DONE
-  - 这一步到底做什么：修改 Claude Hook settings 生成逻辑，让 `ExitPlanMode` 能通过 `PreToolUse` 进入现有 Hook bridge。
-  - 做完你能看到什么：Claude 计划模式结束时，CodingNS 能收到请求，不再漏掉。
+  - 这一步到底做什么：修改 Claude Hook settings 生成逻辑，让 `ExitPlanMode` 和 `AskUserQuestion` 一起通过 `PreToolUse` 进入现有 Hook bridge。
+  - 做完你能看到什么：Claude 计划模式结束时，CodingNS 能收到计划审批请求，不再漏掉。
   - 先依赖什么：0.2
   - 开始前先看：
     - `requirements.md` 需求 2、需求 5
@@ -177,9 +177,10 @@
     - `apps/host/tests/integration/session-permission-request-service.test.ts`
   - 这一步先不做什么：不顺手改前端展示。
   - 怎么算完成：
-    1. `ExitPlanMode` 进入 matcher
+    1. `ExitPlanMode` 进入 `PreToolUse` matcher
     2. 现有 `AskUserQuestion` matcher 还在
   - 怎么验证：
+    - `node --test packages/session-sync-core/tests/claude-runtime-permissions.test.mjs`
     - `CI=1 pnpm --dir apps/host test tests/integration/session-permission-request-service.test.ts`
   - 对应需求：`requirements.md` 需求 2、需求 5
   - 对应设计：`design.md` §2.1.1、§4.3.1
@@ -208,7 +209,7 @@
 - [x] 1.3 阶段检查：Claude Plan 审批主链路已经通了
   - 状态：DONE
   - 这一步到底做什么：只检查 Claude 计划审批是不是已经从 Hook 到 Host 打通，不扩新范围。
-  - 做完你能看到什么：Claude 能真正把计划请求送进 CodingNS，而不是继续漏接。
+  - 做完你能看到什么：Claude 能真正把计划请求送进 CodingNS，并在用户批准后收到 `PreToolUse + updatedInput` 风格的允许结果，而不是误判成拒绝。
   - 先依赖什么：1.1、1.2
   - 开始前先看：
     - `requirements.md`
@@ -218,9 +219,9 @@
   - 这一步先不做什么：不开始补一堆运行态事件。
   - 怎么算完成：
     1. `ExitPlanMode` 已能创建审批请求
-    2. 批准和拒绝都有明确回写
+    2. 批准和拒绝都有明确回写，且批准不会再被 Claude 误判成拒绝
   - 怎么验证：
-    - `CI=1 pnpm --dir apps/host test tests/integration/session-permission-request-service.test.ts`
+    - `CI=1 pnpm --dir apps/host test tests/integration/session-live-runtime-service.test.ts`
   - 对应需求：`requirements.md` 需求 2、需求 5
   - 对应设计：`design.md` §3.3.1、§4.3.3
 
