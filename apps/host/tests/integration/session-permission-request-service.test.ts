@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { resolveClaudePreToolUseHookMatchers } from "@codingns/session-sync-core/runtime/claude-runtime";
+import {
+  resolveClaudePreToolUseHookMatchers
+} from "@codingns/session-sync-core/runtime/claude-runtime";
 
 import {
   buildClaudeAskUserQuestionAnswers,

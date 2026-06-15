@@ -585,6 +585,7 @@ export class SessionPermissionRequestService {
         : normalized.kind === "plan_approval"
           ? buildClaudeExitPlanModeBridgeResponse(
               decision.action,
+              payload.tool_input,
               buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
             )
         : buildClaudePreToolUseBridgeResponse(
@@ -2080,9 +2081,24 @@ function buildClaudeAskUserQuestionBridgeResponse(
 
 function buildClaudeExitPlanModeBridgeResponse(
   action: "allow" | "deny" | "ask",
+  originalInput: unknown,
   reason: string
 ): Record<string, unknown> {
-  return buildClaudePreToolUseBridgeResponse(action, reason);
+  const originalInputRecord = toRecord(originalInput);
+  const response = buildClaudePreToolUseBridgeResponse(action, reason);
+
+  if (action !== "allow") {
+    return response;
+  }
+
+  return {
+    hookSpecificOutput: {
+      ...(response.hookSpecificOutput as Record<string, unknown>),
+      updatedInput: {
+        ...(originalInputRecord ?? {})
+      }
+    }
+  };
 }
 
 function buildClaudePermissionRequestBridgeResponse(
