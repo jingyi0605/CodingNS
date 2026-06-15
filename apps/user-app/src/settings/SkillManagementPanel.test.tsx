@@ -31,7 +31,7 @@ describe("SkillManagementPanel", () => {
     clearProviderCatalogStore();
   });
 
-  it("可以加载 Skill 概况，并支持导入未纳管项与重新同步", async () => {
+  it("只展示 SKILL 管理，并支持导入、上传和重新同步", async () => {
     let imported = false;
     let uploaded = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -44,53 +44,6 @@ describe("SkillManagementPanel", () => {
 
       if (url.endsWith("/api/providers/catalog") && method === "GET") {
         return createJsonResponse({ items: createProviderCatalogResponse() });
-      }
-
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
-        return createJsonResponse({
-          provider: "opencli",
-          availability: "ready",
-          detail: null,
-          checkedAt: "2026-05-17T08:00:00.000Z",
-          installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-          version: "0.1.0"
-        });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
       }
 
       if (url.endsWith("/api/skills") && method === "POST") {
@@ -129,51 +82,16 @@ describe("SkillManagementPanel", () => {
     global.fetch = fetchMock as typeof fetch;
 
     renderPanel();
-
-    expect(await screen.findByText(t("settings.skillManageAction"))).toBeInTheDocument();
-    expect(screen.queryByText("codingns-assistant")).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
 
     const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
 
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabSkills") })).toHaveAttribute("aria-selected", "true");
-    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") })).toHaveAttribute("aria-selected", "false");
-    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOps") })).toHaveAttribute("aria-selected", "false");
-    expect(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") })).toHaveAttribute("aria-selected", "false");
-    expect(
-      within(dialog).queryByRole("heading", { level: 3, name: t("settings.opencliSectionTitle") })
-    ).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(t("settings.skillSummaryUnmanagedEntries"))).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(t("settings.skillSummaryAssistantRuntimeEntries"))).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
     expect(within(dialog).getByText("team-helper")).toBeInTheDocument();
     expect(within(dialog).getByText("sample-helper")).toBeInTheDocument();
     expect(within(dialog).getByText("codingns-assistant")).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("heading", {
-        level: 3,
-        name: t("settings.skillAssistantRuntimeListTitle")
-      })
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillAssistantRuntimeListDescription"))).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillConflictedEmpty"))).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillDiagnosticsEmpty"))).toBeInTheDocument();
-    expect(within(dialog).getAllByText(t("settings.skillTagAssistantOnly")).length).toBeGreaterThan(0);
     expect(within(dialog).getByText("codingns-workspace-session")).toBeInTheDocument();
     expect(within(dialog).getByText(t("settings.skillTagWorkspaceSessionOnly"))).toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOpenCli") }));
-    expect(
-      await within(dialog).findByRole("checkbox", { name: t("settings.opencliProviderToggleLabel") })
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: t("settings.opencliRefreshAction") })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: t("settings.opencliDetailAction") })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: t("settings.opencliSaveAction") })).toBeInTheDocument();
-    expect(within(dialog).queryByText("team-helper")).not.toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabSkills") }));
-    expect(await within(dialog).findByText("team-helper")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
 
@@ -206,14 +124,8 @@ describe("SkillManagementPanel", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: t("settings.skillImportAction") })).not.toBeInTheDocument();
     });
-    expect(screen.getByText(t("settings.skillImportSuccess", {
-      name: "sample-helper",
-      target: t("settings.skillTargetClaudeCode")
-    }))).toBeInTheDocument();
 
-    const teamHelperTitle = screen.getByText("team-helper");
-    const teamHelperCard = teamHelperTitle.closest(".settings-skill-entry");
-
+    const teamHelperCard = screen.getByText("team-helper").closest(".settings-skill-entry");
     expect(teamHelperCard).not.toBeNull();
 
     await userEvent.click(
@@ -221,20 +133,11 @@ describe("SkillManagementPanel", () => {
     );
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input, init]) => {
-        return (
-          String(input).endsWith("/api/skills/sync") &&
-          (init?.method ?? "GET").toUpperCase() === "POST"
-        );
-      })).toBe(true);
+      expect(fetchMock.mock.calls.some(([input, requestInit]) =>
+        String(input).endsWith("/api/skills/sync")
+        && (requestInit?.method ?? "GET").toUpperCase() === "POST"
+      )).toBe(true);
     });
-    expect(
-      screen.getByText(
-        t("settings.skillSyncSuccess", {
-          name: "team-helper"
-        })
-      )
-    ).toBeInTheDocument();
   });
 
   it("可以通过粘贴文本把 SKILL 纳管到助手专用作用域", async () => {
@@ -251,42 +154,6 @@ describe("SkillManagementPanel", () => {
 
       if (url.endsWith("/api/providers/catalog") && method === "GET") {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
-      }
-
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
       }
 
       if (url.endsWith("/api/skills") && method === "POST") {
@@ -308,10 +175,9 @@ describe("SkillManagementPanel", () => {
 
     renderPanel();
     await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
-
     const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
 
+    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
     const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
     await userEvent.click(within(createDialog).getByRole("tab", { name: t("settings.skillCreateSourcePaste") }));
     await userEvent.click(within(createDialog).getByRole("radio", { name: t("settings.skillUploadScopeAssistant") }));
@@ -319,7 +185,6 @@ describe("SkillManagementPanel", () => {
       within(createDialog).getByLabelText(t("settings.skillPasteLabel")),
       "# Butler Inbox Helper\n\n这是一个助手专用 skill。"
     );
-    expect(within(createDialog).queryByText(t("settings.skillUploadDirectoryLabel"))).not.toBeInTheDocument();
     await userEvent.click(within(createDialog).getByRole("button", { name: t("settings.skillCreateSubmitAction") }));
 
     const butlerHelperTitle = await screen.findByText("Butler Inbox Helper");
@@ -328,11 +193,6 @@ describe("SkillManagementPanel", () => {
     expect(butlerHelperCard).not.toBeNull();
     expect(
       within(butlerHelperCard as HTMLElement).getByText(t("settings.skillAssistantRuntimeItemDescription"))
-    ).toBeInTheDocument();
-    expect(
-      within(butlerHelperCard as HTMLElement).getByText(
-        `${t("settings.skillAssistantRuntimeUsedBy")}: ${t("settings.skillTargetCodex")}`
-      )
     ).toBeInTheDocument();
   });
 
@@ -351,42 +211,6 @@ describe("SkillManagementPanel", () => {
 
       if (url.endsWith("/api/providers/catalog") && method === "GET") {
         return createJsonResponse({ items: createProviderCatalogResponse({ codexEnabled: false }) });
-      }
-
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
       }
 
       throw new Error(`Unexpected request: ${method} ${url}`);
@@ -409,337 +233,6 @@ describe("SkillManagementPanel", () => {
     const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
     expect(within(createDialog).getByRole("checkbox", { name: `${t("settings.skillTargetCodex")} · ${t("settings.skillTargetDisabledTag")}` })).toBeDisabled();
     expect(within(createDialog).getByRole("checkbox", { name: t("settings.skillTargetClaudeCode") })).toBeChecked();
-
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills/sync"))).toBe(false);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/skills"))).toBe(false);
-  });
-
-  it("可以在办公和运维标签页查看模板、任务和 SSH 主机", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-
-      if (url.endsWith("/api/skills/overview") && method === "GET") {
-        return createJsonResponse(createSkillOverviewResponse({
-          imported: false,
-          uploaded: false,
-          assistantUploaded: false
-        }));
-      }
-
-      if (url.endsWith("/api/providers/catalog") && method === "GET") {
-        return createJsonResponse({ items: createProviderCatalogResponse() });
-      }
-
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "POST") {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          workspaceId: "workspace-1",
-          displayName: "办公 Chrome",
-          engine: "chrome",
-          mode: "persistent",
-          ownershipScope: "workspace",
-          cdpEndpoint: null
-        });
-        return createJsonResponse(createBrowserProfilesResponse()[0]);
-      }
-
-      if (url.includes("/api/office/browser/profiles/browser-profile-1") && method === "PATCH") {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          ownershipScope: "user"
-        });
-        return createJsonResponse({
-          ...createBrowserProfilesResponse()[0],
-          ownershipScope: "user"
-        });
-      }
-
-      if (url.includes("/api/office/browser/profiles/browser-profile-1") && method === "DELETE") {
-        return createJsonResponse({
-          profileId: "browser-profile-1",
-          deleted: true
-        });
-      }
-
-      if (url.includes("/api/office/browser/tasks/browser-task-1/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.endsWith("/api/office/browser/tasks/browser-task-1/execute") && method === "POST") {
-        return createJsonResponse({
-          taskId: "browser-task-1",
-          executionTaskId: "execution-task-1",
-          deduped: false
-        });
-      }
-
-      if (url.endsWith("/api/office/browser/tasks/browser-task-1/execution/cancel") && method === "POST") {
-        return createJsonResponse({
-          taskId: "browser-task-1",
-          cancelled: true
-        });
-      }
-
-      if (url.includes("/api/office/document-templates/import-file") && method === "POST") {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          fileName: "quarterly-report.domt",
-          fileContentBase64: btoa("fake domt template")
-        });
-        return createJsonResponse(createImportedDocumentTemplateResponse());
-      }
-
-      if (url.includes("/api/office/tasks/task-1") && method === "GET") {
-        return createJsonResponse(createOfficeTaskDetailResponse());
-      }
-
-      if (url.includes("/api/office/tasks/browser-task-1") && method === "GET") {
-        return createJsonResponse(createBrowserOfficeTaskDetailResponse());
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/approvals/approval-1/reply") && method === "POST") {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          status: "approved",
-          decisionNote: t("settings.skillOpsApprovalApproveNote")
-        });
-        return createJsonResponse({});
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
-      }
-
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
-
-    global.fetch = fetchMock as typeof fetch;
-
-    renderPanel("workspace-1");
-    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
-
-    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
-    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") }));
-
-    expect(await within(dialog).findByText(t("settings.skillOfficeTemplateListTitle"))).toBeInTheDocument();
-    expect(within(dialog).getByText("项目日报模板")).toBeInTheDocument();
-    expect(within(dialog).getAllByText("办公 Chrome").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("跨区 Edge")).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillOfficeScoped"))).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillOfficeBrowserBridgeSummaryLabel"))).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input, requestInit]) => {
-      return (
-        String(input).endsWith("/api/office/browser/bridge-status")
-        && (requestInit?.method ?? "GET").toUpperCase() === "GET"
-      );
-    })).toBe(true);
-    expect(within(dialog).getByText("工作区：当前工作区")).toBeInTheDocument();
-    expect(within(dialog).getByText("工作区：历史工作区")).toBeInTheDocument();
-    expect(within(dialog).getByText(t("settings.skillOfficeBrowserProfileCrossWorkspaceTag"))).toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileOpenCreateAction") }));
-    const browserProfileModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeBrowserProfileModalTitle") });
-    await userEvent.type(within(browserProfileModal).getByLabelText(t("settings.skillOfficeBrowserProfileNameLabel")), "办公 Chrome");
-    await userEvent.click(within(browserProfileModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileSaveAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeBrowserProfileCreated"))).toBeInTheDocument();
-    });
-
-    expect(within(dialog).queryByRole("button", { name: "新建浏览器实例" })).not.toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("checkbox", { name: t("settings.skillOfficeBrowserProfileOnlyCurrentWorkspace") }));
-    expect(within(dialog).queryByText("跨区 Edge")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("办公 Chrome")).toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileOptionAction") }));
-    const browserProfileOptionsModal = await screen.findByRole("dialog", { name: "办公 Chrome 的选项" });
-    await userEvent.click(within(browserProfileOptionsModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileAllowCrossWorkspaceAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeBrowserProfileCrossWorkspaceEnabled"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileTaskAction") }));
-    const browserTaskModal = await screen.findByRole("dialog", { name: "办公 Chrome 的任务记录" });
-    expect(within(browserTaskModal).getByText("日报采集")).toBeInTheDocument();
-    expect(within(browserTaskModal).getAllByText(t("settings.skillOfficeBrowserExecutionBackendPlaywright")).length).toBeGreaterThan(0);
-
-    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceDetailAction") }));
-    expect(await within(browserTaskModal).findByText("读取页面 DOM · succeeded")).toBeInTheDocument();
-
-    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceExecuteAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeBrowserInstanceStarted"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(browserTaskModal).getByRole("button", { name: t("settings.skillOfficeBrowserInstanceCancelAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeBrowserInstanceCancelled"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeBrowserProfileDeleteAction") }));
-    const browserProfileDeleteModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeBrowserProfileDeleteModalTitle") });
-    await userEvent.click(within(browserProfileDeleteModal).getByRole("button", { name: t("settings.skillOfficeBrowserProfileDeleteConfirmAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeBrowserProfileDeleted"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOfficeTemplateOpenCreateAction") }));
-    const officeModal = await screen.findByRole("dialog", { name: t("settings.skillOfficeTemplateModalTitle") });
-    const templateUploadInput = officeModal.querySelector('input[type="file"]');
-    expect(templateUploadInput).not.toBeNull();
-
-    await userEvent.upload(
-      templateUploadInput as HTMLInputElement,
-      new File(["fake domt template"], "quarterly-report.domt", {
-        type: "application/octet-stream"
-      })
-    );
-
-    expect(await within(officeModal).findByText("quarterly-report.domt")).toBeInTheDocument();
-    await userEvent.click(within(officeModal).getByRole("button", { name: t("settings.skillOfficeTemplateSaveAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOfficeTemplateImported"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOps") }));
-
-    expect(await within(dialog).findByText("发布前巡检")).toBeInTheDocument();
-    expect(within(dialog).getByText("预发 SSH")).toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsTaskDetailAction") }));
-    expect(await within(dialog).findByText("pending")).toBeInTheDocument();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsApprovalApproveAction") }));
-    await waitFor(() => {
-      expect(screen.getByText(t("settings.skillOpsApprovalApproved"))).toBeInTheDocument();
-    });
-
-    await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillOpsTargetEditAction") }));
-    const opsModal = await screen.findByRole("dialog", { name: t("settings.skillOpsTargetModalTitle") });
-    expect(within(opsModal).getByDisplayValue("pre.example.internal")).toBeInTheDocument();
-    expect(within(opsModal).getByDisplayValue("/Users/jackson/.ssh/id_ed25519")).toBeInTheDocument();
-  });
-
-  it("ONLYOFFICE 配置会显示单独的设置按钮，并在独立弹窗里编辑", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      const onlyOfficeResponse = matchOnlyOfficeRequest(url, method, init);
-
-      if (onlyOfficeResponse) {
-        return onlyOfficeResponse;
-      }
-
-      if (url.endsWith("/api/skills/overview") && method === "GET") {
-        return createJsonResponse(createSkillOverviewResponse({
-          imported: false,
-          uploaded: false,
-          assistantUploaded: false
-        }));
-      }
-
-      if (url.endsWith("/api/providers/catalog") && method === "GET") {
-        return createJsonResponse({ items: createProviderCatalogResponse() });
-      }
-
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
-        return createJsonResponse({
-          provider: "opencli",
-          availability: "ready",
-          detail: null,
-          checkedAt: "2026-05-17T08:00:00.000Z",
-          installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-          version: "0.1.0"
-        });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
-      }
-
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
-
-    global.fetch = fetchMock as typeof fetch;
-
-    renderPanel("workspace-1");
-    await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
-
-    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
-    await userEvent.click(within(dialog).getByRole("tab", { name: t("settings.skillConfigTabOffice") }));
-
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: t("settings.skillOnlyOfficeOpenSettingsAction") })
-    );
-
-    const onlyOfficeModal = await screen.findByRole("dialog", { name: t("settings.skillOnlyOfficeModalTitle") });
-    expect(within(onlyOfficeModal).getByDisplayValue("http://127.0.0.1:8088")).toBeInTheDocument();
-    expect(within(onlyOfficeModal).getByDisplayValue("http://127.0.0.1:3002")).toBeInTheDocument();
-    expect(within(onlyOfficeModal).getByDisplayValue("产品演示账号")).toBeInTheDocument();
-    expect(within(onlyOfficeModal).getByDisplayValue("https://example.com/avatar.png")).toBeInTheDocument();
-    expect(
-      within(onlyOfficeModal).getByRole("button", { name: t("settings.skillOnlyOfficeCheckAction") })
-    ).toBeInTheDocument();
-    expect(
-      within(onlyOfficeModal).getByRole("button", { name: t("settings.skillOnlyOfficeSaveAction") })
-    ).toBeInTheDocument();
   });
 
   it("可以查看工作区会话 MCP 状态", async () => {
@@ -759,42 +252,6 @@ describe("SkillManagementPanel", () => {
         return createJsonResponse({ items: createProviderCatalogResponse() });
       }
 
-      if (url.includes("/api/office/document-templates") && method === "GET") {
-        return createJsonResponse({ items: createDocumentTemplatesResponse() });
-      }
-
-      if (url.includes("/api/office/browser/profiles") && method === "GET") {
-        return createJsonResponse({ items: createBrowserProfilesResponse() });
-      }
-
-      if (url.endsWith("/api/workspaces") && method === "GET") {
-        return createJsonResponse(createWorkspaceListResponse());
-      }
-
-      if (url.includes("/api/office/browser/tasks/") && url.includes("/execution") && method === "GET") {
-        return createJsonResponse({ task: createBrowserTaskExecutionResponse() });
-      }
-
-      if (url.includes("/api/office/tasks") && method === "GET") {
-        return createJsonResponse({
-          items: url.includes("taskType=browser")
-            ? createBrowserOfficeTasksResponse()
-            : createOfficeTasksResponse()
-        });
-      }
-
-      if (url.includes("/api/office/ops/targets") && method === "GET") {
-        return createJsonResponse({ items: createOpsTargetsResponse() });
-      }
-
-      if (url.endsWith("/api/opencli/check") && method === "POST") {
-        return createJsonResponse(createOpenCliCheckResponse());
-      }
-
-      if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-        return createJsonResponse(createOpenCliCatalogResponse());
-      }
-
       if (url.includes("/api/skills/workspace-session-mcp-status") && method === "GET") {
         expect(url).toContain("workspaceId=workspace-1");
         expect(url).toContain("sessionId=session-1");
@@ -809,9 +266,7 @@ describe("SkillManagementPanel", () => {
     renderPanel("workspace-1", "session-1");
     await userEvent.click(await screen.findByRole("button", { name: t("settings.skillManageAction") }));
 
-    const dialog = await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") });
     const workspaceSkillCard = screen.getByText("codingns-workspace-session").closest(".settings-skill-entry");
-
     expect(workspaceSkillCard).not.toBeNull();
 
     await userEvent.click(
@@ -826,18 +281,10 @@ describe("SkillManagementPanel", () => {
 
     expect(within(statusDialog).getByText("当前会话 runtime 资产已经落齐。")).toBeInTheDocument();
     expect(within(statusDialog).getByText("Codex 会通过运行时注入方式挂上 workspace office MCP。")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。")).toBeInTheDocument();
-    expect(within(statusDialog).getByText("登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。")).toBeInTheDocument();
-    expect(within(statusDialog).getByRole("button", { name: t("settings.skillWorkspaceSessionMcpRefreshAction") })).toBeInTheDocument();
-
-    expect(fetchMock.mock.calls.some(([input, requestInit]) => {
-      return (
-        String(input).includes("/api/skills/workspace-session-mcp-status")
-        && (requestInit?.method ?? "GET").toUpperCase() === "GET"
-      );
-    })).toBe(true);
-
-    expect(dialog).toBeInTheDocument();
+    expect(
+      within(statusDialog).getAllByText("你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。").length
+    ).toBeGreaterThan(0);
+    expect(within(statusDialog).queryByText(/browser\.opencli_bridge/)).not.toBeInTheDocument();
   });
 });
 
@@ -869,33 +316,6 @@ function createJsonResponse(payload: unknown): Response {
       "Content-Type": "application/json"
     }
   });
-}
-
-function matchOnlyOfficeRequest(url: string, method: string, init?: RequestInit): Response | null {
-  if (url.endsWith("/api/office/onlyoffice/settings") && method === "GET") {
-    return createJsonResponse(createOnlyOfficeSettingsResponse());
-  }
-
-  if (url.endsWith("/api/office/onlyoffice/status") && method === "GET") {
-    return createJsonResponse(createOnlyOfficeStatusResponse());
-  }
-
-  if (url.endsWith("/api/office/onlyoffice/settings") && method === "PUT") {
-    const body = JSON.parse(String(init?.body ?? "{}"));
-
-    return createJsonResponse({
-      enabled: body.enabled === true,
-      serverUrl: body.serverUrl ?? null,
-      publicBaseUrl: body.publicBaseUrl ?? null,
-      callbackBaseUrl: body.callbackBaseUrl ?? null,
-      userDisplayName: body.userDisplayName ?? null,
-      userAvatarUrl: body.userAvatarUrl ?? null,
-      jwtSecretConfigured: Boolean(body.jwtSecret),
-      updatedAt: "2026-06-03T10:00:00.000Z"
-    });
-  }
-
-  return null;
 }
 
 function createSkillOverviewResponse(
@@ -1029,151 +449,6 @@ function createSkillOverviewResponse(
   };
 }
 
-function createOnlyOfficeSettingsResponse() {
-  return {
-    enabled: true,
-    serverUrl: "http://127.0.0.1:8088",
-    publicBaseUrl: "http://127.0.0.1:3002",
-    callbackBaseUrl: "",
-    userDisplayName: "产品演示账号",
-    userAvatarUrl: "https://example.com/avatar.png",
-    jwtSecretConfigured: true,
-    updatedAt: "2026-06-03T09:00:00.000Z"
-  };
-}
-
-function createOnlyOfficeStatusResponse() {
-  return {
-    state: "ready",
-    summary: "ONLYOFFICE 服务和回调地址都已通过基础检查，可以启用 Office 预览。",
-    checkedAt: "2026-06-03T09:00:00.000Z",
-    checks: [
-      {
-        key: "serverUrl",
-        label: "ONLYOFFICE 服务地址",
-        status: "pass",
-        detail: "http://127.0.0.1:8088"
-      },
-      {
-        key: "publicBaseUrl",
-        label: "CodingNS 对外地址",
-        status: "pass",
-        detail: "http://127.0.0.1:3002"
-      }
-    ]
-  };
-}
-
-function createOpenCliCatalogResponse() {
-  return {
-    provider: {
-      providerId: "opencli",
-      enabled: false,
-      installState: "installed",
-      healthState: "bridge_missing",
-      version: "1.7.7",
-      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-      lastCheckedAt: "2026-04-26T10:00:00.000Z",
-      activeRuntimeId: null,
-      lastErrorCode: null,
-      lastErrorDetail: null,
-      catalogRefreshedAt: "2026-04-26T10:00:00.000Z",
-      catalogSource: "manifest"
-    },
-    summary: {
-      catalogCount: 2,
-      enabledCount: 2,
-      browserDependentCount: 1,
-      installState: "installed",
-      healthState: "bridge_missing"
-    },
-    effectiveCatalogSource: "manifest",
-    activeRuntimeProfile: null,
-    entries: [
-      {
-        providerId: "opencli",
-        commandId: "hackernews/top",
-        site: "hackernews",
-        name: "top",
-        description: "读取 Hacker News 热门内容",
-        strategy: "public",
-        browser: false,
-        modulePath: "./clis/hackernews/top.js",
-        sourceFile: "clis/hackernews/top.js",
-        enabled: true,
-        sortOrder: 0
-      },
-      {
-        providerId: "opencli",
-        commandId: "twitter/trending",
-        site: "twitter",
-        name: "trending",
-        description: "读取 Twitter 热门趋势",
-        strategy: "intercept",
-        browser: true,
-        modulePath: "./clis/twitter/trending.js",
-        sourceFile: "clis/twitter/trending.js",
-        enabled: true,
-        sortOrder: 1
-      }
-    ],
-    siteGroups: [
-      {
-        site: "hackernews",
-        totalCount: 1,
-        enabledCount: 1,
-        browserDependentCount: 0,
-        commands: [
-          {
-            providerId: "opencli",
-            commandId: "hackernews/top",
-            site: "hackernews",
-            name: "top",
-            description: "读取 Hacker News 热门内容",
-            strategy: "public",
-            browser: false,
-            modulePath: "./clis/hackernews/top.js",
-            sourceFile: "clis/hackernews/top.js",
-            enabled: true,
-            sortOrder: 0
-          }
-        ]
-      },
-      {
-        site: "twitter",
-        totalCount: 1,
-        enabledCount: 1,
-        browserDependentCount: 1,
-        commands: [
-          {
-            providerId: "opencli",
-            commandId: "twitter/trending",
-            site: "twitter",
-            name: "trending",
-            description: "读取 Twitter 热门趋势",
-            strategy: "intercept",
-            browser: true,
-            modulePath: "./clis/twitter/trending.js",
-            sourceFile: "clis/twitter/trending.js",
-            enabled: true,
-            sortOrder: 1
-          }
-        ]
-      }
-    ]
-  };
-}
-
-function createOpenCliCheckResponse() {
-  return {
-    ...createOpenCliCatalogResponse(),
-    refreshState: "fresh",
-    errorCode: null,
-    errorDetail: null,
-    runtimeAvailability: "disabled"
-  };
-}
-
 function createProviderCatalogResponse(
   overrides: {
     codexEnabled?: boolean;
@@ -1235,237 +510,6 @@ function createProviderCatalogEntry(provider: "codex" | "claude-code" | "gemini"
   };
 }
 
-function createDocumentTemplatesResponse() {
-  return [
-    {
-      id: "template-1",
-      templateKey: "daily-report",
-      displayName: "项目日报模板",
-      engine: "doct" as const,
-      templateVersion: "1.0.0",
-      templateSourcePath: "/templates/daily-report.docx",
-      schemaJson: "{\"type\":\"object\"}",
-      mappingJson: "{\"title\":\"reportTitle\"}",
-      outputFormatsJson: "[\"docx\",\"pdf\"]",
-      status: "active" as const,
-      createdAt: "2026-05-15T10:00:00.000Z",
-      updatedAt: "2026-05-15T10:00:00.000Z"
-    }
-  ];
-}
-
-function createBrowserProfilesResponse() {
-  return [
-    {
-      id: "browser-profile-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      engine: "chrome" as const,
-      mode: "persistent" as const,
-      displayName: "办公 Chrome",
-      userDataDir: "/Users/jackson/.codingns/browser-profiles/browser-profile-1",
-      cdpEndpoint: null,
-      ownershipScope: "workspace" as const,
-      status: "active" as const,
-      createdAt: "2026-05-15T10:00:00.000Z",
-      updatedAt: "2026-05-15T10:00:00.000Z"
-    },
-    {
-      id: "browser-profile-2",
-      userId: "user-1",
-      workspaceId: "workspace-2",
-      engine: "edge" as const,
-      mode: "persistent" as const,
-      displayName: "跨区 Edge",
-      userDataDir: "/Users/jackson/.codingns/browser-profiles/browser-profile-2",
-      cdpEndpoint: null,
-      ownershipScope: "user" as const,
-      status: "active" as const,
-      createdAt: "2026-05-15T09:00:00.000Z",
-      updatedAt: "2026-05-15T09:00:00.000Z"
-    }
-  ];
-}
-
-function createBrowserOfficeTasksResponse() {
-  return [
-    {
-      id: "browser-task-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      taskType: "browser" as const,
-      title: "日报采集",
-      description: "读取日报页面并截图",
-      connectorId: "browser.playwright",
-      targetRefKind: "browser_profile",
-      targetRefId: "browser-profile-1",
-      inputJson: "{\"startUrl\":\"https://example.com\"}",
-      status: "ready" as const,
-      riskLevel: "low" as const,
-      approvalPolicyId: null,
-      currentStepId: null,
-      idempotencyKey: null,
-      startedAt: null,
-      finishedAt: null,
-      createdAt: "2026-05-15T11:00:00.000Z",
-      updatedAt: "2026-05-15T11:00:00.000Z"
-    }
-  ];
-}
-
-function createBrowserTaskExecutionResponse() {
-  return {
-    taskId: "browser-task-1",
-    taskType: "office_browser_task_execute",
-    key: "browser-task-1",
-    executionLane: "host_background",
-    status: "running" as const,
-    source: "office.browser_task.execute",
-    attempt: 1,
-    enqueuedAt: Date.parse("2026-05-15T11:00:05.000Z"),
-    startedAt: Date.parse("2026-05-15T11:00:06.000Z"),
-    finishedAt: null,
-    timeoutMs: 180000
-  };
-}
-
-function createOfficeTasksResponse() {
-  return [
-    {
-      id: "task-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      taskType: "ops" as const,
-      title: "发布前巡检",
-      description: "检查预发主机磁盘与进程状态",
-      connectorId: "ops.ssh",
-      targetRefKind: "ops_target",
-      targetRefId: "target-1",
-      inputJson: "{\"command\":\"df -h\"}",
-      status: "pending_approval" as const,
-      riskLevel: "medium" as const,
-      approvalPolicyId: "policy-1",
-      currentStepId: "step-1",
-      idempotencyKey: null,
-      startedAt: null,
-      finishedAt: null,
-      createdAt: "2026-05-15T10:00:00.000Z",
-      updatedAt: "2026-05-15T10:00:00.000Z"
-    }
-  ];
-}
-
-function createOfficeTaskDetailResponse() {
-  return {
-    task: createOfficeTasksResponse()[0],
-    steps: [
-      {
-        id: "step-1",
-        taskId: "task-1",
-        stepSeq: 1,
-        stepType: "approval",
-        title: "等待人工确认",
-        inputJson: "{\"execute\":true}",
-        outputJson: null,
-        status: "pending",
-        retryCount: 0,
-        startedAt: null,
-        finishedAt: null,
-        errorMessage: null,
-        createdAt: "2026-05-15T10:00:00.000Z",
-        updatedAt: "2026-05-15T10:00:00.000Z"
-      }
-    ],
-    approvals: [
-      {
-        id: "approval-1",
-        taskId: "task-1",
-        stepId: "step-1",
-        policyId: "policy-1",
-        status: "pending" as const,
-        approverUserId: null,
-        decisionNote: null,
-        decidedAt: null,
-        createdAt: "2026-05-15T10:00:00.000Z",
-        updatedAt: "2026-05-15T10:00:00.000Z"
-      }
-    ],
-    receipts: [],
-    artifacts: []
-  };
-}
-
-function createBrowserOfficeTaskDetailResponse() {
-  return {
-    task: createBrowserOfficeTasksResponse()[0],
-    steps: [
-      {
-        id: "browser-step-1",
-        taskId: "browser-task-1",
-        stepSeq: 1,
-        stepType: "read_dom",
-        title: "读取页面 DOM",
-        inputJson: "{\"type\":\"read_dom\"}",
-        outputJson: "{\"url\":\"https://example.com\"}",
-        status: "succeeded",
-        retryCount: 0,
-        startedAt: "2026-05-15T11:00:06.000Z",
-        finishedAt: "2026-05-15T11:00:08.000Z",
-        errorMessage: null,
-        createdAt: "2026-05-15T11:00:06.000Z",
-        updatedAt: "2026-05-15T11:00:08.000Z"
-      }
-    ],
-    approvals: [],
-    receipts: [],
-    artifacts: []
-  };
-}
-
-function createOpsTargetsResponse() {
-  return [
-    {
-      id: "target-1",
-      userId: "user-1",
-      workspaceId: "workspace-1",
-      kind: "ssh_host" as const,
-      displayName: "预发 SSH",
-      environment: "pre",
-      configJson: JSON.stringify({
-        host: "pre.example.internal",
-        port: 22,
-        username: "deploy",
-        privateKeyPath: "/Users/jackson/.ssh/id_ed25519",
-        knownHostsPath: "/Users/jackson/.ssh/known_hosts",
-        jumpHost: "bastion.example.internal",
-        workspacePath: "/srv/app",
-        strictHostKeyChecking: "accept-new"
-      }),
-      credentialRef: "cred-pre-1",
-      status: "active" as const,
-      createdAt: "2026-05-15T10:00:00.000Z",
-      updatedAt: "2026-05-15T10:00:00.000Z"
-    }
-  ];
-}
-
-function createImportedDocumentTemplateResponse() {
-  return {
-    id: "quarterly.report@v1",
-    templateKey: "quarterly.report",
-    displayName: "quarterly-report",
-    engine: "doct" as const,
-    templateVersion: "v1",
-    templateSourcePath: "/tmp/document-templates/quarterly.report/v1.domt",
-    schemaJson: "{\"requiredFields\":[\"title\",\"body\"],\"optionalFields\":[\"summary\"]}",
-    mappingJson: "{\"title\":\"document.title\",\"sections\":\"content.blocks\"}",
-    outputFormatsJson: "[\"docx\",\"pdf\"]",
-    status: "active" as const,
-    createdAt: "2026-05-16T10:00:00.000Z",
-    updatedAt: "2026-05-16T10:00:00.000Z"
-  };
-}
-
 function createWorkspaceSessionMcpStatusResponse() {
   return {
     summary: {
@@ -1482,78 +526,7 @@ function createWorkspaceSessionMcpStatusResponse() {
       codexDetail: "Codex 会通过运行时注入方式挂上 workspace office MCP。",
       globalCodingnsState: "partial",
       globalCodingnsDetail: "你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。",
-      recommendedPath: "登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。"
-    },
-    runtime: {
-      workspaceId: "workspace-1",
-      workspacePath: "/Users/jackson/Code/CodingNS",
-      sessionId: "session-1",
-      runtimeHomeDir: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1",
-      runtimeHomeExists: true,
-      scopedAuthFilePath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/WORKSPACE_SESSION_AUTH.json",
-      scopedAuthFileExists: true,
-      composedInstructionPath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/WORKSPACE_SESSION_COMPOSED.md",
-      composedInstructionExists: true,
-      skillDirectoryPath: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/skills/codingns-workspace-session",
-      skillDirectoryExists: true
-    },
-    commands: {
-      globalCodingnsInstalled: true,
-      globalCodingnsPath: "/opt/homebrew/bin/codingns",
-      globalCodingnsSupportsWorkspaceMcp: false,
-      globalCodingnsWorkspaceMcpDetail: "[codingns] 不支持的命令：mcp",
-      globalWorkspaceOfficeMcpInstalled: false,
-      globalWorkspaceOfficeMcpPath: null,
-      repoCodingnsSupportsWorkspaceMcp: true,
-      repoCodingnsWorkspaceMcpDetail: "codingns mcp workspace-office serve --help 可正常输出帮助"
-    },
-    cliStatuses: [
-      {
-        cli: "codex",
-        label: "Codex",
-        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/config.toml",
-        runtimeConfigExists: true,
-        mcpConfigured: true,
-        callState: "runtime_injected",
-        callStateDetail: "当前会话会在启动 codex app-server 时临时注入 office MCP，不要求把 codingns-workspace-office 写进 config.toml。"
-      },
-      {
-        cli: "claude-code",
-        label: "Claude Code",
-        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/.claude.json",
-        runtimeConfigExists: false,
-        mcpConfigured: false,
-        callState: "missing_runtime_config",
-        callStateDetail: "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。"
-      },
-      {
-        cli: "opencode",
-        label: "OpenCode",
-        runtimeConfigFile: "/Users/jackson/.codingns/host/workspace-session-runtime/workspace-1/session-1/opencode.json",
-        runtimeConfigExists: false,
-        mcpConfigured: false,
-        callState: "missing_runtime_config",
-        callStateDetail: "当前工作区会话 runtime 里还没有这个 CLI 的 MCP 配置文件。"
-      }
-    ]
-  };
-}
-
-function createWorkspaceListResponse() {
-  return {
-    items: [
-      {
-        id: "workspace-1",
-        name: "当前工作区",
-        path: "/Users/jackson/Code/CodingNS",
-        repoRoot: "/Users/jackson/Code/CodingNS"
-      },
-      {
-        id: "workspace-2",
-        name: "历史工作区",
-        path: "/Users/jackson/Code/HistoryWorkspace",
-        repoRoot: "/Users/jackson/Code/HistoryWorkspace"
-      }
-    ]
+      recommendedPath: null
+    }
   };
 }

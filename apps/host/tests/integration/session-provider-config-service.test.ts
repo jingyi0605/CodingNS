@@ -5,10 +5,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
-import { OpenCliBridgeSkillService } from "../../src/modules/opencli/opencli-bridge-skill-service.js";
-import { OpenCliCatalogEntryRepository } from "../../src/storage/repositories/opencli-catalog-entry-repository.js";
-import { OpenCliProviderRepository } from "../../src/storage/repositories/opencli-provider-repository.js";
-import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type { ModelPresetRuntimeConfigDto } from "../../src/modules/model-switch/cc-switch-adapter.js";
 import { SessionProviderConfigService } from "../../src/modules/sessions/session-provider-config-service.js";
 import { WorkspaceSessionRuntimeContextService } from "../../src/modules/sessions/workspace-session-runtime-context-service.js";
@@ -145,8 +141,8 @@ describe("SessionProviderConfigService", () => {
     expect(error.message).toContain("authEnv=OPENAI_API_KEY");
   });
 
-  it("resolveLaunchContext 会把 OpenCLI runtime PATH 注入会话环境，但不改会话 HOME", () => {
-    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-opencli-"));
+  it("resolveLaunchContext 不再把私有 runtime 注入会话环境", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-private-runtime-"));
     tempDirs.push(rootDir);
 
     const config = resolveHostConfig({
@@ -157,18 +153,7 @@ describe("SessionProviderConfigService", () => {
       config,
       {
         readPresetRuntimeConfig: () => null
-      } as never,
-      {
-        resolveSessionRuntime: () => ({
-          availability: "ready",
-          runtimeRootPath: "/tmp/opencli-runtime",
-          runtimeBinPath: "/tmp/opencli-runtime/bin",
-          realHome: "/Users/real-home",
-          realUserProfile: "/Users/real-home",
-          errorCode: null,
-          errorDetail: null
-        })
-      }
+      } as never
     );
 
     const launchContext = service.resolveLaunchContext({
@@ -179,57 +164,21 @@ describe("SessionProviderConfigService", () => {
     });
 
     expect(launchContext.runtimeHomeDir).toBeNull();
-    expect(launchContext.runtimeEnv.PATH?.split(path.delimiter)[0]).toBe("/tmp/opencli-runtime/bin");
-    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_RUNTIME_ROOT).toBe("/tmp/opencli-runtime");
-    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_HOME).toBe("/Users/real-home");
-    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_USERPROFILE).toBe("/Users/real-home");
-    expect(launchContext.runtimeEnv.HOME).toBeUndefined();
-    expect(launchContext.runtimeEnv.USERPROFILE).toBeUndefined();
+    expect(launchContext.runtimeEnv).toEqual({});
+    expect(launchContext.runtimeEnv.PATH).toBeUndefined();
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_RUNTIME_ROOT).toBeUndefined();
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_HOME).toBeUndefined();
+    expect(launchContext.runtimeEnv.CODINGNS_OPENCLI_REAL_USERPROFILE).toBeUndefined();
   });
 
-  it("OpenCLI ready 时不会把全局默认的 Codex 会话切到独立 runtime home，但会把桥接 Skill 同步到共享 Codex home", () => {
-    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-opencli-skill-"));
+  it("全局默认 Codex 会话不会切到独立 runtime home，也不会同步私有桥接 Skill", () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-session-provider-private-skill-"));
     tempDirs.push(rootDir);
 
     const codexHomeDir = path.join(rootDir, ".codex");
     mkdirSync(path.join(codexHomeDir, "skills"), { recursive: true });
     writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5.4\"\n", "utf8");
     writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
-
-    const database = createDatabaseClient(":memory:");
-    const providerRepository = new OpenCliProviderRepository(database.db);
-    const catalogRepository = new OpenCliCatalogEntryRepository(database.db);
-    const bridgeSkillService = new OpenCliBridgeSkillService(providerRepository, catalogRepository);
-
-    providerRepository.upsert({
-      providerId: "opencli",
-      enabled: true,
-      installState: "installed",
-      healthState: "binary_ready",
-      version: "1.7.7",
-      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-      lastCheckedAt: "2026-04-26T05:00:00.000Z",
-      activeRuntimeId: "opencli-runtime-1",
-      lastErrorCode: null,
-      lastErrorDetail: null,
-      catalogRefreshedAt: "2026-04-26T05:00:00.000Z",
-      catalogSource: "manifest"
-    });
-    catalogRepository.replaceAll("opencli", [
-      {
-        providerId: "opencli",
-        commandId: "hackernews/top",
-        site: "hackernews",
-        name: "top",
-        description: "热门",
-        strategy: "public",
-        browser: false,
-        modulePath: "clis/hackernews/top.js",
-        sourceFile: "clis/hackernews/top.js",
-        enabled: true,
-        sortOrder: 1
-      }
-    ]);
 
     const config = resolveHostConfig({
       databasePath: path.join(rootDir, "host.sqlite"),
@@ -239,23 +188,11 @@ describe("SessionProviderConfigService", () => {
       config,
       {
         readPresetRuntimeConfig: () => null
-      } as never,
-      {
-        resolveSessionRuntime: () => ({
-          availability: "ready",
-          runtimeRootPath: "/tmp/opencli-runtime",
-          runtimeBinPath: "/tmp/opencli-runtime/bin",
-          realHome: "/Users/real-home",
-          realUserProfile: "/Users/real-home",
-          errorCode: null,
-          errorDetail: null
-        })
-      },
-      bridgeSkillService
+      } as never
     );
 
     const binding = service.prepareSessionBinding({
-      sessionId: "session-opencli-skill",
+      sessionId: "session-private-skill",
       provider: "codex",
       providerConfigMode: "global-default"
     });
@@ -268,21 +205,10 @@ describe("SessionProviderConfigService", () => {
 
     expect(binding.runtimeHomeDir).toBeNull();
     expect(launchContext.runtimeHomeDir).toBeNull();
-    expect(launchContext.runtimeEnv.PATH?.split(path.delimiter)[0]).toBe("/tmp/opencli-runtime/bin");
+    expect(launchContext.runtimeEnv).toEqual({});
     expect(
       existsSync(path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"))
-    ).toBe(true);
-    const skillMarkdown = readFileSync(
-      path.join(codexHomeDir, "skills", "codingns-opencli", "SKILL.md"),
-      "utf8"
-    );
-    expect(skillMarkdown).toContain("hackernews/top");
-    expect(skillMarkdown).toMatch(/^description: ".*managed runtime: check.*"$/m);
-    expect(skillMarkdown).toContain("当前默认可见命令");
-    expect(skillMarkdown).toContain("browser-dependent 命令");
-    expect(skillMarkdown).toContain("office.browser.*");
-
-    database.close();
+    ).toBe(false);
   });
 
   it("Codex 全局默认工作区会话不会再改真实 Codex home，而是等运行时注入", () => {
@@ -322,8 +248,6 @@ describe("SessionProviderConfigService", () => {
       {
         readPresetRuntimeConfig: () => null
       } as never,
-      undefined,
-      undefined,
       workspaceSessionRuntimeContextService
     );
 
@@ -381,8 +305,6 @@ describe("SessionProviderConfigService", () => {
       {
         readPresetRuntimeConfig: () => null
       } as never,
-      undefined,
-      undefined,
       workspaceSessionRuntimeContextService
     );
 
@@ -459,8 +381,6 @@ describe("SessionProviderConfigService", () => {
       {
         readPresetRuntimeConfig: () => preset
       } as never,
-      undefined,
-      undefined,
       workspaceSessionRuntimeContextService
     );
 

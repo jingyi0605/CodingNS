@@ -13,8 +13,8 @@ describe("TaskScheduler error snapshot", () => {
       run: async () => {
         throw new AppError({
           statusCode: 409,
-          errorCode: "OPENCLI_BRIDGE_LOAD_FAILED",
-          detail: "无法加载 opencli 浏览器桥接模块: bridge module exploded"
+          errorCode: "PRIVATE_BRIDGE_LOAD_FAILED",
+          detail: "无法加载私有桥接模块: bridge module exploded"
         });
       }
     });
@@ -25,14 +25,14 @@ describe("TaskScheduler error snapshot", () => {
     });
 
     await expect(handle.promise).rejects.toMatchObject({
-      errorCode: "OPENCLI_BRIDGE_LOAD_FAILED"
+      errorCode: "PRIVATE_BRIDGE_LOAD_FAILED"
     });
 
     expect(manager.peek("test.app_error_snapshot", "task-1")).toMatchObject({
       status: "failed",
-      errorCode: "OPENCLI_BRIDGE_LOAD_FAILED",
-      errorMessage: "无法加载 opencli 浏览器桥接模块: bridge module exploded",
-      errorDetail: "无法加载 opencli 浏览器桥接模块: bridge module exploded"
+      errorCode: "PRIVATE_BRIDGE_LOAD_FAILED",
+      errorMessage: "无法加载私有桥接模块: bridge module exploded",
+      errorDetail: "无法加载私有桥接模块: bridge module exploded"
     });
   });
 });

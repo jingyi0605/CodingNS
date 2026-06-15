@@ -76,6 +76,29 @@ vi.mock("../../workbench/affairs-library-capability-store", () => ({
   setAffairsLibraryCapabilityEnabled: affairsLibraryCapabilityMock.setEnabled
 }));
 
+vi.mock("../../../platform/server/service-update-manager", () => ({
+  fetchCurrentHostVersion: vi.fn(async () => "0.3.0"),
+  checkForServiceUpdate: vi.fn(async () => ({ packages: [] })),
+  installServiceUpdate: vi.fn(async () => ({
+    taskId: "service-update-task-1",
+    packageName: "@codingns/service",
+    status: "queued",
+    targetVersion: "0.3.1",
+    errorMessage: null,
+    restartRequired: false,
+    restartScheduled: false
+  })),
+  getServiceUpdateTask: vi.fn(async () => ({
+    taskId: "service-update-task-1",
+    packageName: "@codingns/service",
+    status: "succeeded",
+    targetVersion: "0.3.1",
+    errorMessage: null,
+    restartRequired: false,
+    restartScheduled: false
+  }))
+}));
+
 vi.mock("../../plugins/api/plugins-api", async () => {
   const actual = await vi.importActual<typeof import("../../plugins/api/plugins-api")>("../../plugins/api/plugins-api");
 
@@ -886,8 +909,8 @@ describe("SettingsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.releaseCheckNow") }));
 
-    expect(await screen.findByText("0.3.0")).toBeInTheDocument();
-    expect(screen.getByText("0.4.0")).toBeInTheDocument();
+    expect((await screen.findAllByText("0.3.0")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("0.4.0").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: t("settings.releaseOpenPage") })).not.toBeInTheDocument();
   });
 
@@ -1097,6 +1120,10 @@ describe("SettingsPage", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
+      if (url.endsWith("/api/client/host-version") && method === "GET") {
+        return createJsonResponse({ version: "0.3.0" });
+      }
+
       if (url.endsWith("/api/skills/overview") && method === "GET") {
         return createJsonResponse(createSkillOverviewResponse());
       }
@@ -1244,7 +1271,6 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     expect(screen.getByText(t("settings.advancedSettings"))).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(0);
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugAction") }));
 
@@ -1435,6 +1461,10 @@ function matchSkillManagementPanelRequest(
   method: string,
   init?: RequestInit
 ): Response | null {
+  if (url.endsWith("/api/client/host-version") && method === "GET") {
+    return createJsonResponse({ version: "0.3.0" });
+  }
+
   if (url.endsWith("/api/skills/overview") && method === "GET") {
     return createJsonResponse(createSkillOverviewResponse());
   }
@@ -1456,47 +1486,6 @@ function matchSkillManagementPanelRequest(
         }
       ]
     });
-  }
-
-  if (url.includes("/api/office/document-templates") && method === "GET") {
-    return createJsonResponse({
-      items: [
-        {
-          id: "template-1",
-          templateKey: "daily-report",
-          displayName: "项目日报模板",
-          templateVersion: "1.0.0",
-          engine: "doct",
-          status: "active",
-          templateSourcePath: "/templates/daily-report.docx"
-        }
-      ]
-    });
-  }
-
-  if (url.includes("/api/office/browser/profiles") && method === "GET") {
-    return createJsonResponse({
-      items: []
-    });
-  }
-
-  if (url.endsWith("/api/office/browser/bridge-status") && method === "GET") {
-    return createJsonResponse({
-      provider: "opencli",
-      availability: "ready",
-      detail: null,
-      checkedAt: "2026-06-03T10:00:00.000Z",
-      installPath: "/opt/homebrew/lib/node_modules/@jackwener/opencli",
-      version: "0.1.0"
-    });
-  }
-
-  if (url.includes("/api/office/tasks") && method === "GET") {
-    return createJsonResponse({ items: [] });
-  }
-
-  if (url.includes("/api/office/ops/targets") && method === "GET") {
-    return createJsonResponse({ items: [] });
   }
 
   if (url.endsWith("/api/workspaces") && method === "GET") {
@@ -1595,6 +1584,50 @@ function matchSkillManagementPanelRequest(
           }
         }
       }
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "GET") {
+    return createJsonResponse({
+      enabled: true,
+      serverUrl: "http://127.0.0.1:8088",
+      publicBaseUrl: "http://127.0.0.1:3002",
+      callbackBaseUrl: "",
+      userDisplayName: "产品演示账号",
+      userAvatarUrl: "https://example.com/avatar.png",
+      jwtSecretConfigured: true,
+      updatedAt: "2026-06-03T10:00:00.000Z"
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/status") && method === "GET") {
+    return createJsonResponse({
+      state: "ready",
+      summary: "ONLYOFFICE 服务和回调地址都已通过基础检查，可以启用 Office 预览。",
+      checkedAt: "2026-06-03T10:00:00.000Z",
+      checks: [
+        {
+          key: "serverUrl",
+          label: "ONLYOFFICE 服务地址",
+          status: "pass",
+          detail: "http://127.0.0.1:8088"
+        }
+      ]
+    });
+  }
+
+  if (url.endsWith("/api/office/onlyoffice/settings") && method === "PUT") {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+
+    return createJsonResponse({
+      enabled: body.enabled === true,
+      serverUrl: body.serverUrl ?? null,
+      publicBaseUrl: body.publicBaseUrl ?? null,
+      callbackBaseUrl: body.callbackBaseUrl ?? null,
+      userDisplayName: body.userDisplayName ?? null,
+      userAvatarUrl: body.userAvatarUrl ?? null,
+      jwtSecretConfigured: Boolean(body.jwtSecret),
+      updatedAt: "2026-06-03T10:01:00.000Z"
     });
   }
 
@@ -1791,64 +1824,6 @@ function matchSkillManagementPanelRequest(
         lastRecomputedAt: null,
         lastError: null
       }
-    });
-  }
-
-  if (url.endsWith("/api/office/onlyoffice/settings") && method === "GET") {
-    return createJsonResponse({
-      enabled: true,
-      serverUrl: "http://127.0.0.1:8088",
-      publicBaseUrl: "http://127.0.0.1:3002",
-      callbackBaseUrl: "",
-      userDisplayName: "产品演示账号",
-      userAvatarUrl: "https://example.com/avatar.png",
-      jwtSecretConfigured: true,
-      updatedAt: "2026-06-03T10:00:00.000Z"
-    });
-  }
-
-  if (url.endsWith("/api/office/onlyoffice/status") && method === "GET") {
-    return createJsonResponse({
-      state: "ready",
-      summary: "ONLYOFFICE 服务和回调地址都已通过基础检查，可以启用 Office 预览。",
-      checkedAt: "2026-06-03T10:00:00.000Z",
-      checks: [
-        {
-          key: "serverUrl",
-          label: "ONLYOFFICE 服务地址",
-          status: "pass",
-          detail: "http://127.0.0.1:8088"
-        }
-      ]
-    });
-  }
-
-  if (url.endsWith("/api/office/onlyoffice/settings") && method === "PUT") {
-    const body = JSON.parse(String(init?.body ?? "{}"));
-
-    return createJsonResponse({
-      enabled: body.enabled === true,
-      serverUrl: body.serverUrl ?? null,
-      publicBaseUrl: body.publicBaseUrl ?? null,
-      callbackBaseUrl: body.callbackBaseUrl ?? null,
-      userDisplayName: body.userDisplayName ?? null,
-      userAvatarUrl: body.userAvatarUrl ?? null,
-      jwtSecretConfigured: Boolean(body.jwtSecret),
-      updatedAt: "2026-06-03T10:01:00.000Z"
-    });
-  }
-
-  if (url.endsWith("/api/opencli/check") && method === "POST") {
-    return createJsonResponse({
-      ok: true,
-      provider: "opencli"
-    });
-  }
-
-  if (url.endsWith("/api/opencli/catalog") && method === "GET") {
-    return createJsonResponse({
-      version: "0.1.0",
-      items: []
     });
   }
 

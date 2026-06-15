@@ -11,7 +11,6 @@ const tempDirs: string[] = [];
 
 function createService(
   configOverrides: Partial<ConstructorParameters<typeof SessionLiveRuntimeService>[11]> = {},
-  openCliSessionPromptService: { buildPrompt: ReturnType<typeof vi.fn> } | null = null,
   workspaceSessionRuntimeContextService: {
     prepareWorkspaceInstructionBundle: ReturnType<typeof vi.fn>;
   } | null = null
@@ -172,7 +171,6 @@ function createService(
       ...configOverrides
     },
     undefined,
-    openCliSessionPromptService as never,
     workspaceSessionRuntimeContextService as never
   );
 
@@ -232,14 +230,8 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("sendLiveMessage 在 active run 存在时会优先走 submitToActiveRun", async () => {
-    const openCliSessionPromptService = {
-      buildPrompt: vi.fn(() => [
-        "## OpenCLI CLI技能",
-        "- 当前会话已经注入 CodingNS 管理的裁剪版 OpenCLI 运行时，可以直接在 shell 里使用 `opencli`。"
-      ].join("\n"))
-    };
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService, sessionBindingRepository } =
-      createService({}, openCliSessionPromptService);
+      createService();
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
       getSnapshot: vi.fn(() => ({
@@ -327,7 +319,6 @@ describe("SessionLiveRuntimeService", () => {
         providerPrompt: null
       })
     );
-    expect(openCliSessionPromptService.buildPrompt).not.toHaveBeenCalled();
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
   });
@@ -1780,7 +1771,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionHistoryService,
       sessionMessageAttachmentService,
       workspaceService
-    } = createService({}, null, workspaceSessionRuntimeContextService);
+    } = createService({}, workspaceSessionRuntimeContextService);
     const providerRuntimeService = {
       isRunHealthy: vi.fn(() => true),
       startSession: vi.fn(async () => ({
@@ -2006,7 +1997,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionHistoryService,
       sessionMessageAttachmentService,
       workspaceService
-    } = createService({}, null, workspaceSessionRuntimeContextService);
+    } = createService({}, workspaceSessionRuntimeContextService);
     const continueSession = vi.fn(async () => ({
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
@@ -2108,7 +2099,7 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
-  it("命中登录态浏览器任务时，会额外注入本轮浏览器临时规则", async () => {
+  it("命中登录态浏览器任务时，不再自动注入 OpenCLI 浏览器临时规则", async () => {
     const workspaceRoot = mkdtempSync(path.join(tmpdir(), "codingns-workspace-browser-overlay-"));
     const workspaceInstructionFilePath = path.join(
       workspaceRoot,
@@ -2151,7 +2142,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionHistoryService,
       sessionMessageAttachmentService,
       workspaceService
-    } = createService({}, null, workspaceSessionRuntimeContextService);
+    } = createService({}, workspaceSessionRuntimeContextService);
     const continueSession = vi.fn(async () => ({
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
@@ -2229,13 +2220,13 @@ describe("SessionLiveRuntimeService", () => {
 
     expect(workspaceSessionRuntimeContextService.prepareWorkspaceInstructionBundle).toHaveBeenCalledWith(
       expect.objectContaining({
-        instructionOverlay: expect.stringContaining("浏览器任务临时规则（本轮生效）")
+        instructionOverlay: null
       })
     );
     const injectedInstruction = readFileSync(workspaceInstructionFilePath, "utf8");
-    expect(injectedInstruction).toContain("浏览器任务临时规则（本轮生效）");
-    expect(injectedInstruction).toContain("executionBackend=opencli_bridge");
-    expect(injectedInstruction).toContain("不要自动切到 `playwright`");
+    expect(injectedInstruction).not.toContain("浏览器任务临时规则（本轮生效）");
+    expect(injectedInstruction).not.toContain("executionBackend=opencli_bridge");
+    expect(injectedInstruction).not.toContain("不要自动切到 `playwright`");
     expect(continueSession).toHaveBeenCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({
@@ -2283,7 +2274,7 @@ describe("SessionLiveRuntimeService", () => {
       sessionHistoryService,
       sessionMessageAttachmentService,
       workspaceService
-    } = createService({}, null, workspaceSessionRuntimeContextService);
+    } = createService({}, workspaceSessionRuntimeContextService);
     const continueSession = vi.fn(async () => ({
       getSnapshot: vi.fn(() => ({
         sessionId: "session-1",
