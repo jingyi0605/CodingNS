@@ -16438,6 +16438,18 @@ textarea:focus-visible {
   text-overflow: ellipsis;
 }
 
+.task-tool-item-title.markdown-content {
+  display: block;
+}
+
+.task-tool-item-title.markdown-content :where(p, strong, em, code) {
+  margin: 0;
+}
+
+.task-tool-item-title.markdown-content p {
+  display: inline;
+}
+
 .task-tool-item-detail {
   flex: 0 1 34%;
   min-width: 0;
