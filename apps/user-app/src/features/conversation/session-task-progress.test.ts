@@ -84,6 +84,73 @@ describe("buildConversationTaskSnapshot", () => {
     ]);
   });
 
+  it("会保留 Claude Code 纯文本计划说明里的 markdown 换行结构", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-06-15T11:00:00.000Z",
+        toolCall: {
+          callId: "exit-plan-markdown-1",
+          name: "ExitPlanMode",
+          input: JSON.stringify({
+            allowedPrompts: [
+              {
+                tool: "Bash",
+                prompt: "run tests"
+              }
+            ]
+          }),
+          output: JSON.stringify({
+            plan: `## 本轮更新\n\n- 先确认方案\n- 再继续执行`,
+            allowedPrompts: [
+              {
+                tool: "Bash",
+                prompt: "run tests"
+              }
+            ]
+          }),
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.source).toBe("plan");
+    expect(snapshot?.explanation).toBe("## 本轮更新");
+    expect(snapshot?.items.map((item) => item.title)).toEqual([
+      "先确认方案",
+      "再继续执行"
+    ]);
+  });
+
+  it("会把 Claude Code plan 数组里的字符串项解析成任务项", () => {
+    const snapshot = buildConversationTaskSnapshot([
+      createToolMessage({
+        timestamp: "2026-06-15T11:10:00.000Z",
+        toolCall: {
+          callId: "exit-plan-string-items-1",
+          name: "ExitPlanMode",
+          input: JSON.stringify({
+            allowedPrompts: []
+          }),
+          output: JSON.stringify({
+            plan: [
+              "**一日一主题**，每天景点地理集中，减少跨城奔波；",
+              "**热在中午、人在室内**——把山东省博物馆固定在最热时段；"
+            ]
+          }),
+          error: null,
+          status: "completed"
+        }
+      })
+    ], "claude-code");
+
+    expect(snapshot?.source).toBe("plan");
+    expect(snapshot?.items.map((item) => item.title)).toEqual([
+      "**一日一主题**，每天景点地理集中，减少跨城奔波；",
+      "**热在中午、人在室内**——把山东省博物馆固定在最热时段；"
+    ]);
+  });
+
   it("会解析 Claude Code 的 TodoWrite 全量任务", () => {
     const snapshot = buildConversationTaskSnapshot([
       createToolMessage({

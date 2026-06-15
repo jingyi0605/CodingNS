@@ -1139,6 +1139,77 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"allowedPrompts":/)).toBeInTheDocument();
   });
 
+  it("Claude 的 ExitPlanMode 长文本计划说明会按 markdown 渲染", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-markdown-raw-1",
+            callId: "exit-plan-markdown-raw-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: `## 济南 3 日游\n\n> 先定节奏，再拆每天安排\n\n- Day 1：老城泉水\n- Day 2：千佛山与博物馆`,
+              allowedPrompts: []
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "济南 3 日游" })).toBeInTheDocument();
+    expect(screen.getByText("先定节奏，再拆每天安排")).toBeInTheDocument();
+    expect(screen.getByText("Day 1：老城泉水")).toBeInTheDocument();
+    expect(screen.getByText("Day 2：千佛山与博物馆")).toBeInTheDocument();
+  });
+
+  it("Claude 的 ExitPlanMode 任务项标题会按 markdown 渲染加粗", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-bold-list-1",
+            callId: "exit-plan-bold-list-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: [
+                "**一日一主题**，每天景点地理集中，减少跨城奔波；",
+                "**热在中午、人在室内**——把山东省博物馆固定在最热时段；"
+              ],
+              allowedPrompts: []
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    const firstStrong = screen.getByText("一日一主题", { selector: "strong" });
+    const secondStrong = screen.getByText("热在中午、人在室内", { selector: "strong" });
+
+    expect(firstStrong).toBeInTheDocument();
+    expect(secondStrong).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*一日一主题\*\*/)).not.toBeInTheDocument();
+  });
+
   it("Claude 的 ExitPlanMode 在顶部有待处理审批时，不再重复显示底部计划说明", async () => {
     render(
       <MessageTimeline

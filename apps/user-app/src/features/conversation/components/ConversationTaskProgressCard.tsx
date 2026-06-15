@@ -97,7 +97,11 @@ export function ConversationTaskProgressCard({
         {snapshot.items.map((item) => (
           <li key={item.id} className="task-tool-list-item" data-status={item.status}>
             <span className="task-tool-item-indicator" data-status={item.status} aria-hidden="true" />
-            <strong className="task-tool-item-title">{item.title}</strong>
+            <MarkdownText
+              content={item.title}
+              className="task-tool-item-title markdown-content"
+              inline
+            />
             {item.detail ? <span className="task-tool-item-detail">{item.detail}</span> : null}
             <span className="task-tool-item-status">{resolveTaskCardStatusLabel(item.status)}</span>
           </li>

@@ -5,28 +5,52 @@ interface MarkdownTextProps {
   content: string;
   className: string;
   paragraphClassName?: string;
+  inline?: boolean;
 }
 
 export function MarkdownText({
   content,
   className,
-  paragraphClassName
+  paragraphClassName,
+  inline = false
 }: MarkdownTextProps) {
+  const RootTag = inline ? "span" : "div";
+
   return (
-    <div className={className}>
+    <RootTag className={className}>
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
           p: ({ node, className: _className, ...props }) => (
-            <p
-              {...props}
-              className={paragraphClassName}
-            />
-          )
+            inline ? (
+              <span
+                {...props}
+                className={paragraphClassName}
+              />
+            ) : (
+              <p
+                {...props}
+                className={paragraphClassName}
+              />
+            )
+          ),
+          ...(inline
+            ? {
+                ul: ({ node, className: _className, ...props }) => (
+                  <span {...props} />
+                ),
+                ol: ({ node, className: _className, ...props }) => (
+                  <span {...props} />
+                ),
+                li: ({ node, className: _className, children, ...props }) => (
+                  <span {...props}>{children}</span>
+                )
+              }
+            : {})
         }}
       >
         {content}
       </Markdown>
-    </div>
+    </RootTag>
   );
 }

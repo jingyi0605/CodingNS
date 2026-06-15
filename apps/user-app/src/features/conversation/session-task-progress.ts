@@ -423,8 +423,8 @@ function parseClaudePlanText(
   planText: string,
   updatedAt: string
 ): Pick<ConversationTaskSnapshot, "items" | "explanation"> | null {
-  const lines = planText
-    .split(/\r?\n/)
+  const rawLines = planText.split(/\r?\n/);
+  const lines = rawLines
     .map((line) => line.trim())
     .filter(Boolean);
 
@@ -435,15 +435,22 @@ function parseClaudePlanText(
   const explanationLines: string[] = [];
   const items: ParsedTaskItem[] = [];
 
-  for (const line of lines) {
-    const taskItem = parseClaudePlanLine(line, updatedAt, items.length);
+  for (const rawLine of rawLines) {
+    const normalizedLine = rawLine.trim();
+
+    if (!normalizedLine) {
+      explanationLines.push("");
+      continue;
+    }
+
+    const taskItem = parseClaudePlanLine(normalizedLine, updatedAt, items.length);
 
     if (taskItem) {
       items.push(taskItem);
       continue;
     }
 
-    explanationLines.push(stripMarkdownHeading(line));
+    explanationLines.push(rawLine);
   }
 
   if (items.length === 0) {
@@ -452,7 +459,10 @@ function parseClaudePlanText(
 
   return {
     items,
-    explanation: explanationLines.length > 0 ? explanationLines.join(" ") : null
+    explanation:
+      explanationLines.join("\n").trim().length > 0
+        ? explanationLines.join("\n").trim()
+        : null
   };
 }
 
@@ -865,6 +875,23 @@ function toTaskItem(
     updatedAt: string;
   }
 ): ParsedTaskItem | null {
+  if (typeof payload === "string") {
+    const normalizedText = payload.trim();
+
+    if (!normalizedText) {
+      return null;
+    }
+
+    return {
+      id: buildStableFallbackTaskId(input.fallbackIdPrefix, normalizedText),
+      title: normalizedText,
+      status: input.fallbackStatus,
+      detail: null,
+      updatedAt: input.updatedAt,
+      hasExplicitTitle: true
+    };
+  }
+
   if (!isRecord(payload)) {
     return null;
   }
