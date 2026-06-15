@@ -69,22 +69,9 @@ function resolveRequestTimeoutMs(body) {
       parsed && typeof parsed === "object" && typeof parsed.hook_event_name === "string"
         ? parsed.hook_event_name.trim()
         : "";
-    const toolName =
-      parsed && typeof parsed === "object" && typeof parsed.tool_name === "string"
-        ? parsed.tool_name.trim()
-        : "";
 
-    if (hookEventName === "Elicitation") {
-      return 605_000;
-    }
-
-    if (
-      (hookEventName === "PreToolUse" && (toolName === "AskUserQuestion" || toolName === "ExitPlanMode"))
-    ) {
-      return 605_000;
-    }
-
-    if (hookEventName === "PreToolUse" || hookEventName === "PermissionRequest") {
+    if (hookEventName === "PreToolUse") {
+      // 权限申请需要等用户操作，不能再用原来的 1.5 秒超时。
       return 95_000;
     }
 
