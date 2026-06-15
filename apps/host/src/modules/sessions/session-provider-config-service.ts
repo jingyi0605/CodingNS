@@ -11,7 +11,6 @@ import {
   type ModelSwitchAppId
 } from "../model-switch/cc-switch-adapter.js";
 import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
-import type { OpenCliSessionRuntimeResolution } from "../opencli/opencli-runtime-resolver.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import type {
   SessionBinding,
@@ -45,17 +44,6 @@ export interface SessionProviderBindingDebugSummary {
 interface SessionProviderSelection {
   providerConfigMode: SessionProviderConfigMode;
   providerPresetId: string | null;
-}
-
-interface OpenCliRuntimeResolverPort {
-  resolveSessionRuntime(): OpenCliSessionRuntimeResolution;
-}
-
-interface OpenCliBridgeSkillServicePort {
-  supportsProvider(provider: SessionBinding["provider"]): boolean;
-  hasEnabledCommands(): boolean;
-  syncRuntimeSkill(provider: SessionBinding["provider"], runtimeHomeDir: string): void;
-  removeRuntimeSkill(provider: SessionBinding["provider"], runtimeHomeDir: string): void;
 }
 
 interface StoredRuntimeMetadata {
@@ -128,8 +116,6 @@ export class SessionProviderConfigService {
   constructor(
     private readonly config: HostConfig,
     private readonly ccSwitchAdapter: CcSwitchAdapter,
-    private readonly openCliRuntimeResolver?: OpenCliRuntimeResolverPort,
-    private readonly openCliBridgeSkillService?: OpenCliBridgeSkillServicePort,
     private readonly workspaceSessionRuntimeContextService?: WorkspaceSessionRuntimeContextPort
   ) {}
 
@@ -352,20 +338,7 @@ export class SessionProviderConfigService {
     SessionBinding,
     "provider" | "providerConfigMode" | "providerPresetId" | "runtimeHomeDir"
   >): SessionProviderLaunchContext {
-    const baseLaunchContext = this.resolveBaseLaunchContext(binding);
-    const openCliResolution = this.openCliRuntimeResolver?.resolveSessionRuntime();
-
-    this.refreshOpenCliBridgeSkill(binding, openCliResolution);
-
-    if (!openCliResolution || openCliResolution.availability !== "ready" || !openCliResolution.runtimeBinPath) {
-      return baseLaunchContext;
-    }
-
-    return {
-      runtimeHomeDir: baseLaunchContext.runtimeHomeDir,
-      runtimeEnv: mergeLaunchRuntimeEnv(baseLaunchContext.runtimeEnv, openCliResolution),
-      providerInstructionFilePath: baseLaunchContext.providerInstructionFilePath ?? null
-    };
+    return this.resolveBaseLaunchContext(binding);
   }
 
   private resolveBaseLaunchContext(binding: Pick<
@@ -586,14 +559,6 @@ export class SessionProviderConfigService {
           detail: `${provider} 当前不支持会话级 cc-switch preset`
         });
     }
-
-    this.refreshOpenCliBridgeSkill(
-      {
-        provider,
-        runtimeHomeDir
-      },
-      this.openCliRuntimeResolver?.resolveSessionRuntime()
-    );
   }
 
   private materializeGlobalRuntimeHome(
@@ -617,14 +582,6 @@ export class SessionProviderConfigService {
       default:
         return;
     }
-
-    this.refreshOpenCliBridgeSkill(
-      {
-        provider,
-        runtimeHomeDir
-      },
-      this.openCliRuntimeResolver?.resolveSessionRuntime()
-    );
   }
 
   private materializeClaudeRuntimeHome(
@@ -879,77 +836,8 @@ export class SessionProviderConfigService {
       return false;
     }
 
-    if (!this.openCliBridgeSkillService?.supportsProvider(provider)) {
-      return false;
-    }
-
-    if (!this.openCliBridgeSkillService.hasEnabledCommands()) {
-      return false;
-    }
-
-    const runtimeResolution = this.openCliRuntimeResolver?.resolveSessionRuntime();
-    return runtimeResolution?.availability === "ready";
+    return false;
   }
-  private refreshOpenCliBridgeSkill(
-    binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">,
-    openCliResolution: OpenCliSessionRuntimeResolution | undefined
-  ): void {
-    const targetHomeDir = this.resolveOpenCliBridgeSkillHomeDir(binding);
-
-    if (!targetHomeDir || !this.openCliBridgeSkillService?.supportsProvider(binding.provider)) {
-      return;
-    }
-
-    if (openCliResolution?.availability === "ready" && this.openCliBridgeSkillService.hasEnabledCommands()) {
-      this.openCliBridgeSkillService.syncRuntimeSkill(binding.provider, targetHomeDir);
-      return;
-    }
-
-    this.openCliBridgeSkillService.removeRuntimeSkill(binding.provider, targetHomeDir);
-  }
-
-  private resolveOpenCliBridgeSkillHomeDir(
-    binding: Pick<SessionBinding, "provider" | "runtimeHomeDir">
-  ): string | null {
-    const runtimeHomeDir = binding.runtimeHomeDir?.trim() ?? "";
-
-    if (runtimeHomeDir) {
-      return runtimeHomeDir;
-    }
-
-    if (binding.provider === "codex") {
-      return path.resolve(this.config.codexHomeDir);
-    }
-
-    return null;
-  }
-}
-
-function mergeLaunchRuntimeEnv(
-  baseRuntimeEnv: Record<string, string>,
-  openCliResolution: OpenCliSessionRuntimeResolution
-): Record<string, string> {
-  const runtimeEnv = {
-    ...baseRuntimeEnv
-  };
-  const basePath = runtimeEnv.PATH?.trim() || process.env.PATH?.trim() || "";
-  const pathEntries = [openCliResolution.runtimeBinPath, basePath].filter(
-    (entry): entry is string => Boolean(entry && entry.trim())
-  );
-
-  runtimeEnv.PATH = pathEntries.join(path.delimiter);
-
-  if (openCliResolution.runtimeRootPath) {
-    runtimeEnv.CODINGNS_OPENCLI_RUNTIME_ROOT = openCliResolution.runtimeRootPath;
-  }
-  if (openCliResolution.realHome) {
-    runtimeEnv.CODINGNS_OPENCLI_REAL_HOME = openCliResolution.realHome;
-  }
-  if (openCliResolution.realUserProfile) {
-    runtimeEnv.CODINGNS_OPENCLI_REAL_USERPROFILE = openCliResolution.realUserProfile;
-  }
-
-  return runtimeEnv;
 }
 
 function mapProviderToModelSwitchApp(provider: SessionBinding["provider"]): ModelSwitchAppId {

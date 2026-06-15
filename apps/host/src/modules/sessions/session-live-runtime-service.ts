@@ -89,7 +89,6 @@ import {
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
-import type { OpenCliSessionPromptService } from "../opencli/opencli-session-prompt-service.js";
 import type { WorkspaceSessionRuntimeContextService } from "./workspace-session-runtime-context-service.js";
 
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
@@ -430,7 +429,6 @@ export class SessionLiveRuntimeService {
     private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly config: HostConfig,
     sessionActivityAuthorityService = new SessionActivityAuthorityService(),
-    private readonly openCliSessionPromptService: OpenCliSessionPromptService | null = null,
     private readonly workspaceSessionRuntimeContextService: Pick<
       WorkspaceSessionRuntimeContextService,
       "prepareWorkspaceInstructionBundle"
@@ -2254,9 +2252,9 @@ export class SessionLiveRuntimeService {
       return null;
     }
 
-    // OpenCLI 约束必须走 runtime skill / runtime 环境本身，不能再内联到用户消息里。
+    // 运行时约束必须走 runtime skill / runtime 环境本身，不能再内联到用户消息里。
     // Codex / Claude 会优先把 providerPrompt 当成真实用户输入发送；一旦这里拼上
-    // OpenCLI 提示，就会覆盖或污染用户原始内容，导致模型只对提示词本身作答。
+    // 额外提示，就会覆盖或污染用户原始内容，导致模型只对提示词本身作答。
     return normalizedBasePrompt;
   }
 
@@ -2545,7 +2543,7 @@ export class SessionLiveRuntimeService {
       workspacePath: input.workspacePath,
       projectId: input.projectId ?? null,
       provider: input.provider,
-      instructionOverlay: buildBrowserTaskInstructionOverlay(input.messageContent ?? null)
+      instructionOverlay: null
     });
   }
 
@@ -4805,56 +4803,6 @@ function resolveRuntimeInstructionFilePath(
   return existsSync(defaultInstructionPath)
     ? path.resolve(defaultInstructionPath)
     : null;
-}
-
-function buildBrowserTaskInstructionOverlay(content: string | null): string | null {
-  const intent = classifyBrowserTaskIntent(content);
-
-  if (intent !== "real_site_authenticated") {
-    return null;
-  }
-
-  return `## 浏览器任务临时规则（本轮生效）
-
-- 当前用户消息已识别为真实站点登录态浏览器任务。
-- 如果任务涉及登录态、个人账户、订单、后台页面、验证码、下载文件、表单提交，必须优先走 \`codingns assistant office browser-task-create\`。
-- 如果用户明确要求复用当前已登录的 Edge/Chrome 会话，必须显式传 \`executionBackend=opencli_bridge\`。
-- 这类任务不要把 persistent profile 当成当前真人浏览器会话的替代品。
-- 首次桥接失败时，不要自动切到 \`playwright\`；先检查 \`executionBackend\`、\`finalUrl\` 和步骤结果，再重试一次 \`opencli_bridge\`。
-- 只有用户明确同意放弃“当前已登录会话”约束后，才允许改用 \`playwright\` 或手工指定 profile。
-- 成功标准不仅是任务执行完成，还必须同时满足：
-  - \`executionBackend = opencli_bridge\`
-  - \`finalUrl\` 落在目标业务页
-  - 页面确认处于已登录状态
-- 如果结果是 \`about:blank\`、登录页、验证码页或错误页，必须明确说明“未满足用户约束”。`;
-}
-
-function classifyBrowserTaskIntent(content: string | null): "none" | "local_debug" | "real_site_public" | "real_site_authenticated" {
-  const normalized = normalizeIntentText(content);
-
-  if (!normalized) {
-    return "none";
-  }
-
-  if (/(localhost|127\.0\.0\.1|::1|本地预览|前端调试|热更新|ui 冒烟|ui冒烟)/i.test(normalized)) {
-    return "local_debug";
-  }
-
-  const browserActionPattern = /(打开网页|打开页面|登录网站|抓取页面|读取dom|读取 dom|截图|点按钮|点击按钮|填写表单|提交表单|下载文件|浏览器|网页|页面|站点)/i;
-  if (!browserActionPattern.test(normalized)) {
-    return "none";
-  }
-
-  const authenticatedPattern = /(已登录|登录态|当前浏览器|当前窗口|现有窗口|复用.*登录|edge|chrome|淘宝|京东|飞书|订单|购物车|个人账户|账号|后台|验证码|待收货|待付款|商家后台|管理后台)/i;
-  if (authenticatedPattern.test(normalized)) {
-    return "real_site_authenticated";
-  }
-
-  return "real_site_public";
-}
-
-function normalizeIntentText(content: string | null): string {
-  return (content ?? "").trim().toLowerCase();
 }
 
 function buildClaudeHookBridgeConfig(

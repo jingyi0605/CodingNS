@@ -1,4 +1,4 @@
 interface:
   display_name: "CodingNS Workspace Session"
-  short_description: "工作区会话专用 Skill，默认把真实网页操作收口到 office.browser.*"
-  default_prompt: "Use $codingns-workspace-session inside CodingNS workspace sessions. Treat `office.browser.*` as the default first-class entry for real website operations such as open/login/scrape/form-submit/download. If `$codingns-opencli` is also present, only use it for public data collection; do not use browser-dependent OpenCLI site commands for login/account/order/admin tasks. For login/captcha/complex real sites/reusing human Chrome or Edge state, prefer `office.browser.*` with `executionBackend=opencli_bridge`. Only use the built-in Browser first for localhost or explicit in-app browser debugging."
+  short_description: "工作区会话专用 Skill，负责当前工作区能力边界和路由规则"
+  default_prompt: "Use $codingns-workspace-session inside CodingNS workspace sessions. Follow runtime-exposed MCP and tool schemas. Use Codex or Claude Code built-in browser and terminal capabilities for website and ops tasks. Prefer the built-in Browser for localhost or explicit in-app browser debugging."

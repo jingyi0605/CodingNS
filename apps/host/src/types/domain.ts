@@ -2012,16 +2012,6 @@ export type SkillScope = "workspace" | "assistant";
 export type ManagedSkillState = "active" | "conflicted" | "missing";
 export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode";
 export type SkillTargetSyncStatus = "synced" | "pending" | "failed" | "conflicted";
-export type OpenCliProviderId = "opencli";
-export type OpenCliInstallState = "not_installed" | "installed" | "broken";
-export type OpenCliHealthState =
-  | "unknown"
-  | "binary_ready"
-  | "bridge_missing"
-  | "ready"
-  | "runtime_build_failed";
-export type OpenCliCatalogSource = "manifest" | "cli_list" | "local_manifest" | "cache";
-export type OpenCliRuntimeProfileStatus = "pending" | "ready" | "failed" | "stale";
 
 export interface ManagedSkillRecord {
   id: string;
@@ -2046,48 +2036,6 @@ export interface SkillTargetBindingRecord {
   lastErrorDetail: string | null;
 }
 
-export interface OpenCliProviderRecord {
-  providerId: OpenCliProviderId;
-  enabled: boolean;
-  installState: OpenCliInstallState;
-  healthState: OpenCliHealthState;
-  version: string | null;
-  installPath: string | null;
-  lastCheckedAt: string | null;
-  activeRuntimeId: string | null;
-  lastErrorCode: string | null;
-  lastErrorDetail: string | null;
-  catalogRefreshedAt: string | null;
-  catalogSource: OpenCliCatalogSource | null;
-}
-
-export interface OpenCliCatalogEntryRecord {
-  providerId: OpenCliProviderId;
-  commandId: string;
-  site: string;
-  name: string;
-  description: string;
-  strategy: string;
-  browser: boolean;
-  modulePath: string | null;
-  sourceFile: string | null;
-  enabled: boolean;
-  sortOrder: number;
-}
-
-export interface OpenCliRuntimeProfileRecord {
-  id: string;
-  version: string;
-  sourceInstallPath: string;
-  enabledCommandIdsJson: string;
-  runtimeRootPath: string;
-  status: OpenCliRuntimeProfileStatus;
-  contentHash: string;
-  createdAt: string;
-  updatedAt: string;
-  lastErrorCode: string | null;
-  lastErrorDetail: string | null;
-}
 
 export type SkillScanManagementState = "managed" | "unmanaged" | "conflicted";
 

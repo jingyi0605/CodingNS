@@ -64,12 +64,6 @@ import { createDefaultChannelPlatformAdapterRegistry } from "../modules/channels
 import { ChannelService } from "../modules/channels/channel-service.js";
 import { WechatClawRuntimeClient } from "../modules/channels/wechat-claw-runtime-client.js";
 import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtime-manager.js";
-import { BrowserProfileService } from "../modules/browser-runtime/browser-profile-service.js";
-import { BrowserRuntimeController } from "../modules/browser-runtime/browser-runtime-controller.js";
-import { BrowserRuntimeService } from "../modules/browser-runtime/browser-runtime-service.js";
-import { OpenCliBridgeBrowserExecutor } from "../modules/browser-runtime/opencli-bridge-browser-executor.js";
-import { OpenCliBrowserBridgeService } from "../modules/browser-runtime/opencli-browser-bridge-service.js";
-import { PlaywrightBrowserExecutor } from "../modules/browser-runtime/playwright-browser-executor.js";
 import { DocumentRuntimeController } from "../modules/document-runtime/document-runtime-controller.js";
 import { DocumentExportExecutor } from "../modules/document-runtime/document-export-executor.js";
 import { DocumentRuntimeService } from "../modules/document-runtime/document-runtime-service.js";
@@ -104,9 +98,6 @@ import { OfficeController } from "../modules/office/office-controller.js";
 import { OnlyOfficeIntegrationService } from "../modules/office/onlyoffice-integration-service.js";
 import { OfficePreviewLinkService } from "../modules/office/office-preview-link-service.js";
 import { OfficeService } from "../modules/office/office-service.js";
-import { OpsRuntimeController } from "../modules/ops-runtime/ops-runtime-controller.js";
-import { OpsRuntimeService } from "../modules/ops-runtime/ops-runtime-service.js";
-import { SshOpsExecutor } from "../modules/ops-runtime/ssh-ops-executor.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
 import { ProfileController } from "../modules/preferences/profile-controller.js";
 import { PreferenceProfileService } from "../modules/preferences/profile-service.js";
@@ -127,15 +118,6 @@ import { HostResourceService } from "../modules/system/host-resource-service.js"
 import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
 import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
 import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
-import { OpenCliCatalogService } from "../modules/opencli/opencli-catalog-service.js";
-import { OpenCliController } from "../modules/opencli/opencli-controller.js";
-import { OpenCliHealthService } from "../modules/opencli/opencli-health-service.js";
-import { OpenCliManagementService } from "../modules/opencli/opencli-management-service.js";
-import { OpenCliBridgeSkillService } from "../modules/opencli/opencli-bridge-skill-service.js";
-import { OpenCliRuntimeBuilder } from "../modules/opencli/opencli-runtime-builder.js";
-import { OpenCliRuntimeProfileService } from "../modules/opencli/opencli-runtime-profile-service.js";
-import { OpenCliRuntimeResolver } from "../modules/opencli/opencli-runtime-resolver.js";
-import { OpenCliSessionPromptService } from "../modules/opencli/opencli-session-prompt-service.js";
 import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
@@ -212,7 +194,6 @@ import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAffairsRoutes } from "../routes/affairs.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
-import { registerBrowserRuntimeRoutes } from "../routes/browser-runtime.js";
 import { registerChannelRoutes } from "../routes/channels.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
@@ -220,7 +201,6 @@ import { registerDocumentRuntimeRoutes } from "../routes/document-runtime.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
 import { registerOfficeRoutes } from "../routes/office.js";
-import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
 import { registerPeerHostRoutes } from "../routes/peer-hosts.js";
@@ -239,7 +219,6 @@ import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorktreeRoutes } from "../routes/worktrees.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { registerSystemRoutes } from "../routes/system.js";
-import { registerOpsRuntimeRoutes } from "../routes/ops-runtime.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
@@ -264,7 +243,6 @@ import { ButlerProfileRepository } from "../storage/repositories/butler-profile-
 import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
 import { ButlerSessionSummaryStateRepository } from "../storage/repositories/butler-session-summary-state-repository.js";
-import { BrowserProfileRepository } from "../storage/repositories/browser-profile-repository.js";
 import {
   PeerHostRepository,
   PeerHostSessionRepository,
@@ -295,14 +273,10 @@ import { OfficeReceiptRepository } from "../storage/repositories/office-receipt-
 import { OfficeRollbackRecordRepository } from "../storage/repositories/office-rollback-record-repository.js";
 import { OfficeTaskRepository } from "../storage/repositories/office-task-repository.js";
 import { OfficeTaskStepRepository } from "../storage/repositories/office-task-step-repository.js";
-import { OpsTargetRepository } from "../storage/repositories/ops-target-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
-import { OpenCliCatalogEntryRepository } from "../storage/repositories/opencli-catalog-entry-repository.js";
-import { OpenCliProviderRepository } from "../storage/repositories/opencli-provider-repository.js";
-import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
 import { OfficeOnlyOfficeSettingRepository } from "../storage/repositories/office-onlyoffice-setting-repository.js";
 import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
 import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
@@ -432,7 +406,6 @@ export function createServer(config: HostConfig) {
     officeAuditEventRepository: new OfficeAuditEventRepository(database.db),
     officeRollbackRecordRepository: new OfficeRollbackRecordRepository(database.db),
     officeOnlyOfficeSettingRepository: new OfficeOnlyOfficeSettingRepository(database.db),
-    browserProfileRepository: new BrowserProfileRepository(database.db),
     pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
     pluginEnablementRepository: new PluginEnablementRepository(database.db),
     pluginAuditEventRepository: new PluginAuditEventRepository(database.db),
@@ -443,7 +416,6 @@ export function createServer(config: HostConfig) {
     documentRepository: new DocumentRepository(database.db),
     documentRevisionRepository: new DocumentRevisionRepository(database.db),
     documentCommentRepository: new DocumentCommentRepository(database.db),
-    opsTargetRepository: new OpsTargetRepository(database.db),
     portLeaseRepository: new PortLeaseRepository(database.db),
     runtimeBindingRepository: new RuntimeBindingRepository(database.db),
     aiFallbackEditRepository: new AiFallbackEditRepository(database.db),
@@ -468,9 +440,6 @@ export function createServer(config: HostConfig) {
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
     managedSkillRepository: new ManagedSkillRepository(database.db),
-    openCliProviderRepository: new OpenCliProviderRepository(database.db),
-    openCliCatalogEntryRepository: new OpenCliCatalogEntryRepository(database.db),
-    openCliRuntimeProfileRepository: new OpenCliRuntimeProfileRepository(database.db),
     providerControlRepository: new ProviderControlRepository(database.db),
     providerRuntimeStateRepository: new ProviderRuntimeStateRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
@@ -736,45 +705,6 @@ export function createServer(config: HostConfig) {
     dbPath: config.ccSwitchDbPath
   });
   const modelSwitchService = new ModelSwitchService(ccSwitchAdapter);
-  const openCliRuntimeProfileService = new OpenCliRuntimeProfileService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository,
-    repositories.openCliRuntimeProfileRepository,
-    {
-      runtimeStorageRootPath: path.dirname(config.databasePath)
-    }
-  );
-  const openCliCatalogService = new OpenCliCatalogService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliRuntimeBuilder = new OpenCliRuntimeBuilder(
-    repositories.openCliRuntimeProfileRepository
-  );
-  const openCliHealthService = new OpenCliHealthService();
-  const openCliRuntimeResolver = new OpenCliRuntimeResolver(
-    repositories.openCliProviderRepository,
-    repositories.openCliRuntimeProfileRepository,
-    openCliRuntimeProfileService,
-    openCliRuntimeBuilder
-  );
-  const openCliManagementService = new OpenCliManagementService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository,
-    repositories.openCliRuntimeProfileRepository,
-    openCliCatalogService,
-    openCliHealthService,
-    openCliRuntimeResolver
-  );
-  const openCliSessionPromptService = new OpenCliSessionPromptService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliBridgeSkillService = new OpenCliBridgeSkillService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliController = new OpenCliController(openCliManagementService);
   const workspaceSessionAuthService = new WorkspaceSessionAuthService(authService, config);
   const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService(
     workspaceSessionAuthService,
@@ -810,8 +740,6 @@ export function createServer(config: HostConfig) {
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
     ccSwitchAdapter,
-    openCliRuntimeResolver,
-    openCliBridgeSkillService,
     workspaceSessionRuntimeContextService
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
@@ -922,7 +850,6 @@ export function createServer(config: HostConfig) {
     sessionProviderConfigService,
     config,
     sessionActivityAuthorityService,
-    openCliSessionPromptService,
     workspaceSessionRuntimeContextService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
@@ -957,8 +884,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
+    sessionActivityAuthorityService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -976,8 +902,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerSummaryRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
+    sessionActivityAuthorityService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSummarySessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -995,8 +920,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerFollowUpRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
+    sessionActivityAuthorityService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1672,40 +1596,6 @@ export function createServer(config: HostConfig) {
     pluginFileGatewayService,
     pluginPermissionService
   );
-  const browserProfileService = new BrowserProfileService(
-    repositories.browserProfileRepository,
-    config.databasePath
-  );
-  const playwrightBrowserExecutor = new PlaywrightBrowserExecutor(
-    config,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository
-  );
-  const openCliBrowserBridgeService = new OpenCliBrowserBridgeService(openCliHealthService);
-  const openCliBridgeBrowserExecutor = new OpenCliBridgeBrowserExecutor(
-    config.databasePath,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository,
-    openCliHealthService
-  );
-  const browserRuntimeService = new BrowserRuntimeService(
-    browserProfileService,
-    officeService,
-    repositories.officeTaskRepository,
-    [
-      playwrightBrowserExecutor,
-      openCliBridgeBrowserExecutor
-    ],
-    openCliBrowserBridgeService,
-    taskManager
-  );
-  const browserRuntimeController = new BrowserRuntimeController(browserRuntimeService);
   const documentRuntimeService = new DocumentRuntimeService(
     repositories.documentTemplateRepository,
     repositories.documentRepository,
@@ -1724,23 +1614,6 @@ export function createServer(config: HostConfig) {
     path.join(path.dirname(config.databasePath), "document-templates")
   );
   const documentRuntimeController = new DocumentRuntimeController(documentRuntimeService);
-  const sshOpsExecutor = new SshOpsExecutor(
-    config,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository
-  );
-  const opsRuntimeService = new OpsRuntimeService(
-    repositories.opsTargetRepository,
-    browserProfileService,
-    officeService,
-    repositories.officeTaskRepository,
-    sshOpsExecutor,
-    taskManager
-  );
-  const opsRuntimeController = new OpsRuntimeController(opsRuntimeService);
   const assistantCapabilityController = new AssistantCapabilityController(
     new AssistantCapabilityService(
       butlerProjectService,
@@ -1763,9 +1636,7 @@ export function createServer(config: HostConfig) {
       repositories.providerControlRepository,
       documentRuntimeService,
       officeService,
-      officePreviewLinkService,
-      browserRuntimeService,
-      opsRuntimeService
+      officePreviewLinkService
     )
   );
   const hostHandshakeController = new HostHandshakeController(hostHandshakeService);
@@ -1928,9 +1799,7 @@ export function createServer(config: HostConfig) {
   void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
   void registerOfficeRoutes(app, officeController);
-  void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
-  void registerOpsRuntimeRoutes(app, opsRuntimeController);
   void registerAffairsRoutes(
     app,
     affairsLibraryController,
@@ -1959,7 +1828,6 @@ export function createServer(config: HostConfig) {
   void registerPluginRoutes(app, pluginController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
-  void registerOpenCliRoutes(app, openCliController);
   void registerSystemRoutes(
     app,
     tailscaleController,
@@ -2082,13 +1950,11 @@ export function createServer(config: HostConfig) {
         tailscaleService,
         modelSwitchService,
         officeService,
-        browserProfileService,
         pluginRegistryService,
         pluginRuntimeSessionService,
         pluginRuntimeService,
         pluginSchedulerService,
         documentRuntimeService,
-        opsRuntimeService,
         runtimeObservabilityService,
         sessionHistoryService,
         sessionChangedFileService,
@@ -2108,30 +1974,6 @@ function ensureDefaultOfficeConnectors(
 ): void {
   const timestamp = new Date().toISOString();
   const defaults: Array<Omit<OfficeConnector, "id" | "createdAt" | "updatedAt">> = [
-    {
-      connectorKey: "browser.playwright",
-      kind: "browser",
-      displayName: "Playwright Browser",
-      capabilityJson: JSON.stringify({
-        supportedTaskTypes: ["browser", "ops"],
-        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
-        supportedArtifacts: ["screenshot", "ocr_result", "downloaded_file", "dom_snapshot"],
-        supportsSubscription: false
-      }),
-      status: "active"
-    },
-    {
-      connectorKey: "browser.opencli_bridge",
-      kind: "browser",
-      displayName: "OpenCLI Bridge Browser",
-      capabilityJson: JSON.stringify({
-        supportedTaskTypes: ["browser"],
-        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
-        supportedArtifacts: ["screenshot", "downloaded_file", "dom_snapshot"],
-        supportsSubscription: false
-      }),
-      status: "active"
-    },
     {
       connectorKey: "document.doct",
       kind: "document",
