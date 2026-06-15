@@ -4477,6 +4477,88 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
+  it("Claude ExitPlanMode 批准后会按 PreToolUse 协议返回计划审批结果", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+
+    const resultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "ExitPlanMode",
+      tool_input: {
+        allowedPrompts: [
+          {
+            tool: "Bash",
+            prompt:
+              "pnpm test:related -- apps/user-app/src/features/conversation/components/PermissionRequestList.tsx"
+          }
+        ]
+      }
+    });
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      kind: "plan_approval",
+      toolName: "ExitPlanMode"
+    });
+
+    await service.replyPermissionRequest("session-1", "user-1", requests[0]!.id, {
+      action: "allow"
+    });
+
+    const result = await resultPromise;
+
+    expect(result.accepted).toBe(true);
+    expect(result.ignored).toBe(false);
+    expect(result.sessionId).toBe("session-1");
+    expect(result.bridgeResponse).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: {
+          allowedPrompts: [
+            {
+              tool: "Bash",
+              prompt:
+                "pnpm test:related -- apps/user-app/src/features/conversation/components/PermissionRequestList.tsx"
+            }
+          ]
+        }
+      }
+    });
+  });
+
   it("Claude 关键运行态 Hook 会映射成可追踪的运行中状态", async () => {
     useFakeNow("2026-03-26T10:00:00.000Z");
 
