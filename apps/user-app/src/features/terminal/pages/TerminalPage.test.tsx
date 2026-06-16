@@ -117,18 +117,25 @@ const {
 function setTerminalManagerSnapshot(
   workspaceId: string,
   terminals: TerminalDto[],
-  shellOptions: TerminalShellOptionDto[] = []
+  shellOptions: TerminalShellOptionDto[] = [],
+  options: {
+    targetHostId?: string | null;
+  } = {}
 ) {
   const snapshot = {
     workspaceId,
     terminals,
     templates: [],
     templateStatuses: [],
-    shellOptions
+    shellOptions,
+    targetHostId: options.targetHostId ?? null
   };
 
   terminalManagerSnapshotByWorkspace.set(workspaceId, snapshot);
-  writeViewSnapshot(`terminal-manager.snapshot.${workspaceId}`, snapshot);
+  const hostPart = options.targetHostId?.trim()
+    ? `host.${encodeURIComponent(options.targetHostId.trim())}.`
+    : "";
+  writeViewSnapshot(`terminal-manager.snapshot.${hostPart}${workspaceId}`, snapshot);
 }
 
 function emitTerminalManagerSnapshot(workspaceId: string) {
@@ -763,7 +770,12 @@ describe("TerminalPage", () => {
       }
     ];
 
-    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions);
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions, {
+      targetHostId: "peer-host-windows"
+    });
+    mockListTerminalShellOptions.mockResolvedValueOnce({
+      items: windowsShellOptions
+    });
     mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
     mockListWorkspaceTerminals.mockResolvedValueOnce({
       items: [createdTerminal]
@@ -787,10 +799,80 @@ describe("TerminalPage", () => {
       expect(mockCreateTerminal).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: "workspace-1",
-          shell: "C:\\Program Files\\Git\\bin\\bash.exe"
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          runtimeType: "tmux"
         }),
         expect.objectContaining({
           targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("PeerHost 指向 Windows 时，即使当前前端不在 Windows 也会先弹 shell 选择并默认走持久会话", async () => {
+    const createdTerminal = buildTerminal({
+      id: "terminal-peer-windows-created",
+      name: "Peer Windows 终端",
+      shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    });
+    const windowsShellOptions: TerminalShellOptionDto[] = [
+      {
+        id: "cmd",
+        label: "命令提示符 (CMD)",
+        shell: "C:\\Windows\\System32\\cmd.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "powershell",
+        label: "PowerShell",
+        shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "git-bash",
+        label: "Git Bash",
+        shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+        available: true,
+        unavailableReason: null
+      }
+    ];
+
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions);
+    mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
+
+    renderPage(undefined, {
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-windows"
+      }
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "新建终端" }));
+
+    expect(mockCreateTerminal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。 已启用$/
+      })
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /PowerShell/ }));
+    await userEvent.click(screen.getByRole("button", { name: "创建终端" }));
+
+    await waitFor(() => {
+      expect(mockCreateTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          runtimeType: "tmux"
+        }),
+        expect.objectContaining({
+          targetHostId: "peer-host-windows"
         })
       );
     });
@@ -1691,7 +1773,7 @@ describe("TerminalPage", () => {
     expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。$/
+        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。 已启用$/
       })
     ).toBeInTheDocument();
 
