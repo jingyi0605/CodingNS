@@ -22,6 +22,7 @@
 - 多 HOST Profile、激活 HOST 切换和 HOST 级登录态隔离由 `spec001.3-多HOST接入与跨端切换` 继续展开
 - 桌面端本机 `codingns` Host 自动发现、自动发现分类和与手动 HOST 去重由 `spec001.3.1-桌面端本机HOST自动发现` 继续展开
 - 当前 HOST 代理访问其他 HOST 仓库、同版本检查和目标 HOST 登录态代管由 `spec001.3.2-当前HOST代理访问其他HOST仓库` 继续展开
+- HOST / PEERHOST 下会话、终端、文件、Git、调试等资源的统一作用域模型，以及跨作用域切换时的连接清理由 `spec001.3.3-HOST与PEERHOST资源作用域统一与切换收口` 继续展开
 - 实例级 Tailscale 接入、设置页动态远程访问管理和 tailnet 暴露边界由 `spec001.4-Tailscale接入与实例级远程访问` 继续展开
 - 多 CLI 的 Skill 读取、同步和统一管理边界由 `spec001.5-多CLI-Skill统一管理与同步` 继续展开
 - 客户端和服务端的统一更新链路由 `spec001.6-客户端与服务端统一更新机制` 继续展开
@@ -57,6 +58,7 @@
 - `spec001.3-多HOST接入与跨端切换/`
 - `spec001.3.1-桌面端本机HOST自动发现/`
 - `spec001.3.2-当前HOST代理访问其他HOST仓库/`
+- `spec001.3.3-HOST与PEERHOST资源作用域统一与切换收口/`
 - `spec001.4-Tailscale接入与实例级远程访问/`
 - `spec001.5-多CLI-Skill统一管理与同步/`
 - `spec001.6-客户端与服务端统一更新机制/`
