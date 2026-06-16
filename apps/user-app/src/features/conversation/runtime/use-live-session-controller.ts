@@ -25,6 +25,7 @@ import {
 } from "./session-runtime-store";
 import type { SessionMessageViewModel } from "./session-runtime-machine";
 import { withConversationTimelineRuntimeThinkingItem } from "../timeline-source-items";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
@@ -100,14 +101,13 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const previousRunningStateRef = useRef<string | null>(input.externalSession?.runningState ?? null);
   const notifiedPermissionRequestIdsRef = useRef<Set<string>>(new Set());
 
-  const normalizedTargetHostId = input.targetHostId?.trim() || null;
+  const normalizedTargetHostId = normalizeTargetHostId(input.targetHostId);
 
   if (
     !storeRef.current
     || currentSessionIdRef.current !== input.sessionId
     || currentTargetHostIdRef.current !== normalizedTargetHostId
   ) {
-    storeRef.current?.destroy();
     storeRef.current = new SessionRuntimeStore(input.sessionId, {
       targetHostId: normalizedTargetHostId,
       initialSession: input.externalSession,

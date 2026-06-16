@@ -7,6 +7,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 import {
   updatePreferences,
   usePreferencesSelector
@@ -236,10 +237,9 @@ function buildComposerDeploymentSnapshotCacheKey(
   app: ModelSwitchAppId,
   targetHostId?: string | null
 ): string {
-  const hostKey = targetHostId?.trim() || "current";
+  const hostKey = normalizeTargetHostId(targetHostId) ?? "current";
   return `${hostKey}::${app}`;
 }
-
 
 function createFallbackModelOptions(provider: ProviderId): ModelOption[] {
   return [

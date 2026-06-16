@@ -7,6 +7,7 @@ import type {
   WorkbenchWorktreeNodeDto,
   WorkspaceRef
 } from "../../conversation/api/conversation-api";
+import { normalizeTargetHostId } from "./resource-scope";
 import {
   sortSessionSummaryList,
   sortWorkbenchWorktreeNodes
@@ -36,8 +37,7 @@ export function buildScopedWorkspaceKeyFromRef(workspaceRef: WorkspaceRef): stri
 }
 
 export function resolveWorkbenchTargetHostId(targetHostId?: string | null): string | undefined {
-  const normalizedTargetHostId = targetHostId?.trim();
-  return normalizedTargetHostId || undefined;
+  return normalizeTargetHostId(targetHostId) ?? undefined;
 }
 
 export function resolveWorkbenchScopeHostId(

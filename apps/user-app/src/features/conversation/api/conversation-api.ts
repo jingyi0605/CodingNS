@@ -1713,9 +1713,10 @@ export function analyzeDebugTarget(payload: {
   workspaceId: string;
   rootPath: string;
   commandHints?: string[];
-}) {
+}, options?: { targetHostId?: string | null }) {
   return httpClient.request<DebugTargetAnalysisEnvelopeDto>("/api/debug-targets/analyze", {
     method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify(payload)
   });
 }
@@ -1728,12 +1729,14 @@ export function getFrameworkAnalysis(targetId: string) {
 
 export function createDebugLaunchPlan(
   targetId: string,
-  payload?: { portRequests?: DebugTargetPortRequestDto[] }
+  payload?: { portRequests?: DebugTargetPortRequestDto[] },
+  options?: { targetHostId?: string | null }
 ) {
   return httpClient.request<DebugLaunchPlanDto>(
     `/api/debug-targets/${encodeURIComponent(targetId)}/launch-plan`,
     {
       method: "POST",
+      targetHostId: options?.targetHostId ?? undefined,
       body: JSON.stringify(payload ?? {})
     }
   );

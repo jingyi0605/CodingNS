@@ -1,5 +1,6 @@
 import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
 import { getAuthClientHeaders } from "../features/auth/store/client-device";
+import { normalizeTargetHostId } from "../shared/network/target-host";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
 import { markAuthExpiredFlag } from "./auth-expired-flag";
@@ -190,17 +191,13 @@ class HttpClient {
 export const httpClient = new HttpClient();
 
 function buildTargetHostProxyPath(path: string, targetHostId?: string): string {
-  if (!targetHostId) {
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
+
+  if (!normalizedTargetHostId) {
     return path;
   }
 
-  const trimmedTargetHostId = targetHostId.trim();
-
-  if (!trimmedTargetHostId) {
-    return path;
-  }
-
-  const pathPrefix = `/api/host-proxy/hosts/${encodeURIComponent(trimmedTargetHostId)}`;
+  const pathPrefix = `/api/host-proxy/hosts/${encodeURIComponent(normalizedTargetHostId)}`;
   const queryStartIndex = path.indexOf("?");
   const pathname = queryStartIndex >= 0 ? path.slice(0, queryStartIndex) : path;
   const query = queryStartIndex >= 0 ? path.slice(queryStartIndex) : "";

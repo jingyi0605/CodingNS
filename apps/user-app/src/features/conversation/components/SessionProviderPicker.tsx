@@ -5,6 +5,7 @@ import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-ap
 import { getProviderCapabilities } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 import {
   createDraftCapabilities,
   getProviderDisplayName,
@@ -55,8 +56,7 @@ export function SessionProviderPicker({
    * 传给 httpClient 时必须归一化为 null，否则 buildTargetHostProxyPath
    * 会拼出 /api/host-proxy/hosts/current/... 导致 404。
    */
-  const targetHostIdForRequest =
-    targetHostId && targetHostId !== "current" ? targetHostId : null;
+  const targetHostIdForRequest = normalizeTargetHostId(targetHostId);
 
   const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(
     providers,
@@ -204,7 +204,7 @@ function readCachedCapabilities(
   targetHostId: string | null | undefined
 ): Partial<Record<ProviderId, ProviderCapabilitiesDto>> {
   const normalizedWorkspaceId = workspaceId?.trim() ?? "";
-  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId) ?? "current";
 
   if (!normalizedWorkspaceId) {
     return {};
@@ -231,7 +231,7 @@ function writeCachedCapabilities(
   capabilitiesByProvider: Partial<Record<ProviderId, ProviderCapabilitiesDto>>
 ): void {
   const normalizedWorkspaceId = workspaceId.trim();
-  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId) ?? "current";
 
   if (!normalizedWorkspaceId) {
     return;
