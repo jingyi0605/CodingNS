@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import type { AuthContext } from "../auth/auth-service.js";
 import type { WsAuthGuard } from "../../ws/ws-auth-guard.js";
 import type { PeerHostService } from "./peer-host-service.js";
@@ -108,6 +109,12 @@ export class HostWsProxyService {
         peerHost.baseUrl,
         accessToken,
       );
+      logResourceScopeDebug("peer_ws_proxy.open", {
+        userId: authContext.user.userId,
+        peerHostId,
+        requestUrl: request.url ?? null,
+        upstreamBaseUrl: peerHost.baseUrl
+      });
     } catch (error) {
       writeUpgradeError(socket, error);
       return;
@@ -149,6 +156,15 @@ export class HostWsProxyService {
       const raw = data.toString("utf8");
       const messageType = readMessageType(raw);
 
+      if (messageType === "terminalManager.subscribe" || messageType === "terminalManager.refresh") {
+        logResourceScopeDebug("peer_ws_proxy.client_message", {
+          userId: authContext.user.userId,
+          peerHostId,
+          messageType,
+          workspaceId: readMessageWorkspaceId(raw)
+        });
+      }
+
       if (!messageType || !ALLOWED_CLIENT_MESSAGE_TYPES.has(messageType)) {
         sendWsError(client, "HOST_PROXY_WS_MESSAGE_NOT_ALLOWED", "这个 WebSocket 消息没有加入 Peer HOST 代理白名单");
         return;
@@ -170,6 +186,16 @@ export class HostWsProxyService {
       const raw = data.toString("utf8");
       const messageType = readMessageType(raw);
 
+      if (messageType === "terminalManager.snapshot" || messageType === "session.error") {
+        logResourceScopeDebug("peer_ws_proxy.remote_message", {
+          userId: authContext.user.userId,
+          peerHostId,
+          messageType,
+          workspaceId: readMessageWorkspaceId(raw),
+          errorCode: readSessionErrorCode(raw)
+        });
+      }
+
       if (!messageType || !ALLOWED_REMOTE_MESSAGE_TYPES.has(messageType)) {
         return;
       }
@@ -180,6 +206,12 @@ export class HostWsProxyService {
     });
 
     remoteSocket.on("close", (code, reason) => {
+      logResourceScopeDebug("peer_ws_proxy.closed", {
+        userId: authContext.user.userId,
+        peerHostId,
+        code,
+        reason: reason.length > 0 ? reason.toString("utf8") : null
+      });
       if (code === 1008 || code === 4001 || code === 4401) {
         this.peerHostService.clearSession(authContext.user.userId, peerHostId);
       }
@@ -211,6 +243,24 @@ function buildRemoteWsUrl(baseUrl: string, accessToken: string): string {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("access_token", accessToken);
   return url.toString();
+}
+
+function readMessageWorkspaceId(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { workspaceId?: unknown };
+    return typeof parsed.workspaceId === "string" ? parsed.workspaceId.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionErrorCode(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { error_code?: unknown };
+    return typeof parsed.error_code === "string" ? parsed.error_code.trim() || null : null;
+  } catch {
+    return null;
+  }
 }
 
 function connectRemoteWorkbenchSocket(

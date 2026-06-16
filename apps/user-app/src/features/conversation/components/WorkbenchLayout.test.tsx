@@ -737,6 +737,117 @@ describe("WorkbenchLayout", () => {
     expect(peerSocket.sentPayloads).toHaveLength(0);
   });
 
+  it("访问过 PeerHOST 终端后，再打开主 HOST 工作区会话时不会继续复用旧的 peer targetHostId", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXAC"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-peer-1",
+            title: "Peer 终端会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "头脑风暴"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-host-1",
+            title: "主机项目会话",
+            workspaceId: "workspace-2"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "GXAC"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/terminals?targetHostId=peer-host-1");
+
+    const hostSessionCard = await findSessionCardByTitle("主机项目会话");
+    await userEvent.click(within(hostSessionCard).getByRole("button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-2/sessions/session-host-1");
+      expect(screen.getByTestId("current-search").textContent || "").not.toContain("targetHostId=peer-host-1");
+    });
+  });
+
   it("新建会话弹窗支持先创建子工作区，再选择供应商", async () => {
     let currentSnapshot = createWorkbenchSnapshot([
       {

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -318,12 +319,24 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       return;
     }
 
+    logPerfDebug("resource_scope.session_runtime.missing", {
+      sessionId: input.sessionId,
+      targetHostId: normalizedTargetHostId,
+      runtimeErrorCode,
+      runtimeErrorDetail,
+      externalWorkspaceId: input.externalSession?.workspaceId ?? null
+    });
+
     dismissToast("conversation-runtime-error");
     input.onResolveMissingSession?.();
   }, [
     dismissToast,
     input.enableRuntimeErrorHandling,
+    input.externalSession?.workspaceId,
     input.onResolveMissingSession,
+    input.sessionId,
+    normalizedTargetHostId,
+    runtimeErrorDetail,
     runtimeErrorCode
   ]);
 

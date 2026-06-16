@@ -2,6 +2,7 @@ import type { WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
 import { logPerformance } from "../shared/utils/perf-log.js";
+import { logResourceScopeDebug } from "../shared/utils/resource-scope-debug-log.js";
 import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { TerminalService } from "../modules/terminal/terminal-service.js";
@@ -908,6 +909,11 @@ export class WorkbenchWsHub {
 
     if (current && current.workspaceId === normalizedWorkspaceId) {
       current.knownRevision = normalizedKnownRevision;
+      logResourceScopeDebug("workbench_ws.terminal_subscription_reused", {
+        userId: this.clientUsers.get(client) ?? null,
+        workspaceId: normalizedWorkspaceId,
+        knownRevision: normalizedKnownRevision
+      });
       return current;
     }
 
@@ -1027,6 +1033,11 @@ export class WorkbenchWsHub {
     };
 
     this.clientTerminalManagerSubscriptions.set(client, next);
+    logResourceScopeDebug("workbench_ws.terminal_subscription_set", {
+      userId: this.clientUsers.get(client) ?? null,
+      workspaceId: normalizedWorkspaceId,
+      knownRevision: normalizedKnownRevision
+    });
     return next;
   }
 
@@ -1075,6 +1086,11 @@ export class WorkbenchWsHub {
     const force = subscription.queuedForce;
     subscription.queuedRefresh = false;
     subscription.queuedForce = false;
+    logResourceScopeDebug("workbench_ws.terminal_refresh_flush", {
+      userId: this.clientUsers.get(client) ?? null,
+      workspaceId: subscription.workspaceId,
+      force
+    });
     void this.refreshTerminalManagerSubscription(client, force);
   }
 
@@ -1130,6 +1146,13 @@ export class WorkbenchWsHub {
         subscription.lastPayload = payload;
         const sendStartedAtMs = terminalDebugNowMs();
         client.send(payload);
+        logResourceScopeDebug("workbench_ws.terminal_refresh_sent", {
+          userId: this.clientUsers.get(client) ?? null,
+          workspaceId: subscription.workspaceId,
+          force,
+          revision: snapshot.revision,
+          terminalCount: snapshot.terminals.length
+        });
         logTerminalDebug("workbench.terminal_manager_refresh.completed", {
           workspaceId: subscription.workspaceId,
           force,

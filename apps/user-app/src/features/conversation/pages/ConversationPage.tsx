@@ -312,6 +312,19 @@ function LiveConversationPage({
           ? buildWorkspaceSessionIndexPath(fallbackWorkspaceId, workspaceRef)
           : (shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing");
 
+    logPerfDebug("resource_scope.session_runtime.missing_fallback", {
+      pathname: location.pathname,
+      search: location.search,
+      sessionId,
+      navigationSessionWorkspaceId: navigationSession?.workspaceId ?? null,
+      fallbackWorkspaceId,
+      fallbackSessionId: fallbackSessionEntry?.session.sessionId ?? null,
+      currentTargetHostId: currentTargetHostId ?? null,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      targetPath
+    });
+
     navigate(targetPath, { replace: true });
   };
   const {

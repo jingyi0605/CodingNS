@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import type { DebugServiceRole } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import type {
@@ -478,6 +479,11 @@ export class AssistantCapabilityController {
     request: FastifyRequest<{ Params: AssistantSessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    logResourceScopeDebug("assistant_capability.get_session_runtime.request", {
+      sessionId: request.params.sessionId,
+      userId: request.auth?.user.userId ?? null,
+      requestUrl: request.url
+    });
     this.assistantCapabilityService.assertExecutionAllowed(
       "sessions.runtime.get",
       readAssistantExecutionContext(request),

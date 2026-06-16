@@ -1,5 +1,6 @@
 import { createId } from "../../shared/utils/id.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthCallerKind } from "../auth/auth-service.js";
 import type { AssistantAutomationService } from "../butler/assistant-automation-service.js";
@@ -1262,8 +1263,18 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     runtime: Awaited<ReturnType<SessionLiveRuntimeService["getSessionRuntime"]>>;
   }>> {
+    logResourceScopeDebug("assistant_capability.get_session_runtime.start", {
+      sessionId,
+      userId
+    });
     this.sessionHistoryService.getSession(sessionId, userId);
     const runtime = await this.sessionLiveRuntimeService.getSessionRuntime(sessionId, userId);
+    logResourceScopeDebug("assistant_capability.get_session_runtime.end", {
+      sessionId,
+      userId,
+      runningState: runtime.runningState,
+      errorCode: runtime.errorCode ?? null
+    });
 
     return this.createReceipt("sessions.runtime.get", {
       kind: "session",

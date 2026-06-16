@@ -31,6 +31,7 @@ import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { isPerfDebugEnabled, logPerformance } from "../../shared/utils/perf-log.js";
 import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
 import type { SessionBindingRepository } from "../../storage/repositories/session-binding-repository.js";
@@ -1046,6 +1047,13 @@ export class SessionLiveRuntimeService {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
+    logResourceScopeDebug("session_live_runtime.get_session_runtime.start", {
+      sessionId,
+      userId,
+      runtimeSessionId,
+      hasRuntimeSnapshot: runtimeSnapshot !== null,
+      hasExternalRuntimeSnapshot: externalRuntimeSnapshot !== null
+    });
     const runtimeHasActiveRun = runtimeSnapshot ? isActiveRuntimeState(runtimeSnapshot.runningState) : false;
     const externalHasActiveRun = externalRuntimeSnapshot
       ? isActiveRuntimeState(externalRuntimeSnapshot.runningState)
@@ -1128,6 +1136,14 @@ export class SessionLiveRuntimeService {
 
     const persistedErrorCode = resolution.runningState === "failed" ? resolution.errorCode ?? session.lastErrorCode : null;
     const persistedErrorDetail = resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null;
+
+    logResourceScopeDebug("session_live_runtime.get_session_runtime.persisted", {
+      sessionId,
+      userId,
+      runtimeSessionId,
+      runningState: resolution.runningState,
+      errorCode: persistedErrorCode
+    });
 
     return {
       sessionId,
@@ -2729,6 +2745,9 @@ export class SessionLiveRuntimeService {
     const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
 
     if (!existingBinding) {
+      logResourceScopeDebug("session_live_runtime.session_binding_missing", {
+        sessionId
+      });
       throw new AppError({
         statusCode: 404,
         errorCode: "SESSION_NOT_FOUND",

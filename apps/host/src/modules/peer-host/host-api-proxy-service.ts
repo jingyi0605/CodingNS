@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import type { PeerHostService } from "./peer-host-service.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -65,6 +66,15 @@ export class HostApiProxyService {
       peerHost,
     );
     const targetUrl = `${peerHost.baseUrl}${targetPath}${readQueryString(request.url)}`;
+    logResourceScopeDebug("peer_http_proxy.request", {
+      ownerUserId,
+      peerHostId,
+      method: request.method,
+      requestUrl: request.url,
+      targetPath,
+      query: readQueryString(request.url),
+      targetUrl
+    });
     const response = await this.fetchImpl(targetUrl, {
       method: request.method,
       headers: buildForwardHeaders(request, accessToken),
@@ -78,6 +88,15 @@ export class HostApiProxyService {
     if (response.status === 401) {
       this.peerHostService.clearSession(ownerUserId, peerHostId);
     }
+
+    logResourceScopeDebug("peer_http_proxy.response", {
+      ownerUserId,
+      peerHostId,
+      method: request.method,
+      targetPath,
+      targetUrl,
+      status: response.status
+    });
 
     forwardResponseHeaders(response, reply);
     reply.status(response.status).send(await response.text());

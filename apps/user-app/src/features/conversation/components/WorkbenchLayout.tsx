@@ -12235,11 +12235,12 @@ export function WorkbenchLayout({
   const [selectedWorkspaceRef, setSelectedWorkspaceRef] = useState<WorkspaceRef | null>(() =>
     readWorkspaceRefFromLocation(location)
   );
+  const routeHasExplicitWorkspaceScope = routeScopedWorkspaceRef !== null;
   const activeTargetHostId =
-    selectedWorkspaceRef?.hostId && selectedWorkspaceRef.hostId !== "current"
-      ? selectedWorkspaceRef.hostId
-      : routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current"
-        ? routeScopedWorkspaceRef.hostId
+    routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current"
+      ? routeScopedWorkspaceRef.hostId
+      : !routeHasExplicitWorkspaceScope && selectedWorkspaceRef?.hostId && selectedWorkspaceRef.hostId !== "current"
+        ? selectedWorkspaceRef.hostId
         : null;
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
@@ -14111,6 +14112,11 @@ export function WorkbenchLayout({
     const candidates = flattenedSessions.filter((item) => item.session.sessionId === normalizedSessionId);
 
     if (candidates.length === 0) {
+      logPerfDebug("resource_scope.find_session_entry.miss", {
+        sessionId: normalizedSessionId,
+        displayWorkspaceId: normalizedDisplayWorkspaceId,
+        targetHostId: normalizedTargetHostId
+      });
       return null;
     }
 
@@ -14148,6 +14154,12 @@ export function WorkbenchLayout({
       }
     }
 
+    logPerfDebug("resource_scope.find_session_entry.fallback", {
+      sessionId: normalizedSessionId,
+      displayWorkspaceId: normalizedDisplayWorkspaceId,
+      targetHostId: normalizedTargetHostId,
+      candidateWorkspaceIds: candidates.map((item) => item.workspace.id)
+    });
     return candidates[0] ?? null;
   }, [flattenedSessions, resolveWorkspaceRefForTargetHost]);
 
@@ -14156,27 +14168,76 @@ export function WorkbenchLayout({
       return null;
     }
 
-    const targetHostId = entry.workspace.id === routeWorkspaceId
-      ? normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId
-      : activeTargetHostId;
+    if (entry.workspace.id === routeWorkspaceId) {
+      const routeTargetHostId = normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId;
 
-    if (targetHostId) {
-      return resolveWorkspaceRefForTargetHost(entry.workspace, targetHostId);
+      if (routeTargetHostId) {
+        const routeRef = resolveWorkspaceRefForTargetHost(entry.workspace, routeTargetHostId);
+        logPerfDebug("resource_scope.resolve_session_entry_workspace_ref", {
+          sessionId: entry.session.sessionId,
+          entryWorkspaceId: entry.workspace.id,
+          routeWorkspaceId,
+          routeTargetHostId,
+          resolvedHostId: routeRef?.hostId ?? null,
+          resolvedWorkspaceId: routeRef?.workspaceId ?? null,
+          source: "route"
+        });
+        return routeRef;
+      }
+
+      return makeWorkspaceRef(entry.workspace.id, "current");
     }
 
-    return makeWorkspaceRef(entry.workspace.id, "current");
-  }, [activeTargetHostId, resolveWorkspaceRefForTargetHost, routeScopedWorkspaceRef, routeWorkspaceId]);
+    const entryAssignment = resolveWorkspaceHostAssignment(
+      workspaceHostAssignments,
+      activeHostId,
+      entry.workspace
+    );
+    const entrySelectedHostId = resolveSelectableHostId(entryAssignment?.selectedHostId);
+    const scopedWorkspaceRef = entrySelectedHostId
+      ? resolveWorkspaceRefForTargetHost(entry.workspace, resolveRemoteSelectedHostId(entrySelectedHostId))
+      : makeWorkspaceRef(entry.workspace.id, "current");
+    logPerfDebug("resource_scope.resolve_session_entry_workspace_ref", {
+      sessionId: entry.session.sessionId,
+      entryWorkspaceId: entry.workspace.id,
+      routeWorkspaceId,
+      activeTargetHostId: activeTargetHostId ?? null,
+      selectedHostId: entrySelectedHostId ?? null,
+      resolvedHostId: scopedWorkspaceRef?.hostId ?? null,
+      resolvedWorkspaceId: scopedWorkspaceRef?.workspaceId ?? null,
+      source: "workspace_assignment"
+    });
+    return scopedWorkspaceRef ?? makeWorkspaceRef(entry.workspace.id, "current");
+  }, [
+    activeTargetHostId,
+    activeHostId,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    resolveWorkspaceRefForTargetHost,
+    routeScopedWorkspaceRef,
+    routeWorkspaceId,
+    workspaceHostAssignments
+  ]);
 
   const buildSessionEntryPath = useCallback((entry: WorkbenchNavigationEntry | null): string | null => {
     if (!entry) {
       return null;
     }
 
-    return buildWorkspaceSessionPath(
+    const workspaceRef = resolveSessionEntryWorkspaceRef(entry);
+    const path = buildWorkspaceSessionPath(
       entry.workspace.id,
       entry.session.sessionId,
-      resolveSessionEntryWorkspaceRef(entry)
+      workspaceRef
     );
+    logPerfDebug("resource_scope.build_session_entry_path", {
+      sessionId: entry.session.sessionId,
+      entryWorkspaceId: entry.workspace.id,
+      path,
+      hostId: workspaceRef?.hostId ?? null,
+      requestWorkspaceId: workspaceRef?.workspaceId ?? null
+    });
+    return path;
   }, [resolveSessionEntryWorkspaceRef]);
 
   const currentSessionContext = findSessionEntryByScope(currentSessionId, {
@@ -14213,7 +14274,11 @@ export function WorkbenchLayout({
       return null;
     }
 
-    if (routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current") {
+    if (routeScopedWorkspaceRef?.workspaceId === currentWorkspaceId) {
+      if (routeScopedWorkspaceRef.hostId === "current") {
+        return routeScopedWorkspaceRef;
+      }
+
       const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
 
       if (currentWorkspace) {
@@ -14230,6 +14295,7 @@ export function WorkbenchLayout({
         || (
           selectedWorkspaceId === currentWorkspaceId
           && selectedWorkspaceRef.hostId !== "current"
+          && !routeHasExplicitWorkspaceScope
         )
       )
     ) {
@@ -14246,14 +14312,6 @@ export function WorkbenchLayout({
       return selectedWorkspaceRef;
     }
 
-    if (routeScopedWorkspaceRef?.workspaceId === currentWorkspaceId) {
-      if (routeScopedWorkspaceRef.hostId !== "current") {
-        return null;
-      }
-
-      return routeScopedWorkspaceRef;
-    }
-
     if (activeTargetHostId) {
       const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
       return currentWorkspace
@@ -14267,6 +14325,7 @@ export function WorkbenchLayout({
     currentWorkspaceId,
     navigationGroups,
     resolveWorkspaceRefForTargetHost,
+    routeHasExplicitWorkspaceScope,
     routeScopedWorkspaceRef,
     selectedWorkspaceId,
     selectedWorkspaceRef
@@ -14558,6 +14617,19 @@ export function WorkbenchLayout({
         ? nextWorkspaceRef.workspaceId?.trim() || nextWorkspaceId
         : nextWorkspaceId;
 
+    logPerfDebug("resource_scope.open_terminal_dock", {
+      pathname: location.pathname,
+      currentWorkspaceId: currentWorkspaceId ?? null,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      requestedWorkspaceId: workspaceId ?? null,
+      resolvedWorkspaceId: nextWorkspaceId,
+      resolvedWorkspaceRefHostId: nextWorkspaceRef.hostId,
+      resolvedWorkspaceRefWorkspaceId: nextWorkspaceRef.workspaceId,
+      nextTargetHostId: nextTargetHostId ?? null,
+      nextRequestWorkspaceId
+    });
+
     refreshTerminalManagerSnapshot(nextRequestWorkspaceId, nextTargetHostId);
 
     setSelectedWorkspaceId(nextWorkspaceId);
@@ -14846,9 +14918,25 @@ export function WorkbenchLayout({
       storedSessionEntry &&
       (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
     ) {
-      return buildSessionEntryPath(storedSessionEntry);
+      const resolvedPath = buildSessionEntryPath(storedSessionEntry);
+      logPerfDebug("resource_scope.resolve_stored_conversation_path.hit", {
+        preferredWorkspaceId: preferredWorkspaceId ?? null,
+        storedSessionId,
+        storedRouteWorkspaceId: storedSessionMatch.workspaceId ?? null,
+        storedTargetHostId,
+        resolvedWorkspaceId: storedSessionEntry.workspace.id,
+        resolvedPath
+      });
+      return resolvedPath;
     }
 
+    logPerfDebug("resource_scope.resolve_stored_conversation_path.clear", {
+      preferredWorkspaceId: preferredWorkspaceId ?? null,
+      storedSessionId,
+      storedRouteWorkspaceId: storedSessionMatch.workspaceId ?? null,
+      storedTargetHostId,
+      foundEntry: storedSessionEntry !== null
+    });
     window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
     return null;
   }, [buildSessionEntryPath, findSessionEntryByScope]);
@@ -15025,12 +15113,36 @@ export function WorkbenchLayout({
           ? "workspaceSelection"
           : "navigationFallback"
     });
+    logPerfDebug("resource_scope.current_scope", {
+      pathname: location.pathname,
+      search: location.search,
+      currentSessionId,
+      routeWorkspaceId,
+      sessionWorkspaceId,
+      selectedWorkspaceId,
+      currentWorkspaceId,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      currentTargetHostId: currentTargetHostId ?? null,
+      currentRequestWorkspaceId: currentRequestWorkspaceId ?? null,
+      routeScopedWorkspaceRefHostId: routeScopedWorkspaceRef?.hostId ?? null,
+      routeScopedWorkspaceRefWorkspaceId: routeScopedWorkspaceRef?.workspaceId ?? null,
+      selectedWorkspaceRefHostId: selectedWorkspaceRef?.hostId ?? null,
+      selectedWorkspaceRefWorkspaceId: selectedWorkspaceRef?.workspaceId ?? null
+    });
   }, [
+    currentRequestWorkspaceId,
     currentSessionContext,
     currentSessionId,
+    currentTargetHostId,
     currentWorkspaceId,
+    currentWorkspaceRef,
+    location.pathname,
+    location.search,
     routeWorkspaceId,
+    routeScopedWorkspaceRef,
     selectedWorkspaceId,
+    selectedWorkspaceRef,
     sessionWorkspaceId
   ]);
 
@@ -15990,6 +16102,21 @@ export function WorkbenchLayout({
       workspaceId
     } : workspaceRef;
 
+    logPerfDebug("resource_scope.select_workspace", {
+      pathname: location.pathname,
+      currentSessionId: currentSessionId ?? null,
+      sessionWorkspaceId: sessionWorkspaceId ?? null,
+      currentWorkspaceId: currentWorkspaceId ?? null,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      currentTargetHostId: currentTargetHostId ?? null,
+      selectedWorkspaceId: workspaceId,
+      selectedWorkspaceRefHostId: effectiveWorkspaceRef?.hostId ?? null,
+      selectedWorkspaceRefWorkspaceId: effectiveWorkspaceRef?.workspaceId ?? null,
+      isTerminalsRoute: isTerminalsRoute(location.pathname),
+      isMobileShell
+    });
+
     setSelectedWorkspaceId(workspaceId);
     setSelectedWorkspaceRef(effectiveWorkspaceRef);
     ensureInfoPanelReady();
@@ -16004,6 +16131,13 @@ export function WorkbenchLayout({
       if (location.pathname !== targetPath) {
         navigate(targetPath);
       }
+      return;
+    }
+
+    // 桌面端如果还停在旧的终端路由，routeScopedWorkspaceRef 会继续把整个页面压在旧 HOST 上。
+    // 这里必须立刻退出旧 terminal route，不能只改选中态。
+    if (isTerminalsRoute(location.pathname)) {
+      navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
       return;
     }
 

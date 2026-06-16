@@ -1,5 +1,6 @@
 import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
 import { getAuthClientHeaders } from "../features/auth/store/client-device";
+import { logPerfDebug } from "../shared/debug/perf-debug";
 import { normalizeTargetHostId } from "../shared/network/target-host";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
@@ -52,6 +53,7 @@ class HttpClient {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
     const proxyPath = buildTargetHostProxyPath(path, options.targetHostId);
+    const normalizedTargetHostId = normalizeTargetHostId(options.targetHostId);
     const requestedBaseUrl = options.targetHostId ? getHostBaseUrl() : options.baseUrl ?? getHostBaseUrl();
     const transportTarget = resolveHostTransportTarget(requestedBaseUrl);
     const baseUrl = transportTarget.baseUrl;
@@ -108,6 +110,17 @@ class HttpClient {
       headers.set("Authorization", `Bearer ${accessToken}`);
     }
 
+    logPerfDebug("resource_scope.http.request", {
+      path,
+      proxyPath,
+      requestUrl,
+      method: options.method ?? "GET",
+      targetHostId: normalizedTargetHostId,
+      requestedBaseUrl,
+      baseUrl,
+      transport: transport.name ?? "unknown"
+    });
+
     let response: Response;
 
     try {
@@ -136,6 +149,14 @@ class HttpClient {
       }
 
       const detail = error instanceof Error ? error.message : "未知网络错误";
+      logPerfDebug("resource_scope.http.network_error", {
+        path,
+        proxyPath,
+        requestUrl,
+        method: options.method ?? "GET",
+        targetHostId: normalizedTargetHostId,
+        detail
+      });
 
       throw new ApiError(0, {
         detail: `请求 ${requestUrl} 失败：${detail}`,
@@ -180,6 +201,17 @@ class HttpClient {
         markAuthExpiredFlag();
         authStore.clear();
       }
+
+      logPerfDebug("resource_scope.http.error_response", {
+        path,
+        proxyPath,
+        requestUrl,
+        method: options.method ?? "GET",
+        targetHostId: normalizedTargetHostId,
+        status: response.status,
+        errorCode: payload.error_code,
+        detail: payload.detail
+      });
 
       throw new ApiError(response.status, payload);
     }
