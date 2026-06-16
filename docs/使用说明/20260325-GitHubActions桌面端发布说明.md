@@ -4,6 +4,14 @@
 
 这份说明写的是仓库里桌面端 GitHub Actions 工作流怎么用、会产出什么，以及现在有哪些边界。
 
+如果你的目标是“准备正式发布”，不要只单独看这条桌面工作流。发布前默认入口已经改成：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
+
+这个统一脚本会先做本地 npm 打包测试，再触发桌面端验包和 Windows 安装回放。
+
 对应工作流文件：
 
 - [desktop-release.yml](C:/Code/CodingNS/.github/workflows/desktop-release.yml)
@@ -25,6 +33,14 @@
 ## 怎么触发
 
 现在支持两种触发方式：
+
+发布前建议先跑统一入口：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
+
+统一入口会自动触发这条桌面工作流，不需要手工再点一次。
 
 1. 手动触发
 2. 推送 tag 触发
