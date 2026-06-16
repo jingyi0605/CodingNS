@@ -1283,8 +1283,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const callId = pickFirstNonEmpty(
-      ensureText(readProp(item, "id")).trim(),
       ensureText(readProp(item, "call_id")).trim(),
+      ensureText(readProp(item, "id")).trim(),
       `${itemType}-${randomUUID()}`
     );
     const name = pickFirstNonEmpty(
@@ -2352,11 +2352,13 @@ function createCodexAppServerNotificationTranslator(): (
   const agentMessageTextById = new Map<string, string>();
   const reasoningSummaryPartsById = new Map<string, string[]>();
   const reasoningContentPartsById = new Map<string, string[]>();
+  let sawAgentMessageInCurrentTurn = false;
 
   const resetStreamState = (): void => {
     agentMessageTextById.clear();
     reasoningSummaryPartsById.clear();
     reasoningContentPartsById.clear();
+    sawAgentMessageInCurrentTurn = false;
   };
 
   const ensureIndexedTextPart = (
@@ -2526,7 +2528,9 @@ function createCodexAppServerNotificationTranslator(): (
     if (method === "turn/completed") {
       const turn = toRecord(params.turn);
       const status = ensureText(turn?.status).trim();
-      const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed");
+      const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed", {
+        skipAgentMessageFallback: sawAgentMessageInCurrentTurn
+      });
 
       resetStreamState();
 
@@ -2633,6 +2637,7 @@ function createCodexAppServerNotificationTranslator(): (
         if (itemId) {
           if (itemText.length > 0) {
             agentMessageTextById.set(itemId, itemText);
+            sawAgentMessageInCurrentTurn = true;
           } else if (method === "item/completed") {
             agentMessageTextById.delete(itemId);
           }
@@ -2698,7 +2703,10 @@ function createCodexAppServerNotificationTranslator(): (
 
 function translateCodexAppServerTurnItems(
   turn: Record<string, unknown> | null,
-  eventType: "item.completed"
+  eventType: "item.completed",
+  options?: {
+    skipAgentMessageFallback?: boolean;
+  }
 ): Record<string, unknown>[] {
   const rawItems = Array.isArray(turn?.items) ? turn.items : [];
   const translatedItems = rawItems
@@ -2712,6 +2720,10 @@ function translateCodexAppServerTurnItems(
 
   if (translatedItems.length > 0) {
     return translatedItems;
+  }
+
+  if (options?.skipAgentMessageFallback) {
+    return [];
   }
 
   const lastAgentMessage = normalizeCodexTurnLastAgentMessage(turn);
