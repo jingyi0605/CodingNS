@@ -13,6 +13,12 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { useToast } from "../../../shared/toast";
 import { ApiError } from "../../../shared/network/api-error";
 import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../utils/resource-scope";
+import type { WorkspaceRef } from "../../conversation/api/conversation-api";
+import {
   createTerminalTemplate,
   deleteTerminalTemplate,
   runTerminalTemplate,
@@ -39,6 +45,7 @@ import {
 interface TerminalManagerPanelProps {
   className?: string;
   currentWorkspaceId: string | null;
+  requestWorkspaceId?: string | null;
   navigationGroups: WorkspaceSessionGroup[];
   externalWindowMode?: boolean;
   workbenchShellOverrides?: TerminalManagerPanelWorkbenchShellOverrides;
@@ -46,6 +53,7 @@ interface TerminalManagerPanelProps {
 
 export interface TerminalManagerPanelWorkbenchShellOverrides {
   currentTargetHostId?: string | null;
+  currentWorkspaceRef?: WorkspaceRef | null;
   subscribeTerminalManagerSnapshot?: (
     workspaceId: string,
     options?: { knownRevision?: string | null; targetHostId?: string | null; skipKnownRevision?: boolean }
@@ -509,6 +517,7 @@ function CheckIcon() {
 export function TerminalManagerPanel({
   className,
   currentWorkspaceId,
+  requestWorkspaceId,
   navigationGroups,
   externalWindowMode = false,
   workbenchShellOverrides
@@ -520,12 +529,25 @@ export function TerminalManagerPanel({
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener,
-    currentTargetHostId
+    currentTargetHostId,
+    currentWorkspaceRef
   } = {
     ...workbenchShell,
     ...workbenchShellOverrides
   };
   const activeWorkspaceId = currentWorkspaceId?.trim() || null;
+  const activeRequestWorkspaceId =
+    requestWorkspaceId?.trim()
+    || (
+      currentTargetHostId
+        ? (
+          currentWorkspaceRef?.hostId === currentTargetHostId
+            ? currentWorkspaceRef.workspaceId?.trim() || null
+            : null
+        )
+        : activeWorkspaceId
+    )
+    || null;
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [revision, setRevision] = useState<string | null>(null);
   const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
@@ -563,10 +585,11 @@ export function TerminalManagerPanel({
   useEffect(() => {
     logPerfDebug("terminal_manager.props", {
       currentWorkspaceId,
+      requestWorkspaceId: activeRequestWorkspaceId,
       workspaceCount: navigationGroups.length,
       externalWindowMode
     });
-  }, [currentWorkspaceId, externalWindowMode, navigationGroups.length]);
+  }, [activeRequestWorkspaceId, currentWorkspaceId, externalWindowMode, navigationGroups.length]);
 
   const selectedShellOption = useMemo(
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
@@ -605,12 +628,12 @@ export function TerminalManagerPanel({
   }, [shellOptions]);
 
   useEffect(() => {
-    if (!templateEditorOpen || !activeWorkspaceId || shellOptions.length > 0) {
+    if (!templateEditorOpen || !activeRequestWorkspaceId || shellOptions.length > 0) {
       return;
     }
 
-    requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
-  }, [activeWorkspaceId, shellOptions.length, templateEditorOpen]);
+    requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
+  }, [activeRequestWorkspaceId, shellOptions.length, templateEditorOpen]);
 
   useEffect(() => {
     if (!templateEditorOpen) {
@@ -639,7 +662,7 @@ export function TerminalManagerPanel({
   }, [removeConfirmDraft, removingTemplateId, templates]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       setTerminals([]);
       setRevision(null);
       setTemplates([]);
@@ -649,12 +672,12 @@ export function TerminalManagerPanel({
     }
 
     const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
-      buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId),
+      buildTerminalManagerSnapshotKey(activeRequestWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
 
     logPerfDebug("terminal_manager.snapshot", {
-      workspaceId: activeWorkspaceId,
+      workspaceId: activeRequestWorkspaceId,
       cached: Boolean(cachedSnapshot),
       cachedTemplateCount: cachedSnapshot?.templates.length ?? 0,
       cachedStatusCount: cachedSnapshot?.templateStatuses.length ?? 0
@@ -675,15 +698,18 @@ export function TerminalManagerPanel({
       setShellOptions([]);
       setLoading(true);
     }
-  }, [activeWorkspaceId]);
+  }, [activeRequestWorkspaceId, currentTargetHostId]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     return addTerminalManagerSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== activeWorkspaceId || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)) {
+      if (
+        snapshot.workspaceId !== activeRequestWorkspaceId
+        || !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)
+      ) {
         return;
       }
 
@@ -696,42 +722,42 @@ export function TerminalManagerPanel({
       applyTerminalManagerSnapshot(snapshot);
       setLoading(false);
     });
-  }, [activeWorkspaceId, addTerminalManagerSnapshotListener, currentTargetHostId]);
+  }, [activeRequestWorkspaceId, addTerminalManagerSnapshotListener, currentTargetHostId]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
-      buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId),
+      buildTerminalManagerSnapshotKey(activeRequestWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
 
-    subscribeTerminalManagerSnapshot(activeWorkspaceId, {
+    subscribeTerminalManagerSnapshot(activeRequestWorkspaceId, {
       knownRevision: cachedSnapshot?.revision ?? null,
       targetHostId: currentTargetHostId
     });
 
-    requestTerminalManagerSnapshotRefresh(activeWorkspaceId, {
+    requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId, {
       force: true,
       knownRevision: cachedSnapshot?.revision ?? null
     });
-  }, [activeWorkspaceId, currentTargetHostId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
+  }, [activeRequestWorkspaceId, currentTargetHostId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
-    writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId, currentTargetHostId), {
+    writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeRequestWorkspaceId, currentTargetHostId), {
       revision,
       terminals,
       templates,
       templateStatuses,
       shellOptions
     });
-  }, [activeWorkspaceId, revision, shellOptions, templateStatuses, templates, terminals]);
+  }, [activeRequestWorkspaceId, currentTargetHostId, revision, shellOptions, templateStatuses, templates, terminals]);
 
   function applyTerminalManagerSnapshot(snapshot: TerminalManagerSnapshot) {
     setRevision(typeof snapshot.revision === "string" ? snapshot.revision : null);
@@ -782,7 +808,7 @@ export function TerminalManagerPanel({
   }
 
   async function handleStopTemplateProcess(templateId: string) {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -790,7 +816,7 @@ export function TerminalManagerPanel({
 
     try {
       await stopTerminalTemplateProcess(templateId, { targetHostId: currentTargetHostId });
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
       showToast({
         title: t("terminalManager.stopProcessSuccess"),
         tone: "success"
@@ -806,7 +832,7 @@ export function TerminalManagerPanel({
   }
 
   async function handleSaveLaunchTemplate() {
-    if (!activeWorkspaceId || !launchDraft.target.trim()) {
+    if (!activeRequestWorkspaceId || !launchDraft.target.trim()) {
       return;
     }
 
@@ -832,7 +858,7 @@ export function TerminalManagerPanel({
 
     try {
       const payload = {
-        workspaceId: activeWorkspaceId,
+        workspaceId: activeRequestWorkspaceId,
         name: buildLaunchName(launchDraft),
         cwd: launchDraft.cwd.trim() || undefined,
         command: launchDraft.target.trim(),
@@ -854,7 +880,7 @@ export function TerminalManagerPanel({
       }
 
       closeTemplateEditor();
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
       showToast({
         title: editingTemplateMode
           ? t("terminalManager.templateUpdateSuccess")
@@ -891,7 +917,7 @@ export function TerminalManagerPanel({
     template: TerminalTemplateDto,
     _runtimeStatus: TerminalTemplateRuntimeStatusDto | null
   ) {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -908,7 +934,7 @@ export function TerminalManagerPanel({
         closeTemplateEditor();
       }
 
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
       showToast({
         title: t("terminalManager.templateDeleteSuccess"),
         tone: "success"
@@ -924,7 +950,7 @@ export function TerminalManagerPanel({
   }
 
   async function handleRunTemplate(templateId: string) {
-    if (!activeWorkspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -935,7 +961,7 @@ export function TerminalManagerPanel({
       await runTerminalTemplate(templateId, {
         shell
       }, { targetHostId: currentTargetHostId });
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
       showToast({
         title: t("terminalManager.templateRunSuccess"),
         tone: "success"
@@ -959,7 +985,7 @@ export function TerminalManagerPanel({
   }
 
   async function handleConfirmRuntimeFallback() {
-    if (!activeWorkspaceId || !runtimeFallbackDraft) {
+    if (!activeRequestWorkspaceId || !runtimeFallbackDraft) {
       return;
     }
 
@@ -971,7 +997,7 @@ export function TerminalManagerPanel({
         runtimeType: "embedded-pty"
       }, { targetHostId: currentTargetHostId });
       setRuntimeFallbackDraft(null);
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId);
       showToast({
         title: t("terminalManager.templateRunSuccess"),
         tone: "success"
@@ -1002,7 +1028,7 @@ export function TerminalManagerPanel({
     );
   }
 
-  if (!activeWorkspaceId) {
+  if (!activeWorkspaceId || !activeRequestWorkspaceId) {
     return (
       <section className="workbench-empty-state minimal">
         <p>{t("terminalManager.noCurrentWorkspaceBody")}</p>
@@ -1060,7 +1086,7 @@ export function TerminalManagerPanel({
             disabled={!activeWorkspaceId}
             onClick={() => {
               if (activeWorkspaceId) {
-                navigate(buildWorkspaceDebugPath(activeWorkspaceId));
+                navigate(buildWorkspaceDebugPath(activeWorkspaceId, currentWorkspaceRef));
               }
             }}
           >
@@ -1069,10 +1095,10 @@ export function TerminalManagerPanel({
           <button
             className="ghost-button"
             type="button"
-            disabled={!activeWorkspaceId || loading}
+            disabled={!activeRequestWorkspaceId || loading}
             onClick={() => {
-              if (activeWorkspaceId) {
-                requestTerminalManagerSnapshotRefresh(activeWorkspaceId, {
+              if (activeRequestWorkspaceId) {
+                requestTerminalManagerSnapshotRefresh(activeRequestWorkspaceId, {
                   force: true
                 });
               }
@@ -1083,7 +1109,7 @@ export function TerminalManagerPanel({
           <button
             className="primary-button"
             type="button"
-            disabled={!activeWorkspaceId}
+            disabled={!activeRequestWorkspaceId}
             onClick={() => {
               openCreateTemplateEditor();
             }}
@@ -1657,18 +1683,11 @@ export function TerminalManagerPanel({
   );
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left?.trim() || null) === (right?.trim() || null);
-}
-
 function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("terminal-manager.snapshot", {
+    workspaceId,
+    targetHostId
+  });
 }
 
 function readError(error: unknown, fallback: string): string {

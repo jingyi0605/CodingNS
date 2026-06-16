@@ -69,6 +69,11 @@ import { SessionProviderPicker } from "./SessionProviderPicker";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 
 interface GitSidebarProps {
   className?: string;
@@ -317,7 +322,7 @@ export function GitSidebar({
     setViewerDiffContent(null);
     commitDetailCacheRef.current.clear();
     historyMenuTriggerRefs.current.clear();
-  }, [workspaceId]);
+  }, [currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     function handleResize() {
@@ -425,7 +430,7 @@ export function GitSidebar({
       applyGitSnapshot(snapshot, snapshot.workspaceId);
       setLoading(false);
     });
-  }, [addGitSnapshotListener, workspaceId]);
+  }, [addGitSnapshotListener, currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId?.trim()) {
@@ -494,7 +499,7 @@ export function GitSidebar({
     }
 
     writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(currentWorkspaceId, currentTargetHostId), snapshotToCache);
-  }, [branches, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
+  }, [branches, currentTargetHostId, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
 
   useEffect(() => {
     if (!status || !selectedPath) {
@@ -4007,18 +4012,8 @@ function readError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left?.trim() || null) === (right?.trim() || null);
-}
-
 function buildGitSidebarSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `git-sidebar.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("git-sidebar.snapshot", { workspaceId, targetHostId });
 }
 
 function hasGitSidebarSnapshotData(snapshot: GitSidebarSnapshot | null | undefined): boolean {

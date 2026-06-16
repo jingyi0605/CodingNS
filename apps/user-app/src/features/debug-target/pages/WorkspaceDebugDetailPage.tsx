@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { DebugAnalysisView } from "../components/DebugAnalysisView";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -7,6 +7,7 @@ import { createDebugLaunchPlan } from "../../conversation/api/conversation-api";
 import { runTerminalTemplate } from "../../terminal/api/terminal-api";
 import { getTerminalRuntimeLabel } from "../../terminal/runtime/terminal-runtime-meta";
 import { buildWorkspaceDetailPath, buildWorkspaceToolProcessesPath } from "../../workbench/utils/workbench-navigation";
+import { buildScopedWorkspaceRef, normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 import { useDebugAnalysis } from "../hooks/useDebugAnalysis";
 import { useRegisteredDebugTemplates } from "../hooks/useRegisteredDebugTemplates";
 import { t } from "../../../shared/i18n";
@@ -32,9 +33,15 @@ type RegisteredDebugPendingAction = "sync" | "plan" | "run" | "refresh" | null;
 
 export function WorkspaceDebugDetailPage() {
   const { workspaceId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { navigationGroups, selectWorkspace } = useWorkbenchShell();
+  const { navigationGroups, selectWorkspace, currentWorkspaceRef } = useWorkbenchShell();
+  const targetHostId = normalizeTargetHostId(searchParams.get("targetHostId"));
+  const requestWorkspaceId =
+    targetHostId && currentWorkspaceRef?.hostId === targetHostId
+      ? currentWorkspaceRef.workspaceId?.trim() || workspaceId
+      : workspaceId;
   const workspace =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace
     ?? null;
@@ -48,12 +55,21 @@ export function WorkspaceDebugDetailPage() {
       return;
     }
 
-    selectWorkspace(workspaceId);
-  }, [selectWorkspace, workspaceId]);
+    selectWorkspace(workspaceId, buildScopedWorkspaceRef(workspaceId, targetHostId));
+  }, [selectWorkspace, targetHostId, workspaceId]);
 
   const workspaceTarget = useMemo(
-    () => (workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null),
-    [workspace]
+    () => (
+      workspace
+        ? {
+            id: requestWorkspaceId,
+            path: workspace.path,
+            name: workspace.name,
+            targetHostId
+          }
+        : null
+    ),
+    [requestWorkspaceId, targetHostId, workspace]
   );
   const registeredState = useRegisteredDebugTemplates(workspaceTarget);
   const debugAnalysisState = useDebugAnalysis(workspaceTarget);
@@ -112,7 +128,7 @@ export function WorkspaceDebugDetailPage() {
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => navigate(buildWorkspaceDetailPath(workspace.id))}
+                onClick={() => navigate(buildWorkspaceDetailPath(workspace.id, buildScopedWorkspaceRef(workspace.id, targetHostId)))}
               >
                 {t("shell.goBack")}
               </button>
@@ -211,7 +227,7 @@ export function WorkspaceDebugDetailPage() {
         </section>
 
         <DebugAnalysisView
-          workspace={{ id: workspace.id, path: workspace.path, name: workspace.name }}
+          workspace={workspaceTarget}
           state={debugAnalysisState}
           variant="page"
         />
@@ -321,7 +337,7 @@ export function WorkspaceDebugDetailPage() {
             <button
               type="button"
               className="secondary-button"
-              onClick={() => navigate(buildWorkspaceToolProcessesPath(workspace.id))}
+              onClick={() => navigate(buildWorkspaceToolProcessesPath(workspace.id, buildScopedWorkspaceRef(workspace.id, targetHostId)))}
             >
               {t("shell.workspaceDetailRegisteredDebugOpenProcessManagerAction")}
             </button>
@@ -426,7 +442,7 @@ export function WorkspaceDebugDetailPage() {
         throw new Error(t("shell.workspaceDetailDebugActionTargetMissing"));
       }
 
-      const preview = await createDebugLaunchPlan(debugAnalysisState.targetId);
+      const preview = await createDebugLaunchPlan(debugAnalysisState.targetId, undefined, { targetHostId });
       const plan = buildRegisteredLaunchPlan(
         registeredState.templates,
         registeredState.runtimeStatuses,
@@ -459,7 +475,7 @@ export function WorkspaceDebugDetailPage() {
           ? buildRegisteredLaunchPlan(
               registeredState.templates,
               registeredState.runtimeStatuses,
-              await createDebugLaunchPlan(debugAnalysisState.targetId)
+              await createDebugLaunchPlan(debugAnalysisState.targetId, undefined, { targetHostId })
             )
           : buildRegisteredLaunchPlan(registeredState.templates, registeredState.runtimeStatuses)
       );
@@ -485,7 +501,7 @@ export function WorkspaceDebugDetailPage() {
             argsOverride: item.planItem?.args,
             envPatch: item.planItem?.envPatch,
             portOverride: item.assignedPort
-          });
+          }, { targetHostId });
         } catch (error) {
           failures.push(`${item.template.name}: ${normalizeActionError(error, t("shell.workspaceDetailRegisteredDebugActionRunRegisteredFailed"))}`);
         }

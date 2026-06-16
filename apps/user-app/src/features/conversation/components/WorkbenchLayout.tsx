@@ -219,6 +219,12 @@ import {
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
 import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  normalizeTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
+import {
   resolveContextMenuPosition,
   type ContextMenuAnchorPoint
 } from "../../workbench/utils/context-menu-position";
@@ -3541,13 +3547,57 @@ function mapWorktreeNodes(
 }
 
 function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `workspace-management.summary.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("workspace-management.summary", {
+    workspaceId,
+    targetHostId
+  });
 }
 
 function buildGitSidebarSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `git-sidebar.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("git-sidebar.snapshot", {
+    workspaceId,
+    targetHostId
+  });
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  return buildScopedSnapshotKey("terminal-manager.snapshot", {
+    workspaceId,
+    targetHostId
+  });
+}
+
+function buildWorkbenchRealtimeScopeKey(workspaceId?: string | null, targetHostId?: string | null): string | null {
+  const normalizedWorkspaceId = workspaceId?.trim() || null;
+
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  return buildScopedSnapshotKey("workbench-realtime.scope", {
+    workspaceId: normalizedWorkspaceId,
+    targetHostId
+  });
+}
+
+type WorkbenchRealtimeScopeBindingBase = {
+  workspaceId: string;
+  scopeKey: string | null;
+  targetHostId?: string | null;
+};
+
+type WorkbenchRealtimeFileTreeBinding = WorkbenchRealtimeScopeBindingBase & {
+  paths: string[];
+  knownRevisionByPath?: Record<string, string | null | undefined>;
+};
+
+type WorkbenchRealtimeFileTreeRefreshBinding = WorkbenchRealtimeScopeBindingBase & {
+  paths?: string[];
+  knownRevisionByPath?: Record<string, string | null | undefined>;
+};
+
+type WorkbenchRealtimeKnownRevisionBinding = WorkbenchRealtimeScopeBindingBase & {
+  knownRevision?: string | null | undefined;
 }
 
 function createWorkspaceManagementFallback(
@@ -5978,8 +6028,11 @@ function SidebarContent({
   const { showToast } = useToast();
   const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
+  const routeWorkspaceRef = useMemo(
+    () => readWorkspaceRefFromLocation(location),
+    [location.pathname, location.search]
+  );
   const runtimeConfig = useClientConfigSelector((state) => state);
-  const routeWorkspaceRef = useMemo(() => readWorkspaceRefFromLocation(location), [location.pathname, location.search]);
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = runtimeConfig.activeHostId ?? activeHost?.id ?? "current";
   const selectableWorkspaceHosts = useMemo(() => {
@@ -11056,6 +11109,7 @@ function WorkbenchInfoPanel({
   currentSessionId,
   activeWorkspaceId,
   requestWorkspaceId,
+  currentWorkspaceRef,
   currentTargetHostId,
   navigationGroups,
   workspaceContext,
@@ -11073,6 +11127,7 @@ function WorkbenchInfoPanel({
   currentSessionId: string | null;
   activeWorkspaceId: string | null;
   requestWorkspaceId?: string | null;
+  currentWorkspaceRef?: WorkspaceRef | null;
   currentTargetHostId?: string | null;
   navigationGroups: WorkspaceSessionGroup[];
   workspaceContext: WorkspaceVisualContext | null;
@@ -11570,8 +11625,10 @@ function WorkbenchInfoPanel({
           <Suspense fallback={<InfoPanelSkeleton />}>
             <LazyTerminalManagerPanel
               currentWorkspaceId={fallbackWorkspaceId}
+              requestWorkspaceId={requestWorkspaceId ?? fallbackWorkspaceId}
               navigationGroups={navigationGroups}
               workbenchShellOverrides={{
+                currentWorkspaceRef,
                 currentTargetHostId
               }}
             />
@@ -12005,48 +12062,16 @@ export function WorkbenchLayout({
   const terminalManagerSnapshotListenersRef = useRef(
     new Set<(snapshot: TerminalManagerRealtimeSnapshotDto) => void>()
   );
-  const fileTreeSubscriptionRef = useRef<{
-    workspaceId: string;
-    paths: string[];
-    targetHostId?: string | null;
-    knownRevisionByPath?: Record<string, string | null | undefined>;
-  } | null>(null);
-  const pendingFileTreeRefreshRef = useRef<{
-    workspaceId: string;
-    paths?: string[];
-    targetHostId?: string | null;
-    knownRevisionByPath?: Record<string, string | null | undefined>;
-  } | null>(null);
-  const gitWorkspaceSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingGitRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const workspaceManagementSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const terminalManagerWorkspaceSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
+  const fileTreeSubscriptionRef = useRef<WorkbenchRealtimeFileTreeBinding | null>(null);
+  const pendingFileTreeRefreshRef = useRef<WorkbenchRealtimeFileTreeRefreshBinding | null>(null);
+  const gitWorkspaceSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingGitRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const workspaceManagementSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const terminalManagerWorkspaceSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const activeWorkbenchRealtimeScopeKeyRef = useRef<string | null>(null);
+  const activeWorkbenchRealtimeTargetHostIdRef = useRef<string | null>(null);
   const notificationRefreshRequestIdRef = useRef(0);
   const notificationArchiveMutationRequestIdRef = useRef(0);
   const showToastRef = useRef(showToast);
@@ -12081,6 +12106,11 @@ export function WorkbenchLayout({
   const pendingWorkspaceReorderRef = useRef<{
     originalGroups: WorkspaceSessionGroup[];
   } | null>(null);
+  const routeScopedWorkspaceRef = useMemo(
+    () => readWorkspaceRefFromLocation(location),
+    [location.pathname, location.search]
+  );
+  const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = runtimeConfig.activeHostId ?? activeHost?.id ?? "current";
@@ -12204,10 +12234,6 @@ export function WorkbenchLayout({
   );
   const [selectedWorkspaceRef, setSelectedWorkspaceRef] = useState<WorkspaceRef | null>(() =>
     readWorkspaceRefFromLocation(location)
-  );
-  const routeScopedWorkspaceRef = useMemo(
-    () => readWorkspaceRefFromLocation(location),
-    [location.pathname, location.search]
   );
   const activeTargetHostId =
     selectedWorkspaceRef?.hostId && selectedWorkspaceRef.hostId !== "current"
@@ -12680,12 +12706,9 @@ export function WorkbenchLayout({
     workbenchRealtimeClientRef.current?.requestRefresh();
   }, []);
 
-  const openSessionFromToast = useCallback(
-    (workspaceId: string, sessionId: string) => {
-      navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
-    },
-    [navigate]
-  );
+  function openSessionFromToast(workspaceId: string, sessionId: string) {
+    navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
+  }
 
   const dispatchFileTreeSnapshot = useCallback((snapshot: FileTreeRealtimeSnapshotDto, targetHostId?: string | null) => {
     fileTreeSnapshotListenersRef.current.forEach((listener) => listener({
@@ -12772,7 +12795,7 @@ export function WorkbenchLayout({
   }, []);
 
   const getWorkbenchRealtimeClientForTargetHost = useCallback((targetHostId?: string | null): WorkbenchRealtimeClient | null => {
-    const normalizedTargetHostId = targetHostId?.trim() || null;
+    const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
 
     if (!normalizedTargetHostId) {
       return workbenchRealtimeClientRef.current;
@@ -12804,18 +12827,57 @@ export function WorkbenchLayout({
     dispatchWorkspaceManagementSnapshot
   ]);
 
+  const clearWorkbenchRealtimeBindings = useCallback((scopeKey?: string | null) => {
+    const shouldClearBinding = (binding: { scopeKey: string | null } | null) =>
+      Boolean(binding) && (!scopeKey || binding?.scopeKey === scopeKey);
+
+    if (shouldClearBinding(fileTreeSubscriptionRef.current)) {
+      fileTreeSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingFileTreeRefreshRef.current)) {
+      pendingFileTreeRefreshRef.current = null;
+    }
+
+    if (shouldClearBinding(gitWorkspaceSubscriptionRef.current)) {
+      gitWorkspaceSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingGitRefreshWorkspaceIdRef.current)) {
+      pendingGitRefreshWorkspaceIdRef.current = null;
+    }
+
+    if (shouldClearBinding(workspaceManagementSubscriptionRef.current)) {
+      workspaceManagementSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingWorkspaceManagementRefreshWorkspaceIdRef.current)) {
+      pendingWorkspaceManagementRefreshWorkspaceIdRef.current = null;
+    }
+
+    if (shouldClearBinding(terminalManagerWorkspaceSubscriptionRef.current)) {
+      terminalManagerWorkspaceSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingTerminalManagerRefreshWorkspaceIdRef.current)) {
+      pendingTerminalManagerRefreshWorkspaceIdRef.current = null;
+    }
+  }, []);
+
   const subscribeFileTree = useCallback((
     workspaceId: string,
     paths: string[],
     options?: WorkbenchRealtimeFileTreeOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     fileTreeSubscriptionRef.current = {
       workspaceId,
       paths,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevisionByPath: options?.knownRevisionByPath
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeFileTree(workspaceId, paths, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeFileTree(workspaceId, paths, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestFileTreeRefresh = useCallback((
@@ -12823,13 +12885,15 @@ export function WorkbenchLayout({
     paths?: string[],
     options?: WorkbenchRealtimeFileTreeOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingFileTreeRefreshRef.current = {
       workspaceId,
       paths,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevisionByPath: options?.knownRevisionByPath
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestFileTreeRefresh(workspaceId, paths, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestFileTreeRefresh(workspaceId, paths, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addFileTreeSnapshotListener = useCallback(
@@ -12846,24 +12910,28 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     gitWorkspaceSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeGit(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeGit(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestGitRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingGitRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestGitRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestGitRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addGitSnapshotListener = useCallback(
@@ -12880,21 +12948,25 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     workspaceManagementSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeWorkspaceManagement(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeWorkspaceManagement(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestWorkspaceManagementRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingWorkspaceManagementRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
     setWorkspaceManagementStateById((current) => ({
@@ -12905,7 +12977,7 @@ export function WorkbenchLayout({
         error: null
       }
     }));
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestWorkspaceManagementRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestWorkspaceManagementRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addWorkspaceManagementSnapshotListener = useCallback(
@@ -13124,24 +13196,28 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     terminalManagerWorkspaceSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeTerminalManager(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeTerminalManager(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestTerminalManagerRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingTerminalManagerRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestTerminalManagerRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestTerminalManagerRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addTerminalManagerSnapshotListener = useCallback(
@@ -13373,6 +13449,8 @@ export function WorkbenchLayout({
       client.close();
       peerWorkbenchRealtimeClientByHostRef.current.forEach((peerClient) => peerClient.close());
       peerWorkbenchRealtimeClientByHostRef.current.clear();
+      activeWorkbenchRealtimeScopeKeyRef.current = null;
+      activeWorkbenchRealtimeTargetHostIdRef.current = null;
     };
   }, [
     dispatchFileTreeSnapshot,
@@ -14015,17 +14093,103 @@ export function WorkbenchLayout({
     });
   }, [knownWorkspaceIds, navigationLoading, routeScopedWorkspaceRef, selectedWorkspaceRef]);
 
-  const currentSessionContext =
-    flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
+  const findSessionEntryByScope = useCallback((
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ): WorkbenchNavigationEntry | null => {
+    const normalizedSessionId = sessionId?.trim() || "";
+
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    const normalizedDisplayWorkspaceId = options?.displayWorkspaceId?.trim() || null;
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
+    const candidates = flattenedSessions.filter((item) => item.session.sessionId === normalizedSessionId);
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    if (normalizedDisplayWorkspaceId) {
+      const workspaceMatched = candidates.filter((item) => item.workspace.id === normalizedDisplayWorkspaceId);
+
+      if (workspaceMatched.length === 1) {
+        return workspaceMatched[0] ?? null;
+      }
+
+      if (workspaceMatched.length > 1 && normalizedTargetHostId !== null) {
+        const hostMatched = workspaceMatched.find((item) =>
+          isSameTargetHostId(
+            normalizeScopeTargetHostId(resolveWorkspaceRefForTargetHost(item.workspace, normalizedTargetHostId)),
+            normalizedTargetHostId
+          )
+        );
+
+        if (hostMatched) {
+          return hostMatched;
+        }
+      }
+    }
+
+    if (normalizedTargetHostId !== null) {
+      const hostMatched = candidates.find((item) =>
+        isSameTargetHostId(
+          normalizeScopeTargetHostId(resolveWorkspaceRefForTargetHost(item.workspace, normalizedTargetHostId)),
+          normalizedTargetHostId
+        )
+      );
+
+      if (hostMatched) {
+        return hostMatched;
+      }
+    }
+
+    return candidates[0] ?? null;
+  }, [flattenedSessions, resolveWorkspaceRefForTargetHost]);
+
+  const resolveSessionEntryWorkspaceRef = useCallback((entry: WorkbenchNavigationEntry | null): WorkspaceRef | null => {
+    if (!entry) {
+      return null;
+    }
+
+    const targetHostId = entry.workspace.id === routeWorkspaceId
+      ? normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId
+      : activeTargetHostId;
+
+    if (targetHostId) {
+      return resolveWorkspaceRefForTargetHost(entry.workspace, targetHostId);
+    }
+
+    return makeWorkspaceRef(entry.workspace.id, "current");
+  }, [activeTargetHostId, resolveWorkspaceRefForTargetHost, routeScopedWorkspaceRef, routeWorkspaceId]);
+
+  const buildSessionEntryPath = useCallback((entry: WorkbenchNavigationEntry | null): string | null => {
+    if (!entry) {
+      return null;
+    }
+
+    return buildWorkspaceSessionPath(
+      entry.workspace.id,
+      entry.session.sessionId,
+      resolveSessionEntryWorkspaceRef(entry)
+    );
+  }, [resolveSessionEntryWorkspaceRef]);
+
+  const currentSessionContext = findSessionEntryByScope(currentSessionId, {
+    displayWorkspaceId: routeWorkspaceId,
+    targetHostId: normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId
+  });
   const sessionWorkspaceId =
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
-  const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
-  const routeWorkspaceRef = routeScopedWorkspaceRef;
   const validatedRouteWorkspaceId =
     routeWorkspaceId && (
       knownWorkspaceIds.has(routeWorkspaceId)
-      || (routeWorkspaceRef?.hostId && routeWorkspaceRef.hostId !== "current")
+      || (routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current")
     )
       ? routeWorkspaceId
       : null;
@@ -14049,11 +14213,11 @@ export function WorkbenchLayout({
       return null;
     }
 
-    if (routeWorkspaceRef?.hostId && routeWorkspaceRef.hostId !== "current") {
+    if (routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current") {
       const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
 
       if (currentWorkspace) {
-        return resolveWorkspaceRefForTargetHost(currentWorkspace, routeWorkspaceRef.hostId);
+        return resolveWorkspaceRefForTargetHost(currentWorkspace, routeScopedWorkspaceRef.hostId);
       }
 
       return null;
@@ -14082,12 +14246,12 @@ export function WorkbenchLayout({
       return selectedWorkspaceRef;
     }
 
-    if (routeWorkspaceRef?.workspaceId === currentWorkspaceId) {
-      if (routeWorkspaceRef.hostId !== "current") {
+    if (routeScopedWorkspaceRef?.workspaceId === currentWorkspaceId) {
+      if (routeScopedWorkspaceRef.hostId !== "current") {
         return null;
       }
 
-      return routeWorkspaceRef;
+      return routeScopedWorkspaceRef;
     }
 
     if (activeTargetHostId) {
@@ -14103,7 +14267,7 @@ export function WorkbenchLayout({
     currentWorkspaceId,
     navigationGroups,
     resolveWorkspaceRefForTargetHost,
-    routeWorkspaceRef,
+    routeScopedWorkspaceRef,
     selectedWorkspaceId,
     selectedWorkspaceRef
   ]);
@@ -14134,6 +14298,10 @@ export function WorkbenchLayout({
         ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
         : currentWorkspaceRef?.workspaceId ?? null
       : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
+  const currentWorkbenchRealtimeScopeKey = useMemo(
+    () => buildWorkbenchRealtimeScopeKey(currentRequestWorkspaceId, currentTargetHostId),
+    [currentRequestWorkspaceId, currentTargetHostId]
+  );
   const currentTerminalSnapshotCacheKey = useMemo(
     () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
     [currentRequestWorkspaceId, currentTargetHostId]
@@ -14148,7 +14316,7 @@ export function WorkbenchLayout({
       return;
     }
 
-    const normalizedTargetHostId = targetHostId?.trim() || null;
+    const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
     const cacheKey = buildTerminalManagerSnapshotKey(normalizedWorkspaceId, normalizedTargetHostId);
     const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(cacheKey, 60 * 1000);
     const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
@@ -14167,6 +14335,28 @@ export function WorkbenchLayout({
     requestTerminalManagerRefresh,
     subscribeTerminalManagerSnapshot
   ]);
+  useEffect(() => {
+    const previousScopeKey = activeWorkbenchRealtimeScopeKeyRef.current;
+    const previousTargetHostId = activeWorkbenchRealtimeTargetHostIdRef.current;
+    const nextTargetHostId = normalizeTargetHostId(currentTargetHostId);
+
+    if (previousScopeKey === currentWorkbenchRealtimeScopeKey) {
+      return;
+    }
+
+    if (previousScopeKey) {
+      clearWorkbenchRealtimeBindings(previousScopeKey);
+    }
+
+    if (previousTargetHostId && previousTargetHostId !== nextTargetHostId) {
+      const previousPeerClient = peerWorkbenchRealtimeClientByHostRef.current.get(previousTargetHostId);
+      previousPeerClient?.close();
+      peerWorkbenchRealtimeClientByHostRef.current.delete(previousTargetHostId);
+    }
+
+    activeWorkbenchRealtimeScopeKeyRef.current = currentWorkbenchRealtimeScopeKey;
+    activeWorkbenchRealtimeTargetHostIdRef.current = nextTargetHostId;
+  }, [clearWorkbenchRealtimeBindings, currentTargetHostId, currentWorkbenchRealtimeScopeKey]);
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
@@ -14643,8 +14833,12 @@ export function WorkbenchLayout({
     }
 
     const storedSessionId = storedSessionMatch.sessionId;
-    const storedSessionEntry =
-      flattenedSessions.find((item) => item.session.sessionId === storedSessionId) ?? null;
+    const storedSearch = storedSessionPath.includes("?") ? `?${storedSessionPath.split("?")[1] ?? ""}` : "";
+    const storedTargetHostId = new URLSearchParams(storedSearch).get("targetHostId")?.trim() || null;
+    const storedSessionEntry = findSessionEntryByScope(storedSessionId, {
+      displayWorkspaceId: storedSessionMatch.workspaceId,
+      targetHostId: storedTargetHostId
+    });
     const storedSessionWorkspaceId =
       storedSessionMatch.workspaceId ?? storedSessionEntry?.workspace.id ?? null;
 
@@ -14652,16 +14846,12 @@ export function WorkbenchLayout({
       storedSessionEntry &&
       (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
     ) {
-      return buildWorkspaceSessionPath(
-        storedSessionEntry.workspace.id,
-        storedSessionEntry.session.sessionId,
-        currentWorkspaceRef
-      );
+      return buildSessionEntryPath(storedSessionEntry);
     }
 
     window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
     return null;
-  }, [currentWorkspaceRef, flattenedSessions]);
+  }, [buildSessionEntryPath, findSessionEntryByScope]);
   const activeNotifications = useMemo(
     () => globalNotifications.filter((item) => !archivedNotificationIds.has(item.id)),
     [archivedNotificationIds, globalNotifications]
@@ -14775,11 +14965,7 @@ export function WorkbenchLayout({
         ? resolveStoredConversationPath(fallbackSessionWorkspaceId)
         : null;
     const fallbackSessionPath = fallbackSessionEntry
-      ? buildWorkspaceSessionPath(
-          fallbackSessionEntry.workspace.id,
-          fallbackSessionEntry.session.sessionId,
-          currentWorkspaceRef
-        )
+      ? buildSessionEntryPath(fallbackSessionEntry)
       : null;
     const fallbackWorkspaceRef = currentWorkspaceRef;
 
@@ -14814,6 +15000,7 @@ export function WorkbenchLayout({
     navigate,
     navigationGroups,
     navigationLoading,
+    buildSessionEntryPath,
     resolveStoredConversationPath,
     routeWorkspaceId,
     sessionWorkspaceId,
@@ -15828,15 +16015,20 @@ export function WorkbenchLayout({
 
   const toggleFavoriteSession = useCallback(
     async (sessionId: string) => {
-      const currentSession = flattenedSessions.find((item) => item.session.sessionId === sessionId)?.session ?? null;
+      const currentSessionEntry = findSessionEntryByScope(sessionId, {
+        displayWorkspaceId: currentWorkspaceId,
+        targetHostId: currentTargetHostId
+      });
+      const currentSession = currentSessionEntry?.session ?? null;
       const nextFavorite = currentSession?.isFavorite !== true;
+      const targetHostId = normalizeScopeTargetHostId(resolveSessionEntryWorkspaceRef(currentSessionEntry));
 
       setNavigationGroups((current) =>
         updateSessionFavoriteStateInGroups(current, sessionId, nextFavorite)
       );
 
       try {
-        const session = await updateSessionFavoriteState(sessionId, nextFavorite, { targetHostId: currentTargetHostId });
+        const session = await updateSessionFavoriteState(sessionId, nextFavorite, { targetHostId });
         upsertNavigationSession(session);
         requestNavigationRefresh();
       } catch (error) {
@@ -15846,7 +16038,14 @@ export function WorkbenchLayout({
         throw error;
       }
     },
-    [flattenedSessions, requestNavigationRefresh, upsertNavigationSession, currentTargetHostId]
+    [
+      currentTargetHostId,
+      currentWorkspaceId,
+      findSessionEntryByScope,
+      requestNavigationRefresh,
+      resolveSessionEntryWorkspaceRef,
+      upsertNavigationSession
+    ]
   );
 
   const startDraftSession = useCallback(
@@ -16426,6 +16625,7 @@ export function WorkbenchLayout({
         currentSessionId={isDraftSession ? null : currentSessionId}
         activeWorkspaceId={currentAuxiliaryWorkspaceId}
         requestWorkspaceId={currentRequestWorkspaceId}
+        currentWorkspaceRef={currentWorkspaceRef}
         currentTargetHostId={currentTargetHostId}
         navigationGroups={effectiveNavigationGroups}
         workspaceContext={currentAuxiliaryWorkspaceContext}
@@ -16433,7 +16633,7 @@ export function WorkbenchLayout({
         worktreeMergeState={currentWorktreeMergeState}
         onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
         onApplyWorktreeMerge={applyWorktreeMerge}
-        onCleanupWorktree={applyWorktreeCleanup}
+        onCleanupWorktree={requestWorktreeCleanup}
       />
     );
   const codeEmbeddedAffairsAuxiliaryPanelContent =
@@ -16475,6 +16675,13 @@ export function WorkbenchLayout({
     isParallelConversationActive
     && parallelConversationTransition !== null
     && !rightCollapsed;
+  const shouldRenderAuxiliaryPanel =
+    shouldAllowAuxiliaryPanel
+    && (
+      !shouldRenderCodeEmbeddedAffairs
+      || !effectiveRightCollapsed
+      || shouldKeepParallelAuxiliaryMounted
+    );
   const shellStyle = {
     "--workbench-left-width": `${leftPanelWidth}px`,
     "--workbench-left-current-width": effectiveLeftCollapsed ? "0px" : `${leftPanelWidth}px`,
@@ -17155,7 +17362,7 @@ export function WorkbenchLayout({
                       </button>
                     </div>
 
-                    {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
+                    {shouldAllowAuxiliaryPanel && effectiveRightCollapsed && !isParallelConversationActive ? (
                       <div
                         className="workbench-collapsed-controls right"
                         data-visible={effectiveRightCollapsed}
@@ -17194,7 +17401,7 @@ export function WorkbenchLayout({
                   </CodeWorkbenchView>
                 </div>
 
-                {shouldShowAuxiliaryPanel ? (
+                {shouldRenderAuxiliaryPanel ? (
                   <>
                     <div
                       className="workbench-side-resizer"
@@ -17305,11 +17512,12 @@ export function WorkbenchLayout({
         }}
         onOpenSession={(sessionId) => {
           closeSearchModal();
-          const entry = flattenedSessions.find((item) => item.session.sessionId === sessionId) ?? null;
+          const entry = findSessionEntryByScope(sessionId, {
+            displayWorkspaceId: currentWorkspaceId,
+            targetHostId: currentTargetHostId
+          });
           navigate(
-            entry
-              ? buildWorkspaceSessionPath(entry.workspace.id, sessionId, currentWorkspaceRef)
-              : buildWorkspaceHomePath()
+            buildSessionEntryPath(entry) ?? buildWorkspaceHomePath()
           );
         }}
         onOpenCodeFile={(item) => {
@@ -17622,19 +17830,12 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
   );
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  return snapshot && typeof snapshot === "object" && "targetHostId" in snapshot
-    ? ((snapshot as { targetHostId?: unknown }).targetHostId as string | null | undefined) ?? null
-    : null;
-}
+function normalizeScopeTargetHostId(workspaceRef?: WorkspaceRef | null): string | null {
+  if (!workspaceRef) {
+    return null;
+  }
 
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left ?? null) === (right ?? null);
-}
-
-function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `${targetHostId.trim()}:` : "";
-  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
+  return workspaceRef.hostId !== "current" ? workspaceRef.hostId : null;
 }
 
 function isDraftSessionId(sessionId: string): boolean {

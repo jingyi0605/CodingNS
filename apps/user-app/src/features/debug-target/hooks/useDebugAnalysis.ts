@@ -13,6 +13,7 @@ export interface DebugAnalysisWorkspaceTarget {
   id: string;
   path: string;
   name?: string | null;
+  targetHostId?: string | null;
 }
 
 export interface DebugAnalysisState {
@@ -80,6 +81,8 @@ export function useDebugAnalysis(
           analyzeDebugTarget({
             workspaceId: workspace.id,
             rootPath: workspace.path
+          }, {
+            targetHostId: workspace.targetHostId
           }),
           getFrameworkCompatibilityMatrix()
         ]);
@@ -117,7 +120,7 @@ export function useDebugAnalysis(
     return () => {
       disposed = true;
     };
-  }, [refreshVersion, workspace?.id, workspace?.path]);
+  }, [refreshVersion, workspace?.id, workspace?.path, workspace?.targetHostId]);
 
   const primaryAnalysis = useMemo(
     () => pickPrimaryAnalysis(state.services, state.analyses),

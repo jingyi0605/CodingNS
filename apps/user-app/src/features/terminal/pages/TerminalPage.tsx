@@ -32,6 +32,11 @@ import {
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 import type { WorkspaceRef } from "../../conversation/api/conversation-api";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -450,14 +455,20 @@ export function TerminalPage({
       return resolvedWorkspaceId;
     }
 
-    // Peer HOST 下，路由和左侧列表仍使用主 HOST 的本地 workspaceId；
-    // 真正发给 Peer 的终端接口必须使用远端 workspaceId。
-    if (shellCurrentWorkspaceRef?.hostId === currentTargetHostId) {
-      return shellCurrentWorkspaceRef.workspaceId?.trim() || resolvedWorkspaceId;
+    const normalizedSelectedWorkspaceId = resolvedWorkspaceId.trim();
+    const normalizedShellWorkspaceId = shellCurrentWorkspaceId?.trim() || null;
+
+    // Peer HOST 下，显示工作区和请求工作区不是一个概念。
+    // 如果当前 shell 里的 workspaceRef 还属于旧工作区，就必须停住，不能把旧远端 id 发给新工作区。
+    if (
+      shellCurrentWorkspaceRef?.hostId === currentTargetHostId
+      && normalizedShellWorkspaceId === normalizedSelectedWorkspaceId
+    ) {
+      return shellCurrentWorkspaceRef.workspaceId?.trim() || null;
     }
 
-    return resolvedWorkspaceId;
-  }, [currentTargetHostId, resolvedWorkspaceId, shellCurrentWorkspaceRef]);
+    return null;
+  }, [currentTargetHostId, resolvedWorkspaceId, shellCurrentWorkspaceId, shellCurrentWorkspaceRef]);
 
   const mobileHeaderWorkspace = useMemo(
     () =>
@@ -725,6 +736,10 @@ export function TerminalPage({
         preferredPaneId?: PaneId;
       } = {}
     ): Promise<void> => {
+      if (!requestWorkspaceId) {
+        return;
+      }
+
       const requestId = terminalReloadRequestIdRef.current + 1;
       terminalReloadRequestIdRef.current = requestId;
 
@@ -764,6 +779,10 @@ export function TerminalPage({
   }, [reloadWorkspaceResources, selectedWorkspaceId]);
   const requestTerminalSnapshotRefresh = useCallback(
     (workspaceId: string, options: { force?: boolean } = {}) => {
+      if (!requestWorkspaceId) {
+        return;
+      }
+
       const cacheKey = buildTerminalManagerSnapshotKey(workspaceId, currentTargetHostId);
       const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(
         cacheKey,
@@ -922,6 +941,10 @@ export function TerminalPage({
       return;
     }
 
+    if (!requestWorkspaceId) {
+      return;
+    }
+
     return addTerminalManagerSnapshotListener((snapshot) => {
       if (
         snapshot.workspaceId !== requestWorkspaceId ||
@@ -1020,6 +1043,22 @@ export function TerminalPage({
       setMobileCreateSheetOpen(false);
       terminalsRef.current = [];
       setTerminals([]);
+      updatePaneBindings(() => INITIAL_PANE_BINDINGS);
+      updateActivePane("primary");
+      setPaneConnectionStates(INITIAL_CONNECTION_STATES);
+      setPendingTerminalCreationPaneId(null);
+      return;
+    }
+
+    if (!requestWorkspaceId) {
+      setActiveTerminalPersistenceWorkspaceId(null);
+      setShellOptions([]);
+      setSelectedShell("");
+      setMobileQuickDrawerOpen(false);
+      setMobileCreateSheetOpen(false);
+      terminalsRef.current = [];
+      setTerminals([]);
+      setManuallyDisconnectedTerminalIds([]);
       updatePaneBindings(() => INITIAL_PANE_BINDINGS);
       updateActivePane("primary");
       setPaneConnectionStates(INITIAL_CONNECTION_STATES);
@@ -1640,7 +1679,7 @@ export function TerminalPage({
   }
 
   async function handleDuplicateTerminal(terminal: TerminalDto): Promise<void> {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !requestWorkspaceId) {
       return;
     }
 
@@ -4316,6 +4355,7 @@ function TerminalWorkspacePane({
     onTerminalStatus,
     onUnauthorized,
     paneId,
+    targetHostId,
     terminal?.id,
     terminal?.runtimeType,
     ownsTerminalSize,
@@ -5303,16 +5343,6 @@ function createTerminalViewportRuntime(input: {
   };
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  return snapshot && typeof snapshot === "object" && "targetHostId" in snapshot
-    ? ((snapshot as { targetHostId?: unknown }).targetHostId as string | null | undefined) ?? null
-    : null;
-}
-
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left ?? null) === (right ?? null);
-}
-
 function truncateTowardZero(value: number): number {
   return value < 0 ? Math.ceil(value) : Math.floor(value);
 }
@@ -6233,8 +6263,10 @@ function buildTerminalMutationToastId(terminalId: string): string {
 }
 
 function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("terminal-manager.snapshot", {
+    workspaceId,
+    targetHostId
+  });
 }
 
 function waitForNextMutationPoll(): Promise<void> {

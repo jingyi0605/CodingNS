@@ -12,6 +12,7 @@ export interface RegisteredDebugWorkspaceTarget {
   id: string;
   path: string;
   name?: string | null;
+  targetHostId?: string | null;
 }
 
 export interface RegisteredDebugTemplatesState {
@@ -61,8 +62,8 @@ export function useRegisteredDebugTemplates(
 
     try {
       const [templateResponse, runtimeResponse] = await Promise.all([
-        listWorkspaceTemplates(workspace.id),
-        listWorkspaceTemplateRuntimeStatuses(workspace.id)
+        listWorkspaceTemplates(workspace.id, { targetHostId: workspace.targetHostId }),
+        listWorkspaceTemplateRuntimeStatuses(workspace.id, { targetHostId: workspace.targetHostId })
       ]);
 
       setState({
@@ -80,7 +81,7 @@ export function useRegisteredDebugTemplates(
       }));
       throw error;
     }
-  }, [workspace?.id]);
+  }, [workspace?.id, workspace?.targetHostId]);
 
   const refreshRuntime = useCallback(async () => {
     if (!workspace?.id) {
@@ -94,7 +95,9 @@ export function useRegisteredDebugTemplates(
     }));
 
     try {
-      const runtimeResponse = await listWorkspaceTemplateRuntimeStatuses(workspace.id);
+      const runtimeResponse = await listWorkspaceTemplateRuntimeStatuses(workspace.id, {
+        targetHostId: workspace.targetHostId
+      });
 
       setState((current) => ({
         ...current,
@@ -111,7 +114,7 @@ export function useRegisteredDebugTemplates(
       }));
       throw error;
     }
-  }, [workspace?.id]);
+  }, [workspace?.id, workspace?.targetHostId]);
 
   useEffect(() => {
     void refreshAll().catch(() => {});

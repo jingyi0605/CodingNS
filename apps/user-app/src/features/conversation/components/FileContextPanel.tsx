@@ -32,6 +32,11 @@ import {
   type WorkbenchFileRevealRequest,
   type WorkspaceSessionGroup
 } from "./WorkbenchLayout";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { FileViewerModal } from "./FileViewerModal";
 import {
@@ -262,6 +267,73 @@ export function FileContextPanel({
   const showSystemFiles = useLocalUiPreferenceSelector((state) => state.showSystemFiles);
   const hasSessionContext = Boolean(sessionId?.trim());
   const shouldUseMobileActionMenu = hideHeading && platform.isMobile;
+  const getScopedRequestOptions = () =>
+    currentTargetHostId
+      ? {
+          targetHostId: currentTargetHostId
+        }
+      : undefined;
+  const getFileTreeSnapshot = (targetWorkspaceId: string, directoryPath?: string) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? getFileTree(targetWorkspaceId, directoryPath, options)
+      : getFileTree(targetWorkspaceId, directoryPath);
+  };
+  const getSessionChangedGitFilesSnapshot = (targetSessionId: string, targetWorkspaceId: string) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? loadSessionChangedGitFiles(targetSessionId, targetWorkspaceId, options)
+      : loadSessionChangedGitFiles(targetSessionId, targetWorkspaceId);
+  };
+  const searchWorkspaceFiles = (
+    targetWorkspaceId: string,
+    keyword: string,
+    page: number,
+    pageSize: number
+  ) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? searchFiles(targetWorkspaceId, keyword, page, pageSize, options)
+      : searchFiles(targetWorkspaceId, keyword, page, pageSize);
+  };
+  const getWorkspaceGitDiff = (targetWorkspaceId: string, filePath: string, staged: boolean) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? getGitDiff(targetWorkspaceId, filePath, staged, options)
+      : getGitDiff(targetWorkspaceId, filePath, staged);
+  };
+  const uploadWorkspaceFile = (payload: {
+    workspaceId: string;
+    path: string;
+    contentBase64: string;
+  }) => {
+    const options = getScopedRequestOptions();
+    return options ? uploadFile(payload, options) : uploadFile(payload);
+  };
+  const downloadWorkspaceFile = (targetWorkspaceId: string, filePath: string) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? downloadFile(targetWorkspaceId, filePath, options)
+      : downloadFile(targetWorkspaceId, filePath);
+  };
+  const operateWorkspaceFile = (payload: {
+    workspaceId: string;
+    opType: "create_file" | "create_directory" | "delete" | "rename" | "move" | "copy";
+    srcPath?: string;
+    dstPath?: string;
+    content?: string;
+  }) => {
+    const options = getScopedRequestOptions();
+    return options ? operateFile(payload, options) : operateFile(payload);
+  };
+  const getFileTreeRealtimeOptions = () => ({
+    knownRevisionByPath: treeRevisionByPathRef.current,
+    ...(currentTargetHostId
+      ? {
+          targetHostId: currentTargetHostId
+        }
+      : {})
+  });
 
   useEffect(() => {
     logPerfDebug("file_panel.props", {
@@ -282,7 +354,7 @@ export function FileContextPanel({
       return;
     }
 
-    writeViewSnapshot(buildSessionChangeCountSnapshotKey(workspaceId, sessionId), nextCount);
+    writeViewSnapshot(buildSessionChangeCountSnapshotKey(workspaceId, sessionId, currentTargetHostId), nextCount);
   }
 
   async function refreshSessionChangeCount() {
@@ -291,9 +363,7 @@ export function FileContextPanel({
       return;
     }
 
-    const sessionChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, {
-      targetHostId: currentTargetHostId
-    });
+    const sessionChanges = await getSessionChangedGitFilesSnapshot(sessionId, workspaceId);
     const visibleCount = filterVisibleEntriesByName(
       sessionChanges,
       (item) => getPathLeafName(item.path),
@@ -359,7 +429,7 @@ export function FileContextPanel({
     restoringWorkspaceSnapshotRef.current = true;
 
     const cachedSnapshot = readViewSnapshot<FilePanelWorkspaceSnapshot>(
-      buildWorkspaceTreeSnapshotKey(workspaceId),
+      buildWorkspaceTreeSnapshotKey(workspaceId, currentTargetHostId),
       FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS
     );
 
@@ -405,7 +475,7 @@ export function FileContextPanel({
     queueMicrotask(() => {
       restoringWorkspaceSnapshotRef.current = false;
     });
-  }, [workspaceId]);
+  }, [currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     if (!externalRevealRequest || externalRevealRequest.workspaceId !== workspaceId) {
@@ -466,7 +536,7 @@ export function FileContextPanel({
       setLoadingDirectories((previous) => previous.filter((item) => item !== snapshot.path));
       resolveDirectoryWaiters(snapshot.path, snapshot.items);
     });
-  }, [addFileTreeSnapshotListener, workspaceId]);
+  }, [addFileTreeSnapshotListener, currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     return () => {
@@ -482,10 +552,7 @@ export function FileContextPanel({
     subscribeFileTree(
       workspaceId,
       collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
-      {
-        knownRevisionByPath: treeRevisionByPathRef.current,
-        targetHostId: currentTargetHostId
-      }
+      getFileTreeRealtimeOptions()
     );
   }, [activeDirectoryPath, currentTargetHostId, expandedDirectories, subscribeFileTree, workspaceId]);
 
@@ -620,13 +687,13 @@ export function FileContextPanel({
       snapshotExpandedDirectories
     );
 
-    writeViewSnapshot<FilePanelWorkspaceSnapshot>(buildWorkspaceTreeSnapshotKey(workspaceId), {
+    writeViewSnapshot<FilePanelWorkspaceSnapshot>(buildWorkspaceTreeSnapshotKey(workspaceId, currentTargetHostId), {
       treeCache: snapshotTreeCache,
       treeRevisionByPath: pruneTreeRevisionByPath(treeRevisionByPathRef.current, snapshotTreeCache),
       expandedDirectories: snapshotExpandedDirectories,
       activeDirectoryPath
     });
-  }, [activeDirectoryPath, expandedDirectories, treeCache, workspaceId]);
+  }, [activeDirectoryPath, currentTargetHostId, expandedDirectories, treeCache, workspaceId]);
 
   useEffect(() => {
     if (restoringWorkspaceSnapshotRef.current) {
@@ -714,10 +781,7 @@ export function FileContextPanel({
         subscribeFileTree(
           currentWorkspaceId,
           collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current),
-          {
-            knownRevisionByPath: treeRevisionByPathRef.current,
-            targetHostId: currentTargetHostId
-          }
+          getFileTreeRealtimeOptions()
         );
         void loadRootTree({ silent: true });
       }, 1500);
@@ -742,7 +806,7 @@ export function FileContextPanel({
     }
 
     const cachedCount = readViewSnapshot<number>(
-      buildSessionChangeCountSnapshotKey(workspaceId, sessionId),
+      buildSessionChangeCountSnapshotKey(workspaceId, sessionId, currentTargetHostId),
       FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS
     );
 
@@ -766,7 +830,7 @@ export function FileContextPanel({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, sessionRefreshVersion, showSystemFiles, workspaceId]);
+  }, [currentTargetHostId, sessionId, sessionRefreshVersion, showSystemFiles, workspaceId]);
 
   // 通过 WebSocket 订阅 git 状态（复用 GitSidebar 的快照通道，避免冗余 HTTP 调用）
   useEffect(() => {
@@ -776,8 +840,8 @@ export function FileContextPanel({
     }
 
     const wid = workspaceId.trim();
-    subscribeGitSnapshot(wid, { targetHostId: currentTargetHostId });
-    requestGitRefresh(wid, { targetHostId: currentTargetHostId });
+    subscribeGitSnapshot(wid, getScopedRequestOptions());
+    requestGitRefresh(wid, getScopedRequestOptions());
   }, [currentTargetHostId, workspaceId, subscribeGitSnapshot, requestGitRefresh]);
 
   // 监听 git 快照，提取文件变更列表
@@ -795,7 +859,7 @@ export function FileContextPanel({
 
       setGitChanges(snapshot.status?.changes ?? []);
     });
-  }, [addGitSnapshotListener, workspaceId]);
+  }, [addGitSnapshotListener, currentTargetHostId, workspaceId]);
 
   // 变更路径集合（用于筛选和状态标记）
   const visibleGitChanges = useMemo(
@@ -1029,14 +1093,8 @@ export function FileContextPanel({
       directoryPath || activeDirectoryPathRef.current
     );
 
-    subscribeFileTree(workspaceId, subscribedDirectories, {
-      knownRevisionByPath: treeRevisionByPathRef.current,
-      targetHostId: currentTargetHostId
-    });
-    requestFileTreeRefresh(workspaceId, [directoryPath], {
-      knownRevisionByPath: treeRevisionByPathRef.current,
-      targetHostId: currentTargetHostId
-    });
+    subscribeFileTree(workspaceId, subscribedDirectories, getFileTreeRealtimeOptions());
+    requestFileTreeRefresh(workspaceId, [directoryPath], getFileTreeRealtimeOptions());
     const waitForRealtimeSnapshot = waitForDirectorySnapshot(
       directoryPath,
       FILE_TREE_SNAPSHOT_TIMEOUT_MS,
@@ -1049,9 +1107,7 @@ export function FileContextPanel({
         return [];
       }
 
-      const fallbackResponse = await getFileTree(workspaceId, directoryPath || undefined, {
-        targetHostId: currentTargetHostId
-      });
+      const fallbackResponse = await getFileTreeSnapshot(workspaceId, directoryPath || undefined);
       const fallbackItems = fallbackResponse.items;
 
       treeRevisionByPathRef.current = {
@@ -1237,7 +1293,7 @@ export function FileContextPanel({
     const status = gitChangeInfo.statusByPath.get(normalizedPath);
     if (workspaceId && status && status !== "?" && status !== "D") {
       try {
-        const diffResult = await getGitDiff(workspaceId, filePath, false, { targetHostId: currentTargetHostId });
+        const diffResult = await getWorkspaceGitDiff(workspaceId, filePath, false);
 
         if (viewerDiffRequestIdRef.current === requestId) {
           setViewerDiffContent(diffResult.content || null);
@@ -1397,7 +1453,7 @@ export function FileContextPanel({
 
     try {
       // 手动刷新时同步触发 git status 更新（通过 WebSocket）
-      requestGitRefresh(wid, { targetHostId: currentTargetHostId });
+      requestGitRefresh(wid, getScopedRequestOptions());
       await refreshTreeCache();
 
       if (primarySelectedFilePath) {
@@ -1405,7 +1461,7 @@ export function FileContextPanel({
       }
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(wid, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+        const response = await searchWorkspaceFiles(wid, searchKeyword.trim(), 1, 20);
         setSearchResult(response.items);
       }
 
@@ -1442,7 +1498,7 @@ export function FileContextPanel({
     setSearching(true);
 
     try {
-      const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+      const response = await searchWorkspaceFiles(workspaceId, searchKeyword.trim(), 1, 20);
       setSearchResult(response.items);
     } catch (error) {
       showToast({
@@ -1500,11 +1556,11 @@ export function FileContextPanel({
     try {
       const contentBase64 = await readFileAsBase64(file);
 
-      await uploadFile({
+      await uploadWorkspaceFile({
         workspaceId,
         path: targetPath,
         contentBase64
-      }, { targetHostId: currentTargetHostId });
+      });
 
       await refreshTreeCache();
       await selectFile(targetPath);
@@ -1532,7 +1588,7 @@ export function FileContextPanel({
     setTransferring(true);
 
     try {
-      const payload = await downloadFile(workspaceId, explicitFilePath, { targetHostId: currentTargetHostId });
+      const payload = await downloadWorkspaceFile(workspaceId, explicitFilePath);
       const fileBuffer = decodeBase64ToArrayBuffer(payload.contentBase64);
 
       downloadBlob(payload.fileName, new Blob([fileBuffer], {
@@ -1646,12 +1702,12 @@ export function FileContextPanel({
           ? replacePathPrefix(viewerFilePath, sourcePath, nextPath)
           : null;
 
-        await operateFile({
+        await operateWorkspaceFile({
           workspaceId,
           opType: "rename",
           srcPath: sourcePath,
           dstPath: nextPath
-        }, { targetHostId: currentTargetHostId });
+        });
 
         if (fileClipboard) {
           setFileClipboard({
@@ -1679,7 +1735,7 @@ export function FileContextPanel({
         }
 
         if (searchMode && searchKeyword.trim()) {
-          const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+          const response = await searchWorkspaceFiles(workspaceId, searchKeyword.trim(), 1, 20);
           setSearchResult(response.items);
         }
 
@@ -1693,12 +1749,12 @@ export function FileContextPanel({
         return;
       }
 
-      await operateFile({
+      await operateWorkspaceFile({
         workspaceId,
         opType: pathOperationModal.mode,
         dstPath: nextPath,
         content: pathOperationModal.mode === "create_file" ? "" : undefined
-      }, { targetHostId: currentTargetHostId });
+      });
 
       resetPathOperationModal();
       await refreshTreeCache();
@@ -1712,7 +1768,7 @@ export function FileContextPanel({
       }
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+        const response = await searchWorkspaceFiles(workspaceId, searchKeyword.trim(), 1, 20);
         setSearchResult(response.items);
       }
 
@@ -1781,12 +1837,12 @@ export function FileContextPanel({
           continue;
         }
 
-        await operateFile({
+        await operateWorkspaceFile({
           workspaceId,
           opType: fileClipboard.mode === "copy" ? "copy" : "move",
           srcPath: target.source.path,
           dstPath: target.destinationPath
-        }, { targetHostId: currentTargetHostId });
+        });
       }
 
       const pastedTargets = nextTargets.map((item) =>
@@ -1816,7 +1872,7 @@ export function FileContextPanel({
       });
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+        const response = await searchWorkspaceFiles(workspaceId, searchKeyword.trim(), 1, 20);
         setSearchResult(response.items);
       }
 
@@ -1859,11 +1915,11 @@ export function FileContextPanel({
 
     try {
       for (const target of effectiveDeleteTargets) {
-        await operateFile({
+        await operateWorkspaceFile({
           workspaceId,
           opType: "delete",
           srcPath: target.path
-        }, { targetHostId: currentTargetHostId });
+        });
       }
 
       const nextActiveDirectory = resolveSafeActiveDirectoryAfterDelete(
@@ -1901,7 +1957,7 @@ export function FileContextPanel({
       });
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim(), 1, 20, { targetHostId: currentTargetHostId });
+        const response = await searchWorkspaceFiles(workspaceId, searchKeyword.trim(), 1, 20);
         setSearchResult(response.items);
       }
 
@@ -2950,15 +3006,6 @@ export function FileContextPanel({
   );
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left?.trim() || null) === (right?.trim() || null);
-}
-
 function getParentDirectory(filePath: string): string {
   if (!filePath.includes("/")) {
     return ROOT_DIRECTORY;
@@ -3553,12 +3600,12 @@ function mergeUnique(items: string[], nextItems: string[]): string[] {
   return nextItems.reduce((merged, nextItem) => appendUnique(merged, nextItem), items);
 }
 
-function buildWorkspaceTreeSnapshotKey(workspaceId: string) {
-  return `file-panel.workspace-tree.${workspaceId}`;
+function buildWorkspaceTreeSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  return buildScopedSnapshotKey("file-panel.workspace-tree", { workspaceId, targetHostId });
 }
 
-function buildSessionChangeCountSnapshotKey(workspaceId: string, sessionId: string) {
-  return `file-panel.session-change-count.${workspaceId}.${sessionId}`;
+function buildSessionChangeCountSnapshotKey(workspaceId: string, sessionId: string, targetHostId?: string | null) {
+  return `${buildScopedSnapshotKey("file-panel.session-change-count", { workspaceId, targetHostId })}.${sessionId}`;
 }
 
 function pruneTreeRevisionByPath(
