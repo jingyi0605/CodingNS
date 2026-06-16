@@ -842,7 +842,9 @@ describe("TerminalPage", () => {
       }
     ];
 
-    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions);
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions, {
+      targetHostId: "peer-host-windows"
+    });
     mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
     mockListWorkspaceTerminals.mockResolvedValueOnce({
       items: [createdTerminal]
@@ -850,6 +852,11 @@ describe("TerminalPage", () => {
 
     renderPage(undefined, {
       workbenchShellOverrides: {
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-windows",
+          workspaceId: "workspace-1"
+        },
         currentTargetHostId: "peer-host-windows"
       }
     });
@@ -984,6 +991,10 @@ describe("TerminalPage", () => {
                   workbenchShellOverrides={{
                     navigationGroups,
                     currentWorkspaceId: "workspace-1",
+                    currentWorkspaceRef: {
+                      hostId: "peer-host-1",
+                      workspaceId: "workspace-1"
+                    },
                     currentTargetHostId: "peer-host-1",
                     selectWorkspace: vi.fn(),
                     subscribeTerminalManagerSnapshot,
@@ -1010,6 +1021,34 @@ describe("TerminalPage", () => {
         expect.objectContaining({ targetHostId: "peer-host-1" })
       );
     });
+  });
+
+  it("PeerHost 下如果当前 workspaceRef 仍指向旧工作区，不会把旧远端 workspaceId 复用到新工作区请求", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    renderPage("/workspaces/workspace-2/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        },
+        currentTargetHostId: "peer-host-1",
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    expect(subscribeTerminalManagerSnapshot).not.toHaveBeenCalled();
+    expect(requestTerminalManagerRefresh).not.toHaveBeenCalled();
+    expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
   });
 
   it("显式传入不在导航列表里的工作区时，仍然使用该工作区加载终端", async () => {

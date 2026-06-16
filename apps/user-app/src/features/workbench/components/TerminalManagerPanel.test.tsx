@@ -154,6 +154,8 @@ function renderPanel(
   currentWorkspaceId: string | null = "workspace-1",
   options?: {
     externalWindowMode?: boolean;
+    requestWorkspaceId?: string | null;
+    workbenchShellOverrides?: Record<string, unknown>;
   }
 ) {
   function LocationProbe() {
@@ -167,8 +169,10 @@ function renderPanel(
       <ToastProvider>
         <TerminalManagerPanel
           currentWorkspaceId={currentWorkspaceId}
+          requestWorkspaceId={options?.requestWorkspaceId}
           navigationGroups={navigationGroups}
           externalWindowMode={options?.externalWindowMode}
+          workbenchShellOverrides={options?.workbenchShellOverrides as never}
         />
         <LocationProbe />
       </ToastProvider>
@@ -467,6 +471,44 @@ describe("TerminalManagerPanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
 
     expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/debug");
+  });
+
+  it("PeerHost 场景会用请求工作区刷新，但调试跳转仍保留显示工作区和 targetHostId", async () => {
+    writeViewSnapshot("terminal-manager.snapshot.host.peer-host-1.remote-workspace-1", {
+      revision: "revision-peer",
+      workspaceId: "remote-workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: [],
+      shellOptions: []
+    });
+
+    renderPanel("workspace-1", {
+      requestWorkspaceId: "remote-workspace-1",
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        }
+      }
+    });
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-peer",
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/workspaces/workspace-1/debug?targetHostId=peer-host-1"
+    );
   });
 
   it("详情层支持编辑和移除快捷启动项", async () => {

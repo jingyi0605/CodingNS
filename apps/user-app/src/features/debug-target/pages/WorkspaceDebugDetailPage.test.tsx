@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +50,7 @@ const mockedRunTerminalTemplate = vi.mocked(runTerminalTemplate);
 
 describe("WorkspaceDebugDetailPage", () => {
   const showToast = vi.fn();
+  const selectWorkspace = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -57,6 +58,7 @@ describe("WorkspaceDebugDetailPage", () => {
       showToast,
       dismissToast: vi.fn()
     } as never);
+    selectWorkspace.mockReset();
     mockedUseWorkbenchShell.mockReturnValue({
       navigationGroups: [
         {
@@ -69,7 +71,8 @@ describe("WorkspaceDebugDetailPage", () => {
           childWorktrees: []
         }
       ],
-      selectWorkspace: vi.fn()
+      currentWorkspaceRef: null,
+      selectWorkspace
     } as never);
     mockedAnalyzeDebugTarget.mockResolvedValue({
       target: {
@@ -363,7 +366,7 @@ describe("WorkspaceDebugDetailPage", () => {
         VITE_API_BASE_URL: "http://127.0.0.1:44010"
       },
       portOverride: 43010
-    });
+    }, { targetHostId: null });
     expect(mockedRunTerminalTemplate).toHaveBeenCalledWith("template-host", {
       runtimeType: "node",
       argsOverride: ["dev"],
@@ -371,7 +374,7 @@ describe("WorkspaceDebugDetailPage", () => {
         PORT: "44010"
       },
       portOverride: 44010
-    });
+    }, { targetHostId: null });
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
         title: t("shell.workspaceDetailRegisteredDebugActionRunRegisteredSuccess"),
@@ -379,11 +382,149 @@ describe("WorkspaceDebugDetailPage", () => {
       })
     );
   });
+
+  it("PEERHOST 调试页会用远端工作区请求并保留 targetHostId", async () => {
+    const user = userEvent.setup();
+
+    mockedUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ],
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      selectWorkspace
+    } as never);
+
+    renderPage("/workspaces/workspace-1/debug?targetHostId=peer-host-1");
+
+    await waitFor(() => {
+      expect(selectWorkspace).toHaveBeenCalledWith("workspace-1", {
+        hostId: "peer-host-1",
+        workspaceId: "workspace-1"
+      });
+    });
+    await waitFor(() => {
+      expect(mockedAnalyzeDebugTarget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "remote-workspace-1",
+          rootPath: "/repo/project-one"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+    expect(mockedListWorkspaceTemplates).toHaveBeenCalledWith("remote-workspace-1", {
+      targetHostId: "peer-host-1"
+    });
+    expect(mockedListWorkspaceTemplateRuntimeStatuses).toHaveBeenCalledWith("remote-workspace-1", {
+      targetHostId: "peer-host-1"
+    });
+
+    await user.click(await screen.findByRole("button", { name: t("shell.workspaceDetailRegisteredDebugActionRunRegistered") }));
+
+    await waitFor(() => {
+      expect(mockedRunTerminalTemplate).toHaveBeenCalledWith(
+        "template-web",
+        expect.objectContaining({
+          runtimeType: "node"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+  });
+
+  it("从 PEERHOST 调试页切回主 HOST 后会重新按主 HOST 工作区请求", async () => {
+    mockedUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ],
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      selectWorkspace
+    } as never);
+
+    const peerView = renderPage("/workspaces/workspace-1/debug?targetHostId=peer-host-1");
+
+    await waitFor(() => {
+      expect(mockedAnalyzeDebugTarget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "remote-workspace-1",
+          rootPath: "/repo/project-one"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+
+    mockedAnalyzeDebugTarget.mockClear();
+    mockedListWorkspaceTemplates.mockClear();
+    mockedListWorkspaceTemplateRuntimeStatuses.mockClear();
+    selectWorkspace.mockClear();
+
+    mockedUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ],
+      currentWorkspaceRef: null,
+      selectWorkspace
+    } as never);
+
+    peerView.unmount();
+    renderPage("/workspaces/workspace-1/debug");
+
+    await waitFor(() => {
+      expect(selectWorkspace).toHaveBeenCalledWith("workspace-1", {
+        hostId: "current",
+        workspaceId: "workspace-1"
+      });
+    });
+    await waitFor(() => {
+      expect(mockedAnalyzeDebugTarget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          rootPath: "/repo/project-one"
+        }),
+        { targetHostId: null }
+      );
+    });
+    expect(mockedListWorkspaceTemplates).toHaveBeenCalledWith("workspace-1", {
+      targetHostId: null
+    });
+    expect(mockedListWorkspaceTemplateRuntimeStatuses).toHaveBeenCalledWith("workspace-1", {
+      targetHostId: null
+    });
+  });
 });
 
-function renderPage() {
+function renderPage(initialEntry = "/workspaces/workspace-1/debug"): RenderResult {
   return render(
-    <MemoryRouter initialEntries={["/workspaces/workspace-1/debug"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/workspaces/:workspaceId/debug" element={<WorkspaceDebugDetailPage />} />
       </Routes>

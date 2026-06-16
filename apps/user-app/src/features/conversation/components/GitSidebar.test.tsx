@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -116,6 +116,7 @@ vi.mock("../api/conversation-api", () => ({
   startLiveSession: conversationApiMock.startLiveSession,
   getSessionDetail: conversationApiMock.getSessionDetail,
   listProviderCatalog: conversationApiMock.listProviderCatalog,
+  getProviderCapabilities: conversationApiMock.listProviderCapabilities,
   listProviderCapabilities: conversationApiMock.listProviderCapabilities
 }));
 
@@ -761,6 +762,77 @@ describe("GitSidebar", () => {
     });
   });
 
+  it("从 PEERHOST Git 作用域切回主 HOST 后不会复用旧缓存或接收旧快照", async () => {
+    const peerSnapshotKey = "git-sidebar.snapshot.host.peer-host-1.workspace-1";
+
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+    writeViewSnapshot(peerSnapshotKey, {
+      revision: "peer-revision",
+      status: createStatus(["peer-only.ts"]),
+      history: [],
+      historyTotalCount: 0,
+      historyNextCursor: null,
+      branches: {
+        currentBranch: "peer-main",
+        local: [{ name: "peer-main", current: true, upstream: null, remote: false }],
+        remote: []
+      }
+    });
+
+    const view = renderSidebar();
+    const peerGroup = await findGroup("当前变更");
+
+    expect(within(peerGroup).getAllByText("peer-only.ts").length).toBeGreaterThan(0);
+
+    workbenchShellMock.currentTargetHostId = null;
+    workbenchShellMock.currentWorkspaceRef = null;
+    workbenchShellMock.subscribeGitSnapshot.mockClear();
+    workbenchShellMock.requestGitRefresh.mockClear();
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.({
+        ...createGitSnapshot(createStatus(["host-main.ts"])),
+        targetHostId: null
+      });
+    });
+
+    view.rerender(
+      <ToastProvider>
+        <GitSidebar
+          workspaceId="workspace-1"
+          panelActive
+          workbenchShellOverrides={{ currentTargetHostId: null } as never}
+        />
+      </ToastProvider>
+    );
+
+    expect(screen.queryAllByText("peer-only.ts")).toHaveLength(0);
+
+    await waitFor(() => {
+      expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
+        knownRevision: null,
+        targetHostId: null
+      });
+    });
+
+    const hostGroup = await findGroup("当前变更");
+    await waitFor(() => {
+      expect(within(hostGroup).getAllByText("host-main.ts").length).toBeGreaterThan(0);
+    });
+
+    gitSnapshotListener?.({
+      ...createGitSnapshot(createStatus(["peer-leak.ts"])),
+      workspaceId: "workspace-1",
+      targetHostId: "peer-host-1"
+    });
+
+    await waitFor(() => {
+      expect(within(hostGroup).getAllByText("host-main.ts").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText("peer-leak.ts")).toHaveLength(0);
+
+    clearViewSnapshot(peerSnapshotKey);
+  });
+
   it("移动端最近版本标题右侧提供 Git 操作菜单，并复用桌面端菜单内容", async () => {
     renderSidebar();
 
@@ -1136,8 +1208,8 @@ function createRect({
   } as DOMRect;
 }
 
-function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }) {
-  render(
+function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }): RenderResult {
+  return render(
     <ToastProvider>
       <GitSidebar
         workspaceId={options?.workspaceId ?? "workspace-1"}

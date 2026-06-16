@@ -1,4 +1,4 @@
-﻿import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+﻿import { fireEvent, render, screen, waitFor, within, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +15,13 @@ import { FileContextPanel } from "./FileContextPanel";
 
 const WORKSPACE_TREE_SNAPSHOT_KEY = "file-panel.workspace-tree.workspace-1";
 const SESSION_COUNT_SNAPSHOT_KEY = "file-panel.session-change-count.workspace-1.session-1";
+const DEFAULT_FILE_PREVIEW_CAPABILITIES = {
+  canEdit: true,
+  canRefresh: true,
+  canResize: true,
+  canZoom: true,
+  canPaginate: false
+} as const;
 
 const fileApiMock = vi.hoisted(() => ({
   getFileTree: vi.fn(),
@@ -331,14 +338,15 @@ describe("FileContextPanel", () => {
     });
 
     workbenchShellMock.requestFileTreeRefresh.mockImplementation(
-      async (workspaceId: string, paths?: string[]) => {
+      async (workspaceId: string, paths?: string[], options?: { targetHostId?: string | null }) => {
         const targetPaths = paths && paths.length > 0 ? paths : [""];
 
         await Promise.all(
           targetPaths.map(async (path) => {
             const response = await fileApiMock.getFileTree(
               workspaceId,
-              path ? path : undefined
+              path ? path : undefined,
+              ...(options?.targetHostId ? [{ targetHostId: options.targetHostId }] : [])
             );
 
             queueMicrotask(() => {
@@ -346,7 +354,8 @@ describe("FileContextPanel", () => {
                 listener({
                   workspaceId,
                   path,
-                  items: response.items
+                  items: response.items,
+                  targetHostId: options?.targetHostId ?? null
                 });
               });
             });
@@ -413,7 +422,11 @@ describe("FileContextPanel", () => {
           content: '{\n  "name": "demo",\n  "enabled": true\n}',
           version: "json-version-1",
           size: 42,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -427,7 +440,11 @@ describe("FileContextPanel", () => {
           content: "name: demo\nenabled: true\n",
           version: "yaml-version-1",
           size: 36,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -441,7 +458,11 @@ describe("FileContextPanel", () => {
           content: '[database]\nport = 5432\nenabled = true\n',
           version: "toml-version-1",
           size: 84,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -455,7 +476,11 @@ describe("FileContextPanel", () => {
           content: '[user]\nname=demo\nenabled=yes\n',
           version: "ini-version-1",
           size: 56,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -469,7 +494,11 @@ describe("FileContextPanel", () => {
           content: 'NODE_ENV="development"\nPORT=3000\n',
           version: "env-version-1",
           size: 64,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -483,7 +512,11 @@ describe("FileContextPanel", () => {
           content: "org.gradle.jvmargs=-Xmx2g\nbuild.cache=true\n",
           version: "properties-version-1",
           size: 72,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -497,7 +530,11 @@ describe("FileContextPanel", () => {
           content: "[server]\nport=8080\nenabled=on\n",
           version: "conf-version-1",
           size: 68,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -511,7 +548,11 @@ describe("FileContextPanel", () => {
           content: "root = true\n\n[*]\nindent_style = space\n",
           version: "editorconfig-version-1",
           size: 96,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -525,7 +566,11 @@ describe("FileContextPanel", () => {
           content: "FROM node:20-alpine\nWORKDIR /app\nRUN pnpm install\n",
           version: "dockerfile-version-1",
           size: 128,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -539,7 +584,11 @@ describe("FileContextPanel", () => {
           content: "node_modules/\n*.log\n!.env.example\n",
           version: "gitignore-version-1",
           size: 48,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -553,7 +602,11 @@ describe("FileContextPanel", () => {
           content: "2026-03-24 21:45:01 INFO server started\n2026-03-24 21:45:03 ERROR port in use\n",
           version: "log-version-1",
           size: 144,
-          updatedAt: "2026-03-24T12:01:00.000Z"
+          updatedAt: "2026-03-24T12:01:00.000Z",
+          previewPath: null,
+          previewUrl: null,
+          onlyOffice: null,
+          capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
         };
       }
 
@@ -566,7 +619,11 @@ describe("FileContextPanel", () => {
         content: "# 鏍囬\n\n```ts\nconst answer = 42;\n```\n",
         version: "md-version-1",
         size: 38,
-        updatedAt: "2026-03-24T12:01:00.000Z"
+        updatedAt: "2026-03-24T12:01:00.000Z",
+        previewPath: null,
+        previewUrl: null,
+        onlyOffice: null,
+        capabilities: DEFAULT_FILE_PREVIEW_CAPABILITIES
       };
     });
 
@@ -610,9 +667,10 @@ describe("FileContextPanel", () => {
         filePath: string;
         openViewer: boolean;
       } | null;
+      workbenchShellOverrides?: Record<string, unknown>;
     }
-  ) {
-    render(
+  ): RenderResult {
+    return render(
       <ToastProvider>
         <FileContextPanel
           sessionId={sessionId}
@@ -621,6 +679,7 @@ describe("FileContextPanel", () => {
           hideTabs={options?.hideTabs}
           externalWindowMode={options?.externalWindowMode}
           externalRevealRequest={options?.externalRevealRequest}
+          workbenchShellOverrides={options?.workbenchShellOverrides as never}
         />
       </ToastProvider>
     );
@@ -656,6 +715,147 @@ describe("FileContextPanel", () => {
     await waitFor(() => {
       expect(fileApiMock.getFileTree).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("PEERHOST 文件树会使用带 HOST 的缓存 key 和订阅参数", async () => {
+    const peerWorkspaceTreeSnapshotKey = "file-panel.workspace-tree.host.peer-host-1.remote-workspace-1";
+
+    writeViewSnapshot(peerWorkspaceTreeSnapshotKey, {
+      treeCache: {
+        "": [
+          {
+            path: "peer-cached.ts",
+            name: "peer-cached.ts",
+            kind: "file",
+            size: 1,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      treeRevisionByPath: {
+        "": "peer-revision"
+      },
+      expandedDirectories: [],
+      activeDirectoryPath: ""
+    });
+
+    renderPanel("session-1", "remote-workspace-1", {
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-1"
+      }
+    });
+
+    expect(await screen.findByText("peer-cached.ts")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(workbenchShellMock.subscribeFileTree).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.any(Array),
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    clearViewSnapshot(peerWorkspaceTreeSnapshotKey);
+  });
+
+  it("从 PEERHOST 文件作用域切回主 HOST 后不会复用旧缓存或接收旧快照", async () => {
+    const peerWorkspaceTreeSnapshotKey = "file-panel.workspace-tree.host.peer-host-1.remote-workspace-1";
+
+    writeViewSnapshot(peerWorkspaceTreeSnapshotKey, {
+      treeCache: {
+        "": [
+          {
+            path: "peer-cached.ts",
+            name: "peer-cached.ts",
+            kind: "file",
+            size: 1,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      treeRevisionByPath: {
+        "": "peer-revision"
+      },
+      expandedDirectories: [],
+      activeDirectoryPath: ""
+    });
+
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "host-main.ts",
+          name: "host-main.ts",
+          kind: "file",
+          size: 2,
+          updatedAt: "2026-03-24T12:10:00.000Z"
+        }
+      ]
+    });
+
+    const view = renderPanel("session-1", "remote-workspace-1", {
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-1"
+      }
+    });
+
+    expect(await screen.findByText("peer-cached.ts")).toBeInTheDocument();
+
+    workbenchShellMock.requestFileTreeRefresh.mockClear();
+    workbenchShellMock.subscribeFileTree.mockClear();
+    fileApiMock.getFileTree.mockClear();
+
+    view.rerender(
+      <ToastProvider>
+        <FileContextPanel
+          sessionId="session-1"
+          workspaceId="workspace-1"
+          workbenchShellOverrides={{ currentTargetHostId: null } as never}
+        />
+      </ToastProvider>
+    );
+
+    expect(screen.queryByText("peer-cached.ts")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(workbenchShellMock.subscribeFileTree).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.any(Array),
+        expect.not.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", undefined);
+    });
+
+    expect(await screen.findByText("host-main.ts")).toBeInTheDocument();
+
+    fileTreeSnapshotListeners.forEach((listener) => {
+      listener({
+        workspaceId: "workspace-1",
+        path: "",
+        items: [
+          {
+            path: "peer-leak.ts",
+            name: "peer-leak.ts",
+            kind: "file",
+            size: 3,
+            updatedAt: "2026-03-24T12:11:00.000Z"
+          }
+        ],
+        targetHostId: "peer-host-1"
+      } as never);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("host-main.ts")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("peer-leak.ts")).not.toBeInTheDocument();
+
+    clearViewSnapshot(peerWorkspaceTreeSnapshotKey);
   });
 
   it("工作区首屏有会话改动缓存时不会立刻请求 changed-files", async () => {
@@ -1550,9 +1750,11 @@ describe("FileContextPanel", () => {
 
     await userEvent.dblClick(await screen.findByText("docs.md"));
 
-    expect(await screen.findByRole("dialog", { name: "docs.md" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "鏍囬" })).toBeInTheDocument();
-    expect(await screen.findByText("TypeScript")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "docs.md" });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText("# 鏍囬")).toBeInTheDocument();
+    expect(within(dialog).getByText("```ts")).toBeInTheDocument();
+    expect(within(dialog).getByText("const answer = 42;")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
 
@@ -1806,6 +2008,19 @@ describe("FileContextPanel", () => {
           isDirty: true,
           lastFetchedAt: null
         },
+        changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+      })
+      .mockResolvedValueOnce({
+        snapshot: {
+          workspaceId: "workspace-1",
+          repoRoot: "C:/Code/CodingNS",
+          branch: "main",
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          isDirty: true,
+          lastFetchedAt: null
+        },
         changes: [createGitChange("apps/user-app/src/app/App.tsx", true)]
       });
 
@@ -1823,10 +2038,11 @@ describe("FileContextPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSessionStageAll") }));
 
     await waitFor(() => {
-      expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", [
-        "apps/user-app/src/app/App.tsx"
-      ]);
+      expect(gitApiMock.stageGitTargets).toHaveBeenCalledTimes(1);
     });
+    expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", [
+      "apps/user-app/src/app/App.tsx"
+    ]);
 
     expect(await screen.findByText("已把本次会话的修改加入暂存区。")).toBeInTheDocument();
   });
