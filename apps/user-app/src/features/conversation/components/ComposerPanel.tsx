@@ -639,6 +639,12 @@ export function ComposerPanel({
   const quickPhraseMutationVersionRef = useRef(0);
   const appliedInitialModelKeyRef = useRef<string | null>(null);
   const mentionRequestIdRef = useRef(0);
+  const deploymentCapabilitiesRequestIdRef = useRef(0);
+  const forkCapabilitiesRequestIdRef = useRef(0);
+  const forkProviderCapabilitiesRequestIdRef = useRef(0);
+  const deploymentCapabilitiesAbortRef = useRef<AbortController | null>(null);
+  const forkCapabilitiesAbortRef = useRef<AbortController | null>(null);
+  const forkProviderCapabilitiesAbortRef = useRef<AbortController | null>(null);
   const { showToast } = useToast();
   const haptics = useHaptics();
   const { revealWorkspaceFile, currentTargetHostId } = useWorkbenchShell();
@@ -814,6 +820,11 @@ export function ComposerPanel({
       return;
     }
 
+    const requestId = deploymentCapabilitiesRequestIdRef.current + 1;
+    deploymentCapabilitiesRequestIdRef.current = requestId;
+    deploymentCapabilitiesAbortRef.current?.abort();
+    const abortController = new AbortController();
+    deploymentCapabilitiesAbortRef.current = abortController;
     let cancelled = false;
     setDeploymentCapabilitiesLoading(true);
 
@@ -821,26 +832,29 @@ export function ComposerPanel({
       providerConfigMode: "cc-switch-preset",
       providerPresetId: selectedProviderPresetId
     }, {
-      targetHostId: currentTargetHostId
+      targetHostId: currentTargetHostId,
+      signal: abortController.signal
     })
       .then((nextCapabilities) => {
-        if (!cancelled) {
+        if (!cancelled && requestId === deploymentCapabilitiesRequestIdRef.current) {
           setDeploymentCapabilities(nextCapabilities);
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && requestId === deploymentCapabilitiesRequestIdRef.current) {
           setDeploymentCapabilities(null);
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && requestId === deploymentCapabilitiesRequestIdRef.current) {
+          deploymentCapabilitiesAbortRef.current = null;
           setDeploymentCapabilitiesLoading(false);
         }
       });
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [currentTargetHostId, provider, selectedProviderConfigMode, selectedProviderPresetId, workspaceId]);
 
@@ -1863,6 +1877,11 @@ export function ComposerPanel({
     }
 
     let cancelled = false;
+    const requestId = forkCapabilitiesRequestIdRef.current + 1;
+    forkCapabilitiesRequestIdRef.current = requestId;
+    forkCapabilitiesAbortRef.current?.abort();
+    const abortController = new AbortController();
+    forkCapabilitiesAbortRef.current = abortController;
 
     setForkCapabilities(createDraftCapabilities(forkDraft.targetProvider));
     setForkCapabilitiesLoading(true);
@@ -1874,30 +1893,33 @@ export function ComposerPanel({
           ? forkProviderSelection.providerPresetId
           : null
     }, {
-      targetHostId: currentTargetHostId
+      targetHostId: currentTargetHostId,
+      signal: abortController.signal
     })
       .then((nextCapabilities) => {
-        if (cancelled) {
+        if (cancelled || requestId !== forkCapabilitiesRequestIdRef.current) {
           return;
         }
 
         setForkCapabilities(nextCapabilities);
       })
       .catch(() => {
-        if (cancelled) {
+        if (cancelled || requestId !== forkCapabilitiesRequestIdRef.current) {
           return;
         }
 
         setForkCapabilities(createDraftCapabilities(forkDraft.targetProvider));
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && requestId === forkCapabilitiesRequestIdRef.current) {
+          forkCapabilitiesAbortRef.current = null;
           setForkCapabilitiesLoading(false);
         }
       });
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [
     currentTargetHostId,
@@ -1913,18 +1935,29 @@ export function ComposerPanel({
       return;
     }
 
+    const requestId = forkProviderCapabilitiesRequestIdRef.current + 1;
+    forkProviderCapabilitiesRequestIdRef.current = requestId;
+    forkProviderCapabilitiesAbortRef.current?.abort();
+    const abortController = new AbortController();
+    forkProviderCapabilitiesAbortRef.current = abortController;
     let cancelled = false;
 
     void listProviderCapabilities(visibleCatalogForkProviders, forkDraft.workspaceId, {
-      targetHostId: currentTargetHostId
+      targetHostId: currentTargetHostId,
+      signal: abortController.signal
     }).then((nextCapabilities) => {
-      if (!cancelled) {
+      if (!cancelled && requestId === forkProviderCapabilitiesRequestIdRef.current) {
         setForkProviderCapabilities(nextCapabilities);
+      }
+    }).finally(() => {
+      if (!cancelled && requestId === forkProviderCapabilitiesRequestIdRef.current) {
+        forkProviderCapabilitiesAbortRef.current = null;
       }
     });
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [currentTargetHostId, forkDraft?.workspaceId, visibleCatalogForkProviders]);
 

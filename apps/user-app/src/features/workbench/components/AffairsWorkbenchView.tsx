@@ -1582,6 +1582,10 @@ export function AffairsWorkbenchProvider({
   const [lastObjectAssistantContext, setLastObjectAssistantContext] = useState<AffairsObjectContext | null>(null);
   const conversationExportRenderRootRef = useRef<HTMLDivElement | null>(null);
   const lightweightConversationSessionCacheScopeRef = useRef<string | null>(null);
+  const lightweightConversationReloadRequestIdRef = useRef(0);
+  const agentConversationReloadRequestIdRef = useRef(0);
+  const lightweightConversationReloadAbortRef = useRef<AbortController | null>(null);
+  const agentConversationReloadAbortRef = useRef<AbortController | null>(null);
   const activeLightweightConversationSessionIds = useMemo(
     () => new Set(lightweightConversationSessions.map((session) => session.sessionId)),
     [lightweightConversationSessions]
@@ -1671,6 +1675,7 @@ export function AffairsWorkbenchProvider({
   useEffect(() => {
     if (
       !affairsLibraryCapability.requested
+      || affairsLibraryCapability.loading
       || affairsLibraryCapability.enabled
       || activeSection !== "library"
     ) {
@@ -1690,6 +1695,7 @@ export function AffairsWorkbenchProvider({
   }, [
     activeSection,
     affairsLibraryCapability.enabled,
+    affairsLibraryCapability.loading,
     affairsLibraryCapability.requested,
     onStateChange,
     state
@@ -1875,18 +1881,34 @@ export function AffairsWorkbenchProvider({
   ]);
 
   const reloadLightweightConversationSessions = useCallback(async () => {
+    const requestId = lightweightConversationReloadRequestIdRef.current + 1;
+    lightweightConversationReloadRequestIdRef.current = requestId;
+    lightweightConversationReloadAbortRef.current?.abort();
+    const abortController = new AbortController();
+    lightweightConversationReloadAbortRef.current = abortController;
     setLightweightConversationSessionsLoading(true);
     try {
-      const response = await listAffairsLightweightSessions(workspaceId);
+      const response = await listAffairsLightweightSessions(workspaceId, {
+        signal: abortController.signal
+      });
+      if (requestId !== lightweightConversationReloadRequestIdRef.current) {
+        return;
+      }
       setLightweightConversationSessions(response.items);
     } catch (error) {
+      if (requestId !== lightweightConversationReloadRequestIdRef.current) {
+        return;
+      }
       showToast({
         tone: "error",
         title: t("shell.affairsConversationLightweightLoadFailed"),
         description: getErrorMessage(error, t("shell.affairsConversationLightweightLoadFailed"))
       });
     } finally {
-      setLightweightConversationSessionsLoading(false);
+      if (requestId === lightweightConversationReloadRequestIdRef.current) {
+        lightweightConversationReloadAbortRef.current = null;
+        setLightweightConversationSessionsLoading(false);
+      }
     }
   }, [showToast, workspaceId]);
 
@@ -1898,11 +1920,20 @@ export function AffairsWorkbenchProvider({
   }, [activeSection, reloadLightweightConversationSessions]);
 
   const reloadAgentConversationSessions = useCallback(async () => {
+    const requestId = agentConversationReloadRequestIdRef.current + 1;
+    agentConversationReloadRequestIdRef.current = requestId;
+    agentConversationReloadAbortRef.current?.abort();
+    const abortController = new AbortController();
+    agentConversationReloadAbortRef.current = abortController;
     setAgentConversationSessionsLoading(true);
     try {
       const response = await getAffairsAssistantSessionsSnapshot(workspaceId, {
-        refresh: true
+        refresh: true,
+        signal: abortController.signal
       });
+      if (requestId !== agentConversationReloadRequestIdRef.current) {
+        return;
+      }
       setAgentProjectId(response.item.projectId);
       setSnapshotAgentProjectWorkspaceId(response.item.projectWorkspaceId);
       setAgentConversationSessions((current) => mergeSnapshotBackedAgentConversationSessions(
@@ -1911,13 +1942,19 @@ export function AffairsWorkbenchProvider({
       ));
       setAgentConversationSessionsReady(true);
     } catch (error) {
+      if (requestId !== agentConversationReloadRequestIdRef.current) {
+        return;
+      }
       showToast({
         tone: "error",
         title: t("shell.affairsConversationAgentLoadFailed"),
         description: getErrorMessage(error, t("shell.affairsConversationAgentLoadFailed"))
       });
     } finally {
-      setAgentConversationSessionsLoading(false);
+      if (requestId === agentConversationReloadRequestIdRef.current) {
+        agentConversationReloadAbortRef.current = null;
+        setAgentConversationSessionsLoading(false);
+      }
     }
   }, [showToast, workspaceId]);
 
@@ -1927,6 +1964,11 @@ export function AffairsWorkbenchProvider({
     }
     void reloadAgentConversationSessions();
   }, [activeSection, reloadAgentConversationSessions]);
+
+  useEffect(() => () => {
+    lightweightConversationReloadAbortRef.current?.abort();
+    agentConversationReloadAbortRef.current?.abort();
+  }, []);
 
   const upsertRecentTagTask = useCallback((record: RecentAffairsTagTaskRecord) => {
     setRecentTagTasks((previous) => {
@@ -7174,6 +7216,20 @@ export function AffairsLightweightConversationDraftState(input: {
       session,
       historyState: "ready"
     });
+  const draftNodeId = useMemo(
+    () => buildAffairsConversationDraftNodeId(input.draft),
+    [input.draft]
+  );
+  const currentDraftNodeIdRef = useRef<string | null>(draftNodeId);
+
+  useEffect(() => {
+    currentDraftNodeIdRef.current = draftNodeId;
+    return () => {
+      if (currentDraftNodeIdRef.current === draftNodeId) {
+        currentDraftNodeIdRef.current = null;
+      }
+    };
+  }, [draftNodeId]);
 
   return (
     <main className="workbench-page conversation-page-shell affairs-conversation-page-shell" data-affairs-section="conversation">
@@ -7194,7 +7250,7 @@ export function AffairsLightweightConversationDraftState(input: {
         </div>
         <ComposerPanel
           capabilities={capabilities}
-          draftStorageId={buildAffairsConversationDraftNodeId(input.draft)}
+          draftStorageId={draftNodeId}
           workspaceId={input.workspaceId}
           contextUsage={null}
           taskProvider={input.draft.provider}
@@ -7203,6 +7259,7 @@ export function AffairsLightweightConversationDraftState(input: {
           isRunning={false}
           onSend={async (content, options) => {
             const clientRequestId = createAffairsConversationClientRequestId();
+            const draftNodeIdAtSend = draftNodeId;
             const initialMessages = [
               ...runtimeSnapshot.messages,
               createPendingMessage(
@@ -7250,11 +7307,13 @@ export function AffairsLightweightConversationDraftState(input: {
                     streamingToolStatus: null
                   }));
                   setLightweightRuntimeSnapshot(session.sessionId, null);
-                  activateConversationSession({
-                    kind: "lightweight",
-                    session: event.session,
-                    bootstrapMessages: []
-                  });
+                  if (currentDraftNodeIdRef.current === draftNodeIdAtSend) {
+                    activateConversationSession({
+                      kind: "lightweight",
+                      session: event.session,
+                      bootstrapMessages: []
+                    });
+                  }
                   void reloadLightweightConversationSessions();
                   return;
                 }
@@ -7318,11 +7377,13 @@ export function AffairsLightweightConversationDraftState(input: {
                 streamingToolStatus: null
               }));
               await reloadLightweightConversationSessions();
-              activateConversationSession({
-                kind: "lightweight",
-                session: liveSession,
-                bootstrapMessages: created.messages
-              });
+              if (currentDraftNodeIdRef.current === draftNodeIdAtSend) {
+                activateConversationSession({
+                  kind: "lightweight",
+                  session: liveSession,
+                  bootstrapMessages: created.messages
+                });
+              }
             } catch (error) {
               if (!activeSessionId) {
                 const recovered = await recoverAffairsLightweightSessionAfterCreateStreamFailure({
@@ -7351,11 +7412,13 @@ export function AffairsLightweightConversationDraftState(input: {
                   }));
                   setLightweightRuntimeSnapshot(session.sessionId, null);
                   await reloadLightweightConversationSessions();
-                  activateConversationSession({
-                    kind: "lightweight",
-                    session: recovered.session,
-                    bootstrapMessages: recovered.messages
-                  });
+                  if (currentDraftNodeIdRef.current === draftNodeIdAtSend) {
+                    activateConversationSession({
+                      kind: "lightweight",
+                      session: recovered.session,
+                      bootstrapMessages: recovered.messages
+                    });
+                  }
                   return;
                 }
               }
@@ -7525,11 +7588,43 @@ function useAffairsLightweightSessionController(input: {
   }, [bootstrapViewMessages, input.bootstrapMessages.length, input.externalSession, input.sessionId, setLightweightRuntimeSnapshot]);
 
   useEffect(() => {
+    const abortController = new AbortController();
     let cancelled = false;
 
+    if (input.bootstrapMessages.length > 0) {
+      void getAffairsLightweightSession(workspaceId, input.sessionId, {
+        signal: abortController.signal
+      }).then((nextSession) => {
+        if (cancelled) {
+          return;
+        }
+        setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
+          ...(current ?? createAffairsLightweightRuntimeSnapshot()),
+          session: nextSession,
+          historyState: "ready"
+        }));
+      }).catch(() => {
+        if (!cancelled) {
+          setLightweightRuntimeSnapshot(input.sessionId, (current) => ({
+            ...(current ?? createAffairsLightweightRuntimeSnapshot()),
+            historyState: "ready"
+          }));
+        }
+      });
+
+      return () => {
+        cancelled = true;
+        abortController.abort();
+      };
+    }
+
     void Promise.all([
-      getAffairsLightweightSession(workspaceId, input.sessionId),
-      getAffairsLightweightSessionMessages(workspaceId, input.sessionId)
+      getAffairsLightweightSession(workspaceId, input.sessionId, {
+        signal: abortController.signal
+      }),
+      getAffairsLightweightSessionMessages(workspaceId, input.sessionId, {
+        signal: abortController.signal
+      })
     ]).then(([nextSession, nextMessages]) => {
       if (cancelled) {
         return;
@@ -7560,8 +7655,9 @@ function useAffairsLightweightSessionController(input: {
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
-  }, [input.sessionId, setLightweightRuntimeSnapshot, workspaceId]);
+  }, [input.bootstrapMessages.length, input.sessionId, setLightweightRuntimeSnapshot, workspaceId]);
 
   const effectiveSnapshot = runtimeSnapshot ?? createAffairsLightweightRuntimeSnapshot({
     session: input.externalSession,
