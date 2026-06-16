@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../../shared/toast";
+import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { authStore } from "../../auth/store/auth-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type {
@@ -24,6 +25,8 @@ interface MockTerminalManagerSnapshot {
 }
 
 let terminalManagerSnapshotListener: ((snapshot: MockTerminalManagerSnapshot) => void) | null = null;
+const mockSubscribeTerminalManagerSnapshot = vi.fn();
+const mockRequestTerminalManagerRefresh = vi.fn();
 const initialPreferenceState = userPreferenceStore.getState();
 
 function createPreferenceState(language: "zh-CN" | "en-US") {
@@ -112,8 +115,9 @@ vi.mock("../../conversation/components/WorkbenchLayout", async () => {
       subscribeGitSnapshot: () => undefined,
       requestGitRefresh: () => undefined,
       addGitSnapshotListener: () => () => undefined,
-      subscribeTerminalManagerSnapshot: () => undefined,
-      requestTerminalManagerRefresh: () => {
+      subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
+      requestTerminalManagerRefresh: (...args: unknown[]) => {
+        mockRequestTerminalManagerRefresh(...args);
         terminalManagerSnapshotListener?.(buildMockSnapshot());
       },
       addTerminalManagerSnapshotListener: (listener: (snapshot: MockTerminalManagerSnapshot) => void) => {
@@ -179,6 +183,8 @@ describe("TerminalManagerPanel", () => {
     authStore.clear();
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     terminalManagerSnapshotListener = null;
+    mockSubscribeTerminalManagerSnapshot.mockReset();
+    mockRequestTerminalManagerRefresh.mockReset();
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
       terminals: [],
@@ -375,6 +381,59 @@ describe("TerminalManagerPanel", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "添加快捷启动项" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("命中缓存后打开终端面板也会强制刷新最新快照", async () => {
+    writeViewSnapshot("terminal-manager.snapshot.workspace-1", {
+      revision: "revision-cached",
+      workspaceId: "workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: [],
+      shellOptions: []
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-cached",
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-cached",
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("点击刷新按钮会强制拉取最新终端快照", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    const refreshButton = await screen.findByRole("button", { name: "刷新列表" });
+    mockRequestTerminalManagerRefresh.mockClear();
+
+    await user.click(refreshButton);
+
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
     });
   });
 

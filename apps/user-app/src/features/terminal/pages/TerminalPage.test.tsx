@@ -157,8 +157,11 @@ const workbenchShell = {
   currentWorkspaceId: "workspace-1",
   selectWorkspace: vi.fn(),
   subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
-  requestTerminalManagerRefresh: (workspaceId: string) => {
-    mockRequestTerminalManagerRefresh(workspaceId);
+  requestTerminalManagerRefresh: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null; skipKnownRevision?: boolean; targetHostId?: string | null }
+  ) => {
+    mockRequestTerminalManagerRefresh(workspaceId, options);
     queueMicrotask(() => {
       emitTerminalManagerSnapshot(workspaceId);
     });
@@ -898,7 +901,34 @@ describe("TerminalPage", () => {
       );
     });
     await waitFor(() => {
-      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith("workspace-1");
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("点击标题栏刷新按钮会强制拉取最新终端列表", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("button", { name: "新建终端" });
+    mockRequestTerminalManagerRefresh.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
     });
   });
 
