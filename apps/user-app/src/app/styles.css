@@ -1973,7 +1973,7 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
 }
 
 .terminal-tabbar-embedded-controls {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   flex: none;
@@ -1988,8 +1988,10 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
   min-width: 28px;
   height: 28px;
+  padding: 0;
   border-radius: 8px;
   color: var(--text-secondary);
 }
@@ -5696,6 +5698,13 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
   justify-content: flex-end;
   position: relative;
   z-index: 35;
+}
+
+.terminal-tabbar-inline-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 .terminal-desktop-tabstrip {

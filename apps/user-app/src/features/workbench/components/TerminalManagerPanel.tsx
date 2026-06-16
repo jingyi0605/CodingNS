@@ -46,8 +46,14 @@ interface TerminalManagerPanelProps {
 
 export interface TerminalManagerPanelWorkbenchShellOverrides {
   currentTargetHostId?: string | null;
-  subscribeTerminalManagerSnapshot?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
-  requestTerminalManagerRefresh?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
+  subscribeTerminalManagerSnapshot?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null; targetHostId?: string | null; skipKnownRevision?: boolean }
+  ) => void;
+  requestTerminalManagerRefresh?: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null; targetHostId?: string | null; skipKnownRevision?: boolean }
+  ) => void;
   addTerminalManagerSnapshotListener?: (
     listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
   ) => () => void;
@@ -707,9 +713,10 @@ export function TerminalManagerPanel({
       targetHostId: currentTargetHostId
     });
 
-    if (!cachedSnapshot) {
-      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
-    }
+    requestTerminalManagerSnapshotRefresh(activeWorkspaceId, {
+      force: true,
+      knownRevision: cachedSnapshot?.revision ?? null
+    });
   }, [activeWorkspaceId, currentTargetHostId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
 
   useEffect(() => {
@@ -734,12 +741,20 @@ export function TerminalManagerPanel({
     setShellOptions(snapshot.shellOptions ?? []);
   }
 
-  function requestTerminalManagerSnapshotRefresh(workspaceId: string) {
+  function requestTerminalManagerSnapshotRefresh(
+    workspaceId: string,
+    options: {
+      force?: boolean;
+      knownRevision?: string | null;
+    } = {}
+  ) {
     logPerfDebug("terminal_manager.refresh_requested", {
-      workspaceId
+      workspaceId,
+      force: options.force === true
     });
     requestTerminalManagerRefresh(workspaceId, {
-      knownRevision: revision,
+      knownRevision: options.knownRevision ?? revision,
+      skipKnownRevision: options.force === true,
       targetHostId: currentTargetHostId
     });
   }
@@ -1057,7 +1072,9 @@ export function TerminalManagerPanel({
             disabled={!activeWorkspaceId || loading}
             onClick={() => {
               if (activeWorkspaceId) {
-                requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+                requestTerminalManagerSnapshotRefresh(activeWorkspaceId, {
+                  force: true
+                });
               }
             }}
           >

@@ -762,6 +762,41 @@ export function TerminalPage({
 
     return reloadWorkspaceResources(selectedWorkspaceId);
   }, [reloadWorkspaceResources, selectedWorkspaceId]);
+  const requestTerminalSnapshotRefresh = useCallback(
+    (workspaceId: string, options: { force?: boolean } = {}) => {
+      const cacheKey = buildTerminalManagerSnapshotKey(workspaceId, currentTargetHostId);
+      const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(
+        cacheKey,
+        TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+      );
+      const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
+
+      subscribeTerminalManagerSnapshot(requestWorkspaceId, {
+        knownRevision,
+        skipKnownRevision: options.force === true,
+        targetHostId: currentTargetHostId
+      });
+      requestTerminalManagerRefresh(requestWorkspaceId, {
+        knownRevision,
+        skipKnownRevision: options.force === true,
+        targetHostId: currentTargetHostId
+      });
+    },
+    [
+      currentTargetHostId,
+      requestTerminalManagerRefresh,
+      requestWorkspaceId,
+      subscribeTerminalManagerSnapshot
+    ]
+  );
+  const handleForceRefreshTerminalWorkspace = useCallback(async () => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    requestTerminalSnapshotRefresh(selectedWorkspaceId, { force: true });
+    await reloadWorkspaceResources(selectedWorkspaceId);
+  }, [reloadWorkspaceResources, requestTerminalSnapshotRefresh, selectedWorkspaceId]);
 
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspaceId;
@@ -1007,8 +1042,6 @@ export function TerminalPage({
       buildTerminalManagerSnapshotKey(selectedWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
-    const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
-
     if (cachedSnapshot) {
       setShellOptions(parseTerminalShellOptions(cachedSnapshot.shellOptions));
       applyWorkspaceTerminalCollection(selectedWorkspaceId, cachedSnapshot.terminals);
@@ -1022,18 +1055,13 @@ export function TerminalPage({
       setPendingTerminalCreationPaneId(null);
     }
 
-    subscribeTerminalManagerSnapshot(requestWorkspaceId, {
-      knownRevision,
-      targetHostId: currentTargetHostId
-    });
-    requestTerminalManagerRefresh(requestWorkspaceId, {
-      knownRevision,
-      targetHostId: currentTargetHostId
+    requestTerminalSnapshotRefresh(selectedWorkspaceId, {
+      force: true
     });
   }, [
     applyWorkspaceTerminalCollection,
     currentTargetHostId,
-    requestTerminalManagerRefresh,
+    requestTerminalSnapshotRefresh,
     requestWorkspaceId,
     selectedWorkspaceId,
     subscribeTerminalManagerSnapshot
@@ -2216,114 +2244,30 @@ export function TerminalPage({
                         </div>
                       </div>
 
-                      <button
-                        ref={toolbarToggleRef}
-                        type="button"
-                        className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
-                        data-open={toolbarOpen}
-                        aria-label={t("terminal.toolbarToggleAction")}
-                        aria-expanded={toolbarOpen}
-                        onClick={() => {
-                          setActionMenu(null);
-                          setToolbarOpen((current) => !current);
-                        }}
-                      >
-                        <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
-                          <svg viewBox="0 0 20 20" fill="none" focusable="false">
-                            <path
-                              d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
-                              stroke="currentColor"
-                              strokeWidth="1.35"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path
-                              d="m5.85 11.92 2.22 2.22"
-                              stroke="currentColor"
-                              strokeWidth="1.35"
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                        </span>
-                      </button>
-                    </div>
-                    {embeddedMode && embeddedDockControls ? (
-                      <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
-                        <div
-                          className="code-workbench-terminal-layout-switcher"
-                        >
-                          <button
-                            type="button"
-                            className="code-workbench-terminal-layout-button"
-                            aria-label={
-                              embeddedDockToggleTargetOrientation === "horizontal"
-                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
-                                : t("shell.codeTerminalDockSwitchToVerticalAction")
-                            }
-                            title={
-                              embeddedDockToggleTargetOrientation === "horizontal"
-                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
-                                : t("shell.codeTerminalDockSwitchToVerticalAction")
-                            }
-                            onClick={() => {
-                              embeddedDockControls.onChangeOrientation(
-                                embeddedDockToggleTargetOrientation
-                              );
-                            }}
-                          >
-                            <span className="code-workbench-terminal-button-icon" aria-hidden="true">
-                              {embeddedDockToggleTargetOrientation === "horizontal" ? (
-                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
-                                  <path
-                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                  <path
-                                    d="M8 4.25v7.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              ) : (
-                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
-                                  <path
-                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                  <path
-                                    d="M3.75 8h9.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              )}
-                            </span>
-                          </button>
-                        </div>
+                      <div className="terminal-tabbar-inline-icon-actions" data-window-drag="ignore">
                         <button
+                          ref={toolbarToggleRef}
                           type="button"
-                          className="code-workbench-terminal-close-button"
-                          aria-label={t("shell.codeTerminalDockCloseAction")}
-                          onClick={embeddedDockControls.onClose}
+                          className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                          data-open={toolbarOpen}
+                          aria-label={t("terminal.toolbarToggleAction")}
+                          aria-expanded={toolbarOpen}
+                          onClick={() => {
+                            setActionMenu(null);
+                            setToolbarOpen((current) => !current);
+                          }}
                         >
-                          <span className="code-workbench-terminal-button-icon" aria-hidden="true">
-                            <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                          <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                            <svg viewBox="0 0 20 20" fill="none" focusable="false">
                               <path
-                                d="m5.25 5.25 5.5 5.5"
+                                d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
                                 stroke="currentColor"
                                 strokeWidth="1.35"
                                 strokeLinecap="round"
+                                strokeLinejoin="round"
                               />
                               <path
-                                d="m10.75 5.25-5.5 5.5"
+                                d="m5.85 11.92 2.22 2.22"
                                 stroke="currentColor"
                                 strokeWidth="1.35"
                                 strokeLinecap="round"
@@ -2331,8 +2275,122 @@ export function TerminalPage({
                             </svg>
                           </span>
                         </button>
+
+                        <button
+                          type="button"
+                          className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                          aria-label={t("git.refreshNow")}
+                          title={t("git.refreshNow")}
+                          onClick={() => {
+                            void handleForceRefreshTerminalWorkspace();
+                          }}
+                        >
+                          <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                            <svg viewBox="0 0 20 20" fill="none" focusable="false">
+                              <path
+                                d="M16.2 10a6.2 6.2 0 1 1-1.82-4.38"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                              <path
+                                d="M16.2 4.6v3.3h-3.3"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </span>
+                        </button>
+
+                        {embeddedMode && embeddedDockControls ? (
+                          <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
+                            <div className="code-workbench-terminal-layout-switcher">
+                              <button
+                                type="button"
+                                className="code-workbench-terminal-layout-button"
+                                aria-label={
+                                  embeddedDockToggleTargetOrientation === "horizontal"
+                                    ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                    : t("shell.codeTerminalDockSwitchToVerticalAction")
+                                }
+                                title={
+                                  embeddedDockToggleTargetOrientation === "horizontal"
+                                    ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                    : t("shell.codeTerminalDockSwitchToVerticalAction")
+                                }
+                                onClick={() => {
+                                  embeddedDockControls.onChangeOrientation(
+                                    embeddedDockToggleTargetOrientation
+                                  );
+                                }}
+                              >
+                                <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                                  {embeddedDockToggleTargetOrientation === "horizontal" ? (
+                                    <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                      <path
+                                        d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      <path
+                                        d="M8 4.25v7.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                      <path
+                                        d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      <path
+                                        d="M3.75 8h9.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </span>
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              className="code-workbench-terminal-close-button"
+                              aria-label={t("shell.codeTerminalDockCloseAction")}
+                              onClick={embeddedDockControls.onClose}
+                            >
+                              <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                  <path
+                                    d="m5.25 5.25 5.5 5.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                  <path
+                                    d="m10.75 5.25-5.5 5.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </span>
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                 </div>
               </header>
