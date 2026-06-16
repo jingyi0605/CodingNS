@@ -1856,6 +1856,7 @@ interface WorkbenchRealtimeTargetOptions {
 
 interface WorkbenchRealtimeKnownRevisionOptions extends WorkbenchRealtimeTargetOptions {
   knownRevision?: string | null | undefined;
+  skipKnownRevision?: boolean;
 }
 
 interface WorkbenchRealtimeFileTreeOptions extends WorkbenchRealtimeTargetOptions {
@@ -13471,11 +13472,14 @@ export function WorkbenchLayout({
       return;
     }
 
+    const abortController = new AbortController();
     let cancelled = false;
 
     void Promise.allSettled(
       workspaceIds.map(async (workspaceId) => {
-        const response = await listAffairsLightweightSessions(workspaceId);
+        const response = await listAffairsLightweightSessions(workspaceId, {
+          signal: abortController.signal
+        });
         return {
           workspaceId,
           sessions: response.items.filter((session) => !session.isArchived),
@@ -13521,6 +13525,7 @@ export function WorkbenchLayout({
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [workspaceIdSignature]);
 
@@ -14115,6 +14120,53 @@ export function WorkbenchLayout({
     () => currentWorkspace?.name ?? null,
     [currentWorkspace]
   );
+  const currentToolWorkspaceId =
+    currentSessionContext
+      ? resolveSessionToolWorkspaceId(
+        currentSessionContext.session,
+        currentSessionContext.session.sessionIsolatedWorkspace
+      )
+      : currentWorkspaceId;
+  const currentAuxiliaryWorkspaceId = currentToolWorkspaceId ?? currentWorkspaceId;
+  const currentRequestWorkspaceId =
+    currentTargetHostId
+      ? currentSessionContext
+        ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
+        : currentWorkspaceRef?.workspaceId ?? null
+      : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
+  const currentTerminalSnapshotCacheKey = useMemo(
+    () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
+    [currentRequestWorkspaceId, currentTargetHostId]
+  );
+  const refreshTerminalManagerSnapshot = useCallback((
+    workspaceId: string | null | undefined,
+    targetHostId?: string | null
+  ) => {
+    const normalizedWorkspaceId = workspaceId?.trim() || null;
+
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    const normalizedTargetHostId = targetHostId?.trim() || null;
+    const cacheKey = buildTerminalManagerSnapshotKey(normalizedWorkspaceId, normalizedTargetHostId);
+    const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(cacheKey, 60 * 1000);
+    const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
+
+    subscribeTerminalManagerSnapshot(normalizedWorkspaceId, {
+      knownRevision,
+      skipKnownRevision: true,
+      targetHostId: normalizedTargetHostId
+    });
+    requestTerminalManagerRefresh(normalizedWorkspaceId, {
+      knownRevision,
+      skipKnownRevision: true,
+      targetHostId: normalizedTargetHostId
+    });
+  }, [
+    requestTerminalManagerRefresh,
+    subscribeTerminalManagerSnapshot
+  ]);
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
@@ -14124,9 +14176,12 @@ export function WorkbenchLayout({
       return;
     }
 
+    const abortController = new AbortController();
     let cancelled = false;
 
-    void listAffairsLightweightSessions(currentWorkspaceId)
+    void listAffairsLightweightSessions(currentWorkspaceId, {
+      signal: abortController.signal
+    })
       .then((response) => {
         if (cancelled) {
           return;
@@ -14140,6 +14195,7 @@ export function WorkbenchLayout({
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [currentWorkspaceId, location.pathname]);
 
@@ -14291,16 +14347,28 @@ export function WorkbenchLayout({
     const nextWorkspaceId = workspaceId?.trim() || currentWorkspaceId;
     const nextWorkspaceRef = workspaceRef === undefined
       ? nextWorkspaceId
-        ? ({
-            hostId: "current",
-            workspaceId: nextWorkspaceId
-          } satisfies WorkspaceRef)
+        ? workspaceId === undefined && currentWorkspaceRef
+          ? currentWorkspaceRef
+          : currentWorkspaceRef?.workspaceId === nextWorkspaceId
+          ? currentWorkspaceRef
+          : ({
+              hostId: "current",
+              workspaceId: nextWorkspaceId
+            } satisfies WorkspaceRef)
         : null
       : workspaceRef;
 
     if (!nextWorkspaceId || !nextWorkspaceRef) {
       return;
     }
+
+    const nextTargetHostId = nextWorkspaceRef.hostId !== "current" ? nextWorkspaceRef.hostId : activeTargetHostId;
+    const nextRequestWorkspaceId =
+      nextTargetHostId && nextWorkspaceRef.hostId === nextTargetHostId
+        ? nextWorkspaceRef.workspaceId?.trim() || nextWorkspaceId
+        : nextWorkspaceId;
+
+    refreshTerminalManagerSnapshot(nextRequestWorkspaceId, nextTargetHostId);
 
     setSelectedWorkspaceId(nextWorkspaceId);
     setSelectedWorkspaceRef(nextWorkspaceRef);
@@ -14329,7 +14397,17 @@ export function WorkbenchLayout({
       writeCodeTerminalDockState(nextState);
       return nextState;
     });
-  }, [currentWorkspaceId, goToConversationTab, isMobileShell, location.pathname, navigate, workbenchHomePath]);
+  }, [
+    activeTargetHostId,
+    currentWorkspaceId,
+    currentWorkspaceRef,
+    goToConversationTab,
+    isMobileShell,
+    location.pathname,
+    navigate,
+    refreshTerminalManagerSnapshot,
+    workbenchHomePath
+  ]);
   const closeCodeTerminalDock = useCallback(() => {
     updateCodeTerminalDockState((current) => ({
       ...current,
@@ -14804,24 +14882,6 @@ export function WorkbenchLayout({
   const currentWorktreeNode = useMemo(
     () => findNavigationWorktreeNodeByWorkspaceId(effectiveNavigationGroups, currentWorkspaceId),
     [currentWorkspaceId, effectiveNavigationGroups]
-  );
-  const currentToolWorkspaceId =
-    currentSessionContext
-      ? resolveSessionToolWorkspaceId(
-        currentSessionContext.session,
-        currentSessionContext.session.sessionIsolatedWorkspace
-      )
-      : currentWorkspaceId;
-  const currentAuxiliaryWorkspaceId = currentToolWorkspaceId ?? currentWorkspaceId;
-  const currentRequestWorkspaceId =
-    currentTargetHostId
-      ? currentSessionContext
-        ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
-        : currentWorkspaceRef?.workspaceId ?? null
-      : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
-  const currentTerminalSnapshotCacheKey = useMemo(
-    () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
-    [currentRequestWorkspaceId, currentTargetHostId]
   );
   useEffect(() => {
     if (!currentTerminalSnapshotCacheKey) {

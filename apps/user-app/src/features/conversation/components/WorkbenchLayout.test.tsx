@@ -6029,6 +6029,62 @@ describe("WorkbenchLayout", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("点击快捷应用终端入口时会强制刷新终端快照", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions");
+
+    const terminalButton = await screen.findByRole("button", {
+      name: t("shell.codeShortcutTerminalAction")
+    });
+
+    MockWebSocket.instances.forEach((socket) => {
+      socket.sentPayloads = [];
+    });
+
+    await userEvent.click(terminalButton);
+
+    await waitFor(() => {
+      const terminalPayloads = MockWebSocket.instances
+        .flatMap((socket) => socket.sentPayloads)
+        .map((payload) => JSON.parse(payload) as { type: string; workspaceId?: string; knownRevision?: string });
+
+      expect(terminalPayloads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "terminalManager.subscribe",
+            workspaceId: "workspace-1"
+          }),
+          expect.objectContaining({
+            type: "terminalManager.refresh",
+            workspaceId: "workspace-1"
+          })
+        ])
+      );
+      expect(
+        terminalPayloads
+          .filter((payload) => payload.type === "terminalManager.subscribe" || payload.type === "terminalManager.refresh")
+          .every((payload) => payload.knownRevision === undefined)
+      ).toBe(true);
+    });
+  });
+
   it("支持工作区会话批量选择，并可部分选择或全选后批量归档", async () => {
     const sessionTitles: Record<string, string> = {
       "session-1": "Session Alpha",

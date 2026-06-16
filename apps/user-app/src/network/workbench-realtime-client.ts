@@ -25,6 +25,10 @@ import type {
 } from "../features/terminal/api/terminal-api";
 
 type WorkbenchConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
+type KnownRevisionOptions = {
+  knownRevision?: string | null | undefined;
+  skipKnownRevision?: boolean;
+};
 
 interface SystemConnectedEvent {
   type: "system.connected";
@@ -150,7 +154,11 @@ export class WorkbenchRealtimeClient {
     knownRevisionByPath: Record<string, string>;
   } | null = null;
   private pendingGitRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
-  private pendingTerminalManagerRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
+  private pendingTerminalManagerRefresh: {
+    workspaceId: string;
+    knownRevision: string | null;
+    skipKnownRevision?: boolean;
+  } | null = null;
   private pendingWorkspaceManagementRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
   private readonly fileTreeRevisionByPath = new Map<string, string>();
   private readonly gitRevisionByWorkspaceId = new Map<string, string>();
@@ -308,7 +316,7 @@ export class WorkbenchRealtimeClient {
 
   subscribeTerminalManager(
     workspaceId: string,
-    options?: { knownRevision?: string | null | undefined }
+    options?: KnownRevisionOptions
   ): void {
     this.terminalManagerSubscription = {
       workspaceId,
@@ -317,28 +325,35 @@ export class WorkbenchRealtimeClient {
     this.sendWhenReady({
       type: "terminalManager.subscribe",
       workspaceId,
-      knownRevision:
-        this.terminalManagerSubscription.knownRevision
-        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+      knownRevision: options?.skipKnownRevision
+        ? undefined
+        : (
+            this.terminalManagerSubscription.knownRevision
+            ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+          )
     });
   }
 
   requestTerminalManagerRefresh(
     workspaceId: string,
-    options?: { knownRevision?: string | null | undefined }
+    options?: KnownRevisionOptions
   ): void {
     const payload = {
       type: "terminalManager.refresh",
       workspaceId,
-      knownRevision:
-        normalizeKnownRevision(options?.knownRevision)
-        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+      knownRevision: options?.skipKnownRevision
+        ? undefined
+        : (
+            normalizeKnownRevision(options?.knownRevision)
+            ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+          )
     };
 
     if (!this.sendWhenReady(payload)) {
       this.pendingTerminalManagerRefresh = {
         workspaceId,
-        knownRevision: normalizeKnownRevision(options?.knownRevision)
+        knownRevision: normalizeKnownRevision(options?.knownRevision),
+        skipKnownRevision: options?.skipKnownRevision
       };
     } else {
       this.pendingTerminalManagerRefresh = null;
@@ -529,7 +544,8 @@ export class WorkbenchRealtimeClient {
 
       if (this.pendingTerminalManagerRefresh) {
         this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefresh.workspaceId, {
-          knownRevision: this.pendingTerminalManagerRefresh.knownRevision
+          knownRevision: this.pendingTerminalManagerRefresh.knownRevision,
+          skipKnownRevision: this.pendingTerminalManagerRefresh.skipKnownRevision
         });
       }
 

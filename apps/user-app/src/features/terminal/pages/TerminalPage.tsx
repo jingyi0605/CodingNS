@@ -88,6 +88,7 @@ interface TerminalViewportRuntime {
   restoredFromSnapshot: boolean;
   focus: () => void;
   reflow: () => void;
+  scheduleReflowRecovery: () => void;
   revealLatest: () => void;
   shouldAutoRevealLatest: () => boolean;
   prependHistory: (
@@ -203,8 +204,6 @@ const PERSISTED_TERMINAL_SCROLLBACK = 160;
 const MAX_PERSISTED_TERMINAL_VIEW_CHARS = 120_000;
 const MIN_TERMINAL_COLS = 20;
 const MIN_TERMINAL_ROWS = 5;
-const MIN_TERMINAL_PIXEL_WIDTH = 320;
-const MIN_TERMINAL_PIXEL_HEIGHT = 120;
 const MIN_TERMINAL_ZOOM_SCALE = 0.8;
 const MAX_TERMINAL_ZOOM_SCALE = 1.6;
 const TERMINAL_ZOOM_STEP = 0.1;
@@ -545,9 +544,13 @@ export function TerminalPage({
     () => sortTerminals(terminals, pinnedTerminalIdSet),
     [pinnedTerminalIdSet, terminals]
   );
+  const targetTerminalOsFamily = useMemo(
+    () => resolveTargetTerminalOsFamily(shellOptions, currentTargetHostId, platform.ui.osFamily),
+    [currentTargetHostId, platform.ui.osFamily, shellOptions]
+  );
   const runtimeOptions = useMemo(
-    () => listTerminalRuntimeOptions(platform.ui.osFamily),
-    [platform.ui.osFamily]
+    () => listTerminalRuntimeOptions(targetTerminalOsFamily),
+    [targetTerminalOsFamily]
   );
   // 终端页要和工作台壳保持同一套判定，避免 iPad 横屏还挂着手机单栏逻辑。
   const isMobileTerminalPage = !platform.isDesktop && platform.isMobile;
@@ -597,8 +600,8 @@ export function TerminalPage({
       ? (["primary"] as PaneId[])
       : (["primary", "secondary"] as PaneId[]);
   const mobileShellChoices = useMemo(
-    () => buildMobileTerminalShellChoices(shellOptions, platform.ui.osFamily),
-    [platform.ui.osFamily, shellOptions]
+    () => buildMobileTerminalShellChoices(shellOptions, targetTerminalOsFamily),
+    [shellOptions, targetTerminalOsFamily]
   );
   const selectedMobileShellChoice = useMemo(
     () => mobileShellChoices.find((option) => option.value === mobileSelectedShell) ?? mobileShellChoices[0] ?? null,
@@ -1376,13 +1379,18 @@ export function TerminalPage({
 
     const availableShellOptions = await ensureShellOptionsLoaded();
     const effectiveShellOptions = availableShellOptions.length > 0 ? availableShellOptions : shellOptions;
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      effectiveShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
     const nextShell = resolvePreferredTerminalShell(effectiveShellOptions, selectedShell);
 
     if (
       shouldPromptForTerminalShellSelection(
         effectiveShellOptions,
         isMobileTerminalPage,
-        platform.ui.osFamily
+        effectiveTargetTerminalOsFamily
       )
     ) {
       setSelectedShell(nextShell ?? "");
@@ -1401,6 +1409,11 @@ export function TerminalPage({
     }
 
     const availableShellOptions = shellOptions.length > 0 ? shellOptions : await ensureShellOptionsLoaded();
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      availableShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
     const nextShell = resolvePreferredTerminalShell(
       availableShellOptions.length > 0 ? availableShellOptions : shellOptions,
       selectedShell
@@ -1410,7 +1423,10 @@ export function TerminalPage({
       {
         workspaceId,
         shell: nextShell ?? undefined,
-        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+        runtimeType: resolveDefaultTerminalCreationRuntime(
+          selectedRuntimeType,
+          effectiveTargetTerminalOsFamily
+        )
       },
       activePaneIdRef.current,
       {
@@ -1434,11 +1450,21 @@ export function TerminalPage({
       return;
     }
 
+    const availableShellOptions = shellOptions.length > 0 ? shellOptions : await ensureShellOptionsLoaded();
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      availableShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
+
     await executeTerminalCreation(
       {
         workspaceId,
         shell: shellChoice.value,
-        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+        runtimeType: resolveDefaultTerminalCreationRuntime(
+          selectedRuntimeType,
+          effectiveTargetTerminalOsFamily
+        )
       },
       "primary",
       {
@@ -2005,9 +2031,9 @@ export function TerminalPage({
               loading={loadingShellOptions}
               creating={creatingTerminal}
               shellChoices={mobileShellChoices}
-              osFamily={platform.ui.osFamily}
+              osFamily={targetTerminalOsFamily}
               selectedShell={mobileSelectedShell}
-              runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+              runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, targetTerminalOsFamily)}
               title={t("terminal.mobileCreateSheetTitle")}
               shellLabel={t("terminal.mobileCreateShellLabel")}
               shellDescription={t("terminal.mobileCreateShellDescription")}
@@ -2723,9 +2749,9 @@ export function TerminalPage({
         loading={loadingShellOptions}
         creating={creatingTerminal}
         shellChoices={mobileShellChoices}
-        osFamily={platform.ui.osFamily}
+        osFamily={targetTerminalOsFamily}
         selectedShell={selectedShell}
-        runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+        runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, targetTerminalOsFamily)}
         title={t("terminal.createDialogTitle")}
         shellLabel={t("terminal.mobileCreateShellLabel")}
         shellDescription={t("terminal.createDialogShellDescription")}
@@ -3831,9 +3857,17 @@ function TerminalWorkspacePane({
   }, [active]);
 
   useEffect(() => {
-    if (active) {
-      viewportRuntimeRef.current?.focus();
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return;
     }
+
+    if (active) {
+      runtime.focus();
+    }
+
+    runtime.scheduleReflowRecovery();
   }, [active, terminal?.id]);
 
   useEffect(() => {
@@ -3871,8 +3905,14 @@ function TerminalWorkspacePane({
   }, [closeSelectionContextMenu, selectionContextMenu]);
 
   useEffect(() => {
-    viewportRuntimeRef.current?.setFontSize(buildTerminalFontSize(zoomScale));
-    viewportRuntimeRef.current?.reflow();
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return;
+    }
+
+    runtime.setFontSize(buildTerminalFontSize(zoomScale));
+    runtime.scheduleReflowRecovery();
   }, [zoomScale]);
 
   useEffect(() => {
@@ -3882,7 +3922,7 @@ function TerminalWorkspacePane({
       return;
     }
 
-    runtime.reflow();
+    runtime.scheduleReflowRecovery();
 
     if (ownsTerminalSize) {
       realtimeClientRef.current?.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
@@ -4029,7 +4069,7 @@ function TerminalWorkspacePane({
 
         if (runtime) {
           runtime.suspendInputForwarding();
-          runtime.reflow();
+          runtime.scheduleReflowRecovery();
           if (ownsTerminalSize) {
             client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
           }
@@ -4070,6 +4110,7 @@ function TerminalWorkspacePane({
             oldestLoadedSeqRef.current = null;
           }
 
+          runtime.scheduleReflowRecovery();
         }
 
         initialBackfillAppliedRef.current = true;
@@ -4136,12 +4177,14 @@ function TerminalWorkspacePane({
               renderMs: terminalDebugNowMs() - renderStartedAtMs
             });
 
+            runtime.scheduleReflowRecovery();
             if (shouldRevealLatest) {
               runtime.revealLatest();
             }
           });
         } else {
           runtime?.terminal.write(event.chunk.content, () => {
+            runtime?.scheduleReflowRecovery();
             if (shouldRevealLatest) {
               runtime?.revealLatest();
             }
@@ -4492,6 +4535,7 @@ function createTerminalViewportRuntime(input: {
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
   let deferredReflowTimer: number | null = null;
+  let reflowRecoveryTimer: number | null = null;
   let viewportBottomAlignFrameId: number | null = null;
   const scheduledReflowFrameIds = new Set<number>();
   let touchPoint: { x: number; y: number } | null = null;
@@ -5026,6 +5070,19 @@ function createTerminalViewportRuntime(input: {
     }, TERMINAL_POST_ATTACH_REFLOW_DELAY_MS);
   }
 
+  function scheduleReflowRecovery(): void {
+    schedulePostAttachReflow();
+
+    if (reflowRecoveryTimer !== null) {
+      window.clearTimeout(reflowRecoveryTimer);
+    }
+
+    reflowRecoveryTimer = window.setTimeout(() => {
+      reflowRecoveryTimer = null;
+      schedulePostAttachReflow();
+    }, 240);
+  }
+
   function syncViewportBottomGap(): void {
     const bottomGapPx = resolveTerminalViewportBottomGapPx(input.container.clientHeight);
     input.container.style.setProperty("--terminal-bottom-gap", `${bottomGapPx}px`);
@@ -5085,6 +5142,7 @@ function createTerminalViewportRuntime(input: {
     reflow: () => {
       fitToContainer();
     },
+    scheduleReflowRecovery,
     revealLatest,
     shouldAutoRevealLatest,
     prependHistory: async (
@@ -5143,6 +5201,10 @@ function createTerminalViewportRuntime(input: {
       if (deferredReflowTimer !== null) {
         window.clearTimeout(deferredReflowTimer);
         deferredReflowTimer = null;
+      }
+      if (reflowRecoveryTimer !== null) {
+        window.clearTimeout(reflowRecoveryTimer);
+        reflowRecoveryTimer = null;
       }
       if (viewportBottomAlignFrameId !== null) {
         window.cancelAnimationFrame(viewportBottomAlignFrameId);
@@ -5332,10 +5394,7 @@ function scrollTerminalViewportToBottom(container: HTMLDivElement, terminal: Ter
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
-  return (
-    container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
-    container.clientHeight >= MIN_TERMINAL_PIXEL_HEIGHT
-  );
+  return container.clientWidth > 0 && container.clientHeight > 0;
 }
 
 function resolveTerminalViewportDimensions(
@@ -5598,7 +5657,7 @@ function resolveDefaultTerminalCreationRuntime(
     return runtimeType;
   }
 
-  return osFamily === "windows" ? "embedded-pty" : "tmux";
+  return "tmux";
 }
 
 function shouldPromptForTerminalShellSelection(
@@ -5611,6 +5670,42 @@ function shouldPromptForTerminalShellSelection(
   }
 
   return shellOptions.filter((option) => option.available).length > 1;
+}
+
+function resolveTargetTerminalOsFamily(
+  shellOptions: TerminalShellOptionDto[],
+  targetHostId: string | null | undefined,
+  fallbackOsFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"]
+): ReturnType<typeof usePlatform>["ui"]["osFamily"] {
+  if (looksLikeWindowsShellOptions(shellOptions)) {
+    return "windows";
+  }
+
+  if (targetHostId) {
+    return fallbackOsFamily;
+  }
+
+  return fallbackOsFamily;
+}
+
+function looksLikeWindowsShellOptions(shellOptions: TerminalShellOptionDto[]): boolean {
+  if (shellOptions.length === 0) {
+    return false;
+  }
+
+  return shellOptions.some((option) => {
+    const shellValue = option.shell.trim().toLowerCase();
+    const optionId = option.id.trim().toLowerCase();
+
+    return (
+      optionId === "cmd" ||
+      optionId === "powershell" ||
+      optionId === "git-bash" ||
+      shellValue.endsWith(".exe") ||
+      shellValue.includes("\\windows\\") ||
+      shellValue.includes("\\program files\\git\\")
+    );
+  });
 }
 
 function shouldBypassTerminalKeyboardFallback(
