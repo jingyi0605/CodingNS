@@ -1241,6 +1241,7 @@ export interface HistoryMessageDto {
   content: string;
   toolCall?: ToolCallDto | null;
   attachments?: MessageAttachmentDto[];
+  attachmentPayloads?: AttachmentPayload[] | null;
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -1588,6 +1589,7 @@ export interface QuickPhraseDto {
 
 export interface ScopedRequestOptions {
   targetHostId?: string | null;
+  signal?: AbortSignal;
 }
 
 export function listWorkspaces(options?: { includeHidden?: boolean }) {
@@ -2680,7 +2682,8 @@ export function getProviderCapabilities(
       search.size > 0 ? `?${search.toString()}` : ""
     }`,
     {
-      targetHostId: options?.targetHostId ?? undefined
+      targetHostId: options?.targetHostId ?? undefined,
+      signal: options?.signal
     }
   );
 }
@@ -2688,7 +2691,7 @@ export function getProviderCapabilities(
 export async function listProviderCatalog(options?: ScopedRequestOptions): Promise<ProviderCatalogEntryDto[]> {
   const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>(
     "/api/providers/catalog",
-    { targetHostId: options?.targetHostId ?? undefined }
+    { targetHostId: options?.targetHostId ?? undefined, signal: options?.signal }
   );
   return response.items;
 }
@@ -2764,7 +2767,7 @@ export function getSessionMessages(
 
   return httpClient.request<HistoryPageDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`,
-    { targetHostId: options?.targetHostId ?? undefined }
+    { targetHostId: options?.targetHostId ?? undefined, signal: options?.signal }
   );
 }
 
@@ -2785,6 +2788,7 @@ export interface AffairsAssistantSessionsSnapshotDto {
 
 export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options?: {
   refresh?: boolean;
+  signal?: AbortSignal;
 }) {
   const headers = new Headers();
   if (options?.refresh) {
@@ -2792,9 +2796,10 @@ export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options
   }
 
   return httpClient.request<{ item: AffairsAssistantSessionsSnapshotDto }>(
-    "/api/affairs/assistant-sessions",
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/assistant-sessions`,
     {
-      headers
+      headers,
+      signal: options?.signal
     }
   );
 }
@@ -2833,21 +2838,30 @@ export function startLiveSession(payload: StartLivePayload, options?: ScopedRequ
   });
 }
 
-export function listAffairsLightweightSessions(workspaceId: string) {
+export function listAffairsLightweightSessions(workspaceId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<{ items: SessionSummaryDto[] }>(
-    "/api/affairs/lightweight-sessions"
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions`,
+    {
+      signal: options?.signal
+    }
   );
 }
 
-export function getAffairsLightweightSession(workspaceId: string, sessionId: string) {
+export function getAffairsLightweightSession(workspaceId: string, sessionId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`,
+    {
+      signal: options?.signal
+    }
   );
 }
 
-export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string) {
+export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<HistoryPageDto>(
-    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      signal: options?.signal
+    }
   );
 }
 
