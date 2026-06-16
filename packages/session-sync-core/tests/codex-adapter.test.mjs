@@ -136,6 +136,73 @@ test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异�
   }
 });
 
+test("CodexAdapter 会把同一次带图用户输入的 response_item 与 event_msg 去重", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-image-user-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const imagePath = join(tempDir, "image.png");
+  const attachmentBlock = [
+    "[[CODINGNS_IMAGE_ATTACHMENTS]]",
+    "下面这些图片是用户随消息附带的本地附件。请先读取并理解它们，再继续处理这条请求。",
+    `1. ${imagePath}`,
+    "[[/CODINGNS_IMAGE_ATTACHMENTS]]"
+  ].join("\n\n");
+
+  try {
+    const lines = [
+      JSON.stringify({
+        timestamp: "2026-06-15T08:49:35.849Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `分析图片内容\n\n${attachmentBlock}`
+            },
+            {
+              type: "input_text",
+              text: "<image name=[Image #1]>"
+            },
+            {
+              type: "input_image",
+              image_url: "data:image/png;base64,iVBORw0KGgo="
+            },
+            {
+              type: "input_text",
+              text: "</image>"
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-06-15T08:49:35.849Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: `分析图片内容\n\n${attachmentBlock}`,
+          local_images: [imagePath]
+        }
+      })
+    ];
+
+    writeFileSync(sessionFile, lines.join("\n"), "utf8");
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("session-1", sessionFile, null, 50);
+
+    assert.equal(page.messages.length, 1);
+    assert.equal(page.messages[0].role, "user");
+    assert.equal(page.messages[0].content.includes("CODINGNS_IMAGE_ATTACHMENTS"), true);
+    assert.equal(
+      page.messages[0].rawRef,
+      `codex://${sessionFile.replaceAll("\\", "/")}#line=1`
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 会为 app-server 落盘的 assistant 与 tool 消息复用稳定 messageId", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-stable-id-"));
   const sessionFile = join(tempDir, "session.jsonl");

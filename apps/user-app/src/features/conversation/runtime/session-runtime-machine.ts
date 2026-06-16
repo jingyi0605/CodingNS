@@ -67,6 +67,8 @@ const INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
 const INTERNAL_ATTACHMENT_DEBUG_BLOCK_TEST_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/;
+const INTERNAL_ATTACHMENT_DEBUG_TAIL_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*$/g;
 
 export function createInitialRuntimeState(
   seed?: Partial<
@@ -146,7 +148,7 @@ export function toViewMessage(
     content: normalizeViewMessageContent(message.provider, message.role, kind, message.content),
     toolCall,
     attachments: message.attachments ?? [],
-    attachmentPayloads: null,
+    attachmentPayloads: message.attachmentPayloads ?? null,
     origin: message.origin ?? null,
     originRef: message.originRef ?? null,
     timestamp: message.timestamp,
@@ -530,14 +532,35 @@ function collapseEquivalentKimiTextMessages(
   return collapsed;
 }
 
+function collapseEquivalentCodexImageUserMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isEquivalentCodexImageUserMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickPreferredCodexImageUserMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   const sorted = sortMessagesByTimeline(messages);
 
-  return collapseEquivalentKimiTextMessages(
-    collapseEquivalentGeminiTextMessages(
-      collapseEquivalentOpenCodeUserMessages(
-        collapseEquivalentOpenCodeTurnPairs(
-          collapseEquivalentOpenCodeAssistantMessages(sorted)
+  return collapseEquivalentCodexImageUserMessages(
+    collapseEquivalentKimiTextMessages(
+      collapseEquivalentGeminiTextMessages(
+        collapseEquivalentOpenCodeUserMessages(
+          collapseEquivalentOpenCodeTurnPairs(
+            collapseEquivalentOpenCodeAssistantMessages(sorted)
+          )
         )
       )
     )
@@ -1050,7 +1073,9 @@ function mergeAuthoritativeVersion(
   }
 
   const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
-  const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+  const content = isCodexAuthoritativeMessage(current) && isCodexAuthoritativeMessage(incoming)
+    ? pickPreferredCodexEquivalentContent(current, incoming)
+    : pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
   const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
   const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
 
@@ -1113,7 +1138,9 @@ function mergeEquivalentAuthoritativeVersion(
   }
 
   const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
-  const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+  const content = isCodexAuthoritativeMessage(current) && isCodexAuthoritativeMessage(incoming)
+    ? pickPreferredCodexEquivalentContent(current, incoming)
+    : pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
   const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
   const stableAnchor = pickStableAuthoritativeMessage(current, incoming);
 
@@ -1256,12 +1283,32 @@ function isEquivalentCodexTextMessageWithinWindow(
 
   const leftContent = parseMessageRichContent(left.content);
   const rightContent = parseMessageRichContent(right.content);
+  const comparableLeftText = normalizeComparableCodexText(leftContent.text);
+  const comparableRightText = normalizeComparableCodexText(rightContent.text);
 
   return (
     areTimestampsNearWithinWindow(left.timestamp, right.timestamp, windowMs) &&
-    normalizeComparableCodexText(leftContent.text) === normalizeComparableCodexText(rightContent.text) &&
+    areEquivalentCodexAssistantTextContents(left, right, comparableLeftText, comparableRightText) &&
     areEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
   );
+}
+
+function areEquivalentCodexAssistantTextContents(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  comparableLeftText: string,
+  comparableRightText: string
+): boolean {
+  if (comparableLeftText === comparableRightText) {
+    return true;
+  }
+
+  return foldDuplicatedCodexAssistantTailText(
+    left,
+    right,
+    comparableLeftText,
+    comparableRightText
+  ) !== null;
 }
 
 function shouldCollapseOpenCodeRepeatedUserMessage(
@@ -1469,6 +1516,68 @@ function pickPreferredKimiMessage(
   return pickNewerAuthoritativeMessage(left, right);
 }
 
+function isEquivalentCodexImageUserMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (!isCodexImageUserTextMessage(left) || !isCodexImageUserTextMessage(right)) {
+    return false;
+  }
+
+  const leftContent = parseMessageRichContent(left.content);
+  const rightContent = parseMessageRichContent(right.content);
+
+  return (
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableUserMergeText(leftContent.text) === normalizeComparableUserMergeText(rightContent.text) &&
+    areEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
+  );
+}
+
+function isCodexImageUserTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("codex://") &&
+    message.role === "user" &&
+    message.kind === "text" &&
+    !isOptimisticUserMessage(message) &&
+    hasImageAttachmentEvidence(message)
+  );
+}
+
+function pickPreferredCodexImageUserMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = countImageAttachmentEvidence(left);
+  const rightAttachmentCount = countImageAttachmentEvidence(right);
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftContentLength = normalizeComparableUserMergeText(left.content).length;
+  const rightContentLength = normalizeComparableUserMergeText(right.content).length;
+
+  if (leftContentLength !== rightContentLength) {
+    return leftContentLength <= rightContentLength ? left : right;
+  }
+
+  return compareViewMessageOrder(left, right) <= 0 ? left : right;
+}
+
+function hasImageAttachmentEvidence(message: SessionMessageViewModel): boolean {
+  return countImageAttachmentEvidence(message) > 0;
+}
+
+function countImageAttachmentEvidence(message: SessionMessageViewModel): number {
+  const persistedCount = (message.attachments ?? []).filter((attachment) => attachment.kind === "image").length;
+  const payloadCount = (message.attachmentPayloads ?? []).filter((attachment) => attachment.kind === "image").length;
+  const inlineImageCount = parseMessageRichContent(message.content).inlineImages.length;
+
+  return persistedCount + payloadCount + inlineImageCount;
+}
+
 function mergeToolCall(
   current: SessionMessageViewModel["toolCall"],
   incoming: SessionMessageViewModel["toolCall"]
@@ -1547,6 +1656,130 @@ function pickPreferredContent(
   }
 
   return incomingTimestamp.localeCompare(currentTimestamp) >= 0 ? incoming : current;
+}
+
+function pickPreferredCodexEquivalentContent(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): string {
+  const currentContent = parseMessageRichContent(current.content);
+  const incomingContent = parseMessageRichContent(incoming.content);
+  const foldedAssistantContent = foldDuplicatedCodexAssistantTailText(
+    current,
+    incoming,
+    normalizeComparableCodexText(currentContent.text),
+    normalizeComparableCodexText(incomingContent.text)
+  );
+
+  if (foldedAssistantContent !== null) {
+    return foldedAssistantContent;
+  }
+
+  return pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+}
+
+function foldDuplicatedCodexAssistantTailText(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  comparableLeftText: string,
+  comparableRightText: string
+): string | null {
+  if (
+    left.role !== "assistant"
+    || right.role !== "assistant"
+    || left.kind !== "text"
+    || right.kind !== "text"
+  ) {
+    return null;
+  }
+
+  const leftFoldedText = removeRepeatedTrailingText(comparableLeftText);
+  const rightFoldedText = removeRepeatedTrailingText(comparableRightText);
+
+  if (
+    leftFoldedText === comparableLeftText
+    && rightFoldedText === comparableRightText
+  ) {
+    return null;
+  }
+
+  if (leftFoldedText === rightFoldedText) {
+    if (comparableLeftText === leftFoldedText) {
+      return left.content;
+    }
+
+    if (comparableRightText === rightFoldedText) {
+      return right.content;
+    }
+
+    return leftFoldedText;
+  }
+
+  if (
+    rightFoldedText.length >= 80
+    && comparableLeftText === rightFoldedText
+  ) {
+    return left.content;
+  }
+
+  if (
+    leftFoldedText.length >= 80
+    && comparableRightText === leftFoldedText
+  ) {
+    return right.content;
+  }
+
+  return null;
+}
+
+function removeRepeatedTrailingText(content: string): string {
+  const normalized = content.trimEnd();
+  const candidateStarts = collectTrailingRepeatCandidateStarts(normalized);
+
+  for (const start of candidateStarts) {
+    const tail = normalized.slice(start);
+    const beforeTail = normalized.slice(0, start).trimEnd();
+
+    if (!beforeTail.endsWith(tail)) {
+      continue;
+    }
+
+    return beforeTail;
+  }
+
+  return normalized;
+}
+
+function collectTrailingRepeatCandidateStarts(content: string): number[] {
+  const minRepeatLength = 80;
+  const minStart = Math.ceil(content.length / 2);
+  const starts: number[] = [];
+
+  for (
+    let index = content.indexOf("\n\n");
+    index >= 0;
+    index = content.indexOf("\n\n", index + 2)
+  ) {
+    const start = index + 2;
+
+    if (content.length - start >= minRepeatLength) {
+      starts.push(start);
+    }
+  }
+
+  for (let index = content.indexOf("\n", minStart); index >= 0; index = content.indexOf("\n", index + 1)) {
+    const start = index + 1;
+
+    if (content.length - start >= minRepeatLength) {
+      starts.push(start);
+    }
+  }
+
+  if (content.length - minStart >= minRepeatLength) {
+    starts.push(minStart);
+  }
+
+  return starts.sort((left, right) => left - right);
 }
 
 function pickPreferredAttachments(
@@ -1636,7 +1869,8 @@ function stripInternalAttachmentDebugContent(content: string): string {
 }
 
 function hasInternalAttachmentDebugBlock(content: string): boolean {
-  return INTERNAL_ATTACHMENT_DEBUG_BLOCK_TEST_PATTERN.test(content);
+  return INTERNAL_ATTACHMENT_DEBUG_BLOCK_TEST_PATTERN.test(content)
+    || content.includes("[[CODINGNS_IMAGE_ATTACHMENTS]]");
 }
 
 function removeInternalAttachmentDebugBlock(content: string): string {
@@ -1646,6 +1880,7 @@ function removeInternalAttachmentDebugBlock(content: string): string {
 
   return content
     .replace(INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN, "")
+    .replace(INTERNAL_ATTACHMENT_DEBUG_TAIL_PATTERN, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
@@ -1834,7 +2069,7 @@ function findClosestMatchingUserMessageId(
   const incomingTimestampMs = toTimestampMs(incoming.timestamp);
   const comparableIncomingContent = normalizeComparableCodexText(incoming.content);
   const relaxedIncomingContent = normalizeComparableUserMergeText(incoming.content);
-  const incomingAttachmentSignature = buildComparableAttachmentSignature(incoming.attachments);
+  const incomingAttachmentSignature = buildComparableMessageAttachmentSignature(incoming);
   let matchedId: string | null = null;
   let matchedScore = Number.POSITIVE_INFINITY;
   const debugCandidates: Array<Record<string, unknown>> = [];
@@ -1866,7 +2101,7 @@ function findClosestMatchingUserMessageId(
     }
 
     const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
-    const currentAttachmentSignature = buildComparableAttachmentSignature(current.attachments);
+    const currentAttachmentSignature = buildComparableMessageAttachmentSignature(current);
     const attachmentCompatibility = resolveAttachmentCompatibility(
       currentAttachmentSignature,
       incomingAttachmentSignature
@@ -2178,6 +2413,32 @@ function buildComparableAttachmentSignature(
     )
     .sort()
     .join("|");
+}
+
+function buildComparableAttachmentPayloadSignature(
+  attachmentPayloads: SessionMessageViewModel["attachmentPayloads"]
+): string {
+  return (attachmentPayloads ?? [])
+    .map((attachment) =>
+      [
+        attachment.kind,
+        attachment.fileName.trim().toLowerCase(),
+        attachment.mimeType.trim().toLowerCase(),
+        String(attachment.fileSize)
+      ].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
+function buildComparableMessageAttachmentSignature(message: SessionMessageViewModel): string {
+  const persistedSignature = buildComparableAttachmentSignature(message.attachments);
+
+  if (persistedSignature) {
+    return persistedSignature;
+  }
+
+  return buildComparableAttachmentPayloadSignature(message.attachmentPayloads);
 }
 
 function resolveAttachmentCompatibility(

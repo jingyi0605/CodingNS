@@ -90,6 +90,8 @@ const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
 const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
 const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
+const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_TAIL_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*$/g;
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -2147,12 +2149,15 @@ function mergeTimelineBridgeAuthoritativeVersion(
   }
 
   const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
-  const content = pickTimelineBridgePreferredContent(
-    current.content,
-    incoming.content,
-    current.timestamp,
-    incoming.timestamp
-  );
+  const content =
+    isTimelineCodexAuthoritativeMessage(current) && isTimelineCodexAuthoritativeMessage(incoming)
+      ? pickTimelineBridgePreferredCodexEquivalentContent(current, incoming)
+      : pickTimelineBridgePreferredContent(
+          current.content,
+          incoming.content,
+          current.timestamp,
+          incoming.timestamp
+        );
   const attachments = pickTimelineBridgePreferredAttachments(
     current.attachments,
     incoming.attachments
@@ -2215,12 +2220,15 @@ function mergeTimelineEquivalentAuthoritativeVersion(
   }
 
   const mergedToolCall = mergeTimelineBridgeToolCall(current.toolCall, incoming.toolCall);
-  const content = pickTimelineBridgePreferredContent(
-    current.content,
-    incoming.content,
-    current.timestamp,
-    incoming.timestamp
-  );
+  const content =
+    isTimelineCodexAuthoritativeMessage(current) && isTimelineCodexAuthoritativeMessage(incoming)
+      ? pickTimelineBridgePreferredCodexEquivalentContent(current, incoming)
+      : pickTimelineBridgePreferredContent(
+          current.content,
+          incoming.content,
+          current.timestamp,
+          incoming.timestamp
+        );
   const attachments = pickTimelineBridgePreferredAttachments(
     current.attachments,
     incoming.attachments
@@ -2461,7 +2469,7 @@ function findMatchingTimelineUserMessage(
   const incomingTimestampMs = toTimelineBridgeTimestampMs(incoming.timestamp);
   const comparableIncomingContent = normalizeTimelineComparableCodexText(incoming.content);
   const relaxedIncomingContent = normalizeTimelineComparableUserMergeText(incoming.content);
-  const incomingAttachmentSignature = buildTimelineComparableAttachmentSignature(incoming.attachments);
+  const incomingAttachmentSignature = buildTimelineComparableMessageAttachmentSignature(incoming);
   let matched: SessionMessageViewModel | null = null;
   let matchedScore = Number.POSITIVE_INFINITY;
   const debugCandidates: Array<Record<string, unknown>> = [];
@@ -2493,7 +2501,7 @@ function findMatchingTimelineUserMessage(
     }
 
     const sequenceDistance = Math.abs(current.sequence - incoming.sequence);
-    const currentAttachmentSignature = buildTimelineComparableAttachmentSignature(current.attachments);
+    const currentAttachmentSignature = buildTimelineComparableMessageAttachmentSignature(current);
     const attachmentCompatibility = resolveTimelineAttachmentCompatibility(
       currentAttachmentSignature,
       incomingAttachmentSignature
@@ -2571,6 +2579,42 @@ function didHistoryMergeIntroduceNewAuthoritativeUserMessage(
   return false;
 }
 
+function removeResolvedPendingMessages(
+  pendingMessages: SessionMessageViewModel[],
+  incomingMessages: HistoryMessageDto[],
+  sessionId: string
+): SessionMessageViewModel[] {
+  if (pendingMessages.length === 0 || incomingMessages.length === 0) {
+    return pendingMessages;
+  }
+
+  const resolvedPendingIds = new Set<string>();
+
+  for (const message of incomingMessages) {
+    if (message.role !== "user" || message.kind !== "text") {
+      continue;
+    }
+
+    const incomingViewMessage = toViewMessage(sessionId, message, "sent", null);
+    const matched = findMatchingTimelineUserMessage(
+      pendingMessages.filter((item) => !resolvedPendingIds.has(item.id)),
+      incomingViewMessage,
+      "pending",
+      sessionId
+    );
+
+    if (matched) {
+      resolvedPendingIds.add(matched.id);
+    }
+  }
+
+  if (resolvedPendingIds.size === 0) {
+    return pendingMessages;
+  }
+
+  return pendingMessages.filter((message) => !resolvedPendingIds.has(message.id));
+}
+
 function mergeTimelineBridgeToolCall(
   current: SessionMessageViewModel["toolCall"],
   incoming: SessionMessageViewModel["toolCall"]
@@ -2637,6 +2681,127 @@ function pickTimelineBridgePreferredContent(
   return incomingTimestamp.localeCompare(currentTimestamp) >= 0 ? incoming : current;
 }
 
+function pickTimelineBridgePreferredCodexEquivalentContent(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): string {
+  const currentContent = parseMessageRichContent(current.content);
+  const incomingContent = parseMessageRichContent(incoming.content);
+  const foldedAssistantContent = foldTimelineDuplicatedCodexAssistantTailText(
+    current,
+    incoming,
+    normalizeTimelineComparableCodexText(currentContent.text),
+    normalizeTimelineComparableCodexText(incomingContent.text)
+  );
+
+  if (foldedAssistantContent !== null) {
+    return foldedAssistantContent;
+  }
+
+  return pickTimelineBridgePreferredContent(
+    current.content,
+    incoming.content,
+    current.timestamp,
+    incoming.timestamp
+  );
+}
+
+function foldTimelineDuplicatedCodexAssistantTailText(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  comparableLeftText: string,
+  comparableRightText: string
+): string | null {
+  if (
+    left.role !== "assistant"
+    || right.role !== "assistant"
+    || left.kind !== "text"
+    || right.kind !== "text"
+  ) {
+    return null;
+  }
+
+  const leftFoldedText = removeTimelineRepeatedTrailingText(comparableLeftText);
+  const rightFoldedText = removeTimelineRepeatedTrailingText(comparableRightText);
+
+  if (
+    leftFoldedText === comparableLeftText
+    && rightFoldedText === comparableRightText
+  ) {
+    return null;
+  }
+
+  if (leftFoldedText === rightFoldedText) {
+    if (comparableLeftText === leftFoldedText) {
+      return left.content;
+    }
+
+    if (comparableRightText === rightFoldedText) {
+      return right.content;
+    }
+
+    return leftFoldedText;
+  }
+
+  if (rightFoldedText.length >= 80 && comparableLeftText === rightFoldedText) {
+    return left.content;
+  }
+
+  if (leftFoldedText.length >= 80 && comparableRightText === leftFoldedText) {
+    return right.content;
+  }
+
+  return null;
+}
+
+function removeTimelineRepeatedTrailingText(content: string): string {
+  const normalized = content.trimEnd();
+  const candidateStarts = collectTimelineTrailingRepeatCandidateStarts(normalized);
+
+  for (const start of candidateStarts) {
+    const tail = normalized.slice(start);
+    const beforeTail = normalized.slice(0, start).trimEnd();
+
+    if (beforeTail.endsWith(tail)) {
+      return beforeTail;
+    }
+  }
+
+  return normalized;
+}
+
+function collectTimelineTrailingRepeatCandidateStarts(content: string): number[] {
+  const minRepeatLength = 80;
+  const minStart = Math.ceil(content.length / 2);
+  const starts: number[] = [];
+
+  for (
+    let index = content.indexOf("\n\n");
+    index >= 0;
+    index = content.indexOf("\n\n", index + 2)
+  ) {
+    const start = index + 2;
+
+    if (content.length - start >= minRepeatLength) {
+      starts.push(start);
+    }
+  }
+
+  for (let index = content.indexOf("\n", minStart); index >= 0; index = content.indexOf("\n", index + 1)) {
+    const start = index + 1;
+
+    if (content.length - start >= minRepeatLength) {
+      starts.push(start);
+    }
+  }
+
+  if (content.length - minStart >= minRepeatLength) {
+    starts.push(minStart);
+  }
+
+  return starts.sort((left, right) => left - right);
+}
+
 function pickTimelineBridgePreferredAttachments(
   current: SessionMessageViewModel["attachments"],
   incoming: SessionMessageViewModel["attachments"]
@@ -2695,6 +2860,7 @@ function pickTimelineBridgeStableAuthoritativeMessage(
 function normalizeTimelineComparableCodexText(content: string): string {
   return content
     .replace(TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN, "")
+    .replace(TIMELINE_INTERNAL_ATTACHMENT_DEBUG_TAIL_PATTERN, "")
     .replace(/\r\n/g, "\n")
     .trimEnd();
 }
@@ -2709,7 +2875,87 @@ function normalizeTimelineComparableUserMergeText(content: string): string {
 function sortTimelineBridgeMessagesByOrder(
   messages: SessionMessageViewModel[]
 ): SessionMessageViewModel[] {
-  return [...messages].sort((left, right) => compareViewMessageOrder(left, right));
+  return collapseTimelineEquivalentCodexImageUserMessages(
+    [...messages].sort((left, right) => compareViewMessageOrder(left, right))
+  );
+}
+
+function collapseTimelineEquivalentCodexImageUserMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isTimelineEquivalentCodexImageUserMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickTimelinePreferredCodexImageUserMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
+function isTimelineEquivalentCodexImageUserMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (!isTimelineCodexImageUserTextMessage(left) || !isTimelineCodexImageUserTextMessage(right)) {
+    return false;
+  }
+
+  const leftContent = parseMessageRichContent(left.content);
+  const rightContent = parseMessageRichContent(right.content);
+
+  return (
+    areTimelineTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000)
+    && normalizeTimelineComparableUserMergeText(leftContent.text)
+      === normalizeTimelineComparableUserMergeText(rightContent.text)
+    && areTimelineEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
+  );
+}
+
+function isTimelineCodexImageUserTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent"
+    && message.rawRef.startsWith("codex://")
+    && message.role === "user"
+    && message.kind === "text"
+    && !isTimelinePendingUserMessage(message)
+    && countTimelineImageAttachmentEvidence(message) > 0
+  );
+}
+
+function pickTimelinePreferredCodexImageUserMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = countTimelineImageAttachmentEvidence(left);
+  const rightAttachmentCount = countTimelineImageAttachmentEvidence(right);
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftContentLength = normalizeTimelineComparableUserMergeText(left.content).length;
+  const rightContentLength = normalizeTimelineComparableUserMergeText(right.content).length;
+
+  if (leftContentLength !== rightContentLength) {
+    return leftContentLength <= rightContentLength ? left : right;
+  }
+
+  return compareViewMessageOrder(left, right) <= 0 ? left : right;
+}
+
+function countTimelineImageAttachmentEvidence(message: SessionMessageViewModel): number {
+  const persistedCount = (message.attachments ?? []).filter((attachment) => attachment.kind === "image").length;
+  const payloadCount = (message.attachmentPayloads ?? []).filter((attachment) => attachment.kind === "image").length;
+  const inlineImageCount = parseMessageRichContent(message.content).inlineImages.length;
+
+  return persistedCount + payloadCount + inlineImageCount;
 }
 
 function isTimelineCodexAuthoritativeMessage(message: SessionMessageViewModel): boolean {
@@ -2875,13 +3121,37 @@ function isTimelineEquivalentCodexTextMessageWithinWindow(
 
   const leftContent = parseMessageRichContent(left.content);
   const rightContent = parseMessageRichContent(right.content);
+  const comparableLeftText = normalizeTimelineComparableCodexText(leftContent.text);
+  const comparableRightText = normalizeTimelineComparableCodexText(rightContent.text);
 
   return (
     areTimelineTimestampsNearWithinWindow(left.timestamp, right.timestamp, windowMs)
-    && normalizeTimelineComparableCodexText(leftContent.text)
-      === normalizeTimelineComparableCodexText(rightContent.text)
+    && areTimelineEquivalentCodexAssistantTextContents(
+      left,
+      right,
+      comparableLeftText,
+      comparableRightText
+    )
     && areTimelineEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
   );
+}
+
+function areTimelineEquivalentCodexAssistantTextContents(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel,
+  comparableLeftText: string,
+  comparableRightText: string
+): boolean {
+  if (comparableLeftText === comparableRightText) {
+    return true;
+  }
+
+  return foldTimelineDuplicatedCodexAssistantTailText(
+    left,
+    right,
+    comparableLeftText,
+    comparableRightText
+  ) !== null;
 }
 
 function isTimelineEquivalentCodexToolMessage(
@@ -2974,6 +3244,34 @@ function buildTimelineComparableAttachmentSignature(
     )
     .sort()
     .join("|");
+}
+
+function buildTimelineComparableAttachmentPayloadSignature(
+  attachmentPayloads: SessionMessageViewModel["attachmentPayloads"]
+): string {
+  return (attachmentPayloads ?? [])
+    .map((attachment) =>
+      [
+        attachment.kind,
+        attachment.fileName.trim().toLowerCase(),
+        attachment.mimeType.trim().toLowerCase(),
+        String(attachment.fileSize)
+      ].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
+function buildTimelineComparableMessageAttachmentSignature(
+  message: SessionMessageViewModel
+): string {
+  const persistedSignature = buildTimelineComparableAttachmentSignature(message.attachments);
+
+  if (persistedSignature) {
+    return persistedSignature;
+  }
+
+  return buildTimelineComparableAttachmentPayloadSignature(message.attachmentPayloads);
 }
 
 function resolveTimelineAttachmentCompatibility(
@@ -3091,9 +3389,10 @@ export function applyTimelineEventToLayers(
         && current.replaceSnapshotSeedOnBackfill
         && shouldReplaceSnapshotSeedWithIncoming(current.authoritativeMessages, event.messages);
       const baseMessages = replacedSnapshotSeed ? [] : current.authoritativeMessages;
+      const authoritativeMessages = mergeAuthoritativeMessages(baseMessages, sessionId, event.messages);
       next = {
         ...current,
-        authoritativeMessages: mergeAuthoritativeMessages(baseMessages, sessionId, event.messages),
+        authoritativeMessages,
         activeRuntimeOverlayKeys: didHistoryMergeIntroduceNewAuthoritativeUserMessage(
           current.authoritativeMessages,
           event.messages,
@@ -3101,6 +3400,11 @@ export function applyTimelineEventToLayers(
         )
           ? []
           : current.activeRuntimeOverlayKeys,
+        pendingMessages: removeResolvedPendingMessages(
+          current.pendingMessages,
+          event.messages,
+          sessionId
+        ),
         replaceSnapshotSeedOnBackfill:
           replacedSnapshotSeed ? false : current.replaceSnapshotSeedOnBackfill
       };
@@ -3195,6 +3499,13 @@ export function applyTimelineEventToLayers(
     }
   }
 
+  next = {
+    ...next,
+    authoritativeMessages: absorbRuntimeOverlayIntoAuthoritativeMessages(
+      next.authoritativeMessages,
+      next.runtimeOverlayMessages
+    )
+  };
   next = {
     ...next,
     // runtime overlay 只保留“权威历史还没完全吸收”的那部分。
@@ -3359,6 +3670,44 @@ function compactRuntimeOverlayMessages(
   });
 
   return next.length === runtimeOverlayMessages.length ? runtimeOverlayMessages : next;
+}
+
+function absorbRuntimeOverlayIntoAuthoritativeMessages(
+  authoritativeMessages: SessionMessageViewModel[],
+  runtimeOverlayMessages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  if (authoritativeMessages.length === 0 || runtimeOverlayMessages.length === 0) {
+    return authoritativeMessages;
+  }
+
+  const nextById = new Map(authoritativeMessages.map((message) => [message.id, message]));
+  const authoritativeMessageIds = new Set(nextById.keys());
+  let changed = false;
+
+  for (const runtimeOverlay of runtimeOverlayMessages) {
+    const authoritativeMatch = findTimelineMessageMatch(
+      nextById,
+      authoritativeMessageIds,
+      runtimeOverlay
+    );
+
+    if (
+      !authoritativeMatch
+      || !isRuntimeOverlayAbsorbedByAuthoritative(authoritativeMatch, runtimeOverlay)
+    ) {
+      continue;
+    }
+
+    const merged = mergeTimelineBridgePreservingIdentity(authoritativeMatch, runtimeOverlay);
+    nextById.set(authoritativeMatch.id, merged);
+    changed = true;
+  }
+
+  if (!changed) {
+    return authoritativeMessages;
+  }
+
+  return sortTimelineBridgeMessagesByOrder(Array.from(nextById.values()));
 }
 
 function pinActiveRuntimeLiveMessagesToTail(
@@ -3752,8 +4101,12 @@ function isRuntimeOverlayAbsorbedByAuthoritative(
     clientRequestId: authoritative.clientRequestId ?? runtimeOverlay.clientRequestId
   });
 
-  return buildTimelineRenderablePayloadSignature(merged)
-    === buildTimelineRenderablePayloadSignature(authoritative);
+  const mergedSignature = buildTimelineRenderablePayloadSignature(merged);
+
+  return (
+    mergedSignature === buildTimelineRenderablePayloadSignature(authoritative)
+    || mergedSignature === buildTimelineRenderablePayloadSignature(runtimeOverlay)
+  );
 }
 
 function buildTimelineRenderablePayloadSignature(

@@ -973,6 +973,7 @@ describe("ConversationPage", () => {
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"role\":\"user\"");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"content\":\"请分析这张图片\"");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"attachmentCount\":1");
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"attachmentPayloadCount\":1");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"rawRef\":\"synthetic://codex/session-live-1/");
       expect(screen.getByTestId("route-probe-state")).not.toHaveTextContent("已创建会话");
     });
@@ -1890,6 +1891,7 @@ function summarizeRouteState(state: unknown) {
         content?: unknown;
         rawRef?: unknown;
         attachments?: unknown;
+        attachmentPayloads?: unknown;
       }>;
     };
   };
@@ -1906,7 +1908,10 @@ function summarizeRouteState(state: unknown) {
           role: typeof message?.role === "string" ? message.role : null,
           content: typeof message?.content === "string" ? message.content : null,
           rawRef: typeof message?.rawRef === "string" ? message.rawRef : null,
-          attachmentCount: Array.isArray(message?.attachments) ? message.attachments.length : 0
+          attachmentCount: Array.isArray(message?.attachments) ? message.attachments.length : 0,
+          attachmentPayloadCount: Array.isArray(message?.attachmentPayloads)
+            ? message.attachmentPayloads.length
+            : 0
         }))
       : []
   };

@@ -1510,7 +1510,8 @@ function DraftConversationPage({
                             provider: draft.provider,
                             content,
                             clientRequestId,
-                            attachments: options?.attachmentMeta ?? []
+                            attachments: options?.attachmentMeta ?? [],
+                            attachmentPayloads: options?.attachments ?? []
                           })
                         ]
                       }
@@ -3482,6 +3483,7 @@ function createDraftLiveBootstrapMessage(input: {
   content: string;
   clientRequestId: string;
   attachments: NonNullable<HistoryMessageDto["attachments"]>;
+  attachmentPayloads: NonNullable<HistoryMessageDto["attachmentPayloads"]>;
 }): HistoryMessageDto {
   const providerSessionId =
     input.created.message?.providerSessionId?.trim()
@@ -3504,6 +3506,7 @@ function createDraftLiveBootstrapMessage(input: {
     kind: "text",
     content: input.content,
     attachments: input.attachments,
+    attachmentPayloads: input.attachmentPayloads,
     timestamp,
     sequence: normalizedSequence,
     rawRef: `synthetic://${input.provider}/${input.created.sessionId}/${input.clientRequestId}`

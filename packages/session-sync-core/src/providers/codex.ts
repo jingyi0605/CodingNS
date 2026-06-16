@@ -91,6 +91,12 @@ export interface CodexThreadControlTransport {
 
 type CodexMessageSource = "event_msg" | "response_item";
 const CODEX_SESSION_TITLE_MAX_LENGTH = 72;
+const CODEX_INTERNAL_ATTACHMENT_BLOCK_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
+const CODEX_INTERNAL_ATTACHMENT_TAIL_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*$/g;
+const CODEX_CUSTOM_IMAGE_BLOCK_PATTERN = /<image\b[^>]*>[\s\S]*?<\/image>/gi;
+const CODEX_DATA_IMAGE_URL_PATTERN = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
 
 interface CodexHistoryCacheEntry {
   filePath: string;
@@ -3198,7 +3204,11 @@ function normalizeComparableCodexContent(
   kind: NormalizedMessage["kind"],
   content: string
 ): string {
-  const normalized = normalizeComparableCodexLineEndings(content);
+  const normalized = normalizeComparableCodexLineEndings(
+    kind === "text" || kind === "thinking"
+      ? stripCodexImageAttachmentArtifacts(content)
+      : content
+  );
 
   if (kind === "text" || kind === "thinking") {
     return normalized.trimEnd();
@@ -3209,6 +3219,16 @@ function normalizeComparableCodexContent(
 
 function normalizeComparableCodexLineEndings(content: string): string {
   return content.replace(/\r\n/g, "\n");
+}
+
+function stripCodexImageAttachmentArtifacts(content: string): string {
+  return content
+    .replace(CODEX_INTERNAL_ATTACHMENT_BLOCK_PATTERN, "")
+    .replace(CODEX_INTERNAL_ATTACHMENT_TAIL_PATTERN, "")
+    .replace(CODEX_CUSTOM_IMAGE_BLOCK_PATTERN, "")
+    .replace(CODEX_DATA_IMAGE_URL_PATTERN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 function areCodexTimestampsNear(left: string, right: string): boolean {
@@ -4081,7 +4101,7 @@ function normalizeCodexMessageTitle(content: string | null | undefined): string 
 }
 
 function normalizeCodexTitleText(content: string | null | undefined): string | null {
-  const normalized = ensureText(content).trim().replace(/\s+/g, " ");
+  const normalized = stripCodexImageAttachmentArtifacts(ensureText(content)).trim().replace(/\s+/g, " ");
 
   if (normalized.length === 0) {
     return null;

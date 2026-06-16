@@ -159,6 +159,13 @@ function createHistoryMessage(overrides: {
     mimeType: string;
     fileSize: number;
   }>;
+  attachmentPayloads?: Array<{
+    kind: "image" | "file";
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+    contentBase64: string;
+  }> | null;
 }) {
   return {
     kind: "text" as const,
@@ -175,6 +182,16 @@ function createImageAttachment(fileName: string, fileSize: number) {
     fileName,
     mimeType: "image/png",
     fileSize
+  };
+}
+
+function createImageAttachmentPayload(fileName: string, fileSize: number) {
+  return {
+    kind: "image" as const,
+    fileName,
+    mimeType: "image/png",
+    fileSize,
+    contentBase64: "iVBORw0KGgo="
   };
 }
 
@@ -1169,6 +1186,207 @@ describe("SessionRuntimeStore", () => {
     expect(runtimeEcho.messages[0]).toMatchObject({
       id: "user-image-1",
       content: "请看这张图"
+    });
+  });
+
+  it("history 回填只带图片 payload 时，也会吸收已有的带图乐观消息", () => {
+    const imagePayload = createImageAttachmentPayload("screen.png", 2048);
+    const pending = createPendingMessage(
+      "session-1",
+      "总结图片内容",
+      "client-image-payload-1",
+      [],
+      [imagePayload],
+      61
+    );
+    const pendingAtHistoryTime = {
+      ...pending,
+      timestamp: "2026-03-24T10:00:01.000Z"
+    };
+    const inserted = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "pending.insert",
+      source: "send_pending",
+      pending: pendingAtHistoryTime
+    });
+
+    const backfilled = applyTimelineEventToLayers(inserted.timeline, "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "user-image-backfill-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "总结图片内容",
+          timestamp: "2026-03-24T10:00:02.000Z",
+          sequence: 61,
+          rawRef: "codex://raw#line=61",
+          attachments: [],
+          attachmentPayloads: [imagePayload]
+        })
+      ]
+    });
+
+    expect(backfilled.validationIssues).toEqual([]);
+    expect(backfilled.messages).toHaveLength(1);
+    expect(backfilled.messages[0]).toMatchObject({
+      id: "user-image-backfill-1",
+      content: "总结图片内容"
+    });
+    expect(backfilled.messages[0]?.attachmentPayloads).toEqual([imagePayload]);
+  });
+
+  it("history 已经出现两条相邻带图 Codex 用户消息时，只渲染一条", () => {
+    const imageAttachment = createImageAttachment("screen.png", 2048);
+    const merged = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "user-image-authoritative-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "分析图片内容",
+          timestamp: "2026-06-15T08:43:02.000Z",
+          sequence: 61,
+          rawRef: "codex://raw#line=61",
+          attachments: [imageAttachment]
+        }),
+        createHistoryMessage({
+          messageId: "user-image-authoritative-2",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "分析图片内容",
+          timestamp: "2026-06-15T08:43:03.000Z",
+          sequence: 62,
+          rawRef: "codex://raw#line=62",
+          attachments: [imageAttachment]
+        })
+      ]
+    });
+
+    expect(merged.validationIssues).toEqual([]);
+    expect(merged.messages).toHaveLength(1);
+    expect(merged.messages[0]).toMatchObject({
+      id: "user-image-authoritative-1",
+      content: "分析图片内容"
+    });
+  });
+
+  it("history 同时出现 Codex response_item 与 event_msg 图片用户消息时，只渲染一条", () => {
+    const imageAttachment = createImageAttachment("image.png", 282427);
+    const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+    const responseItemContent = [
+      "分析图片内容",
+      "[[CODINGNS_IMAGE_ATTACHMENTS]]",
+      "下面这些图片是用户随消息附带的本地附件。请先读取并理解它们，再继续处理这条请求。",
+      "1. /Users/jackson/Code/CodingNS/apps/host/data/host/session-attachments/session-1/client-1/image.png",
+      "[[/CODINGNS_IMAGE_ATTACHMENTS]]",
+      "<image name=[Image #1]>",
+      JSON.stringify({ type: "input_image", image_url: imageDataUrl }),
+      "</image>"
+    ].join("\n\n");
+
+    const merged = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "codex-response-item-user-image-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: responseItemContent,
+          timestamp: "2026-06-15T08:49:35.849Z",
+          sequence: 61,
+          rawRef: "codex://raw#line=6",
+          attachments: []
+        }),
+        createHistoryMessage({
+          messageId: "codex-event-msg-user-image-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "分析图片内容",
+          timestamp: "2026-06-15T08:49:35.849Z",
+          sequence: 62,
+          rawRef: "codex://raw#line=7",
+          attachments: [imageAttachment]
+        })
+      ]
+    });
+
+    expect(merged.validationIssues).toEqual([]);
+    expect(merged.messages).toHaveLength(1);
+    expect(merged.messages[0]).toMatchObject({
+      id: "codex-event-msg-user-image-1",
+      content: "分析图片内容",
+      attachments: [imageAttachment]
+    });
+  });
+
+  it("Codex assistant 最终历史消息尾部重复总结时，会和 runtime 文本合成一条", () => {
+    const baseSummary = [
+      "图片展示的是 CodingNS 的会话列表侧边栏。",
+      "",
+      "当前列表里有 5 条会话，日期都是 2026/6/15：",
+      "1. 已选中的会话：分析当前项目中的未提交文件，标记为 CLAUDE",
+      "2. 修复新建 Codex 会话图片附件短暂 404 的问题，标记为 CODEX",
+      "3. 修复频繁切换会话或工作区导致 Codex 配置问题，标记为 CODEX"
+    ].join("\n");
+    const duplicatedSummary = `${baseSummary}\n\n${baseSummary}`;
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "assistant-runtime-summary-1",
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: baseSummary,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-06-15T08:14:03.000Z",
+        sequence: 62,
+        rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=62",
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    const backfilled = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "assistant-history-summary-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          content: duplicatedSummary,
+          timestamp: "2026-06-15T08:14:04.000Z",
+          sequence: 63,
+          rawRef: "codex:///Users/jackson/.codex/sessions/demo.jsonl#line=63"
+        })
+      ]
+    });
+
+    expect(backfilled.validationIssues).toEqual([]);
+    expect(backfilled.timeline.runtimeOverlayMessages).toHaveLength(0);
+    expect(backfilled.messages).toHaveLength(1);
+    expect(backfilled.messages[0]).toMatchObject({
+      id: "assistant-history-summary-1",
+      content: baseSummary
     });
   });
 
