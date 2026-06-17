@@ -685,6 +685,29 @@ describe("SessionRuntimeStore send message", () => {
       })
     );
   });
+
+  it("消息体超限时会保留明确错误原因和上限说明", async () => {
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.sendLiveMessage.mockRejectedValueOnce(
+      new ApiError(413, {
+        detail: "请求体超过大小限制，当前上限为 64 MiB（67,108,864 字节）。请压缩图片、减少附件，或拆分后再发送。",
+        error_code: "REQUEST_BODY_TOO_LARGE",
+        field: "body",
+        data: {
+          bodyLimitBytes: 67108864
+        }
+      })
+    );
+
+    await expect(store.sendMessage("带图消息")).rejects.toMatchObject({
+      status: 413,
+      errorCode: "REQUEST_BODY_TOO_LARGE"
+    });
+    expect(store.getState().errorCode).toBe("REQUEST_BODY_TOO_LARGE");
+    expect(store.getState().errorDetail).toContain("64 MiB");
+    expect(store.getState().errorDetail).toContain("67,108,864");
+  });
 });
 
 function createPreferenceState(

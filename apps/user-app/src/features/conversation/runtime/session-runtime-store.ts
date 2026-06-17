@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 import { authStore } from "../../auth/store/auth-store";
 import { RealtimeClient } from "../../../network/realtime-client";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { buildScopedSnapshotKey } from "../../workbench/utils/resource-scope";
 import {
+  isPerfDebugEnabled,
   logPerfDebug,
   logConversationTimelineDebug,
   logSessionMessageDedupDebug,
