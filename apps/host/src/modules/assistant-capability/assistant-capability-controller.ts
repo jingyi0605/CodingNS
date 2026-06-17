@@ -2,7 +2,6 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
-import type { DebugServiceRole } from "../../types/domain.js";
 import { requireUserId } from "../preferences/common.js";
 import type {
   AssistantCapabilityProfile,
@@ -77,18 +76,6 @@ interface AssistantTerminalListQuery {
 
 interface AssistantTerminalHistoryQuery {
   beforeSeq?: string;
-  limit?: string;
-}
-
-interface AssistantDebugTargetParams {
-  targetId: string;
-}
-
-interface AssistantDebugRuntimeParams {
-  runtimeId: string;
-}
-
-interface AssistantDebugRuntimeHistoryQuery {
   limit?: string;
 }
 
@@ -316,32 +303,6 @@ interface AssistantCreateWorktreeBody {
 interface AssistantWorktreeCleanupBody {
   deleteBranch?: boolean;
   confirm?: boolean;
-}
-
-interface AssistantDebugTargetPortRequestBodyItem {
-  serviceId?: string | null;
-  role?: string | null;
-  cwd?: string | null;
-  name?: string | null;
-  command?: string | null;
-  port?: number | string | null;
-}
-
-interface AssistantAnalyzeDebugTargetBody {
-  workspaceId?: string;
-  rootPath?: string;
-  commandHints?: unknown;
-  confirm?: boolean;
-}
-
-interface AssistantDebugTargetLaunchPlanBody {
-  portRequests?: unknown;
-  confirm?: boolean;
-}
-
-interface AssistantRunDebugTargetBody extends AssistantDebugTargetLaunchPlanBody {
-  shell?: string;
-  runtimeType?: string | null;
 }
 
 export class AssistantCapabilityController {
@@ -1281,143 +1242,6 @@ export class AssistantCapabilityController {
     ));
   };
 
-  readonly getDebugCompatibilityMatrix = async (
-    _request: FastifyRequest,
-    reply: FastifyReply
-  ): Promise<void> => {
-    reply.send(this.assistantCapabilityService.getDebugCompatibilityMatrix());
-  };
-
-  readonly analyzeDebugTarget = async (
-    request: FastifyRequest<{ Body: AssistantAnalyzeDebugTargetBody }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    const workspaceId = requireNonEmptyText(
-      request.body.workspaceId,
-      "workspaceId",
-      "分析调试目标必须提供 workspaceId"
-    );
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.analyze",
-      readAssistantExecutionContext(request, request.body.confirm === true),
-      { workspaceId }
-    );
-    reply.send(this.assistantCapabilityService.analyzeDebugTarget({
-      workspaceId,
-      rootPath: requireNonEmptyText(
-        request.body.rootPath,
-        "rootPath",
-        "分析调试目标必须提供 rootPath"
-      ),
-      commandHints: normalizeCommandHints(request.body.commandHints)
-    }));
-  };
-
-  readonly getDebugFrameworkAnalysis = async (
-    request: FastifyRequest<{ Params: AssistantDebugTargetParams }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.framework-analysis.get",
-      readAssistantExecutionContext(request),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(this.assistantCapabilityService.getDebugFrameworkAnalysis(request.params.targetId));
-  };
-
-  readonly refreshDebugFrameworkAnalysis = async (
-    request: FastifyRequest<{ Params: AssistantDebugTargetParams; Body: AssistantConfirmationBody }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.framework-analysis.refresh",
-      readAssistantExecutionContext(request, request.body?.confirm === true),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(this.assistantCapabilityService.refreshDebugFrameworkAnalysis(request.params.targetId));
-  };
-
-  readonly createDebugLaunchPlan = async (
-    request: FastifyRequest<{
-      Params: AssistantDebugTargetParams;
-      Body: AssistantDebugTargetLaunchPlanBody;
-    }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.launch-plan.create",
-      readAssistantExecutionContext(request, request.body?.confirm === true),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(await this.assistantCapabilityService.createDebugLaunchPlan({
-      targetId: request.params.targetId,
-      userId: requireUserId(request),
-      portRequests: normalizeDebugPortRequests(request.body?.portRequests)
-    }));
-  };
-
-  readonly runDebugTarget = async (
-    request: FastifyRequest<{
-      Params: AssistantDebugTargetParams;
-      Body: AssistantRunDebugTargetBody;
-    }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.run",
-      readAssistantExecutionContext(request, request.body?.confirm === true),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(await this.assistantCapabilityService.runDebugTarget({
-      targetId: request.params.targetId,
-      userId: requireUserId(request),
-      shell: normalizeNullableText(request.body?.shell),
-      runtimeType: normalizeTerminalRuntimeType(request.body?.runtimeType),
-      portRequests: normalizeDebugPortRequests(request.body?.portRequests)
-    }));
-  };
-
-  readonly getLatestDebugRuntime = async (
-    request: FastifyRequest<{ Params: AssistantDebugTargetParams }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.runtime-latest.get",
-      readAssistantExecutionContext(request),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(await this.assistantCapabilityService.getLatestDebugRuntime(request.params.targetId));
-  };
-
-  readonly listDebugRuntimes = async (
-    request: FastifyRequest<{
-      Params: AssistantDebugTargetParams;
-      Querystring: AssistantDebugRuntimeHistoryQuery;
-    }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-targets.runtimes.list",
-      readAssistantExecutionContext(request),
-      { debugTargetId: request.params.targetId }
-    );
-    reply.send(await this.assistantCapabilityService.listDebugRuntimes({
-      targetId: request.params.targetId,
-      limit: normalizePositiveInteger(request.query.limit, 5, 50, "limit")
-    }));
-  };
-
-  readonly getDebugRuntime = async (
-    request: FastifyRequest<{ Params: AssistantDebugRuntimeParams }>,
-    reply: FastifyReply
-  ): Promise<void> => {
-    this.assistantCapabilityService.assertExecutionAllowed(
-      "debug-runtimes.get",
-      readAssistantExecutionContext(request),
-      { debugRuntimeId: request.params.runtimeId }
-    );
-    reply.send(await this.assistantCapabilityService.getDebugRuntime(request.params.runtimeId));
-  };
 }
 
 function requireNonEmptyText(value: string | null | undefined, field: string, detail: string): string {
@@ -1654,127 +1478,6 @@ function resolveAssistantSessionTarget(body: AssistantStartSessionBody):
   }
 
   return targets[0];
-}
-
-function normalizeCommandHints(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function normalizeTerminalRuntimeType(value?: string | null) {
-  const normalized = normalizeNullableText(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (
-    normalized === "embedded-pty"
-    || normalized === "tmux"
-    || normalized === "conpty-powershell"
-    || normalized === "conpty-cmd"
-    || normalized === "conpty-git-bash"
-  ) {
-    return normalized;
-  }
-
-  throw new AppError({
-    statusCode: 400,
-    errorCode: "INVALID_INPUT",
-    detail: `不支持的终端 runtimeType：${normalized}`,
-    field: "runtimeType"
-  });
-}
-
-function normalizeDebugPortRequests(value: unknown) {
-  if (value === undefined || value === null) {
-    return [];
-  }
-
-  if (!Array.isArray(value)) {
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: "portRequests 必须是数组",
-      field: "portRequests"
-    });
-  }
-
-  return value.map((item, index) => normalizeDebugPortRequestItem(item, index));
-}
-
-function normalizeDebugPortRequestItem(input: unknown, index: number) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: `portRequests[${index}] 必须是对象`,
-      field: "portRequests"
-    });
-  }
-
-  const item = input as AssistantDebugTargetPortRequestBodyItem;
-
-  return {
-    serviceId: normalizeNullableText(item.serviceId),
-    role: normalizeDebugPortRequestRole(item.role),
-    cwd: normalizeNullableText(item.cwd),
-    name: normalizeNullableText(item.name),
-    command: normalizeNullableText(item.command),
-    port: normalizeDebugPortRequestPort(item.port, index)
-  };
-}
-
-function normalizeDebugPortRequestPort(value: number | string | null | undefined, index: number): number {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseInt(value.trim(), 10);
-
-    if (Number.isInteger(parsed)) {
-      return parsed;
-    }
-  }
-
-  throw new AppError({
-    statusCode: 400,
-    errorCode: "INVALID_INPUT",
-    detail: `portRequests[${index}].port 必须是整数`,
-    field: "portRequests"
-  });
-}
-
-function normalizeDebugPortRequestRole(value?: string | null): DebugServiceRole | null {
-  const normalized = normalizeNullableText(value);
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (
-    normalized === "frontend"
-    || normalized === "backend"
-    || normalized === "worker"
-    || normalized === "mock"
-    || normalized === "custom"
-  ) {
-    return normalized;
-  }
-
-  throw new AppError({
-    statusCode: 400,
-    errorCode: "INVALID_INPUT",
-    detail: `不支持的调试服务角色：${normalized}`,
-    field: "portRequests"
-  });
 }
 
 function readAssistantExecutionContext(

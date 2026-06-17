@@ -67,9 +67,6 @@ import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtim
 import { DocumentRuntimeController } from "../modules/document-runtime/document-runtime-controller.js";
 import { DocumentExportExecutor } from "../modules/document-runtime/document-export-executor.js";
 import { DocumentRuntimeService } from "../modules/document-runtime/document-runtime-service.js";
-import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
-import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
-import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
 import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
@@ -196,7 +193,6 @@ import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
 import { registerChannelRoutes } from "../routes/channels.js";
 import { registerClientRoutes } from "../routes/client.js";
-import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerDocumentRuntimeRoutes } from "../routes/document-runtime.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
@@ -1229,29 +1225,6 @@ export function createServer(config: HostConfig) {
       terminalLogSegmentRepository: repositories.terminalLogSegmentRepository
     }
   );
-  const debugTargetService = new DebugTargetService(
-    database.db,
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    repositories.debugTargetRepository,
-    repositories.debugServiceRepository,
-    repositories.frameworkAnalysisResultRepository,
-    repositories.debugRuntimeSessionRepository,
-    repositories.portLeaseRepository,
-    repositories.runtimeBindingRepository,
-    repositories.aiFallbackEditRepository,
-    repositories.terminalCommandTemplateRepository,
-    preferenceProfileService,
-    terminalService,
-    repositories.terminalInstanceRepository,
-    taskManager
-  );
-  const debugRuntimeReconciliationScheduler = new DebugRuntimeReconciliationScheduler(
-    debugTargetService,
-    {
-      schedulerMetrics
-    }
-  );
   const commandTemplateService = new CommandTemplateService(
     database.db,
     repositories.terminalCommandTemplateRepository,
@@ -1420,14 +1393,6 @@ export function createServer(config: HostConfig) {
   const clientController = new ClientController(clientService);
   const channelController = new ChannelController(channelsService);
   const channelGatewayController = new ChannelGatewayController(channelGatewayService);
-  const debugTargetController = new DebugTargetController(debugTargetService);
-  const handleDebugTargetTerminalExit = (event: {
-    terminal: TerminalInstance;
-    requestedClose: boolean;
-  }) => {
-    void debugTargetService.handleTerminalExit(event);
-  };
-  terminalService.on("exit", handleDebugTargetTerminalExit);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(
     workspaceService,
@@ -1624,7 +1589,6 @@ export function createServer(config: HostConfig) {
       sessionHistoryService,
       sessionLiveRuntimeService,
       terminalService,
-      debugTargetService,
       workspaceService,
       repositories.workspaceWorktreeRepository,
       worktreeManager,
@@ -1748,18 +1712,6 @@ export function createServer(config: HostConfig) {
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
   app.addHook("onReady", () => {
-    // 启动恢复属于后台补偿流程，不能把 Host ready 绑死在外部命令或慢任务上。
-    void debugTargetService.runBackgroundRuntimeReconciliation(
-      "debug_target.startup_runtime_recovery"
-    ).catch((error) => {
-      if (shuttingDown) {
-        return;
-      }
-
-      console.error("[startup-recovery] 调试运行时恢复失败", {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
     void tailscaleService.restoreOnStartup().catch((error) => {
       if (shuttingDown) {
         return;
@@ -1796,7 +1748,6 @@ export function createServer(config: HostConfig) {
   void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
   void registerChannelRoutes(app, channelController);
   void registerClientRoutes(app, clientController);
-  void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
   void registerOfficeRoutes(app, officeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
@@ -1845,7 +1796,6 @@ export function createServer(config: HostConfig) {
   butlerFollowUpScheduler.start();
   butlerControlTimerScheduler.start();
   channelPollingScheduler.start();
-  debugRuntimeReconciliationScheduler.start();
   pluginSchedulerService.start();
 
   if (config.webUiDir) {
@@ -1862,9 +1812,7 @@ export function createServer(config: HostConfig) {
     await butlerFollowUpScheduler.dispose();
     await butlerControlTimerScheduler.dispose();
     await channelPollingScheduler.dispose();
-    await debugRuntimeReconciliationScheduler.dispose();
     await pluginSchedulerService.dispose();
-    terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
     await butlerFollowUpSessionLiveRuntimeService.dispose();
     await butlerSummarySessionLiveRuntimeService.dispose();
@@ -1907,8 +1855,6 @@ export function createServer(config: HostConfig) {
         channelGatewayService,
         channelPollingService,
         channelPollingScheduler,
-        debugTargetService,
-        debugRuntimeReconciliationScheduler,
         authService,
         workspaceService,
         worktreeManager,

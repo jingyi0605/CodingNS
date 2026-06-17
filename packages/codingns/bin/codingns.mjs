@@ -916,120 +916,6 @@ async function runAssistantCommand(argv) {
       }));
       return;
     }
-    case "debug-targets:compatibility-matrix":
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: "/api/assistant/debug-targets/compatibility-matrix",
-        argv: rest,
-        helpTopic: "debug-targets.compatibility-matrix"
-      }));
-      return;
-    case "debug-targets:analyze":
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: "/api/assistant/debug-targets/analyze",
-        argv: rest,
-        supportedOptions: ["workspace-id", "root-path", "command-hint"],
-        repeatableOptions: ["command-hint"],
-        supportedFlags: ["confirm"],
-        helpTopic: "debug-targets.analyze"
-      }, (options) => ({
-        workspaceId: requireOptionValue(options.values["workspace-id"], "workspace-id"),
-        rootPath: requireOptionValue(options.values["root-path"], "root-path"),
-        commandHints: readMultiOptionValues(options.values["command-hint"]),
-        confirm: options.flags.confirm === true
-      })));
-      return;
-    case "debug-targets:framework-analysis": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/framework-analysis`,
-        argv: tail,
-        helpTopic: "debug-targets.framework-analysis"
-      }));
-      return;
-    }
-    case "debug-targets:refresh-framework-analysis": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/framework-analysis/refresh`,
-        argv: tail,
-        supportedFlags: ["confirm"],
-        helpTopic: "debug-targets.refresh-framework-analysis"
-      }, (options) => ({
-        confirm: options.flags.confirm === true
-      })));
-      return;
-    }
-    case "debug-targets:launch-plan": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/launch-plan`,
-        argv: tail,
-        supportedOptions: ["port-request"],
-        repeatableOptions: ["port-request"],
-        supportedFlags: ["confirm"],
-        helpTopic: "debug-targets.launch-plan"
-      }, (options) => ({
-        portRequests: parseDebugPortRequests(options.values["port-request"]),
-        confirm: options.flags.confirm === true
-      })));
-      return;
-    }
-    case "debug-targets:run": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "POST",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/run`,
-        argv: tail,
-        supportedOptions: ["shell", "runtime-type", "port-request"],
-        repeatableOptions: ["port-request"],
-        supportedFlags: ["confirm"],
-        helpTopic: "debug-targets.run"
-      }, (options) => ({
-        shell: readOptionalTrimmedValue(options.values.shell),
-        runtimeType: readOptionalTrimmedValue(options.values["runtime-type"]),
-        portRequests: parseDebugPortRequests(options.values["port-request"]),
-        confirm: options.flags.confirm === true
-      })));
-      return;
-    }
-    case "debug-targets:runtime-latest": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/runtime-latest`,
-        argv: tail,
-        helpTopic: "debug-targets.runtime-latest"
-      }));
-      return;
-    }
-    case "debug-targets:runtimes": {
-      const [targetId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: `/api/assistant/debug-targets/${requirePositional(targetId, "targetId")}/runtimes`,
-        argv: tail,
-        supportedOptions: ["limit"],
-        helpTopic: "debug-targets.runtimes"
-      }, (options) => ({
-        limit: readOptionalTrimmedValue(options.values.limit)
-      })));
-      return;
-    }
-    case "debug-runtimes:get": {
-      const [runtimeId, ...tail] = rest;
-      await printAssistantResponse(await requestAssistant({
-        method: "GET",
-        path: `/api/assistant/debug-runtimes/${requirePositional(runtimeId, "runtimeId")}`,
-        argv: tail,
-        helpTopic: "debug-runtimes.get"
-      }));
-      return;
-    }
     case "workspaces:list":
       await printAssistantResponse(await requestAssistant({
         method: "GET",
@@ -2362,8 +2248,6 @@ assistant 例子：
   codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}' --token <token>
   codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}' --token <token>
   codingns assistant workspaces list --token <token>
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> --confirm --token <token>
-  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --confirm --token <token>
   codingns assistant worktrees tree --root-workspace-id <id> --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
   codingns assistant follow-ups continue <taskId> --summary "目标还没完成" --continue-prompt "继续补齐剩余实现" --token <token>
@@ -3307,124 +3191,6 @@ codingns assistant terminals close
 用法：
   codingns assistant terminals close <terminalId> --confirm --token <token>
 `.trim();
-    case "debug-targets":
-      return `
-codingns assistant debug-targets
-
-可用动作：
-  compatibility-matrix       读取框架兼容矩阵
-  analyze                    分析工作区调试目标
-  framework-analysis         读取框架分析结果
-  refresh-framework-analysis 刷新框架分析结果
-  launch-plan                生成启动计划，可显式请求端口
-  run                        启动调试目标，可显式请求端口
-  runtime-latest             读取最近一次运行态
-  runtimes                   读取运行历史
-
-示例：
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path /repo/demo --confirm --token <token>
-  codingns assistant debug-targets launch-plan <targetId> --port-request role=backend,cwd=apps/api,port=44001 --confirm --token <token>
-`.trim();
-    case "debug-targets.compatibility-matrix":
-      return `
-codingns assistant debug-targets compatibility-matrix
-
-用途：
-  读取平台当前支持的框架兼容矩阵和建议注入方式。
-
-用法：
-  codingns assistant debug-targets compatibility-matrix --token <token>
-`.trim();
-    case "debug-targets.analyze":
-      return `
-codingns assistant debug-targets analyze
-
-用途：
-  分析指定工作区下的调试目标、服务和框架兼容性。
-
-用法：
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint "pnpm dev"] [--command-hint "node server.js"] [--confirm] --token <token>
-`.trim();
-    case "debug-targets.framework-analysis":
-      return `
-codingns assistant debug-targets framework-analysis
-
-用途：
-  读取指定调试目标当前的框架分析结果。
-
-用法：
-  codingns assistant debug-targets framework-analysis <targetId> --token <token>
-`.trim();
-    case "debug-targets.refresh-framework-analysis":
-      return `
-codingns assistant debug-targets refresh-framework-analysis
-
-用途：
-  刷新指定调试目标的框架分析结果。
-
-用法：
-  codingns assistant debug-targets refresh-framework-analysis <targetId> [--confirm] --token <token>
-`.trim();
-    case "debug-targets.launch-plan":
-      return `
-codingns assistant debug-targets launch-plan
-
-用途：
-  生成调试目标启动计划，可通过重复的 --port-request 显式请求服务端口。
-
-用法：
-  codingns assistant debug-targets launch-plan <targetId> [--port-request role=frontend,cwd=apps/web,port=43001] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] --token <token>
-`.trim();
-    case "debug-targets.run":
-      return `
-codingns assistant debug-targets run
-
-用途：
-  启动调试目标，可选指定 shell、runtimeType 和显式端口请求。
-
-用法：
-  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] --token <token>
-`.trim();
-    case "debug-targets.runtime-latest":
-      return `
-codingns assistant debug-targets runtime-latest
-
-用途：
-  读取指定调试目标最近一次运行态，没有运行记录时返回 null。
-
-用法：
-  codingns assistant debug-targets runtime-latest <targetId> --token <token>
-`.trim();
-    case "debug-targets.runtimes":
-      return `
-codingns assistant debug-targets runtimes
-
-用途：
-  读取指定调试目标最近几次运行历史。
-
-用法：
-  codingns assistant debug-targets runtimes <targetId> [--limit 5] --token <token>
-`.trim();
-    case "debug-runtimes":
-      return `
-codingns assistant debug-runtimes
-
-可用动作：
-  get  读取单个调试运行时详情
-
-示例：
-  codingns assistant debug-runtimes get <runtimeId> --token <token>
-`.trim();
-    case "debug-runtimes.get":
-      return `
-codingns assistant debug-runtimes get
-
-用途：
-  读取指定调试运行时详情，包括服务、绑定、租约和终端实例。
-
-用法：
-  codingns assistant debug-runtimes get <runtimeId> --token <token>
-`.trim();
     case "worktrees":
       return `
 codingns assistant worktrees
@@ -3494,7 +3260,7 @@ codingns assistant worktrees cleanup
       return `
 codingns assistant 用法：
 
-  codingns assistant help [capabilities|projects|sessions|automations|timers|follow-ups|terminals|office|debug-targets|debug-runtimes|workspaces|worktrees] [action]
+  codingns assistant help [capabilities|projects|sessions|automations|timers|follow-ups|terminals|office|workspaces|worktrees] [action]
   codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
   codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
   codingns assistant projects get <projectId> [--base-url ...] --token <token>
@@ -3516,15 +3282,6 @@ codingns assistant 用法：
   codingns assistant office task-approval-reply <approvalId> [--status approved|rejected] [--decision-note <text>] [--base-url ...] --token <token>
   codingns assistant office ops-browser-task-create --target-id <targetId> [--profile-id <profileId>] [--execution-backend playwright|opencli_bridge] [--title <title>] [--risk-level low|medium|high] [--input-json <json>] [--confirm] [--base-url ...] --token <token>
   codingns assistant office ops-task-get <taskId> [--base-url ...] --token <token>
-  codingns assistant debug-targets compatibility-matrix [--base-url ...] --token <token>
-  codingns assistant debug-targets analyze --workspace-id <id> --root-path <path> [--command-hint <command>] [--command-hint <command>] [--confirm] [--base-url ...] --token <token>
-  codingns assistant debug-targets framework-analysis <targetId> [--base-url ...] --token <token>
-  codingns assistant debug-targets refresh-framework-analysis <targetId> [--confirm] [--base-url ...] --token <token>
-  codingns assistant debug-targets launch-plan <targetId> [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] [--base-url ...] --token <token>
-  codingns assistant debug-targets run <targetId> [--shell zsh] [--runtime-type tmux|embedded-pty|conpty-powershell|conpty-cmd|conpty-git-bash] [--port-request role=backend,cwd=apps/api,port=44001] [--confirm] [--base-url ...] --token <token>
-  codingns assistant debug-targets runtime-latest <targetId> [--base-url ...] --token <token>
-  codingns assistant debug-targets runtimes <targetId> [--limit 5] [--base-url ...] --token <token>
-  codingns assistant debug-runtimes get <runtimeId> [--base-url ...] --token <token>
   codingns assistant workspaces list [--base-url ...] --token <token>
   codingns assistant workspaces browse [--path <path>] [--base-url ...] --token <token>
   codingns assistant workspaces mkdir --parent-path <path> --directory-name <name> [--base-url ...] --token <token>
@@ -3775,84 +3532,6 @@ function buildWorkspaceCloneAuth(values) {
   }
 
   fail(`不支持的 --auth-mode：${authMode}`);
-}
-
-function parseDebugPortRequests(value) {
-  const values = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? [value]
-      : [];
-
-  return values
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-    .map((item) => parseDebugPortRequest(item));
-}
-
-function parseDebugPortRequest(value) {
-  const segments = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  const request = {
-    serviceId: null,
-    role: null,
-    cwd: null,
-    name: null,
-    command: null,
-    port: null
-  };
-
-  for (const segment of segments) {
-    const [rawKey, ...rest] = segment.split("=");
-    const key = rawKey?.trim().toLowerCase() ?? "";
-    const parsedValue = rest.join("=").trim();
-
-    if (!key || !parsedValue) {
-      fail(`无效的 --port-request：${value}`);
-    }
-
-    switch (key) {
-      case "service-id":
-        request.serviceId = parsedValue;
-        break;
-      case "role":
-        request.role = parsedValue;
-        break;
-      case "cwd":
-        request.cwd = parsedValue;
-        break;
-      case "name":
-        request.name = parsedValue;
-        break;
-      case "command":
-        request.command = parsedValue;
-        break;
-      case "port": {
-        const port = Number.parseInt(parsedValue, 10);
-
-        if (!Number.isInteger(port)) {
-          fail(`--port-request 中的 port 非法：${parsedValue}`);
-        }
-
-        request.port = port;
-        break;
-      }
-      default:
-        fail(`--port-request 不支持的键：${rawKey}`);
-    }
-  }
-
-  if (!Number.isInteger(request.port)) {
-    fail(`--port-request 缺少 port：${value}`);
-  }
-
-  if (!request.serviceId && !request.role && !request.cwd && !request.name && !request.command) {
-    fail(`--port-request 至少要提供 service-id、role、cwd、name、command 之一：${value}`);
-  }
-
-  return request;
 }
 
 function parseBooleanOption(value, field) {

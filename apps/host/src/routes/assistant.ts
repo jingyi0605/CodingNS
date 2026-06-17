@@ -84,18 +84,6 @@ export async function registerAssistantCapabilityRoutes(
   app.post("/api/assistant/worktrees/:workspaceId/merge-preview", assistantCapabilityController.getWorktreeMergePreview);
   app.post("/api/assistant/worktrees/:workspaceId/merge-into-parent", assistantCapabilityController.mergeWorktreeIntoParent);
   app.post("/api/assistant/worktrees/:workspaceId/cleanup", assistantCapabilityController.cleanupWorktree);
-  app.get("/api/assistant/debug-targets/compatibility-matrix", assistantCapabilityController.getDebugCompatibilityMatrix);
-  app.post("/api/assistant/debug-targets/analyze", assistantCapabilityController.analyzeDebugTarget);
-  app.get("/api/assistant/debug-targets/:targetId/framework-analysis", assistantCapabilityController.getDebugFrameworkAnalysis);
-  app.post(
-    "/api/assistant/debug-targets/:targetId/framework-analysis/refresh",
-    assistantCapabilityController.refreshDebugFrameworkAnalysis
-  );
-  app.post("/api/assistant/debug-targets/:targetId/launch-plan", assistantCapabilityController.createDebugLaunchPlan);
-  app.post("/api/assistant/debug-targets/:targetId/run", assistantCapabilityController.runDebugTarget);
-  app.get("/api/assistant/debug-targets/:targetId/runtime-latest", assistantCapabilityController.getLatestDebugRuntime);
-  app.get("/api/assistant/debug-targets/:targetId/runtimes", assistantCapabilityController.listDebugRuntimes);
-  app.get("/api/assistant/debug-runtimes/:runtimeId", assistantCapabilityController.getDebugRuntime);
 }
 
 function isAssistantCapabilityReceipt(payload: unknown): payload is AssistantCapabilityReceipt<unknown> {

@@ -16,10 +16,6 @@ import type {
 } from "../butler/butler-follow-up-service.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
 import type { ButlerSessionService } from "../butler/butler-session-service.js";
-import type {
-  DebugTargetPortRequest,
-  DebugTargetService
-} from "../debug-target/debug-target-service.js";
 import type { DocumentRuntimeService } from "../document-runtime/document-runtime-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
@@ -91,10 +87,6 @@ const WORKSPACE_SCOPED_DEFAULT_CAPABILITIES = new Set([
 const WORKSPACE_SCOPED_CONFIRMATION_CAPABILITIES = new Set([
   "terminals.input.send",
   "terminals.close",
-  "debug-targets.analyze",
-  "debug-targets.framework-analysis.refresh",
-  "debug-targets.launch-plan.create",
-  "debug-targets.run",
   "worktrees.merge-into-parent"
 ]);
 
@@ -123,14 +115,6 @@ const WORKSPACE_SCOPED_CAPABILITIES = new Set([
   "office.document.update",
   "office.document.export",
   "office.document.task.get",
-  "debug-targets.analyze",
-  "debug-targets.framework-analysis.get",
-  "debug-targets.framework-analysis.refresh",
-  "debug-targets.launch-plan.create",
-  "debug-targets.run",
-  "debug-targets.runtime-latest.get",
-  "debug-targets.runtimes.list",
-  "debug-runtimes.get"
 ]);
 
 export interface AssistantCapabilityReceipt<TPayload> {
@@ -346,26 +330,6 @@ interface ListAssistantAutomationRunsInput {
   userId: string;
   controlSessionId?: string | null;
   limit?: number | null;
-}
-
-interface AnalyzeAssistantDebugTargetInput {
-  workspaceId: string;
-  rootPath: string;
-  commandHints?: string[];
-}
-
-interface CreateAssistantDebugLaunchPlanInput {
-  targetId: string;
-  userId: string;
-  portRequests: DebugTargetPortRequest[];
-}
-
-interface RunAssistantDebugTargetInput {
-  targetId: string;
-  userId: string;
-  shell?: string | null;
-  runtimeType?: Parameters<DebugTargetService["run"]>[0]["runtimeType"];
-  portRequests: DebugTargetPortRequest[];
 }
 
 interface CreateAssistantWorkspaceDirectoryInput {
@@ -665,60 +629,6 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     summary: "处理办公任务审批，批准后任务可以继续执行"
   },
   {
-    name: "debug-targets.compatibility-matrix.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试框架兼容矩阵"
-  },
-  {
-    name: "debug-targets.analyze",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "分析工作区调试目标和服务"
-  },
-  {
-    name: "debug-targets.framework-analysis.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标框架分析结果"
-  },
-  {
-    name: "debug-targets.framework-analysis.refresh",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "刷新调试目标框架分析结果"
-  },
-  {
-    name: "debug-targets.launch-plan.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "生成调试目标启动计划，支持显式端口请求"
-  },
-  {
-    name: "debug-targets.run",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "启动调试目标，支持显式端口请求"
-  },
-  {
-    name: "debug-targets.runtime-latest.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标最近一次运行态"
-  },
-  {
-    name: "debug-targets.runtimes.list",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标运行历史"
-  },
-  {
-    name: "debug-runtimes.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取指定调试运行时详情"
-  },
-  {
     name: "workspaces.list",
     mode: "read",
     enabled: true,
@@ -843,20 +753,6 @@ export class AssistantCapabilityService {
     private readonly terminalService: Pick<
       TerminalService,
       "createTerminal" | "listTerminals" | "readTerminalHistory" | "writeInput" | "closeTerminal" | "getTerminalOrThrow"
-    >,
-    private readonly debugTargetService: Pick<
-      DebugTargetService,
-      | "analyze"
-      | "getTargetWorkspaceId"
-      | "getRuntimeWorkspaceId"
-      | "getFrameworkAnalysis"
-      | "refreshFrameworkAnalysis"
-      | "createLaunchPlan"
-      | "run"
-      | "getLatestRuntimeDetail"
-      | "getRecentRuntimeDetails"
-      | "getRuntimeDetail"
-      | "getCompatibilityMatrix"
     >,
     private readonly workspaceService: Pick<
       WorkspaceService,
@@ -1864,147 +1760,6 @@ export class AssistantCapabilityService {
     });
   }
 
-  getDebugCompatibilityMatrix(): AssistantCapabilityReceipt<{
-    matrix: ReturnType<DebugTargetService["getCompatibilityMatrix"]>;
-  }> {
-    return this.createReceipt("debug-targets.compatibility-matrix.get", {
-      kind: "none",
-      id: null
-    }, {
-      matrix: this.debugTargetService.getCompatibilityMatrix()
-    });
-  }
-
-  analyzeDebugTarget(
-    input: AnalyzeAssistantDebugTargetInput
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["analyze"]>;
-  }> {
-    const result = this.debugTargetService.analyze({
-      workspaceId: input.workspaceId,
-      rootPath: input.rootPath,
-      commandHints: input.commandHints ?? []
-    });
-
-    return this.createReceipt("debug-targets.analyze", {
-      kind: "debug_target",
-      id: result.target.id
-    }, {
-      result
-    });
-  }
-
-  getDebugFrameworkAnalysis(
-    targetId: string
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["getFrameworkAnalysis"]>;
-  }> {
-    return this.createReceipt("debug-targets.framework-analysis.get", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      result: this.debugTargetService.getFrameworkAnalysis(targetId)
-    });
-  }
-
-  refreshDebugFrameworkAnalysis(
-    targetId: string
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["refreshFrameworkAnalysis"]>;
-  }> {
-    return this.createReceipt("debug-targets.framework-analysis.refresh", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      result: this.debugTargetService.refreshFrameworkAnalysis(targetId)
-    });
-  }
-
-  async createDebugLaunchPlan(
-    input: CreateAssistantDebugLaunchPlanInput
-  ): Promise<AssistantCapabilityReceipt<{
-    plan: Awaited<ReturnType<DebugTargetService["createLaunchPlan"]>>;
-  }>> {
-    const plan = await this.debugTargetService.createLaunchPlan(
-      input.targetId,
-      input.portRequests,
-      input.userId
-    );
-
-    return this.createReceipt("debug-targets.launch-plan.create", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      plan
-    });
-  }
-
-  async runDebugTarget(
-    input: RunAssistantDebugTargetInput
-  ): Promise<AssistantCapabilityReceipt<{
-    result: Awaited<ReturnType<DebugTargetService["run"]>>;
-  }>> {
-    const result = await this.debugTargetService.run({
-      targetId: input.targetId,
-      userId: input.userId,
-      shell: input.shell ?? undefined,
-      runtimeType: input.runtimeType ?? undefined,
-      portRequests: input.portRequests
-    });
-
-    return this.createReceipt("debug-targets.run", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      result
-    });
-  }
-
-  async getLatestDebugRuntime(
-    targetId: string
-  ): Promise<AssistantCapabilityReceipt<{
-    runtime: Awaited<ReturnType<DebugTargetService["getLatestRuntimeDetail"]>>;
-  }>> {
-    const runtime = await this.debugTargetService.getLatestRuntimeDetail(targetId);
-
-    return this.createReceipt("debug-targets.runtime-latest.get", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      runtime
-    });
-  }
-
-  async listDebugRuntimes(
-    input: { targetId: string; limit: number }
-  ): Promise<AssistantCapabilityReceipt<{
-    history: Awaited<ReturnType<DebugTargetService["getRecentRuntimeDetails"]>>;
-  }>> {
-    const history = await this.debugTargetService.getRecentRuntimeDetails(input.targetId, input.limit);
-
-    return this.createReceipt("debug-targets.runtimes.list", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      history
-    });
-  }
-
-  async getDebugRuntime(
-    runtimeId: string
-  ): Promise<AssistantCapabilityReceipt<{
-    runtime: Awaited<ReturnType<DebugTargetService["getRuntimeDetail"]>>;
-  }>> {
-    const runtime = await this.debugTargetService.getRuntimeDetail(runtimeId);
-
-    return this.createReceipt("debug-runtimes.get", {
-      kind: "debug_runtime",
-      id: runtimeId
-    }, {
-      runtime
-    });
-  }
-
   listWorkspaces(userId: string): AssistantCapabilityReceipt<{
     items: ReturnType<WorkspaceService["listForUser"]>;
   }> {
@@ -2279,8 +2034,6 @@ export class AssistantCapabilityService {
       officeTaskId?: string | null;
       browserProfileId?: string | null;
       worktreeWorkspaceId?: string | null;
-      debugTargetId?: string | null;
-      debugRuntimeId?: string | null;
     }
   ): void {
     const definition = this.getCapabilityDefinition(capability);
@@ -2319,27 +2072,17 @@ export class AssistantCapabilityService {
       const officeTaskWorkspaceId = target?.officeTaskId
         ? this.requireOfficeTaskService().getTaskDetail(target.officeTaskId, userId).task.workspaceId
         : null;
-      const debugTargetWorkspaceId = target?.debugTargetId
-        ? this.debugTargetService.getTargetWorkspaceId(target.debugTargetId)
-        : null;
-      const debugRuntimeWorkspaceId = target?.debugRuntimeId
-        ? this.debugTargetService.getRuntimeWorkspaceId(target.debugRuntimeId)
-        : null;
       this.assertConsistentWorkspaceTargets(
         capability,
         [
           targetWorkspaceId,
           documentWorkspaceId,
-          officeTaskWorkspaceId,
-          debugTargetWorkspaceId,
-          debugRuntimeWorkspaceId
+          officeTaskWorkspaceId
         ]
       );
       const resolvedWorkspaceId = target?.worktreeWorkspaceId
         ? this.resolveRootWorkspaceId(target.worktreeWorkspaceId)
-        : debugRuntimeWorkspaceId
-          ?? debugTargetWorkspaceId
-          ?? officeTaskWorkspaceId
+        : officeTaskWorkspaceId
           ?? documentWorkspaceId
           ?? targetWorkspaceId;
       this.assertWorkspaceScopedTarget(context.workspaceId, resolvedWorkspaceId, capability);
