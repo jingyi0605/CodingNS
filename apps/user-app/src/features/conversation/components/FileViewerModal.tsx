@@ -346,6 +346,8 @@ export function FileViewerPanel({
   const platform = usePlatform();
   const onCloseRef = useRef(onClose);
   const showToastRef = useRef(showToast);
+  const isDirtyRef = useRef(false);
+  const loadedTargetKeyRef = useRef<string | null>(null);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
@@ -429,6 +431,10 @@ export function FileViewerPanel({
     showToastRef.current = showToast;
   }, [showToast]);
 
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
   useLayoutEffect(() => {
     if (!open || !filePath || isInlineViewer) {
       setTitleScaleTier("default");
@@ -467,6 +473,7 @@ export function FileViewerPanel({
 
   useEffect(() => {
     if (!open) {
+      loadedTargetKeyRef.current = null;
       setPreview(null);
       setEditorContent("");
       setPresentationProject(null);
@@ -504,8 +511,16 @@ export function FileViewerPanel({
         });
 
         if (!cancelled) {
+          const targetKey = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
+          const isPassiveReloadForSameTarget = loadedTargetKeyRef.current === targetKey;
+
+          if (isPassiveReloadForSameTarget && isDirtyRef.current) {
+            setLoading(false);
+            return;
+          }
+
           applyPreviewState(nextPreview, safeFilePath, {
-            preserveMode: false,
+            preserveMode: isPassiveReloadForSameTarget,
             setPreview,
             setEditorContent,
             setPresentationProject,
@@ -517,6 +532,7 @@ export function FileViewerPanel({
             setPdfScale,
             setPdfFitWidth
           });
+          loadedTargetKeyRef.current = targetKey;
         }
       } catch (error) {
         if (!cancelled) {
@@ -570,7 +586,7 @@ export function FileViewerPanel({
         officeDisplayMode
       });
       applyPreviewState(nextPreview, safeFilePath, {
-        preserveMode: false,
+        preserveMode: true,
         setPreview,
         setEditorContent,
         setPresentationProject,
@@ -582,6 +598,7 @@ export function FileViewerPanel({
         setPdfScale,
         setPdfFitWidth
       });
+      loadedTargetKeyRef.current = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
       await onSaved(safeFilePath);
       showToast({
         title: t("conversation.filePanelSaveSuccess"),
@@ -621,7 +638,7 @@ export function FileViewerPanel({
         setPdfScale,
         setPdfFitWidth
       });
-      setResourceRefreshVersion((previous) => previous + 1);
+      loadedTargetKeyRef.current = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.fileViewerRefreshFailed")),
@@ -1147,6 +1164,10 @@ function resetResourceViewerState(setters: {
   setters.setPdfPage(1);
   setters.setPdfScale(110);
   setters.setPdfFitWidth(true);
+}
+
+function buildFileViewerTargetKey(workspaceId: string, filePath: string): string {
+  return `${workspaceId}\u0000${filePath}`;
 }
 
 function canUsePreviewMode(previewKind: FilePreviewDto["kind"] | null): boolean {
@@ -1863,7 +1884,7 @@ function MarkdownPreview({
     >
       <div className="markdown-content file-viewer-markdown" ref={scrollContainerRef}>
         <Markdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkSoftLineBreaks]}
           components={markdownComponents}
         >
           {content}
@@ -1879,6 +1900,47 @@ type MarkdownSourceNode = {
     end?: { line?: number | null };
   } | null;
 };
+
+type MarkdownAstNode = {
+  type?: string;
+  value?: string;
+  children?: MarkdownAstNode[];
+};
+
+function remarkSoftLineBreaks() {
+  return (tree: MarkdownAstNode) => {
+    rewriteSoftBreakTextNodes(tree);
+  };
+}
+
+function rewriteSoftBreakTextNodes(node: MarkdownAstNode) {
+  if (!Array.isArray(node.children) || node.children.length === 0) {
+    return;
+  }
+
+  node.children = node.children.flatMap((child) => {
+    rewriteSoftBreakTextNodes(child);
+
+    if (child.type !== "text" || typeof child.value !== "string" || !child.value.includes("\n")) {
+      return [child];
+    }
+
+    // 编辑态会把单个回车直接显示成换行，这里也转成 <br>，避免预览吞掉软换行。
+    return child.value.split("\n").flatMap((segment, index, segments) => {
+      const nextNodes: MarkdownAstNode[] = [];
+      if (segment.length > 0) {
+        nextNodes.push({
+          type: "text",
+          value: segment
+        });
+      }
+      if (index < segments.length - 1) {
+        nextNodes.push({ type: "break" });
+      }
+      return nextNodes;
+    });
+  });
+}
 
 interface MarkdownDiffRange {
   start: number;

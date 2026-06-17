@@ -20,7 +20,7 @@ import {
   uploadFile,
   type FileNodeDto
 } from "../api/file-context-api";
-import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
+import { addGitIgnoreTargets, getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
 import { openFilePreviewExternalWindow } from "../../../platform/desktop/window-openers";
 import {
@@ -2024,6 +2024,49 @@ export function FileContextPanel({
     }
   }
 
+  async function handleAddSelectionToGitIgnore(
+    targets: FileSelectionTarget[] = actionableSelectedTargets
+  ) {
+    if (!workspaceId || targets.length === 0) {
+      setWebContextMenu(null);
+      return;
+    }
+
+    setMutating(true);
+
+    try {
+      await addGitIgnoreTargets(
+        workspaceId,
+        targets.map((item) => item.path),
+        getScopedRequestOptions()
+      );
+      await refreshSessionChangeCount();
+      requestGitRefresh?.(
+        workspaceId,
+        currentTargetHostId ? { targetHostId: currentTargetHostId } : undefined
+      );
+      setWebContextMenu(null);
+      showToast({
+        title:
+          targets.length === 1
+            ? t("conversation.filePanelAddToGitIgnoreSuccess", {
+                name: getPathLeafName(targets[0]?.path ?? "") || targets[0]?.path || ""
+              })
+            : t("conversation.filePanelAddSelectionToGitIgnoreSuccess", {
+                count: targets.length
+              }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("conversation.filePanelAddToGitIgnoreFailed")),
+        tone: "error"
+      });
+    } finally {
+      setMutating(false);
+    }
+  }
+
   function buildWorkspaceContextMenuItems(
     target: FileSelectionTarget,
     effectiveSelection: FileSelectionTarget[],
@@ -2109,6 +2152,14 @@ export function FileContextPanel({
         label: t("conversation.filePanelCopyAbsolutePath"),
         onSelect: () => {
           void handleCopyPath("absolute", target);
+        }
+      },
+      {
+        id: `git-ignore-${target.path}`,
+        label: t("conversation.filePanelAddToGitIgnore"),
+        disabled: effectiveSelection.length === 0 || mutating || transferring || !workspaceId,
+        onSelect: () => {
+          void handleAddSelectionToGitIgnore(effectiveSelection);
         }
       },
       {

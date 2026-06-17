@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { GitWriteService } from "../../src/modules/git/git-write-service.js";
@@ -120,6 +123,20 @@ describe("GitWriteService", () => {
     );
   });
 
+  it("添加到 Git 排除时会写入 .gitignore 且避免重复项", async () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-git-ignore-"));
+    fs.writeFileSync(path.join(repoRoot, ".gitignore"), "dist\n", "utf8");
+    const nextStatus = createStatus();
+    const { service } = createWriteService([], [nextStatus], {
+      repoRoot
+    });
+
+    await expect(service.addToGitIgnore("workspace-1", ["tmp/cache", "dist"])).resolves.toEqual(nextStatus);
+
+    expect(fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8")).toBe("dist\ntmp/cache\n");
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("远程同步携带认证时会把 askpass 环境传给 Git 命令", async () => {
     const { service, gitCommandRunner, gitRemoteCredentialService } = createWriteService(
       [
@@ -212,7 +229,12 @@ describe("GitWriteService", () => {
   });
 });
 
-function createWriteService(results: GitCommandResult[], statuses: ReturnType<typeof createStatus>[] = []) {
+function createWriteService(
+  results: GitCommandResult[],
+  statuses: ReturnType<typeof createStatus>[] = [],
+  options?: { repoRoot?: string }
+) {
+  const repoRoot = options?.repoRoot ?? "C:/repo";
   const gitCommandRunner = {
     run: vi.fn(async () => {
       const next = results.shift();
@@ -231,25 +253,25 @@ function createWriteService(results: GitCommandResult[], statuses: ReturnType<ty
       workspace: {
         id: "workspace-1",
         name: "Git 工作区",
-        path: "C:/repo",
-        repoRoot: "C:/repo",
+        path: repoRoot,
+        repoRoot,
         favorite: false,
         createdAt: "2026-03-23T00:00:00.000Z",
         updatedAt: "2026-03-23T00:00:00.000Z"
       },
-      repoRoot: "C:/repo"
+      repoRoot
     })),
     resolve: vi.fn(async () => ({
       workspace: {
         id: "workspace-1",
         name: "Git 工作区",
-        path: "C:/repo",
-        repoRoot: "C:/repo",
+        path: repoRoot,
+        repoRoot,
         favorite: false,
         createdAt: "2026-03-23T00:00:00.000Z",
         updatedAt: "2026-03-23T00:00:00.000Z"
       },
-      repoRoot: "C:/repo"
+      repoRoot
     }))
   };
 

@@ -223,6 +223,67 @@ describe("FileViewerModal", () => {
     expect(fileApiMock.getFilePreview).toHaveBeenCalledTimes(1);
   });
 
+  it("同文件被动重载时，会保留编辑模式和未保存草稿", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const firstPreviewLoader = vi.fn().mockResolvedValue(
+      createPreviewResponse({
+        path: "notes.txt",
+        content: "server version 1",
+        version: "preview-version-1"
+      })
+    );
+    const secondPreviewLoader = vi.fn().mockResolvedValue(
+      createPreviewResponse({
+        path: "notes.txt",
+        content: "server version 2",
+        version: "preview-version-2"
+      })
+    );
+
+    const view = render(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="notes.txt"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+          previewLoader={firstPreviewLoader}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(firstPreviewLoader).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "local draft");
+
+    view.rerender(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="notes.txt"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+          previewLoader={secondPreviewLoader}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(secondPreviewLoader).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("file-viewer-editor")).toHaveValue("local draft");
+  });
+
   it("传入自定义 saveHandler 时，会优先走自定义保存逻辑", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
@@ -495,6 +556,42 @@ describe("FileViewerModal", () => {
     await waitFor(() => {
       expect(liveRender).toHaveTextContent("# 新标题");
       expect(liveRender).toHaveTextContent("新内容");
+    });
+  });
+
+  it("Markdown 预览会保留编辑态里的单行换行，不再把同段文本挤成一行", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/readme.md",
+        kind: "markdown",
+        content: [
+          "第一行",
+          "第二行",
+          "",
+          "第三行 `https://example.com/api`",
+          "第四行"
+        ].join("\n"),
+        version: "md-line-break-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/readme.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      const paragraphNodes = document.querySelectorAll(".file-viewer-markdown p");
+      expect(paragraphNodes).toHaveLength(2);
+      expect(paragraphNodes[0]?.querySelectorAll("br")).toHaveLength(1);
+      expect(paragraphNodes[1]?.querySelectorAll("br")).toHaveLength(1);
     });
   });
 

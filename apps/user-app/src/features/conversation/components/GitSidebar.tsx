@@ -31,6 +31,7 @@ import { useToast } from "../../../shared/toast";
 import {
   commitDraft,
   createCommitDraft,
+  addGitIgnoreTargets,
   discardGitTargets,
   getGitBranches,
   getGitCommitDetail,
@@ -752,6 +753,31 @@ export function GitSidebar({
     }
   }
 
+  async function handleAddToGitIgnore(targets: string[]) {
+    if (!workspaceId || targets.length === 0) {
+      return;
+    }
+
+    setActioning(true);
+
+    try {
+      const nextStatus = await addGitIgnoreTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+      setStatus(nextStatus);
+      requestGitSnapshotRefresh();
+      showToast({
+        title: targets.length === 1 ? t("git.addToIgnoreSuccess") : t("git.addSelectionToIgnoreSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.addToIgnoreFailed")),
+        tone: "error"
+      });
+    } finally {
+      setActioning(false);
+    }
+  }
+
   async function handleCommit() {
     if (!workspaceId || !commitSubject.trim()) {
       return;
@@ -1258,6 +1284,68 @@ export function GitSidebar({
     setDesktopHistoryMenuCommitHash(null);
     setMobileHistoryMenuCommitHash(null);
     await showDesktopContextMenu(buildHistoryContextMenuItems(item));
+  }
+
+  function buildTreeContextMenuItems(input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }): DesktopContextMenuItem[] {
+    const { path: itemPath, targets, variant, isDirectory } = input;
+    const canDiscard = variant === "unstaged";
+
+    return [
+      {
+        id: `git-ignore:${itemPath}`,
+        label: t("git.addToIgnore"),
+        disabled: actioning || targets.length === 0,
+        onSelect: () => void handleAddToGitIgnore(targets)
+      },
+      {
+        id: `stage-toggle:${itemPath}`,
+        label: variant === "staged" ? t("git.unstage") : t("git.stage"),
+        disabled: actioning || targets.length === 0,
+        onSelect: () => void handleStageToggle(targets, variant === "staged")
+      },
+      ...(canDiscard
+        ? [
+            {
+              id: `discard:${itemPath}`,
+              label: t("git.discard"),
+              disabled: actioning || targets.length === 0,
+              onSelect: () => void handleDiscard(targets)
+            } satisfies DesktopContextMenuItem
+          ]
+        : []),
+      ...(!isDirectory && targets.length === 1
+        ? [
+            {
+              id: `preview:${itemPath}`,
+              label: t("git.preview"),
+              onSelect: () => {
+                const change = status?.changes.find((item) => item.path === targets[0]);
+
+                if (!change) {
+                  return;
+                }
+
+                setSelectedPath(targets[0] ?? null);
+                void handleOpenFile(targets[0], change);
+              }
+            } satisfies DesktopContextMenuItem
+          ]
+        : [])
+    ];
+  }
+
+  async function openDesktopTreeContextMenu(input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) {
+    await showDesktopContextMenu(buildTreeContextMenuItems(input));
   }
 
   async function handleExplainCommit() {
@@ -2040,6 +2128,7 @@ export function GitSidebar({
                   onToggleMobileSelection={toggleMobileSelection}
                   onStageToggle={handleStageToggle}
                   onDiscard={handleDiscard}
+                  onOpenDesktopContextMenu={openDesktopTreeContextMenu}
                   actioning={actioning}
                   variant="staged"
                   isMobileViewport={isMobileViewport}
@@ -2073,6 +2162,7 @@ export function GitSidebar({
                 onToggleMobileSelection={toggleMobileSelection}
                 onStageToggle={handleStageToggle}
                 onDiscard={handleDiscard}
+                onOpenDesktopContextMenu={openDesktopTreeContextMenu}
                 actioning={actioning}
                 variant="unstaged"
                 isMobileViewport={isMobileViewport}
@@ -2626,6 +2716,7 @@ function GitChangeGroup({
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
+  onOpenDesktopContextMenu,
   actioning,
   variant,
   isMobileViewport,
@@ -2646,6 +2737,12 @@ function GitChangeGroup({
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
+  onOpenDesktopContextMenu?: (input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
   isMobileViewport: boolean;
@@ -2766,6 +2863,7 @@ function GitChangeGroup({
             onToggleMobileSelection,
             onStageToggle,
             onDiscard,
+            onOpenDesktopContextMenu,
             actioning,
             variant,
             isMobileViewport,
@@ -3517,6 +3615,7 @@ function renderTreeNodes({
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
+  onOpenDesktopContextMenu,
   actioning,
   variant,
   isMobileViewport,
@@ -3532,6 +3631,12 @@ function renderTreeNodes({
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
+  onOpenDesktopContextMenu?: (input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
   isMobileViewport: boolean;
@@ -3552,6 +3657,20 @@ function renderTreeNodes({
               type="button"
               style={{ paddingInlineStart: `${6 + depth * 8}px` }}
               onClick={() => onToggleTreePath(node.path)}
+              onContextMenu={(event) => {
+                if (isMobileViewport || !onOpenDesktopContextMenu) {
+                  return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                void onOpenDesktopContextMenu({
+                  path: node.path,
+                  targets: directoryTargets,
+                  variant,
+                  isDirectory: true
+                });
+              }}
             >
               <span className="git-tree-chevron" data-expanded={expanded}>
                 <TreeChevron expanded={expanded} />
@@ -3600,6 +3719,7 @@ function renderTreeNodes({
                 onToggleMobileSelection,
                 onStageToggle,
                 onDiscard,
+                onOpenDesktopContextMenu,
                 actioning,
                 variant,
                 isMobileViewport,
@@ -3676,6 +3796,21 @@ function renderTreeNodes({
             if (onPreviewFile) {
               onPreviewFile(node.change.path, node.change);
             }
+          }}
+          onContextMenu={(event) => {
+            if (isMobileViewport || !onOpenDesktopContextMenu) {
+              return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            onSelectFile(node.change.path);
+            void onOpenDesktopContextMenu({
+              path: node.path,
+              targets: [node.change.path],
+              variant,
+              isDirectory: false
+            });
           }}
         >
           <span

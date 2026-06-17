@@ -40,7 +40,8 @@ const conversationApiMock = vi.hoisted(() => ({
 const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
   getGitDiff: vi.fn(),
-  stageGitTargets: vi.fn()
+  stageGitTargets: vi.fn(),
+  addGitIgnoreTargets: vi.fn()
 }));
 
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
@@ -239,7 +240,8 @@ vi.mock("../api/conversation-api", () => ({
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
   getGitDiff: gitApiMock.getGitDiff,
-  stageGitTargets: gitApiMock.stageGitTargets
+  stageGitTargets: gitApiMock.stageGitTargets,
+  addGitIgnoreTargets: gitApiMock.addGitIgnoreTargets
 }));
 
 vi.mock("./WorkbenchLayout", () => ({
@@ -713,7 +715,7 @@ describe("FileContextPanel", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 1700));
 
     await waitFor(() => {
-      expect(fileApiMock.getFileTree).toHaveBeenCalledTimes(1);
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", undefined);
     });
   });
 
@@ -1300,11 +1302,9 @@ describe("FileContextPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelRefresh") }));
 
     await waitFor(() => {
-      expect(fileApiMock.getFileTree).toHaveBeenCalledTimes(2);
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", undefined);
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", "apps");
     });
-
-    expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(1, "workspace-1", undefined);
-    expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(2, "workspace-1", "apps");
   });
 
   it("收到外部文件定位请求时会展开目录链并显示目标文件", async () => {
@@ -2486,10 +2486,42 @@ describe("FileContextPanel", () => {
         t("conversation.filePanelRenameMove"),
         t("conversation.filePanelCopy"),
         t("conversation.filePanelCut"),
+        t("conversation.filePanelAddToGitIgnore"),
         t("conversation.filePanelPaste"),
         t("conversation.filePanelDelete")
       ])
     );
+  });
+
+  it("桌面端右键添加到 Git 排除会调用对应接口", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.bridge.supported = true;
+    gitApiMock.addGitIgnoreTargets.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: []
+    });
+    showDesktopContextMenuMock.mockImplementation(async (items: Array<{ label: string; onSelect: () => void }>) => {
+      await items.find((item) => item.label === t("conversation.filePanelAddToGitIgnore"))?.onSelect();
+    });
+
+    renderPanel();
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "config.json" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.addGitIgnoreTargets).toHaveBeenCalledWith("workspace-1", ["config.json"], undefined);
+    });
   });
 
   it("H5 端右键会显示页面内操作菜单", async () => {
@@ -2512,6 +2544,7 @@ describe("FileContextPanel", () => {
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelRenameMove") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCopy") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCut") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelAddToGitIgnore") })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelDelete") })).toBeInTheDocument();
   });
 

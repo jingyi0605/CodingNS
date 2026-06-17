@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 
@@ -14,6 +15,7 @@ const gitApiMock = vi.hoisted(() => ({
   getGitCommitDetail: vi.fn(),
   getGitBranches: vi.fn(),
   getGitRemotes: vi.fn(),
+  addGitIgnoreTargets: vi.fn(),
   stageGitTargets: vi.fn(),
   unstageGitTargets: vi.fn(),
   discardGitTargets: vi.fn(),
@@ -102,6 +104,7 @@ vi.mock("../api/git-api", () => ({
   getGitCommitDetail: gitApiMock.getGitCommitDetail,
   getGitBranches: gitApiMock.getGitBranches,
   getGitRemotes: gitApiMock.getGitRemotes,
+  addGitIgnoreTargets: gitApiMock.addGitIgnoreTargets,
   stageGitTargets: gitApiMock.stageGitTargets,
   unstageGitTargets: gitApiMock.unstageGitTargets,
   discardGitTargets: gitApiMock.discardGitTargets,
@@ -1102,6 +1105,30 @@ describe("GitSidebar", () => {
     }
 
     expect(entry.querySelector(".git-history-more")).toBeNull();
+  });
+
+  it("桌面端变更文件右键会提供添加到 Git 排除", async () => {
+    setViewportWidth(1280);
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+    renderSidebar();
+
+    const fileLabel = await screen.findByText("App.tsx");
+    const fileButton = fileLabel.closest("button");
+
+    if (!(fileButton instanceof HTMLElement)) {
+      throw new Error("未找到变更文件按钮");
+    }
+
+    fireEvent.contextMenu(fileButton);
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const menuItems = showDesktopContextMenuMock.mock.calls[0][0] as Array<{ label: string }>;
+    expect(menuItems.map((item) => item.label)).toEqual(
+      expect.arrayContaining([t("git.addToIgnore")])
+    );
   });
 
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {

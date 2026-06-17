@@ -154,6 +154,20 @@ export class GitWriteService {
     return await this.gitReadService.getStatus(workspaceId);
   }
 
+  async addToGitIgnore(workspaceId: string, targets: string[]) {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const relativeTargets = ensureTargets(repo.repoRoot, targets, this.workspaceRepoGuard);
+    const gitignorePath = path.join(repo.repoRoot, ".gitignore");
+    const existingContent = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+    const nextContent = mergeGitIgnoreContent(existingContent, relativeTargets);
+
+    if (nextContent !== existingContent) {
+      fs.writeFileSync(gitignorePath, nextContent, "utf8");
+    }
+
+    return await this.gitReadService.getStatus(workspaceId);
+  }
+
   async commit(workspaceId: string, draft: CommitDraft): Promise<{ commitHash: string }> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const stagedNames = await this.gitCommandRunner.run(
@@ -394,6 +408,44 @@ function formatCommitMessage(draft: CommitDraft): string {
   return [draft.subject.trim(), draft.body?.trim() || "", draft.footer?.trim() || ""]
     .filter((item, index) => item.length > 0 || index === 0)
     .join("\n\n");
+}
+
+function mergeGitIgnoreContent(existingContent: string, targets: string[]): string {
+  const normalizedLines = existingContent
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+  while (normalizedLines.length > 0 && normalizedLines[normalizedLines.length - 1] === "") {
+    normalizedLines.pop();
+  }
+  const existingLines = new Set(normalizedLines.map((line) => line.trim()));
+  const nextLines = [...normalizedLines];
+
+  for (const target of targets) {
+    for (const entry of buildGitIgnoreEntries(target)) {
+      if (existingLines.has(entry)) {
+        continue;
+      }
+
+      nextLines.push(entry);
+      existingLines.add(entry);
+    }
+  }
+
+  while (nextLines.length > 0 && nextLines[nextLines.length - 1] === "") {
+    nextLines.pop();
+  }
+
+  return `${nextLines.join("\n")}${nextLines.length > 0 ? "\n" : ""}`;
+}
+
+function buildGitIgnoreEntries(target: string): string[] {
+  const normalized = target.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+
+  if (!normalized) {
+    return [];
+  }
+
+  return [normalized];
 }
 
 function mapBranchSwitchError(detail: string): AppError {
