@@ -98,6 +98,50 @@ describe("setErrorHandler", () => {
     );
   });
 
+  it("请求体超出上限时返回明确原因和限制说明", () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = createReply();
+    const request = createRequest(
+      "/api/sessions/session-1/messages/live",
+      {},
+      {},
+      {
+        url: "/api/sessions/:sessionId/messages/live"
+      }
+    );
+    const error = Object.assign(new Error("Request body is too large"), {
+      name: "FastifyError",
+      code: "FST_ERR_CTP_BODY_TOO_LARGE",
+      statusCode: 413
+    });
+
+    setErrorHandler(error, request, reply);
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[host-warning]",
+      expect.objectContaining({
+        method: "GET",
+        url: "/api/sessions/session-1/messages/live",
+        statusCode: 413,
+        errorCode: "REQUEST_BODY_TOO_LARGE"
+      })
+    );
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(reply.status).toHaveBeenCalledWith(413);
+    expect(reply.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error_code: "REQUEST_BODY_TOO_LARGE",
+        field: "body",
+        detail: expect.stringContaining("64 MiB"),
+        data: expect.objectContaining({
+          routeUrl: "/api/sessions/:sessionId/messages/live",
+          bodyLimitBytes: 67108864
+        })
+      })
+    );
+  });
+
   it("响应已经发出时不会再次写 header", () => {
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -223,13 +267,15 @@ function createReply(overrides: Partial<{
 function createRequest(
   url: string,
   headers: Record<string, string> = {},
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  routeOptions: Record<string, unknown> = {}
 ) {
   return {
     method: "GET",
     url,
     headers,
     params,
+    routeOptions,
     log: {
       warn: vi.fn(),
       error: vi.fn()
