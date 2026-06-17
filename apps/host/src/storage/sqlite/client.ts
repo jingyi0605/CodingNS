@@ -112,6 +112,7 @@ function ensurePeerHostSchema(db: BetterSqliteDatabase): void {
       owner_user_id TEXT NOT NULL,
       name TEXT NOT NULL,
       alias TEXT,
+      tag_color TEXT,
       base_url TEXT NOT NULL,
       normalized_base_url TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('unknown', 'reachable', 'unreachable', 'version_mismatch', 'unauthorized')),
@@ -173,6 +174,10 @@ function ensurePeerHostSchema(db: BetterSqliteDatabase): void {
 
   if (!tableHasColumn(db, "peer_hosts", "alias")) {
     db.exec("ALTER TABLE peer_hosts ADD COLUMN alias TEXT");
+  }
+
+  if (!tableHasColumn(db, "peer_hosts", "tag_color")) {
+    db.exec("ALTER TABLE peer_hosts ADD COLUMN tag_color TEXT");
   }
 
   if (!tableHasColumn(db, "peer_host_workspace_bindings", "remote_workspace_id")) {

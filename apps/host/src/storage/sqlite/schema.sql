@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS peer_hosts (
   owner_user_id TEXT NOT NULL,
   name TEXT NOT NULL,
   alias TEXT,
+  tag_color TEXT,
   base_url TEXT NOT NULL,
   normalized_base_url TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('unknown', 'reachable', 'unreachable', 'version_mismatch', 'unauthorized')),

@@ -3,15 +3,25 @@ import type { ClientRuntimeConfig, HostProfile } from "../../../config/client-co
 const HOST_ALIAS_MAX_LENGTH = 4;
 const HOST_ALIAS_FALLBACK = "HOST";
 
-const HOST_TAG_COLORS = [
-  "#0EA5E9",
+export const HOST_TAG_COLOR_PRESETS = [
+  "#34C759",
   "#22C55E",
-  "#F59E0B",
-  "#EC4899",
-  "#8B5CF6",
   "#14B8A6",
+  "#06B6D4",
+  "#0EA5E9",
+  "#3B82F6",
+  "#6366F1",
+  "#8B5CF6",
+  "#A855F7",
+  "#D946EF",
+  "#EC4899",
+  "#F43F5E",
+  "#EF4444",
   "#F97316",
-  "#6366F1"
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#10B981"
 ] as const;
 
 export interface HostAliasTagView {
@@ -29,14 +39,16 @@ export function normalizeHostAliasLabel(value: string | null | undefined): strin
   return normalized;
 }
 
-export function resolveHostAliasTag(host: Pick<HostProfile, "id" | "alias" | "name"> | null | undefined): HostAliasTagView | null {
+export function resolveHostAliasTag(
+  host: Pick<HostProfile, "id" | "alias" | "name" | "tagColor"> | null | undefined
+): HostAliasTagView | null {
   if (!host) {
     return null;
   }
 
   return {
     label: normalizeHostAliasLabel(host.alias || host.name),
-    color: HOST_TAG_COLORS[hashHostId(host.id) % HOST_TAG_COLORS.length]
+    color: host.tagColor ?? HOST_TAG_COLOR_PRESETS[hashHostId(host.id) % HOST_TAG_COLOR_PRESETS.length]
   };
 }
 

@@ -115,6 +115,7 @@ export interface PeerHostRecord {
   ownerUserId: string;
   name: string;
   alias: string | null;
+  tagColor: string | null;
   baseUrl: string;
   normalizedBaseUrl: string;
   status: PeerHostStatus;

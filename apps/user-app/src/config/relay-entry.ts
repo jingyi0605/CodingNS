@@ -62,6 +62,7 @@ export function buildRelayEntryConfigPatch(
     id: existingHost?.id ?? buildRelayEntryHostId(input.bindingId ?? null, normalizedTunnelDomain),
     name: displayName,
     alias: existingHost?.alias ?? buildRelayHostAlias(displayName, normalizedTunnelDomain),
+    tagColor: existingHost?.tagColor ?? null,
     baseUrl: relayBaseUrl,
     kind: "remote",
     peerEnabled: existingHost?.peerEnabled ?? false,

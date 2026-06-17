@@ -22787,6 +22787,32 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   border-top: 1px solid var(--border-subtle);
 }
 
+.workbench-host-switcher-tag-palette-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+}
+
+.workbench-host-switcher-tag-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-host-switcher-tag-palette {
+  grid-template-columns: repeat(9, 28px);
+  gap: 6px;
+}
+
+.workbench-host-switcher-tag-palette .workbench-manage-color-swatch {
+  width: 28px;
+  border-radius: 8px;
+}
+
 .workbench-host-switcher-detail-section {
   display: flex;
   flex-direction: column;

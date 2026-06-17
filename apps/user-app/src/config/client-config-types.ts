@@ -17,6 +17,7 @@ export interface HostProfileBase {
   id: string;
   name: string;
   alias: string | null;
+  tagColor: string | null;
   baseUrl: string;
   kind: HostProfileKind;
   createdAt: string;

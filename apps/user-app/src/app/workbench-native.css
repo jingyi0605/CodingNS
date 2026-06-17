@@ -13891,6 +13891,32 @@ html[data-workbench-finder-column-resizing] .workbench-shell * {
   background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
 }
 
+.workbench-host-switcher-tag-palette-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-separator) 84%, transparent);
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+}
+
+.workbench-host-switcher-tag-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workbench-host-switcher-tag-palette {
+  grid-template-columns: repeat(9, 28px);
+  gap: 6px;
+}
+
+.workbench-host-switcher-tag-palette .workbench-manage-color-swatch {
+  width: 28px;
+  border-radius: 8px;
+}
+
 .workbench-host-switcher-inspector-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

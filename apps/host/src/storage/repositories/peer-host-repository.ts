@@ -18,6 +18,7 @@ export class PeerHostRepository {
           owner_user_id,
           name,
           alias,
+          tag_color,
           base_url,
           normalized_base_url,
           status,
@@ -30,13 +31,14 @@ export class PeerHostRepository {
           created_at,
           updated_at,
           removed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
         record.ownerUserId,
         record.name,
         record.alias,
+        record.tagColor,
         record.baseUrl,
         record.normalizedBaseUrl,
         record.status,
@@ -104,6 +106,7 @@ export class PeerHostRepository {
     input: {
       name: string;
       alias: string | null;
+      tagColor: string | null;
       baseUrl: string;
       normalizedBaseUrl: string;
       resetConnectionState?: boolean;
@@ -116,6 +119,7 @@ export class PeerHostRepository {
           `UPDATE peer_hosts
            SET name = ?,
                alias = ?,
+               tag_color = ?,
                base_url = ?,
                normalized_base_url = ?,
                status = 'unknown',
@@ -133,6 +137,7 @@ export class PeerHostRepository {
         .run(
           input.name,
           input.alias,
+          input.tagColor,
           input.baseUrl,
           input.normalizedBaseUrl,
           input.updatedAt,
@@ -148,6 +153,7 @@ export class PeerHostRepository {
         `UPDATE peer_hosts
          SET name = ?,
              alias = ?,
+             tag_color = ?,
              base_url = ?,
              normalized_base_url = ?,
              updated_at = ?
@@ -158,6 +164,7 @@ export class PeerHostRepository {
       .run(
         input.name,
         input.alias,
+        input.tagColor,
         input.baseUrl,
         input.normalizedBaseUrl,
         input.updatedAt,
@@ -384,6 +391,7 @@ interface PeerHostRow {
   owner_user_id: string;
   name: string;
   alias: string | null;
+  tag_color: string | null;
   base_url: string;
   normalized_base_url: string;
   status: PeerHostStatus;
@@ -430,6 +438,7 @@ function mapPeerHostRow(row: PeerHostRow): PeerHostRecord {
     ownerUserId: row.owner_user_id,
     name: row.name,
     alias: row.alias,
+    tagColor: row.tag_color,
     baseUrl: row.base_url,
     normalizedBaseUrl: row.normalized_base_url,
     status: row.status,

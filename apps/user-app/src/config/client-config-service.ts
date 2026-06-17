@@ -231,6 +231,7 @@ function createHostProfile(baseUrl: string, now: string, overrides: Partial<Host
     alias: hasAliasOverride
       ? normalizeHostAlias(overrides.alias)
       : buildDefaultHostAlias(normalizedBaseUrl),
+    tagColor: normalizeOptionalHexColor(overrides.tagColor),
     baseUrl: normalizedBaseUrl,
     kind: overrides.kind ?? classifyHostKind(normalizedBaseUrl),
     peerEnabled: overrides.peerEnabled === true,
@@ -289,6 +290,9 @@ function buildHostProfileOverrides(
     // 对这种缺字段的旧配置，保留本地已有值，别把用户自定义别名洗回默认 HOST。
     if (!hasOwnProperty(rawHost, "alias")) {
       overrides.alias = existingHost.alias;
+    }
+    if (!hasOwnProperty(rawHost, "tagColor")) {
+      overrides.tagColor = existingHost.tagColor;
     }
     if (!hasOwnProperty(rawHost, "peerEnabled")) {
       overrides.peerEnabled = existingHost.peerEnabled;
@@ -409,6 +413,28 @@ function normalizeRelayTunnelProfile(value: unknown): HostRelayTunnelProfile | n
   } catch {
     return null;
   }
+}
+
+function normalizeOptionalHexColor(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalizedColor = value.trim().toUpperCase();
+
+  if (!normalizedColor) {
+    return null;
+  }
+
+  if (!/^#[0-9A-F]{6}$/.test(normalizedColor)) {
+    return null;
+  }
+
+  return normalizedColor;
 }
 
 function normalizeHostCandidateEndpoints(value: unknown): HostCandidateEndpoint[] {

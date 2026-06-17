@@ -22,12 +22,14 @@ import { readHostPackageVersion } from "../client/client-service.js";
 export interface PeerHostCreateInput {
   name?: string;
   alias?: string;
+  tagColor?: string | null;
   baseUrl?: string;
 }
 
 export interface PeerHostUpdateInput {
   name?: string;
   alias?: string | null;
+  tagColor?: string | null;
   baseUrl?: string;
 }
 
@@ -110,6 +112,7 @@ export class PeerHostService {
     const normalizedBaseUrl = baseUrl;
     const name = normalizeName(input.name) ?? new URL(baseUrl).host;
     const alias = normalizeAlias(input.alias);
+    const tagColor = normalizeTagColor(input.tagColor);
 
     this.ensureBaseUrlUnused(ownerUserId, normalizedBaseUrl);
 
@@ -118,6 +121,7 @@ export class PeerHostService {
       ownerUserId,
       name,
       alias,
+      tagColor,
       baseUrl,
       normalizedBaseUrl,
       status: "unknown",
@@ -151,6 +155,8 @@ export class PeerHostService {
     const name = normalizeName(input.name) ?? existing.name;
     const alias =
       input.alias === undefined ? existing.alias : normalizeAlias(input.alias);
+    const tagColor =
+      input.tagColor === undefined ? existing.tagColor : normalizeTagColor(input.tagColor);
 
     if (normalizedBaseUrl !== existing.normalizedBaseUrl) {
       this.ensureBaseUrlUnused(ownerUserId, normalizedBaseUrl);
@@ -162,6 +168,7 @@ export class PeerHostService {
       {
         name,
         alias,
+        tagColor,
         baseUrl,
         normalizedBaseUrl,
         resetConnectionState: normalizedBaseUrl !== existing.normalizedBaseUrl,
@@ -728,6 +735,38 @@ function normalizeAlias(value: unknown): string | null {
   }
 
   return normalized;
+}
+
+function normalizeTagColor(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "标签颜色必须是字符串",
+      field: "tagColor",
+    });
+  }
+
+  const normalizedColor = value.trim().toUpperCase();
+
+  if (!normalizedColor) {
+    return null;
+  }
+
+  if (!/^#[0-9A-F]{6}$/.test(normalizedColor)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "标签颜色必须是 #RRGGBB 格式",
+      field: "tagColor",
+    });
+  }
+
+  return normalizedColor;
 }
 
 function toWorkspaceBindingView(

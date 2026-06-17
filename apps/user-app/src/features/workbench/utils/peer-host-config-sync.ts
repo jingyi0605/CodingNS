@@ -70,6 +70,7 @@ function buildHostProfileFromPeer(peerHost: PeerHostDto, existing: HostProfile |
     id: existing?.id ?? `peer-host-${peerHost.id}`,
     name: peerHost.name || buildHostName(baseUrl),
     alias: existing?.alias ?? normalizeHostAliasLabel(peerHost.alias || peerHost.name),
+    tagColor: existing?.tagColor ?? peerHost.tagColor ?? null,
     baseUrl,
     kind: "lan",
     peerEnabled: peerHost.status === "reachable",
@@ -86,6 +87,7 @@ function buildHostProfileFromPeer(peerHost: PeerHostDto, existing: HostProfile |
 function equalHostProfileForPeerSync(left: HostProfile, right: HostProfile): boolean {
   return left.name === right.name
     && left.alias === right.alias
+    && (left.tagColor ?? null) === (right.tagColor ?? null)
     && left.baseUrl === right.baseUrl
     && left.peerEnabled === right.peerEnabled
     && left.peerHostId === right.peerHostId

@@ -12,6 +12,7 @@ export interface PeerHostDto {
   ownerUserId: string;
   name: string;
   alias: string | null;
+  tagColor: string | null;
   baseUrl: string;
   normalizedBaseUrl: string;
   status: PeerHostStatus;
@@ -39,12 +40,14 @@ export interface PeerHostSessionDto {
 export interface PeerHostCreatePayload {
   name?: string;
   alias?: string | null;
+  tagColor?: string | null;
   baseUrl: string;
 }
 
 export interface PeerHostUpdatePayload {
   name?: string;
   alias?: string | null;
+  tagColor?: string | null;
   baseUrl?: string;
 }
 
@@ -69,6 +72,17 @@ export interface WorkspaceHostBindingSavePayload {
   remoteWorkspaceId?: string | null;
   remoteWorkspacePath?: string | null;
   remoteWorkspaceName?: string | null;
+}
+
+export interface PeerWorkspaceSummaryDto {
+  workspaceId: string;
+  runningSessionCount: number;
+  unreadSessionCount: number;
+  totalSessionCount: number;
+  archivedSessionCount: number;
+  latestSessionTitle: string | null;
+  lastActivityAt: string | null;
+  updatedAt: string;
 }
 
 export function listPeerHosts(): Promise<{ items: PeerHostDto[] }> {
@@ -141,6 +155,26 @@ export function saveWorkspaceHostBinding(
     {
       method: "PUT",
       body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function listPeerWorkspaceSummaries(
+  targetHostId: string,
+  workspaceIds: string[]
+): Promise<{ items: Array<{ workspaceId: string; summary: PeerWorkspaceSummaryDto }> }> {
+  const search = new URLSearchParams();
+  workspaceIds.forEach((workspaceId) => {
+    const normalized = workspaceId.trim();
+    if (normalized) {
+      search.append("workspaceId", normalized);
+    }
+  });
+
+  return httpClient.request<{ items: Array<{ workspaceId: string; summary: PeerWorkspaceSummaryDto }> }>(
+    `/api/workbench/peer-workspace-summaries?${search.toString()}`,
+    {
+      targetHostId
     }
   );
 }
