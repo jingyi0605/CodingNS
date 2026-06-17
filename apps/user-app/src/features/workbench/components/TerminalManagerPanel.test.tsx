@@ -449,7 +449,7 @@ describe("TerminalManagerPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("可以从启动项管理头部跳到当前工作区的调试页", async () => {
+  it("启动项管理头部不再显示调试服务跳转", async () => {
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
       terminals: [],
@@ -468,12 +468,10 @@ describe("TerminalManagerPanel", () => {
 
     renderPanel();
 
-    await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
-
-    expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/debug");
+    expect(screen.queryByRole("button", { name: "调试服务" })).toBeNull();
   });
 
-  it("PeerHost 场景会用请求工作区刷新，但调试跳转仍保留显示工作区和 targetHostId", async () => {
+  it("PeerHost 场景即使外层路由没带 targetHostId，也优先使用显式传入的远端请求工作区", async () => {
     writeViewSnapshot("terminal-manager.snapshot.host.peer-host-1.remote-workspace-1", {
       revision: "revision-peer",
       workspaceId: "remote-workspace-1",
@@ -504,11 +502,14 @@ describe("TerminalManagerPanel", () => {
       );
     });
 
-    await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
-
-    expect(screen.getByTestId("location-probe")).toHaveTextContent(
-      "/workspaces/workspace-1/debug?targetHostId=peer-host-1"
-    );
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
   });
 
   it("详情层支持编辑和移除快捷启动项", async () => {

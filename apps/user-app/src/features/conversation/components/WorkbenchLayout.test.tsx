@@ -848,6 +848,133 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("PeerHOST 工作区在普通工作区路由下不会被隐式压回主 HOST 作用域", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXAC"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-peer-1",
+            title: "Peer 会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "GXAC"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions");
+
+    const terminalButton = await screen.findByRole("button", {
+      name: t("shell.codeShortcutTerminalAction")
+    });
+
+    await userEvent.click(terminalButton);
+
+    await waitFor(() => {
+      const allPayloads = MockWebSocket.instances.flatMap((socket) =>
+        socket.sentPayloads.map((payload) => ({
+          socketUrl: socket.url,
+          payload: JSON.parse(payload) as { type: string; workspaceId?: string }
+        }))
+      );
+
+      expect(allPayloads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            socketUrl: expect.stringContaining("/api/host-proxy/hosts/peer-host-1/ws"),
+            payload: expect.objectContaining({
+              type: "terminalManager.subscribe",
+              workspaceId: "remote-workspace-1"
+            })
+          }),
+          expect.objectContaining({
+            socketUrl: expect.stringContaining("/api/host-proxy/hosts/peer-host-1/ws"),
+            payload: expect.objectContaining({
+              type: "terminalManager.refresh",
+              workspaceId: "remote-workspace-1"
+            })
+          })
+        ])
+      );
+    });
+  });
+
   it("新建会话弹窗支持先创建子工作区，再选择供应商", async () => {
     let currentSnapshot = createWorkbenchSnapshot([
       {
@@ -1269,6 +1396,166 @@ describe("WorkbenchLayout", () => {
           focusOwner: "file-context-panel"
         })
       );
+    });
+  });
+
+  it("PeerHOST 远端会话结束后，主 HOST 的会话列表会同步刷新状态", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXAD"),
+        sessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "GXAD"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions?targetHostId=peer-host-1");
+
+    const peerSocket = await waitFor(() => {
+      const socket = MockWebSocket.instances.find((item) =>
+        item.url.includes("/api/host-proxy/hosts/peer-host-1/ws")
+      );
+
+      if (!socket) {
+        throw new Error("未找到 peer-host-1 的 realtime socket");
+      }
+
+      return socket;
+    });
+
+    peerSocket.dispatchMessage({
+      type: "workbench.snapshot",
+      revision: "peer-revision-1",
+      unchanged: false,
+      snapshot: {
+        items: [
+          {
+            workspace: createWorkspace("remote-workspace-1", "GXAD"),
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-peer-1",
+                title: "远端会话",
+                workspaceId: "remote-workspace-1",
+                runningState: "running",
+                activityState: "running"
+              })
+            ],
+            childWorktrees: [],
+            collapsed: false
+          }
+        ]
+      }
+    });
+
+    const runningCard = await findSessionCardByTitle("远端会话");
+    expect(runningCard.querySelector(".session-state-indicator.is-running")).not.toBeNull();
+
+    peerSocket.dispatchMessage({
+      type: "workbench.snapshot",
+      revision: "peer-revision-2",
+      unchanged: false,
+      snapshot: {
+        items: [
+          {
+            workspace: createWorkspace("remote-workspace-1", "GXAD"),
+            sessions: [
+              {
+                ...createSessionSummary({
+                  sessionId: "session-peer-1",
+                  title: "远端会话",
+                  workspaceId: "remote-workspace-1",
+                  runningState: "completed",
+                  activityState: "completed_unread"
+                }),
+                completedAt: "2026-06-16T10:00:00.000Z"
+              }
+            ],
+            childWorktrees: [],
+            collapsed: false
+          }
+        ]
+      }
+    });
+
+    await waitFor(() => {
+      const completedCard = getSessionCardByTitle("远端会话");
+      expect(completedCard.querySelector(".session-state-indicator.is-running")).toBeNull();
+      expect(completedCard.querySelector(".session-state-indicator.is-running-inferred")).toBeNull();
+      expect(completedCard.querySelector(".session-state-indicator.is-error")).toBeNull();
     });
   });
 
@@ -5309,6 +5596,112 @@ describe("WorkbenchLayout", () => {
     expect(await findWorkspaceGroupByName("项目一")).toBeInTheDocument();
   });
 
+  it("普通主 HOST 路由不会为了已绑定的 PeerHOST 预拉远端工作台快照或预建实时连接", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          tagColor: null,
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          tagColor: null,
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "本地项目"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "主机项目会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = snapshot;
+    const fetchCalls: string[] = [];
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+      fetchCalls.push(url);
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "远端项目"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await findSessionCardByTitle("主机项目会话");
+
+    expect(
+      fetchCalls.some((url) => url.includes("/api/host-proxy/hosts/peer-host-1/api/workbench"))
+    ).toBe(false);
+    expect(
+      MockWebSocket.instances.some((socket) => socket.url.includes("/api/host-proxy/hosts/peer-host-1/ws"))
+    ).toBe(false);
+  });
+
   it("添加项目会打开服务器目录选择器并导入当前目录", async () => {
     let currentSnapshot = createWorkbenchSnapshot([]);
 
@@ -5614,243 +6007,6 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(currentSnapshot);
       }
 
-      if (url.endsWith("/api/debug-targets/analyze") && init?.method === "POST") {
-        return createJsonResponse({
-          target: {
-            id: "debug-target-1",
-            workspaceId: "workspace-1",
-            rootPath: "C:/repo/workspace-1",
-            displayName: "workspace-1",
-            sourceType: "repo",
-            createdAt: "2026-03-26T12:00:00.000Z",
-            updatedAt: "2026-03-26T12:00:00.000Z"
-          },
-          services: [
-            {
-              id: "service-1",
-              targetId: "debug-target-1",
-              role: "frontend",
-              name: "web",
-              cwd: "C:/repo/workspace-1/apps/web",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: 5173,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "cli",
-              frameworkAnalysisId: "analysis-1",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "service-2",
-              targetId: "debug-target-1",
-              role: "backend",
-              name: "host",
-              cwd: "C:/repo/workspace-1/apps/host",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: 3000,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "env",
-              frameworkAnalysisId: "analysis-2",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "service-3",
-              targetId: "debug-target-1",
-              role: "frontend",
-              name: "desktop",
-              cwd: "C:/repo/workspace-1/apps/desktop",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: null,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "cli",
-              frameworkAnalysisId: "analysis-3",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            }
-          ],
-          analyses: [
-            {
-              id: "analysis-1",
-              targetId: "debug-target-1",
-              serviceId: "service-1",
-              primaryFramework: "vite",
-              confidence: "high",
-              compatibilityLevel: "supported",
-              recommendedInjectionMode: "cli",
-              requiresServiceDiscoveryHandling: true,
-              requiresHmrHandling: true,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              reasons: ["检测到 vite.config.ts"],
-              detectedFiles: ["package.json", "vite.config.ts"],
-              createdAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "analysis-2",
-              targetId: "debug-target-1",
-              serviceId: "service-2",
-              primaryFramework: "node-custom",
-              confidence: "medium",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "env",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              reasons: ["检测到 package.json"],
-              detectedFiles: ["package.json", "src/main.ts"],
-              createdAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "analysis-3",
-              targetId: "debug-target-1",
-              serviceId: "service-3",
-              primaryFramework: "tauri",
-              confidence: "high",
-              compatibilityLevel: "conditional",
-              recommendedInjectionMode: "none",
-              requiresServiceDiscoveryHandling: false,
-              requiresHmrHandling: false,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "forbidden",
-              reasons: ["检测到 src-tauri/tauri.conf.json"],
-              detectedFiles: ["package.json", "src-tauri/tauri.conf.json"],
-              createdAt: "2026-03-26T12:00:00.000Z"
-            }
-          ],
-          autoInjectionEligible: true
-        });
-      }
-
-      if (url.includes("/api/debug-targets/debug-target-1/runtimes?")) {
-        return createJsonResponse({
-          targetId: "debug-target-1",
-          items: [{
-          runtimeSession: {
-            id: "runtime-1",
-            targetId: "debug-target-1",
-            status: "FAILED",
-            failureStage: "service_discovery",
-            startedAt: "2026-03-26T12:00:00.000Z",
-            stoppedAt: "2026-03-26T12:01:00.000Z",
-            createdAt: "2026-03-26T12:00:00.000Z",
-            updatedAt: "2026-03-26T12:01:00.000Z"
-          },
-          target: {
-            id: "debug-target-1",
-            workspaceId: "workspace-1",
-            rootPath: "C:/repo/workspace-1",
-            displayName: "workspace-1",
-            sourceType: "repo",
-            createdAt: "2026-03-26T12:00:00.000Z",
-            updatedAt: "2026-03-26T12:00:00.000Z"
-          },
-          services: [
-            {
-              service: {
-                id: "service-1",
-                targetId: "debug-target-1",
-                role: "frontend",
-                name: "web",
-                cwd: "C:/repo/workspace-1",
-                command: "pnpm",
-                args: ["dev"],
-                env: {},
-                defaultPortHint: 5173,
-                protocol: "http",
-                healthPath: null,
-                adapterKind: "cli",
-                frameworkAnalysisId: "analysis-1",
-                createdAt: "2026-03-26T12:00:00.000Z",
-                updatedAt: "2026-03-26T12:00:00.000Z"
-              },
-              analysis: null,
-              binding: {
-                id: "binding-1",
-                runtimeId: "runtime-1",
-                serviceId: "service-1",
-                processInstanceId: "terminal-1",
-                expectedPort: 5173,
-                leasedPort: 43000,
-                observedPort: null,
-                proxyPath: null,
-                status: "FAILED",
-                updatedAt: "2026-03-26T12:01:00.000Z"
-              },
-              portLease: {
-                id: "lease-1",
-                runtimeId: "runtime-1",
-                serviceId: "service-1",
-                port: 43000,
-                protocol: "tcp",
-                status: "RELEASED",
-                leasedAt: "2026-03-26T12:00:00.000Z",
-                expiresAt: null,
-                releasedAt: "2026-03-26T12:01:00.000Z"
-              },
-              processInstance: {
-                id: "terminal-1",
-                workspaceId: "workspace-1",
-                name: "web",
-                cwd: "C:/repo/workspace-1",
-                shell: "pwsh",
-                runtimeType: "embedded-pty",
-                runtimeSessionId: "terminal-runtime-1",
-                attachTarget: "terminal-1",
-                status: "error",
-                processId: 123,
-                createdByUserId: "user-1",
-                createdAt: "2026-03-26T12:00:00.000Z",
-                lastActiveAt: "2026-03-26T12:00:30.000Z",
-                closedAt: "2026-03-26T12:01:00.000Z",
-                exitCode: 1,
-                statusDetail: "boom",
-                debugRuntimeSessionId: "runtime-1",
-                debugTargetId: "debug-target-1",
-                debugServiceId: "service-1",
-                frameworkAnalysisId: "analysis-1",
-                launcherSourceType: "debug_service",
-                launchStage: "command_dispatched",
-                failureStage: "process_runtime_error",
-                adapterKind: "cli",
-                envPatchSummary: {},
-                artifactRef: null
-              },
-              aiFallbackEdits: []
-            }
-          ]
-          }]
-        });
-      }
-
-      if (url.endsWith("/api/framework-compatibility-matrix")) {
-        return createJsonResponse({
-          version: "2026-04-13",
-          items: [
-            {
-              framework: "vite",
-              compatibilityLevel: "supported",
-              recommendedInjectionMode: "cli",
-              requiresServiceDiscoveryHandling: true,
-              requiresHmrHandling: true,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              notes: "Vite 端口入口清楚，第一阶段默认支持"
-            }
-          ]
-        });
-      }
-
       if (url.endsWith("/api/workspaces/workspace-1") && init?.method === "DELETE") {
         currentSnapshot = createWorkbenchSnapshot([
           {
@@ -5951,194 +6107,6 @@ describe("WorkbenchLayout", () => {
     });
 
     expect(screen.getAllByText("项目二").length).toBeGreaterThan(0);
-  });
-
-  it("工作区管理中的调试入口可以跳到桌面端完整调试详情页", async () => {
-    let currentSnapshot = createWorkbenchSnapshot([
-      {
-        workspace: createWorkspace("workspace-1", "项目一"),
-        sessions: []
-      }
-    ]);
-
-    MockWebSocket.workbenchSnapshot = currentSnapshot;
-    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
-
-      if (url.endsWith("/api/workbench")) {
-        return createJsonResponse(currentSnapshot);
-      }
-
-      if (url.endsWith("/api/debug-targets/analyze") && init?.method === "POST") {
-        return createJsonResponse({
-          target: {
-            id: "debug-target-1",
-            workspaceId: "workspace-1",
-            rootPath: "C:/repo/workspace-1",
-            displayName: "workspace-1",
-            sourceType: "repo",
-            createdAt: "2026-03-26T12:00:00.000Z",
-            updatedAt: "2026-03-26T12:00:00.000Z"
-          },
-          services: [
-            {
-              id: "service-1",
-              targetId: "debug-target-1",
-              role: "frontend",
-              name: "web",
-              cwd: "C:/repo/workspace-1/apps/web",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              defaultPortHint: 5173,
-              protocol: "http",
-              healthPath: null,
-              adapterKind: "cli",
-              frameworkAnalysisId: "analysis-1",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            }
-          ],
-          analyses: [
-            {
-              id: "analysis-1",
-              targetId: "debug-target-1",
-              serviceId: "service-1",
-              primaryFramework: "vite",
-              confidence: "high",
-              compatibilityLevel: "supported",
-              recommendedInjectionMode: "cli",
-              requiresServiceDiscoveryHandling: true,
-              requiresHmrHandling: true,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              reasons: ["检测到 vite.config.ts"],
-              detectedFiles: ["package.json", "vite.config.ts"],
-              createdAt: "2026-03-26T12:00:00.000Z"
-            }
-          ],
-          autoInjectionEligible: true
-        });
-      }
-
-      if (url.endsWith("/api/framework-compatibility-matrix")) {
-        return createJsonResponse({
-          version: "2026-04-13",
-          items: [
-            {
-              framework: "vite",
-              compatibilityLevel: "supported",
-              recommendedInjectionMode: "cli",
-              requiresServiceDiscoveryHandling: true,
-              requiresHmrHandling: true,
-              requiresCallbackHandling: false,
-              aiFallbackPolicy: "conditional",
-              notes: "Vite 端口入口清楚，第一阶段默认支持"
-            }
-          ]
-        });
-      }
-
-      if (url.includes("/api/terminals/templates?workspaceId=workspace-1")) {
-        return createJsonResponse({
-          items: [
-            {
-              id: "template-1",
-              workspaceId: "workspace-1",
-              name: "web",
-              cwd: "C:/repo/workspace-1/apps/web",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              port: 43000,
-              proxyEnabled: true,
-              proxySlug: "web",
-              runtimeType: "node",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "template-2",
-              workspaceId: "workspace-1",
-              name: "host",
-              cwd: "C:/repo/workspace-1/apps/host",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              port: 44000,
-              proxyEnabled: false,
-              proxySlug: null,
-              runtimeType: "node",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            },
-            {
-              id: "template-3",
-              workspaceId: "workspace-1",
-              name: "desktop",
-              cwd: "C:/repo/workspace-1/apps/desktop",
-              command: "pnpm",
-              args: ["tauri", "dev"],
-              env: {},
-              port: null,
-              proxyEnabled: false,
-              proxySlug: null,
-              runtimeType: "node",
-              createdAt: "2026-03-26T12:00:00.000Z",
-              updatedAt: "2026-03-26T12:00:00.000Z"
-            }
-          ]
-        });
-      }
-
-      if (url.includes("/api/terminals/templates/runtime-status?workspaceId=workspace-1")) {
-        return createJsonResponse({
-          items: [
-            {
-              templateId: "template-1",
-              port: 43000,
-              occupied: false,
-              processId: null,
-              processName: null,
-              processCommandLine: null
-            },
-            {
-              templateId: "template-2",
-              port: 44000,
-              occupied: false,
-              processId: null,
-              processName: null,
-              processCommandLine: null
-            }
-          ]
-        });
-      }
-
-      throw new Error(`未处理的请求: ${url}`);
-    }) as typeof fetch;
-
-    renderWorkbenchRoute();
-
-    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
-    const managerDialog = await screen.findByRole("dialog", {
-      name: t("shell.manageWorkspaceTitle")
-    });
-
-    await userEvent.click(within(managerDialog).getByRole("button", { name: /项目一/ }));
-    await userEvent.click(
-      within(managerDialog).getByRole("button", { name: t("shell.workspaceDetailDebugOpenPageAction") })
-    );
-
-    expect(await screen.findByText(t("shell.workspaceDetailDebugPageTitle"))).toBeInTheDocument();
-    expect(
-      await screen.findByText(
-        t("shell.workspaceDetailRegisteredDebugOverallSummary", { runnable: 2, orchestrated: 0, blocked: 1 })
-      )
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: t("shell.workspaceDetailRegisteredDebugOpenProcessManagerAction") })
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") })).not.toBeInTheDocument();
   });
 
   it("收到空 git 快照并写入缓存后，重新挂载工作台也不会崩溃", async () => {

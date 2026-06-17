@@ -36,7 +36,6 @@ import {
 } from "../../terminal/runtime/terminal-runtime-meta";
 import { isTmuxDependencyMissingError } from "../../terminal/runtime/terminal-runtime-errors";
 import { TerminalRuntimeFallbackModal } from "../../terminal/components/TerminalRuntimeFallbackModal";
-import { buildWorkspaceDebugPath } from "../utils/workbench-navigation";
 import {
   type WorkspaceSessionGroup,
   useWorkbenchShell
@@ -1080,18 +1079,6 @@ export function TerminalManagerPanel({
         </div>
 
         <div className="terminal-manager-toolbar terminal-manager-toolbar-header">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!activeWorkspaceId}
-            onClick={() => {
-              if (activeWorkspaceId) {
-                navigate(buildWorkspaceDebugPath(activeWorkspaceId, currentWorkspaceRef));
-              }
-            }}
-          >
-            {t("terminalManager.openWorkspaceDebugAction")}
-          </button>
           <button
             className="ghost-button"
             type="button"

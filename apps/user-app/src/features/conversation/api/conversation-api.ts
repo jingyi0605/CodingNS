@@ -1709,58 +1709,6 @@ export function removeWorkspace(workspaceId: string) {
   });
 }
 
-export function analyzeDebugTarget(payload: {
-  workspaceId: string;
-  rootPath: string;
-  commandHints?: string[];
-}, options?: { targetHostId?: string | null }) {
-  return httpClient.request<DebugTargetAnalysisEnvelopeDto>("/api/debug-targets/analyze", {
-    method: "POST",
-    targetHostId: options?.targetHostId ?? undefined,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function getFrameworkAnalysis(targetId: string) {
-  return httpClient.request<FrameworkAnalysisListEnvelopeDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/framework-analysis`
-  );
-}
-
-export function createDebugLaunchPlan(
-  targetId: string,
-  payload?: { portRequests?: DebugTargetPortRequestDto[] },
-  options?: { targetHostId?: string | null }
-) {
-  return httpClient.request<DebugLaunchPlanDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/launch-plan`,
-    {
-      method: "POST",
-      targetHostId: options?.targetHostId ?? undefined,
-      body: JSON.stringify(payload ?? {})
-    }
-  );
-}
-
-export function getLatestDebugRuntime(targetId: string) {
-  return httpClient.request<DebugRuntimeDetailDto | null>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/runtime-latest`
-  );
-}
-
-export function getRecentDebugRuntimes(targetId: string, limit = 5) {
-  const search = new URLSearchParams();
-  search.set("limit", String(limit));
-
-  return httpClient.request<DebugRuntimeHistoryEnvelopeDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/runtimes?${search.toString()}`
-  );
-}
-
-export function getFrameworkCompatibilityMatrix() {
-  return httpClient.request<FrameworkCompatibilityMatrixDto>("/api/framework-compatibility-matrix");
-}
-
 export function reorderWorkspaces(payload: ReorderWorkspacesPayload) {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces/reorder", {
     method: "PUT",

@@ -169,13 +169,6 @@ const appRoutes = [
             )
           },
           {
-            path: "workspaces/:workspaceId/debug",
-            lazy: lazyRouteComponent(
-              () => import("../features/debug-target/pages/WorkspaceDebugDetailPage"),
-              "WorkspaceDebugDetailPage"
-            )
-          },
-          {
             path: "workspaces/:workspaceId/sessions",
             lazy: lazyRouteComponent(
               () => import("../features/mobile-sessions/pages/SessionIndexPage"),
