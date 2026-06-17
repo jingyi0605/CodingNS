@@ -18,6 +18,7 @@ import remarkGfm from "remark-gfm";
 import { DesktopModal } from "../../../components/DesktopModal";
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import {
+  logPerfDebug,
   logConversationTimelineDebug,
   isTimelineScrollDebugEnabled,
   logTimelineScrollDebug
@@ -1589,9 +1590,6 @@ function resolveAssistantCliKind(group: string | null): AssistantCapabilitySnaps
     case "workspaces":
     case "worktrees":
       return "workspace";
-    case "debug-targets":
-    case "debug-runtimes":
-      return "debug";
     default:
       return "query";
   }
@@ -1781,13 +1779,6 @@ function resolveAssistantCapabilityMeta(capability: string): Omit<AssistantCapab
         title: t("conversation.assistantCapabilityWorktreeCleanupTitle"),
         summary: t("conversation.assistantCapabilitySummaryWorktree")
       };
-    case "debug-targets.run":
-      return {
-        kind: "debug",
-        badge: t("conversation.assistantCapabilityBadgeDebug"),
-        title: t("conversation.assistantCapabilityDebugRunTitle"),
-        summary: t("conversation.assistantCapabilitySummaryDebug")
-      };
     default:
       if (capability.startsWith("sessions.") || capability.startsWith("projects.")) {
         return {
@@ -1821,15 +1812,6 @@ function resolveAssistantCapabilityMeta(capability: string): Omit<AssistantCapab
           kind: "workspace",
           badge: t("conversation.assistantCapabilityBadgeWorkspace"),
           title: t("conversation.assistantCapabilityWorkspaceReadTitle"),
-          summary: t("conversation.assistantCapabilitySummaryRead")
-        };
-      }
-
-      if (capability.startsWith("debug-targets.") || capability.startsWith("debug-runtimes.")) {
-        return {
-          kind: "debug",
-          badge: t("conversation.assistantCapabilityBadgeDebug"),
-          title: t("conversation.assistantCapabilityDebugReadTitle"),
           summary: t("conversation.assistantCapabilitySummaryRead")
         };
       }
@@ -1988,12 +1970,6 @@ function buildAssistantCapabilityRows(
         resolveAssistantWorkspaceName(receipt.targetRef.id, null, navigationLookup)
       );
       pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), readText(result, "status"));
-      break;
-    }
-    case "debug-targets.run": {
-      const result = readRecord(payload, "result");
-      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelDebugTarget"), receipt.targetRef.id);
-      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelRuntime"), readText(result, "runtimeId"));
       break;
     }
     default:
@@ -6023,6 +5999,8 @@ export function MessageTimeline({
   const lastProgrammaticRestoreScrollTopRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const previousRuntimeThinkingPlaceholderRef = useRef<string | null>(null);
+  const renderCycleIdRef = useRef(0);
+  const renderCountForSessionRef = useRef(0);
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
@@ -6049,6 +6027,20 @@ export function MessageTimeline({
   const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
   const actionStateByMessageId = timelineViewModel.actionStateByMessageId;
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
+
+  useEffect(() => {
+    renderCycleIdRef.current += 1;
+    renderCountForSessionRef.current = 0;
+    logPerfDebug("timeline.session_cycle.start", {
+      sessionId,
+      renderCycleId: renderCycleIdRef.current,
+      followTailUpdates,
+      historyState,
+      rawMessagesLength: messages.length,
+      visibleMessagesLength: visibleMessages.length,
+      renderItemsLength: renderItems.length
+    });
+  }, [sessionId]);
 
   function summarizeMessageSignature(signature: string | null): Record<string, unknown> | null {
     if (!signature) {
@@ -6762,6 +6754,21 @@ export function MessageTimeline({
   }, [sessionId, visibleMessages.length]);
 
   useEffect(() => {
+    renderCountForSessionRef.current += 1;
+    logPerfDebug("timeline.render_cycle", {
+      sessionId,
+      renderCycleId: renderCycleIdRef.current,
+      renderCountForSession: renderCountForSessionRef.current,
+      followTailUpdates,
+      historyState,
+      rawMessagesLength: messages.length,
+      visibleMessagesLength: visibleMessages.length,
+      renderItemsLength: renderItems.length,
+      hiddenMessageCount: timelineViewModel.hiddenMessageIds.length,
+      validationIssueCount: timelineViewModel.validationIssues.length,
+      tailItemType: renderItems.at(-1)?.type ?? null
+    });
+
     const currentRenderMessageIds = collectRenderItemMessageIds(renderItems);
     const assistantRenderMoves = collectAssistantRenderMoves(
       previousRenderMessageIdsRef.current,

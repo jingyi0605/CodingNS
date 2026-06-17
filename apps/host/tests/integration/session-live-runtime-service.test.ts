@@ -2703,6 +2703,101 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("getSessionRuntime 遇到短暂 unhealthy 但 Codex transcript 仍有新输出时，不应直接降级为 interrupted", async () => {
+    useFakeNow("2026-03-26T10:00:06.000Z");
+    const { service, sessionHistoryService, sessionStateRepository } = createService();
+    const tempDir = mkdtempSync(path.join(tmpdir(), "codingns-codex-unhealthy-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "codex-running.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T10:00:05.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "子 Agent 还在继续输出" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const providerRuntimeService = {
+      isRunHealthy: vi.fn(() => false),
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef,
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:04.000Z",
+        completedAt: null,
+        detail: "native session attached",
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef,
+      runningState: "running",
+      updatedAt: "2026-03-26T10:00:05.000Z",
+      lastEventAt: "2026-03-26T10:00:05.000Z",
+      completedAt: null,
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "queued_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+
+    const runtime = await service.getSessionRuntime("session-1", "user-1");
+
+    expect(runtime).toMatchObject({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: true,
+      canAttach: true,
+      canInterrupt: true,
+      activityResolutionSource: "authoritative_runtime"
+    });
+    expect(sessionStateRepository.upsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        runningState: "interrupted"
+      })
+    );
+    expect(sessionHistoryService.refreshRuntimeFallbackSession).not.toHaveBeenCalled();
+  });
+
   it("运行中会话可以把新消息加入项目队列", async () => {
     const {
       service,

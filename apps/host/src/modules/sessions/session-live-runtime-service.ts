@@ -91,6 +91,7 @@ import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
 import type { WorkspaceSessionRuntimeContextService } from "./workspace-session-runtime-context-service.js";
+import { inspectSessionActivity } from "./session-activity-inspector.js";
 
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
@@ -1459,6 +1460,24 @@ export class SessionLiveRuntimeService {
     }
 
     if (this.providerRuntimeService.isRunHealthy(sessionId) === false) {
+      if (
+        snapshot.provider === "codex"
+        && snapshot.rawStoreRef
+      ) {
+        const inspection = inspectSessionActivity("codex", snapshot.rawStoreRef);
+        const snapshotLastEventAtMs = snapshot.lastEventAt ? Date.parse(snapshot.lastEventAt) : Number.NaN;
+        const inspectionLastEventAtMs = inspection.lastEventAt ? Date.parse(inspection.lastEventAt) : Number.NaN;
+
+        if (
+          inspection.runningState === "running"
+          && Number.isFinite(snapshotLastEventAtMs)
+          && Number.isFinite(inspectionLastEventAtMs)
+          && inspectionLastEventAtMs > snapshotLastEventAtMs
+        ) {
+          return snapshot;
+        }
+      }
+
       this.demoteDeadRuntimeSnapshot(snapshot);
       this.scheduleDeadRuntimeReconciliation(snapshot);
       return null;

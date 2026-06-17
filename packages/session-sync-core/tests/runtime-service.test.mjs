@@ -213,3 +213,69 @@ test("ProviderRuntimeService 会忽略已结束 active run 的迟到 binding 更
     await service.dispose();
   }
 });
+
+test("ProviderRuntimeService 在 launch.completed 后不会再接收迟到消息事件", async () => {
+  let emitLateMessage = null;
+  let resolveCompleted;
+  const completed = new Promise((resolve) => {
+    resolveCompleted = resolve;
+  });
+  const observed = [];
+
+  const adapter = {
+    providerId: "codex",
+    async startSession(_request, sink) {
+      emitLateMessage = async () => {
+        await sink.emit({
+          type: "message",
+          providerSessionId: "thread-1",
+          rawStoreRef: "codex://thread-1",
+          timestamp: "2026-03-26T10:00:01.000Z",
+          message: {
+            messageId: "assistant-1",
+            provider: "codex",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            kind: "text",
+            content: "late message",
+            toolCall: null,
+            attachments: [],
+            timestamp: "2026-03-26T10:00:01.000Z",
+            sequence: 1,
+            rawRef: "codex://thread-1#line=1"
+          }
+        });
+      };
+
+      return {
+        providerSessionId: "thread-1",
+        rawStoreRef: "codex://thread-1",
+        completed
+      };
+    },
+    async continueSession() {
+      throw new Error("not used");
+    }
+  };
+
+  const service = new ProviderRuntimeService([adapter]);
+
+  try {
+    const handle = await service.startSession(createRunRequest());
+    const subscription = service.subscribe("session-1", (event) => {
+      observed.push(event);
+    });
+
+    resolveCompleted();
+    await completed;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await emitLateMessage?.();
+
+    assert.equal(service.getSnapshot("session-1"), null);
+    assert.equal(observed.some((event) => event.type === "message"), false);
+    subscription.close();
+    assert.equal(handle.getSnapshot().providerSessionId, "thread-1");
+  } finally {
+    await service.dispose();
+  }
+});

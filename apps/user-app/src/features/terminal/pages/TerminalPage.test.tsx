@@ -1051,6 +1051,48 @@ describe("TerminalPage", () => {
     expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
   });
 
+  it("PeerHost 工作区在普通路由下仍会沿用当前远端 workspaceRef，而不是退回主 HOST", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    renderPage("/workspaces/workspace-1/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        },
+        currentTargetHostId: "peer-host-1",
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+  });
+
   it("显式传入不在导航列表里的工作区时，仍然使用该工作区加载终端", async () => {
     renderPage("/terminals", {
       externalWindowWorkspaceId: "workspace-isolated-1"

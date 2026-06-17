@@ -3136,14 +3136,6 @@ function getSupportedAssistantCliActions(group: string | null): {
       readonly: new Set(["list", "history"]),
       mutating: new Set(["send", "close"])
     },
-    "debug-targets": {
-      readonly: new Set(["compatibility-matrix", "framework-analysis", "runtime-latest", "runtimes"]),
-      mutating: new Set(["analyze", "refresh-framework-analysis", "launch-plan", "run"])
-    },
-    "debug-runtimes": {
-      readonly: new Set(["get"]),
-      mutating: new Set()
-    },
     workspaces: {
       readonly: new Set(["list", "browse", "management"]),
       mutating: new Set(["mkdir", "import", "clone", "reorder", "nav-state", "remove"])

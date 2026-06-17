@@ -94,6 +94,7 @@ const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
 const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_TAIL_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*$/g;
+let nextSessionRuntimeStoreDebugInstanceId = 1;
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -142,6 +143,7 @@ export type TimelineEvent =
       source: string;
       messages: HistoryMessageDto[];
       replaceSnapshotSeed: boolean;
+      incomingOlderCursor?: string | null;
     }
   | {
       type: "runtime.message";
@@ -203,6 +205,9 @@ export class SessionRuntimeStore {
   } | null = null;
   private readonly pendingReplyDebugTraces: PendingReplyDebugTrace[] = [];
   private readonly hasAuthoritativeBootstrapMessages: boolean;
+  private readonly debugStoreInstanceId = nextSessionRuntimeStoreDebugInstanceId++;
+  private debugPatchCount = 0;
+  private destroyed = false;
 
   constructor(
     private readonly sessionId: string,
@@ -230,7 +235,7 @@ export class SessionRuntimeStore {
         replaceSnapshotSeedOnBackfill:
           !this.hasAuthoritativeBootstrapMessages
           && (cachedSnapshot?.messages.length ?? 0) > 0
-          && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
+          && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
           && (cachedSnapshot?.pagesLoaded ?? 0) <= 1
       }
     );
@@ -261,6 +266,14 @@ export class SessionRuntimeStore {
       pagesLoaded: cachedSnapshot?.pagesLoaded ?? 0
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
+    logPerfDebug("session_runtime.store.created", {
+      storeInstanceId: this.debugStoreInstanceId,
+      sessionId: this.sessionId,
+      targetHostId: this.options.targetHostId ?? null,
+      bootstrapMessageCount: options.bootstrapMessages?.length ?? 0,
+      cachedMessageCount: cachedSnapshot?.messages?.length ?? 0,
+      cachedTimelineItemCount: cachedSnapshot?.timelineItems?.length ?? 0
+    });
   }
 
   subscribe = (listener: RuntimeListener) => {
@@ -281,7 +294,8 @@ export class SessionRuntimeStore {
       type: "history.merge",
       source: "initialize_bootstrap",
       messages: bootstrapMessages,
-      replaceSnapshotSeed: false
+      replaceSnapshotSeed: false,
+      incomingOlderCursor: null
     });
     const hasBootstrappedMessages = this.hasAuthoritativeBootstrapMessages;
 
@@ -345,7 +359,7 @@ export class SessionRuntimeStore {
       replaceSnapshotSeedOnBackfill:
         !this.hasAuthoritativeBootstrapMessages
         && (cachedSnapshot?.messages.length ?? 0) > 0
-        && (cachedSnapshot?.messages.length ?? 0) < REALTIME_LIMIT
+        && (cachedSnapshot?.messages.length ?? 0) <= REALTIME_LIMIT
         && (cachedSnapshot?.pagesLoaded ?? 0) <= 1
     });
     this.state = createInitialRuntimeState({
@@ -451,11 +465,14 @@ export class SessionRuntimeStore {
         source: "send_failed",
         clientRequestId
       });
+      const apiError = error instanceof ApiError ? error : null;
       this.patch({
         messages: failedTimeline.messages,
         session: withRunningState(this.state.session, "failed"),
         runtimeHasActiveRun: false,
-        runtimeCanInterrupt: false
+        runtimeCanInterrupt: false,
+        errorCode: apiError?.errorCode ?? "SESSION_SEND_FAILED",
+        errorDetail: apiError?.message ?? (error instanceof Error ? error.message : "unknown")
       });
       throw error;
     }
@@ -507,9 +524,12 @@ export class SessionRuntimeStore {
         source: "retry_failed",
         clientRequestId
       });
+      const apiError = error instanceof ApiError ? error : null;
       this.patch({
         messages: failedTimeline.messages,
-        session: withRunningState(this.state.session, "failed")
+        session: withRunningState(this.state.session, "failed"),
+        errorCode: apiError?.errorCode ?? "SESSION_SEND_FAILED",
+        errorDetail: apiError?.message ?? (error instanceof Error ? error.message : "unknown")
       });
       throw error;
     }
@@ -637,6 +657,11 @@ export class SessionRuntimeStore {
   }
 
   destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+
+    this.destroyed = true;
     this.clearHistoryBootstrapFallbackTimer();
     this.clearOlderHistoryPrefetch();
     this.realtimeClient?.close();
@@ -654,6 +679,18 @@ export class SessionRuntimeStore {
     }
 
     this.runtimeRefreshMode = null;
+    logPerfDebug("session_runtime.store.destroyed", {
+      storeInstanceId: this.debugStoreInstanceId,
+      sessionId: this.sessionId,
+      targetHostId: this.options.targetHostId ?? null,
+      patchCount: this.debugPatchCount,
+      listenerCount: this.listeners.size,
+      messageCount: this.state.messages.length,
+      timelineItemCount: this.state.timelineItems.length,
+      permissionRequestCount: this.state.permissionRequests.length,
+      queuedMessageCount: this.state.queuedMessages.length,
+      connectionState: this.state.connectionState
+    });
   }
 
   private startRealtime(): void {
@@ -717,17 +754,21 @@ export class SessionRuntimeStore {
         this.scheduleRuntimeRefresh("poll", "connection_state_change");
       },
       onEnvelope: (event) => {
+        const isFirstHistoryEnvelope = !this.historyBootstrapEnvelopeReceived;
         this.historyBootstrapEnvelopeReceived = true;
         this.clearHistoryBootstrapFallbackTimer();
         const shouldAttemptReplaceSnapshotSeed =
-          event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
-        const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
+          isFirstHistoryEnvelope
+          && this.replaceSnapshotSeedOnBackfill
+          && (event.type === "session.backfill" || event.type === "session.delta");
+        const { messages: merged, replacedSnapshotSeed, didChangeMessages } = this.mergeHistoryMessages(
           event.messages,
           shouldAttemptReplaceSnapshotSeed,
-          event.type === "session.backfill" ? "realtime_backfill" : "realtime_delta"
+          event.type === "session.backfill" ? "realtime_backfill" : "realtime_delta",
+          event.olderCursor ?? null
         );
         this.patch({
-          messages: merged,
+          ...(didChangeMessages ? { messages: merged } : {}),
           lastCursor: event.cursor,
           historyState: "ready",
           olderCursor:
@@ -816,6 +857,7 @@ export class SessionRuntimeStore {
   }
 
   private patch(input: Partial<SessionRuntimeState>): void {
+    const previousState = this.state;
     let nextInput = input;
 
     if (Object.prototype.hasOwnProperty.call(input, "session")) {
@@ -826,21 +868,42 @@ export class SessionRuntimeStore {
       };
     }
 
-    if (
+    const nextSessionForTimeline = (
       Object.prototype.hasOwnProperty.call(nextInput, "session")
-      || Object.prototype.hasOwnProperty.call(nextInput, "messages")
-    ) {
+        ? nextInput.session
+        : this.state.session
+    ) ?? null;
+    const nextMessagesForTimeline = Object.prototype.hasOwnProperty.call(nextInput, "messages")
+      ? nextInput.messages ?? []
+      : this.state.messages;
+    const shouldRebuildTimelineItems =
+      Object.prototype.hasOwnProperty.call(nextInput, "messages")
+      || (
+        Object.prototype.hasOwnProperty.call(nextInput, "session")
+        && !isConversationTimelineSessionStateEqual(
+          this.state.session,
+          nextSessionForTimeline
+        )
+      );
+
+    if (shouldRebuildTimelineItems) {
       nextInput = {
         ...nextInput,
         timelineItems: buildConversationTimelineStateItems(
-          (Object.prototype.hasOwnProperty.call(nextInput, "session")
-            ? nextInput.session
-            : this.state.session) ?? null,
-          (Object.prototype.hasOwnProperty.call(nextInput, "messages")
-            ? nextInput.messages
-            : this.state.messages) ?? []
+          nextSessionForTimeline,
+          nextMessagesForTimeline
         )
       };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(nextInput, "messages")) {
+      this.logPatchMessagesDiffDebug(previousState.messages, nextInput.messages ?? []);
+    }
+
+    nextInput = filterNoopSessionRuntimePatch(previousState, nextInput);
+
+    if (Object.keys(nextInput).length === 0) {
+      return;
     }
 
     this.state = {
@@ -858,6 +921,20 @@ export class SessionRuntimeStore {
       || Object.prototype.hasOwnProperty.call(nextInput, "queuedMessages")
     ) {
       this.persistSnapshot();
+    }
+
+    if (isPerfDebugEnabled()) {
+      this.debugPatchCount += 1;
+      logPerfDebug("session_runtime.patch", {
+        storeInstanceId: this.debugStoreInstanceId,
+        patchSeq: this.debugPatchCount,
+        sessionId: this.sessionId,
+        changedKeys: Object.keys(nextInput).sort(),
+        derivedTimelineItemsRebuilt:
+          Object.prototype.hasOwnProperty.call(nextInput, "timelineItems")
+          && !Object.prototype.hasOwnProperty.call(input, "timelineItems"),
+        summary: summarizeSessionRuntimePatch(previousState, this.state, nextInput)
+      });
     }
 
     this.emit();
@@ -915,13 +992,19 @@ export class SessionRuntimeStore {
   private mergeHistoryMessages(
     incoming: HistoryMessageDto[],
     replaceSnapshotSeed: boolean,
-    source: string
-  ): { messages: SessionMessageViewModel[]; replacedSnapshotSeed: boolean } {
+    source: string,
+    incomingOlderCursor: string | null = null
+  ): {
+    messages: SessionMessageViewModel[];
+    replacedSnapshotSeed: boolean;
+    didChangeMessages: boolean;
+  } {
     const result = this.applyTimelineEvent({
       type: "history.merge",
       source,
       messages: incoming,
-      replaceSnapshotSeed
+      replaceSnapshotSeed,
+      incomingOlderCursor
     });
 
     this.logCodexMergeDebug(
@@ -937,9 +1020,21 @@ export class SessionRuntimeStore {
       }
     );
 
+    this.logHistoryMergeRenderableDiffDebug(
+      source,
+      result.previousMessages,
+      incoming,
+      result.messages,
+      !areRenderedMessagesEquivalent(result.previousMessages, result.messages)
+    );
+
     return {
       messages: result.messages,
-      replacedSnapshotSeed: result.replacedSnapshotSeed
+      replacedSnapshotSeed: result.replacedSnapshotSeed,
+      didChangeMessages: !areRenderedMessagesEquivalent(
+        result.previousMessages,
+        result.messages
+      )
     };
   }
 
@@ -1107,14 +1202,15 @@ export class SessionRuntimeStore {
       }
 
       this.historyBootstrapEnvelopeReceived = true;
-      const { messages: merged, replacedSnapshotSeed } = this.mergeHistoryMessages(
+      const { messages: merged, replacedSnapshotSeed, didChangeMessages } = this.mergeHistoryMessages(
         page.messages,
         this.replaceSnapshotSeedOnBackfill,
-        "http_bootstrap_fallback"
+        "http_bootstrap_fallback",
+        page.nextCursor
       );
 
       this.patch({
-        messages: merged,
+        ...(didChangeMessages ? { messages: merged } : {}),
         historyState: "ready",
         olderCursor:
           !replacedSnapshotSeed && this.state.pagesLoaded > 1
@@ -1961,6 +2057,80 @@ export class SessionRuntimeStore {
       afterDuplicateGroupCount: afterDuplicates.length,
       afterDuplicateGroups: afterDuplicates.slice(0, 3),
       ...extra
+    });
+  }
+
+  private logHistoryMergeRenderableDiffDebug(
+    source: string,
+    previousMessages: SessionMessageViewModel[],
+    incoming: HistoryMessageDto[],
+    nextMessages: SessionMessageViewModel[],
+    didChangeMessages: boolean
+  ): void {
+    if (
+      incoming.length < 30
+      || previousMessages.length !== nextMessages.length
+      || previousMessages.length === 0
+      || (!didChangeMessages && areRenderedMessagesEquivalent(previousMessages, nextMessages))
+    ) {
+      return;
+    }
+
+    const firstChangedIndex = findFirstRenderableChangeIndex(previousMessages, nextMessages);
+
+    if (firstChangedIndex < 0) {
+      return;
+    }
+
+    const previousMessage = previousMessages[firstChangedIndex] ?? null;
+    const nextMessage = nextMessages[firstChangedIndex] ?? null;
+
+    logSessionMessageDedupDebug("session.messages.merge.render_diff", {
+      sessionId: this.sessionId,
+      source,
+      previousCount: previousMessages.length,
+      nextCount: nextMessages.length,
+      incomingCount: incoming.length,
+      firstChangedIndex,
+      previous: previousMessage ? summarizeTimelineBridgeMessageForDebug(previousMessage) : null,
+      next: nextMessage ? summarizeTimelineBridgeMessageForDebug(nextMessage) : null,
+      previousRenderableSignature: previousMessage
+        ? buildTimelineRenderablePayloadSignature(previousMessage)
+        : null,
+      nextRenderableSignature: nextMessage
+        ? buildTimelineRenderablePayloadSignature(nextMessage)
+        : null
+    });
+  }
+
+  private logPatchMessagesDiffDebug(
+    previousMessages: SessionMessageViewModel[],
+    nextMessages: SessionMessageViewModel[]
+  ): void {
+    if (
+      previousMessages.length === 0
+      || previousMessages.length !== nextMessages.length
+    ) {
+      return;
+    }
+
+    const firstChangedIndex = findFirstRenderableChangeIndex(previousMessages, nextMessages);
+
+    if (firstChangedIndex < 0) {
+      return;
+    }
+
+    const previousMessage = previousMessages[firstChangedIndex] ?? null;
+    const nextMessage = nextMessages[firstChangedIndex] ?? null;
+
+    logPerfDebug("session_runtime.patch.messages_diff", {
+      sessionId: this.sessionId,
+      previousMessagesLength: previousMessages.length,
+      nextMessagesLength: nextMessages.length,
+      sameRenderableMessages: areRenderedMessagesEquivalent(previousMessages, nextMessages),
+      firstChangedIndex,
+      previous: previousMessage ? summarizeTimelineBridgeMessageForDebug(previousMessage) : null,
+      next: nextMessage ? summarizeTimelineBridgeMessageForDebug(nextMessage) : null
     });
   }
 }
@@ -3361,6 +3531,17 @@ function deriveTimelineMessages(
   );
 }
 
+function isTimelineLayersStateShallowEqual(
+  left: TimelineLayersState,
+  right: TimelineLayersState
+): boolean {
+  return left.authoritativeMessages === right.authoritativeMessages
+    && left.runtimeOverlayMessages === right.runtimeOverlayMessages
+    && left.activeRuntimeOverlayKeys === right.activeRuntimeOverlayKeys
+    && left.pendingMessages === right.pendingMessages
+    && left.replaceSnapshotSeedOnBackfill === right.replaceSnapshotSeedOnBackfill;
+}
+
 export function applyTimelineEventToLayers(
   current: TimelineLayersState,
   sessionId: string,
@@ -3389,9 +3570,27 @@ export function applyTimelineEventToLayers(
       replacedSnapshotSeed =
         event.replaceSnapshotSeed
         && current.replaceSnapshotSeedOnBackfill
-        && shouldReplaceSnapshotSeedWithIncoming(current.authoritativeMessages, event.messages);
+        && shouldReplaceSnapshotSeedWithIncoming(
+          current.authoritativeMessages,
+          event.messages,
+          event.incomingOlderCursor ?? null
+        );
+      const canReuseCurrentAuthoritativeMessages =
+        !replacedSnapshotSeed
+        && isSameAuthoritativeHistoryPage(
+          current.authoritativeMessages,
+          event.messages,
+          sessionId
+        );
       const baseMessages = replacedSnapshotSeed ? [] : current.authoritativeMessages;
-      const authoritativeMessages = mergeAuthoritativeMessages(baseMessages, sessionId, event.messages);
+      const authoritativeMessages = canReuseCurrentAuthoritativeMessages
+        ? current.authoritativeMessages
+        : mergeAuthoritativeMessages(baseMessages, sessionId, event.messages);
+      const pendingMessages = removeResolvedPendingMessages(
+        current.pendingMessages,
+        event.messages,
+        sessionId
+      );
       next = {
         ...current,
         authoritativeMessages,
@@ -3402,11 +3601,7 @@ export function applyTimelineEventToLayers(
         )
           ? []
           : current.activeRuntimeOverlayKeys,
-        pendingMessages: removeResolvedPendingMessages(
-          current.pendingMessages,
-          event.messages,
-          sessionId
-        ),
+        pendingMessages,
         replaceSnapshotSeedOnBackfill:
           replacedSnapshotSeed ? false : current.replaceSnapshotSeedOnBackfill
       };
@@ -3526,7 +3721,9 @@ export function applyTimelineEventToLayers(
     )
   };
 
-  const messages = deriveTimelineMessages(next);
+  const messages = isTimelineLayersStateShallowEqual(current, next)
+    ? previousMessages
+    : deriveTimelineMessages(next);
 
   return {
     timeline: next,
@@ -4196,6 +4393,175 @@ function sameMessageIdSequence(
   return true;
 }
 
+function isSameAuthoritativeHistoryPage(
+  current: SessionMessageViewModel[],
+  incoming: HistoryMessageDto[],
+  sessionId: string
+): boolean {
+  if (current.length === 0 || current.length !== incoming.length) {
+    return false;
+  }
+
+  for (let index = 0; index < incoming.length; index += 1) {
+    const currentMessage = current[index];
+    const incomingMessage = incoming[index];
+
+    if (!currentMessage || !incomingMessage) {
+      return false;
+    }
+
+    const incomingViewMessage = toViewMessage(sessionId, incomingMessage);
+
+    if (!isSameAuthoritativeHistoryMessage(currentMessage, incomingViewMessage)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isSameAuthoritativeHistoryMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  return areRenderedMessageEquivalent(current, incoming);
+}
+
+function areRenderedMessagesEquivalent(
+  left: SessionMessageViewModel[],
+  right: SessionMessageViewModel[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftMessage = left[index];
+    const rightMessage = right[index];
+
+    if (!leftMessage || !rightMessage || !areRenderedMessageEquivalent(leftMessage, rightMessage)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function findFirstRenderableChangeIndex(
+  left: SessionMessageViewModel[],
+  right: SessionMessageViewModel[]
+): number {
+  const minLength = Math.min(left.length, right.length);
+
+  for (let index = 0; index < minLength; index += 1) {
+    const leftMessage = left[index];
+    const rightMessage = right[index];
+
+    if (!leftMessage || !rightMessage || !areRenderedMessageEquivalent(leftMessage, rightMessage)) {
+      return index;
+    }
+  }
+
+  return left.length === right.length ? -1 : minLength;
+}
+
+function areRenderedMessageEquivalent(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  return left.role === right.role
+    && left.kind === right.kind
+    && left.timestamp === right.timestamp
+    && left.sequence === right.sequence
+    && buildTimelineRenderablePayloadSignature(left) === buildTimelineRenderablePayloadSignature(right);
+}
+
+function areToolCallsEquivalent(
+  left: SessionMessageViewModel["toolCall"],
+  right: SessionMessageViewModel["toolCall"]
+): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.callId === right.callId
+    && left.name === right.name
+    && left.input === right.input
+    && left.output === right.output
+    && left.error === right.error
+    && left.status === right.status;
+}
+
+function areAttachmentsEquivalent(
+  left: MessageAttachmentDto[] | undefined,
+  right: MessageAttachmentDto[] | undefined
+): boolean {
+  const normalizedLeft = left ?? [];
+  const normalizedRight = right ?? [];
+
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return false;
+  }
+
+  for (let index = 0; index < normalizedLeft.length; index += 1) {
+    const leftAttachment = normalizedLeft[index];
+    const rightAttachment = normalizedRight[index];
+
+    if (!leftAttachment || !rightAttachment) {
+      return false;
+    }
+
+    if (
+      leftAttachment.id !== rightAttachment.id
+      || leftAttachment.kind !== rightAttachment.kind
+      || leftAttachment.fileName !== rightAttachment.fileName
+      || leftAttachment.mimeType !== rightAttachment.mimeType
+      || leftAttachment.fileSize !== rightAttachment.fileSize
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areAttachmentPayloadsEquivalent(
+  left: AttachmentPayload[] | null | undefined,
+  right: AttachmentPayload[] | null | undefined
+): boolean {
+  const normalizedLeft = left ?? [];
+  const normalizedRight = right ?? [];
+
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return false;
+  }
+
+  for (let index = 0; index < normalizedLeft.length; index += 1) {
+    const leftPayload = normalizedLeft[index];
+    const rightPayload = normalizedRight[index];
+
+    if (!leftPayload || !rightPayload) {
+      return false;
+    }
+
+    if (
+      leftPayload.kind !== rightPayload.kind
+      || leftPayload.fileName !== rightPayload.fileName
+      || leftPayload.mimeType !== rightPayload.mimeType
+      || leftPayload.fileSize !== rightPayload.fileSize
+      || leftPayload.contentBase64 !== rightPayload.contentBase64
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function didOlderHistoryPreserveTail(
   previous: SessionMessageViewModel[],
   next: SessionMessageViewModel[]
@@ -4332,16 +4698,388 @@ export function useSessionRuntimeStore<T>(
   store: SessionRuntimeStore,
   selector: (state: SessionRuntimeState) => T
 ) {
-  const [value, setValue] = useState(() => selector(store.getState()));
+  return useSyncExternalStore(
+    store.subscribe,
+    () => selector(store.getState()),
+    () => selector(store.getState())
+  );
+}
 
-  useEffect(() => {
-    setValue(selector(store.getState()));
-    return store.subscribe(() => {
-      setValue(selector(store.getState()));
-    });
-  }, [selector, store]);
+function isConversationTimelineSessionStateEqual(
+  previousSession: SessionRuntimeState["session"],
+  nextSession: SessionRuntimeState["session"]
+): boolean {
+  if (previousSession === nextSession) {
+    return true;
+  }
 
-  return value;
+  if (!previousSession || !nextSession) {
+    return false;
+  }
+
+  return (
+    previousSession.sessionId === nextSession.sessionId
+    && previousSession.runningState === nextSession.runningState
+    && previousSession.syncStatus === nextSession.syncStatus
+    && previousSession.lastErrorCode === nextSession.lastErrorCode
+    && previousSession.lastErrorDetail === nextSession.lastErrorDetail
+    && previousSession.detail === nextSession.detail
+  );
+}
+
+function filterNoopSessionRuntimePatch(
+  previousState: SessionRuntimeState,
+  input: Partial<SessionRuntimeState>
+): Partial<SessionRuntimeState> {
+  const filtered: Partial<SessionRuntimeState> = {};
+
+  for (const key of Object.keys(input) as Array<keyof SessionRuntimeState>) {
+    const nextValue = input[key];
+    if (typeof nextValue === "undefined") {
+      continue;
+    }
+
+    if (!isSessionRuntimePatchValueEqual(key, previousState[key], nextValue)) {
+      assignSessionRuntimePatchValue(filtered, key, nextValue);
+    }
+  }
+
+  return filtered;
+}
+
+function assignSessionRuntimePatchValue<Key extends keyof SessionRuntimeState>(
+  target: Partial<SessionRuntimeState>,
+  key: Key,
+  value: SessionRuntimeState[Key]
+): void {
+  target[key] = value;
+}
+
+function isSessionRuntimePatchValueEqual(
+  key: keyof SessionRuntimeState,
+  previousValue: SessionRuntimeState[keyof SessionRuntimeState],
+  nextValue: SessionRuntimeState[keyof SessionRuntimeState]
+): boolean {
+  if (previousValue === nextValue) {
+    return true;
+  }
+
+  if (key === "session") {
+    return areSessionRuntimeSessionsEquivalent(
+      previousValue as SessionRuntimeState["session"],
+      nextValue as SessionRuntimeState["session"]
+    );
+  }
+
+  if (key === "messages") {
+    return areRenderedMessagesEquivalent(
+      (previousValue as SessionRuntimeState["messages"]) ?? [],
+      (nextValue as SessionRuntimeState["messages"]) ?? []
+    );
+  }
+
+  if (key === "timelineItems") {
+    return areConversationTimelineSourceItemsEquivalent(
+      (previousValue as SessionRuntimeState["timelineItems"]) ?? [],
+      (nextValue as SessionRuntimeState["timelineItems"]) ?? []
+    );
+  }
+
+  if (key === "permissionRequests" || key === "queuedMessages") {
+    return areSessionRuntimeObjectArraysEquivalent(
+      (previousValue as Array<Record<string, unknown>> | null | undefined) ?? [],
+      (nextValue as Array<Record<string, unknown>> | null | undefined) ?? []
+    );
+  }
+
+  return Object.is(previousValue, nextValue);
+}
+
+function areSessionRuntimeSessionsEquivalent(
+  previousSession: SessionRuntimeState["session"],
+  nextSession: SessionRuntimeState["session"]
+): boolean {
+  if (previousSession === nextSession) {
+    return true;
+  }
+
+  if (!previousSession || !nextSession) {
+    return false;
+  }
+
+  return (
+    previousSession.sessionId === nextSession.sessionId
+    && previousSession.workspaceId === nextSession.workspaceId
+    && previousSession.provider === nextSession.provider
+    && previousSession.providerSessionId === nextSession.providerSessionId
+    && previousSession.rawStoreRef === nextSession.rawStoreRef
+    && previousSession.providerConfigMode === nextSession.providerConfigMode
+    && previousSession.providerPresetId === nextSession.providerPresetId
+    && previousSession.parentSessionId === nextSession.parentSessionId
+    && previousSession.sessionKind === nextSession.sessionKind
+    && previousSession.annotationSourceMessageId === nextSession.annotationSourceMessageId
+    && previousSession.annotationSourceText === nextSession.annotationSourceText
+    && previousSession.forkMethod === nextSession.forkMethod
+    && previousSession.forkSourceType === nextSession.forkSourceType
+    && previousSession.forkSourceSessionId === nextSession.forkSourceSessionId
+    && previousSession.forkSourceMessageId === nextSession.forkSourceMessageId
+    && previousSession.inheritedPrefixMessageCount === nextSession.inheritedPrefixMessageCount
+    && previousSession.isSubagent === nextSession.isSubagent
+    && previousSession.subagentLabel === nextSession.subagentLabel
+    && previousSession.isArchived === nextSession.isArchived
+    && previousSession.isFavorite === nextSession.isFavorite
+    && previousSession.title === nextSession.title
+    && previousSession.messageCount === nextSession.messageCount
+    && previousSession.lastMessageAt === nextSession.lastMessageAt
+    && previousSession.createdAt === nextSession.createdAt
+    && previousSession.updatedAt === nextSession.updatedAt
+    && previousSession.syncStatus === nextSession.syncStatus
+    && previousSession.syncCursor === nextSession.syncCursor
+    && previousSession.lastSyncAt === nextSession.lastSyncAt
+    && previousSession.lastErrorCode === nextSession.lastErrorCode
+    && previousSession.lastErrorDetail === nextSession.lastErrorDetail
+    && previousSession.resumedAt === nextSession.resumedAt
+    && previousSession.runningState === nextSession.runningState
+    && previousSession.activitySource === nextSession.activitySource
+    && previousSession.activityResolutionSource === nextSession.activityResolutionSource
+    && previousSession.activityConfidence === nextSession.activityConfidence
+    && previousSession.runId === nextSession.runId
+    && previousSession.detail === nextSession.detail
+    && previousSession.lastEventAt === nextSession.lastEventAt
+    && previousSession.completedAt === nextSession.completedAt
+    && previousSession.lastSeenAt === nextSession.lastSeenAt
+    && previousSession.watchdogTriggeredAt === nextSession.watchdogTriggeredAt
+    && previousSession.activityState === nextSession.activityState
+    && previousSession.parallelGroup === nextSession.parallelGroup
+    && previousSession.displayParentSessionId === nextSession.displayParentSessionId
+    && previousSession.sessionIsolatedWorkspace === nextSession.sessionIsolatedWorkspace
+  );
+}
+
+function areConversationTimelineSourceItemsEquivalent(
+  previousItems: ConversationTimelineSourceItem[],
+  nextItems: ConversationTimelineSourceItem[]
+): boolean {
+  if (previousItems === nextItems) {
+    return true;
+  }
+
+  if (previousItems.length !== nextItems.length) {
+    return false;
+  }
+
+  for (let index = 0; index < previousItems.length; index += 1) {
+    const previousItem = previousItems[index];
+    const nextItem = nextItems[index];
+
+    if (!previousItem || !nextItem || JSON.stringify(previousItem) !== JSON.stringify(nextItem)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areSessionRuntimeObjectArraysEquivalent(
+  previousItems: Array<Record<string, unknown>>,
+  nextItems: Array<Record<string, unknown>>
+): boolean {
+  if (previousItems === nextItems) {
+    return true;
+  }
+
+  if (previousItems.length !== nextItems.length) {
+    return false;
+  }
+
+  for (let index = 0; index < previousItems.length; index += 1) {
+    if (JSON.stringify(previousItems[index] ?? null) !== JSON.stringify(nextItems[index] ?? null)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function summarizeSessionRuntimePatch(
+  previousState: SessionRuntimeState,
+  nextState: SessionRuntimeState,
+  input: Partial<SessionRuntimeState>
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = {};
+
+  for (const key of Object.keys(input) as Array<keyof SessionRuntimeState>) {
+    summary[key] = summarizeSessionRuntimePatchEntry(
+      key,
+      previousState[key],
+      nextState[key]
+    );
+  }
+
+  return summary;
+}
+
+function summarizeSessionRuntimePatchEntry(
+  key: keyof SessionRuntimeState,
+  previousValue: SessionRuntimeState[keyof SessionRuntimeState],
+  nextValue: SessionRuntimeState[keyof SessionRuntimeState]
+): Record<string, unknown> {
+  if (key === "session") {
+    const previousSession = previousValue as SessionRuntimeState["session"];
+    const nextSession = nextValue as SessionRuntimeState["session"];
+    const hiddenDifferences = summarizeSessionRuntimeSessionHiddenDifferences(
+      previousSession,
+      nextSession
+    );
+
+    return {
+      previous: summarizeSessionRuntimeSession(previousSession),
+      next: summarizeSessionRuntimeSession(nextSession),
+      ...(hiddenDifferences.length > 0 ? { hiddenDifferences } : {})
+    };
+  }
+
+  if (Array.isArray(previousValue) || Array.isArray(nextValue)) {
+    return {
+      previous: summarizeSessionRuntimeArray(previousValue),
+      next: summarizeSessionRuntimeArray(nextValue)
+    };
+  }
+
+  return {
+    previous: summarizeSessionRuntimeScalar(previousValue),
+    next: summarizeSessionRuntimeScalar(nextValue)
+  };
+}
+
+function summarizeSessionRuntimeSession(
+  session: SessionRuntimeState["session"]
+): Record<string, unknown> | null {
+  if (!session) {
+    return null;
+  }
+
+  return {
+    sessionId: session.sessionId,
+    workspaceId: session.workspaceId,
+    provider: session.provider,
+    runningState: session.runningState,
+    activityState: session.activityState ?? null,
+    updatedAt: session.updatedAt,
+    lastSeenAt: session.lastSeenAt ?? null
+  };
+}
+
+function summarizeSessionRuntimeSessionHiddenDifferences(
+  previousSession: SessionRuntimeState["session"],
+  nextSession: SessionRuntimeState["session"]
+): string[] {
+  if (!previousSession || !nextSession) {
+    return [];
+  }
+
+  const visibleKeys = new Set([
+    "sessionId",
+    "workspaceId",
+    "provider",
+    "runningState",
+    "activityState",
+    "updatedAt",
+    "lastSeenAt"
+  ]);
+  const differences: string[] = [];
+  const keys = new Set([
+    ...Object.keys(previousSession),
+    ...Object.keys(nextSession)
+  ]);
+  const previousRecord = toUnknownRecord(previousSession);
+  const nextRecord = toUnknownRecord(nextSession);
+
+  for (const key of keys) {
+    if (visibleKeys.has(key)) {
+      continue;
+    }
+
+    const previousValue = previousRecord[key];
+    const nextValue = nextRecord[key];
+
+    if (JSON.stringify(previousValue ?? null) !== JSON.stringify(nextValue ?? null)) {
+      differences.push(key);
+    }
+  }
+
+  return differences.sort();
+}
+
+function toUnknownRecord(value: object): Record<string, unknown> {
+  return value as unknown as Record<string, unknown>;
+}
+
+function summarizeSessionRuntimeArray(value: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const firstItem = value[0];
+  const lastItem = value.at(-1);
+
+  return {
+    length: value.length,
+    first: summarizeSessionRuntimeArrayItem(firstItem),
+    last: summarizeSessionRuntimeArrayItem(lastItem)
+  };
+}
+
+function summarizeSessionRuntimeArrayItem(value: unknown): Record<string, unknown> | string | number | boolean | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value !== "object") {
+    return String(value);
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return {
+    id:
+      (typeof candidate.id === "string" && candidate.id)
+      || (typeof candidate.messageId === "string" && candidate.messageId)
+      || (typeof candidate.requestId === "string" && candidate.requestId)
+      || null,
+    type: typeof candidate.type === "string" ? candidate.type : null,
+    role: typeof candidate.role === "string" ? candidate.role : null,
+    kind: typeof candidate.kind === "string" ? candidate.kind : null,
+    status: typeof candidate.status === "string" ? candidate.status : null,
+    rawRef: typeof candidate.rawRef === "string" ? candidate.rawRef : null
+  };
+}
+
+function summarizeSessionRuntimeScalar(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > 160 ? `${value.slice(0, 160)}...` : value;
+  }
+
+  if (
+    value === null
+    || typeof value === "number"
+    || typeof value === "boolean"
+    || typeof value === "undefined"
+  ) {
+    return value;
+  }
+
+  if (typeof value === "object") {
+    return {
+      keys: Object.keys(value as Record<string, unknown>).sort()
+    };
+  }
+
+  return String(value);
 }
 
 export function summarizeCapabilities(capabilities: ProviderCapabilitiesDto | null): string[] {
@@ -4409,7 +5147,8 @@ function resolveNextOptimisticUserSequence(
 
 function shouldReplaceSnapshotSeedWithIncoming(
   current: SessionMessageViewModel[],
-  incoming: HistoryMessageDto[]
+  incoming: HistoryMessageDto[],
+  incomingOlderCursor: string | null
 ): boolean {
   const latestIncomingMessage = pickLatestHistoryMessage(incoming);
 
@@ -4423,12 +5162,46 @@ function shouldReplaceSnapshotSeedWithIncoming(
     return true;
   }
 
-  return compareMessageOrder(
+  const incomingCoversNewerTail = compareMessageOrder(
     latestIncomingMessage.sequence,
     latestIncomingMessage.timestamp,
     latestCurrentMessage.sequence,
     latestCurrentMessage.timestamp
   ) >= 0;
+
+  if (!incomingCoversNewerTail) {
+    return false;
+  }
+
+  if (!incomingOlderCursor) {
+    return true;
+  }
+
+  const currentSentCount = countSentViewMessages(current);
+
+  if (incoming.length < currentSentCount) {
+    return false;
+  }
+
+  // 仍然带 olderCursor 的 backfill 只有在它整页都明显晚于当前浅缓存窗口时，
+  // 才值得直接替换快照；否则继续走合并，避免把 1..60 这类缓存误截断成 21..60。
+  if (currentSentCount >= REALTIME_LIMIT) {
+    return false;
+  }
+
+  const earliestIncomingMessage = pickEarliestHistoryMessage(incoming);
+  const earliestCurrentMessage = pickEarliestSentViewMessage(current);
+
+  if (!earliestIncomingMessage || !earliestCurrentMessage) {
+    return true;
+  }
+
+  return compareMessageOrder(
+    earliestIncomingMessage.sequence,
+    earliestIncomingMessage.timestamp,
+    earliestCurrentMessage.sequence,
+    earliestCurrentMessage.timestamp
+  ) > 0;
 }
 
 function pickLatestHistoryMessage(messages: HistoryMessageDto[]): HistoryMessageDto | null {
@@ -4444,6 +5217,21 @@ function pickLatestHistoryMessage(messages: HistoryMessageDto[]): HistoryMessage
   }
 
   return latest;
+}
+
+function pickEarliestHistoryMessage(messages: HistoryMessageDto[]): HistoryMessageDto | null {
+  let earliest: HistoryMessageDto | null = null;
+
+  for (const message of messages) {
+    if (
+      !earliest
+      || compareMessageOrder(message.sequence, message.timestamp, earliest.sequence, earliest.timestamp) < 0
+    ) {
+      earliest = message;
+    }
+  }
+
+  return earliest;
 }
 
 function pickLatestSentViewMessage(
@@ -4465,6 +5253,39 @@ function pickLatestSentViewMessage(
   }
 
   return latest;
+}
+
+function pickEarliestSentViewMessage(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel | null {
+  let earliest: SessionMessageViewModel | null = null;
+
+  for (const message of messages) {
+    if (message.deliveryState !== "sent") {
+      continue;
+    }
+
+    if (
+      !earliest
+      || compareMessageOrder(message.sequence, message.timestamp, earliest.sequence, earliest.timestamp) < 0
+    ) {
+      earliest = message;
+    }
+  }
+
+  return earliest;
+}
+
+function countSentViewMessages(messages: SessionMessageViewModel[]): number {
+  let count = 0;
+
+  for (const message of messages) {
+    if (message.deliveryState === "sent") {
+      count += 1;
+    }
+  }
+
+  return count;
 }
 
 function compareMessageOrder(
@@ -5092,10 +5913,10 @@ function resolveNextRuntimeCanInterrupt(
 }
 
 function buildSessionRuntimeSnapshotKey(sessionId: string, targetHostId?: string | null) {
-  const normalizedTargetHostId = targetHostId?.trim();
-  return normalizedTargetHostId
-    ? `session-runtime.snapshot.host.${encodeURIComponent(normalizedTargetHostId)}.${sessionId}`
-    : `session-runtime.snapshot.${sessionId}`;
+  return buildScopedSnapshotKey("session-runtime.snapshot", {
+    workspaceId: sessionId,
+    targetHostId
+  });
 }
 
 function buildSnapshotMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {

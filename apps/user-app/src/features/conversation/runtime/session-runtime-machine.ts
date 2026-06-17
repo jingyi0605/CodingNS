@@ -1036,6 +1036,17 @@ function mergeAuthoritativeVersion(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel {
+  if (
+    current.id === incoming.id
+    && current.role === "user"
+    && incoming.role === "user"
+    && current.kind === "text"
+    && incoming.kind === "text"
+    && areEquivalentRenderableUserMessages(current, incoming)
+  ) {
+    return current;
+  }
+
   if (current.id !== incoming.id) {
     return incoming;
   }
@@ -1098,6 +1109,16 @@ function mergeEquivalentAuthoritativeVersion(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
 ): SessionMessageViewModel {
+  if (
+    current.role === "user"
+    && incoming.role === "user"
+    && current.kind === "text"
+    && incoming.kind === "text"
+    && areEquivalentRenderableUserMessages(current, incoming)
+  ) {
+    return current;
+  }
+
   if (isEquivalentToolLifecycleMessage(current, incoming)) {
     const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
     const content = pickToolLifecycleMessageContent(
@@ -1794,6 +1815,22 @@ function pickPreferredAttachments(
   }
 
   return incoming ?? current;
+}
+
+function areEquivalentRenderableUserMessages(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): boolean {
+  const currentContent = parseMessageRichContent(current.content);
+  const incomingContent = parseMessageRichContent(incoming.content);
+
+  return (
+    normalizeComparableUserMergeText(currentContent.text)
+      === normalizeComparableUserMergeText(incomingContent.text)
+    && areEquivalentInlineImages(currentContent.inlineImages, incomingContent.inlineImages)
+    && buildComparableMessageAttachmentSignature(current)
+      === buildComparableMessageAttachmentSignature(incoming)
+  );
 }
 
 function pickLongerText(current: string, incoming: string): string {
