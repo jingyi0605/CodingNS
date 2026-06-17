@@ -72,6 +72,7 @@ import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { normalizeHostAliasLabel, resolveHostAliasTag } from "../../workbench/utils/host-alias";
 import {
+  listPeerWorkspaceSummaries,
   listWorkspaceHostBindings,
   saveWorkspaceHostBinding
 } from "../../workbench/api/peer-hosts-api";
@@ -1816,6 +1817,8 @@ interface WorkspaceSidebarGroup {
   visibleSessionTree: NavigationSessionTreeNode[];
   childWorktrees: WorkspaceSidebarWorktreeNode[];
   isCollapsed: boolean;
+  peerSummary: PeerWorkspaceSummaryView | null;
+  usesPeerSummary: boolean;
 }
 
 interface WorkspaceSidebarWorktreeNode {
@@ -1825,6 +1828,20 @@ interface WorkspaceSidebarWorktreeNode {
   archivedSessions: SessionSummaryDto[];
   visibleSessionTree: NavigationSessionTreeNode[];
   children: WorkspaceSidebarWorktreeNode[];
+  peerSummary: PeerWorkspaceSummaryView | null;
+  usesPeerSummary: boolean;
+}
+
+interface PeerWorkspaceSummaryView {
+  remoteWorkspaceId: string;
+  targetHostId: string;
+  runningSessionCount: number;
+  unreadSessionCount: number;
+  totalSessionCount: number;
+  archivedSessionCount: number;
+  latestSessionTitle: string | null;
+  lastActivityAt: string | null;
+  updatedAt: string;
 }
 
 interface WorktreeNodeExpansionState {
@@ -2706,11 +2723,13 @@ function buildWorkspaceSidebarWorktreeNodes(
   nodes: readonly WorkbenchWorktreeNodeDto[],
   favoriteSessionIdSet: ReadonlySet<string>,
   sessionDisplaySortMode: SessionDisplaySortMode,
-  hiddenSessionIdSet: ReadonlySet<string> = new Set()
+  hiddenSessionIdSet: ReadonlySet<string> = new Set(),
+  peerSummaryByWorkspaceId: Readonly<Record<string, PeerWorkspaceSummaryView>> = {}
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.map((node) => {
     const scopedSessions = node.sessions.filter((session) => !hiddenSessionIdSet.has(session.sessionId));
     const visibleSessions = filterVisibleWorkspaceSessions(scopedSessions);
+    const peerSummary = peerSummaryByWorkspaceId[node.workspace.id] ?? null;
 
     return {
       workspace: node.workspace,
@@ -2731,8 +2750,11 @@ function buildWorkspaceSidebarWorktreeNodes(
         node.children,
         favoriteSessionIdSet,
         sessionDisplaySortMode,
-        hiddenSessionIdSet
-      )
+        hiddenSessionIdSet,
+        peerSummaryByWorkspaceId
+      ),
+      peerSummary,
+      usesPeerSummary: peerSummary !== null
     };
   });
 }
@@ -2751,6 +2773,54 @@ function collectSidebarWorktreeNodes(
   nodes: readonly WorkspaceSidebarWorktreeNode[]
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.flatMap((node) => [node, ...collectSidebarWorktreeNodes(node.children)]);
+}
+
+function collectSidebarWorkspaces(
+  groups: readonly WorkspaceSessionGroup[]
+): WorkspaceDto[] {
+  return groups.flatMap((group) => [
+    group.workspace,
+    ...collectSidebarWorktreeWorkspaceDtos(group.childWorktrees)
+  ]);
+}
+
+function collectSidebarWorktreeWorkspaceDtos(
+  nodes: readonly WorkbenchWorktreeNodeDto[]
+): WorkspaceDto[] {
+  return nodes.flatMap((node) => [
+    node.workspace,
+    ...collectSidebarWorktreeWorkspaceDtos(node.children)
+  ]);
+}
+
+function formatPeerWorkspaceSummaryTime(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  const diffMs = Date.now() - timestamp;
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60_000));
+
+  if (diffMinutes < 1) {
+    return t("shell.peerWorkspaceSummaryJustNow");
+  }
+
+  if (diffMinutes < 60) {
+    return t("shell.peerWorkspaceSummaryMinutesAgo", { count: diffMinutes });
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return t("shell.peerWorkspaceSummaryHoursAgo", { count: diffHours });
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return t("shell.peerWorkspaceSummaryDaysAgo", { count: diffDays });
 }
 
 function findSidebarBatchTarget(
@@ -8267,6 +8337,35 @@ function SidebarContent({
     );
   }
 
+  function renderPeerWorkspaceSummary(workspace: WorkspaceDto, summary: PeerWorkspaceSummaryView): JSX.Element {
+    const workspaceContext = getWorkspaceContext(workspace);
+    const lastActivityLabel = formatPeerWorkspaceSummaryTime(summary.lastActivityAt);
+
+    return (
+      <div className="workbench-peer-workspace-summary" data-workspace-tone={workspaceContext.tone}>
+        <div className="workbench-peer-workspace-summary-row">
+          <span>{t("shell.peerWorkspaceSummarySessions")}</span>
+          <strong>{summary.totalSessionCount}</strong>
+        </div>
+        <div className="workbench-peer-workspace-summary-row">
+          <span>{t("shell.peerWorkspaceSummaryRunning")}</span>
+          <strong>{summary.runningSessionCount}</strong>
+        </div>
+        <div className="workbench-peer-workspace-summary-row">
+          <span>{t("shell.peerWorkspaceSummaryUnread")}</span>
+          <strong>{summary.unreadSessionCount}</strong>
+        </div>
+        <div className="workbench-peer-workspace-summary-row">
+          <span>{t("shell.peerWorkspaceSummaryActivity")}</span>
+          <strong>{lastActivityLabel ?? t("common.none")}</strong>
+        </div>
+        {summary.latestSessionTitle ? (
+          <p className="workbench-peer-workspace-summary-title">{summary.latestSessionTitle}</p>
+        ) : null}
+      </div>
+    );
+  }
+
   function renderWorktreeNode(node: WorkspaceSidebarWorktreeNode): JSX.Element {
     const visibleSessionTree =
       visibleSessionTreeByWorkspaceId.get(node.workspace.id) ?? node.visibleSessionTree;
@@ -8324,38 +8423,47 @@ function SidebarContent({
 
         {!isCollapsed ? (
           <>
-            <div
-              className="workbench-session-list"
-              data-workspace-tone={workspaceContext.tone}
-              style={createWorkspaceToneStyle(workspaceContext)}
-            >
-              {visibleSessionTree.length === 0 ? (
-                <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-              ) : (
-                visibleSessionTree
-                  .slice(0, getVisibleWorkspaceSessionCount(node.workspace.id))
-                  .map((treeNode) =>
-                    renderSessionTreeBranch({
-                      node: treeNode,
+            {node.usesPeerSummary && node.peerSummary ? (
+              <>
+                {renderPeerWorkspaceSummary(node.workspace, node.peerSummary)}
+                <div className="workbench-session-list" data-workspace-tone={workspaceContext.tone} style={createWorkspaceToneStyle(workspaceContext)}>
+                  <p className="workbench-session-empty">{t("shell.peerWorkspaceSummaryHint")}</p>
+                </div>
+              </>
+            ) : (
+              <div
+                className="workbench-session-list"
+                data-workspace-tone={workspaceContext.tone}
+                style={createWorkspaceToneStyle(workspaceContext)}
+              >
+                {visibleSessionTree.length === 0 ? (
+                  <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                ) : (
+                  visibleSessionTree
+                    .slice(0, getVisibleWorkspaceSessionCount(node.workspace.id))
+                    .map((treeNode) =>
+                      renderSessionTreeBranch({
+                        node: treeNode,
                       workspace: node.workspace,
                       workspaceContext,
                       menuKeyPrefix: `worktree:${node.workspace.id}`,
                       showWorkspaceName: false,
                       selectionMode: batchWorkspaceId === node.workspace.id,
                       favoriteEnabled: true
-                    })
-                  )
-              )}
-              {visibleSessionTree.length > getVisibleWorkspaceSessionCount(node.workspace.id) ? (
-                <button
-                  type="button"
-                  className="workbench-subsession-expand ghost-button"
-                  onClick={() => handleExpandWorkspaceSessions(node.workspace.id, visibleSessionTree.length)}
-                >
-                  {t("shell.sessionExpandMore")}
-                </button>
-              ) : null}
-            </div>
+                        })
+                    )
+                )}
+                {visibleSessionTree.length > getVisibleWorkspaceSessionCount(node.workspace.id) ? (
+                  <button
+                    type="button"
+                    className="workbench-subsession-expand ghost-button"
+                    onClick={() => handleExpandWorkspaceSessions(node.workspace.id, visibleSessionTree.length)}
+                  >
+                    {t("shell.sessionExpandMore")}
+                  </button>
+                ) : null}
+              </div>
+            )}
 
             {node.children.length > 0 ? (
               <div className="workbench-session-list workbench-worktree-child-list">
@@ -9933,7 +10041,7 @@ function SidebarContent({
             </div>
           </div>
 
-        {workspaceGroups.map((group) => {
+      {workspaceGroups.map((group) => {
           const visibleSessionTree =
             visibleSessionTreeByWorkspaceId.get(group.workspace.id) ?? getVisibleSessionTreeNodes(group);
           const isDraggedWorkspace = dragWorkspaceId === group.workspace.id;
@@ -10005,36 +10113,42 @@ function SidebarContent({
 
               {!isWorkspaceCollapsed ? (
                 <>
-                  <div className="workbench-session-list">
-                    {visibleSessionTree.length === 0 ? (
-                      <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-                    ) : (
-                      visibleSessionTree
-                        .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
-                        .map((node) =>
-                          renderSessionTreeBranch({
-                            node,
-                            workspace: group.workspace,
-                            workspaceContext: getWorkspaceContext(group.workspace),
-                            menuKeyPrefix: `workspace:${group.workspace.id}`,
-                            showWorkspaceName: false,
-                            selectionMode: batchWorkspaceId === group.workspace.id,
-                            favoriteEnabled: true
-                          })
-                        )
-                    )}
-                    {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
-                      <button
-                        type="button"
-                        className="workbench-subsession-expand ghost-button"
-                        onClick={() =>
-                          handleExpandWorkspaceSessions(group.workspace.id, visibleSessionTree.length)
-                        }
-                      >
-                        {t("shell.sessionExpandMore")}
-                      </button>
-                    ) : null}
-                  </div>
+                  {group.usesPeerSummary && group.peerSummary ? (
+                    <div className="workbench-session-list">
+                      {renderPeerWorkspaceSummary(group.workspace, group.peerSummary)}
+                    </div>
+                  ) : (
+                    <div className="workbench-session-list">
+                      {visibleSessionTree.length === 0 ? (
+                        <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                      ) : (
+                        visibleSessionTree
+                          .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
+                          .map((node) =>
+                            renderSessionTreeBranch({
+                              node,
+                              workspace: group.workspace,
+                              workspaceContext: getWorkspaceContext(group.workspace),
+                              menuKeyPrefix: `workspace:${group.workspace.id}`,
+                              showWorkspaceName: false,
+                              selectionMode: batchWorkspaceId === group.workspace.id,
+                              favoriteEnabled: true
+                            })
+                          )
+                      )}
+                      {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
+                        <button
+                          type="button"
+                          className="workbench-subsession-expand ghost-button"
+                          onClick={() =>
+                            handleExpandWorkspaceSessions(group.workspace.id, visibleSessionTree.length)
+                          }
+                        >
+                          {t("shell.sessionExpandMore")}
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
 
                   {group.childWorktrees.length > 0 ? (
                     <div className="workbench-session-list workbench-worktree-child-list">
@@ -12204,6 +12318,9 @@ export function WorkbenchLayout({
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
+  const [peerWorkspaceSummaryByWorkspaceId, setPeerWorkspaceSummaryByWorkspaceId] = useState<
+    Record<string, PeerWorkspaceSummaryView>
+  >({});
   const useMacOsNativeTitlebarDragRegion = shouldUseMacOsNativeTitlebarDragRegion(platform);
 
   useEffect(() => {
@@ -13231,6 +13348,97 @@ export function WorkbenchLayout({
   useEffect(() => {
     hasNavigationDataRef.current = navigationGroups.length > 0;
   }, [navigationGroups]);
+
+  useEffect(() => {
+    const peerBindings = collectSidebarWorkspaces(navigationGroups).flatMap((workspace) => {
+      const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+      const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+      const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+      const remoteWorkspaceId = assignment?.remoteWorkspaceId?.trim() || null;
+
+      if (!targetHostId || targetHostId === "current" || !remoteWorkspaceId) {
+        return [];
+      }
+
+      return [{
+        localWorkspaceId: workspace.id,
+        remoteWorkspaceId,
+        targetHostId
+      }];
+    });
+
+    if (peerBindings.length === 0) {
+      setPeerWorkspaceSummaryByWorkspaceId({});
+      return;
+    }
+
+    const grouped = new Map<string, Array<{ localWorkspaceId: string; remoteWorkspaceId: string }>>();
+    peerBindings.forEach((item) => {
+      const bucket = grouped.get(item.targetHostId) ?? [];
+      bucket.push({
+        localWorkspaceId: item.localWorkspaceId,
+        remoteWorkspaceId: item.remoteWorkspaceId
+      });
+      grouped.set(item.targetHostId, bucket);
+    });
+
+    let disposed = false;
+
+    const load = async () => {
+      const nextState: Record<string, PeerWorkspaceSummaryView> = {};
+
+      await Promise.allSettled(
+        [...grouped.entries()].map(async ([targetHostId, items]) => {
+          const response = await listPeerWorkspaceSummaries(
+            targetHostId,
+            items.map((item) => item.remoteWorkspaceId)
+          );
+          const itemByRemoteWorkspaceId = new Map(items.map((item) => [item.remoteWorkspaceId, item.localWorkspaceId] as const));
+
+          response.items.forEach((entry) => {
+            const localWorkspaceId = itemByRemoteWorkspaceId.get(entry.workspaceId);
+            if (!localWorkspaceId) {
+              return;
+            }
+
+            nextState[localWorkspaceId] = {
+              remoteWorkspaceId: entry.workspaceId,
+              targetHostId,
+              runningSessionCount: entry.summary.runningSessionCount,
+              unreadSessionCount: entry.summary.unreadSessionCount,
+              totalSessionCount: entry.summary.totalSessionCount,
+              archivedSessionCount: entry.summary.archivedSessionCount,
+              latestSessionTitle: entry.summary.latestSessionTitle,
+              lastActivityAt: entry.summary.lastActivityAt,
+              updatedAt: entry.summary.updatedAt
+            };
+          });
+        })
+      );
+
+      if (disposed) {
+        return;
+      }
+
+      setPeerWorkspaceSummaryByWorkspaceId(nextState);
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 30_000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    activeHostId,
+    navigationGroups,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    workspaceHostAssignments
+  ]);
 
   useEffect(() => {
     logPerfDebug("workbench.navigation_state", {
@@ -14995,6 +15203,7 @@ export function WorkbenchLayout({
       navigationGroups.map((group) => {
         const visibleSessions = filterVisibleWorkspaceSessions(group.sessions);
         const projectedSessionIds = new Set(group.sessions.map((session) => session.sessionId));
+        const peerSummary = peerWorkspaceSummaryByWorkspaceId[group.workspace.id] ?? null;
 
         return {
           workspace: group.workspace,
@@ -15011,12 +15220,21 @@ export function WorkbenchLayout({
             group.childWorktrees,
             favoriteSessionIdSet,
             sessionDisplaySortMode,
-            projectedSessionIds
+            projectedSessionIds,
+            peerWorkspaceSummaryByWorkspaceId
           ),
-          isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
+          isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id),
+          peerSummary,
+          usesPeerSummary: peerSummary !== null
         };
       }),
-    [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups, sessionDisplaySortMode]
+    [
+      collapsedWorkspaceIdSet,
+      favoriteSessionIdSet,
+      navigationGroups,
+      peerWorkspaceSummaryByWorkspaceId,
+      sessionDisplaySortMode
+    ]
   );
   const workspaceVisualContextMap = useMemo(
     () => buildWorkspaceVisualContextMap(navigationGroups),

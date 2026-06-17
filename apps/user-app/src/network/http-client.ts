@@ -118,7 +118,7 @@ class HttpClient {
       targetHostId: normalizedTargetHostId,
       requestedBaseUrl,
       baseUrl,
-      transport: transport.name ?? "unknown"
+      transport: transport.constructor?.name ?? "unknown"
     });
 
     let response: Response;

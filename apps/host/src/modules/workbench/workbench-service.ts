@@ -47,6 +47,17 @@ export interface WorkbenchSnapshot {
   items: WorkbenchSnapshotItem[];
 }
 
+export interface PeerWorkspaceSummary {
+  workspaceId: string;
+  runningSessionCount: number;
+  unreadSessionCount: number;
+  totalSessionCount: number;
+  archivedSessionCount: number;
+  latestSessionTitle: string | null;
+  lastActivityAt: string | null;
+  updatedAt: string;
+}
+
 interface WorkbenchDiscoveryCandidate {
   workspace: Workspace;
   maxAgeMs: number;
@@ -126,6 +137,43 @@ export class WorkbenchService {
           collapsed: collapsedWorkspaceIdSet.has(workspace.id)
         };
       })
+    });
+  }
+
+  getPeerWorkspaceSummary(
+    workspaceId: string,
+    userId: string
+  ): PeerWorkspaceSummary {
+    const sessions = this.filterButlerControlSessions(
+      this.sessionHistoryService.listWorkspaceSessions(workspaceId, userId)
+    );
+    const latestSession = sessions[0] ?? null;
+    const lastActivityAt = resolveRecentActivityIso(sessions);
+
+    return {
+      workspaceId,
+      runningSessionCount: sessions.filter(isActiveWorkbenchSession).length,
+      unreadSessionCount: sessions.filter((session) => session.activityState === "completed_unread").length,
+      totalSessionCount: sessions.filter((session) => !isArchivedSessionRecord(session)).length,
+      archivedSessionCount: sessions.filter(isArchivedSessionRecord).length,
+      latestSessionTitle: latestSession?.title?.trim() || null,
+      lastActivityAt,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  schedulePeerWorkspaceSummaryRefresh(
+    workspaceId: string,
+    userId: string
+  ): void {
+    if (typeof this.sessionHistoryService.requestWorkspaceDiscovery !== "function") {
+      return;
+    }
+
+    this.sessionHistoryService.requestWorkspaceDiscovery(workspaceId, userId, {
+      maxAgeMs: WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS,
+      force: false,
+      refreshStateMode: "deferred"
     });
   }
 
@@ -563,6 +611,37 @@ function resolveRecentActivityAtMs(sessions: SessionListItem[]): number {
   }
 
   return recentActivityAtMs;
+}
+
+function resolveRecentActivityIso(sessions: SessionListItem[]): string | null {
+  let latestValue: string | null = null;
+  let latestMs = 0;
+
+  for (const session of sessions) {
+    const candidates = [session.lastEventAt, session.lastMessageAt, session.updatedAt];
+
+    for (const candidate of candidates) {
+      const candidateMs = parseIsoTimeMs(candidate);
+      if (candidateMs > latestMs && candidate) {
+        latestMs = candidateMs;
+        latestValue = candidate;
+      }
+    }
+  }
+
+  return latestValue;
+}
+
+function isArchivedSessionRecord(session: SessionListItem): boolean {
+  return session.isArchived === true;
+}
+
+function isActiveWorkbenchSession(session: SessionListItem): boolean {
+  return (
+    session.activityState === "running"
+    || session.runningState === "running"
+    || session.runningState === "starting"
+  ) && session.isArchived !== true;
 }
 
 function parseIsoTimeMs(value: string | null | undefined): number {
