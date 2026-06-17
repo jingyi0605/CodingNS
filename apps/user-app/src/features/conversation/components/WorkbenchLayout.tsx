@@ -72,7 +72,6 @@ import { useClientConfigSelector } from "../../../config/client-config-store";
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { normalizeHostAliasLabel, resolveHostAliasTag } from "../../workbench/utils/host-alias";
 import {
-  listPeerWorkspaceSummaries,
   listWorkspaceHostBindings,
   saveWorkspaceHostBinding
 } from "../../workbench/api/peer-hosts-api";
@@ -96,6 +95,7 @@ import {
   getAffairsLibrarySnapshot,
   getAffairsLightweightSessionMessages,
   getProviderCapabilities,
+  getScopedWorkbenchSnapshot,
   getWorktreeMergePreview,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
@@ -1817,8 +1817,6 @@ interface WorkspaceSidebarGroup {
   visibleSessionTree: NavigationSessionTreeNode[];
   childWorktrees: WorkspaceSidebarWorktreeNode[];
   isCollapsed: boolean;
-  peerSummary: PeerWorkspaceSummaryView | null;
-  usesPeerSummary: boolean;
 }
 
 interface WorkspaceSidebarWorktreeNode {
@@ -1828,20 +1826,22 @@ interface WorkspaceSidebarWorktreeNode {
   archivedSessions: SessionSummaryDto[];
   visibleSessionTree: NavigationSessionTreeNode[];
   children: WorkspaceSidebarWorktreeNode[];
-  peerSummary: PeerWorkspaceSummaryView | null;
-  usesPeerSummary: boolean;
 }
 
-interface PeerWorkspaceSummaryView {
+interface PeerWorkspaceNavigationView {
+  localWorkspaceId: string;
+  activeHostId: string;
   remoteWorkspaceId: string;
   targetHostId: string;
-  runningSessionCount: number;
-  unreadSessionCount: number;
-  totalSessionCount: number;
-  archivedSessionCount: number;
-  latestSessionTitle: string | null;
-  lastActivityAt: string | null;
-  updatedAt: string;
+  sessions: SessionSummaryDto[];
+}
+
+function buildPeerWorkspaceSummaryStateKey(
+  activeHostId: string,
+  localWorkspaceId: string,
+  targetHostId: string
+): string {
+  return `${activeHostId}::${localWorkspaceId}::${targetHostId}`;
 }
 
 interface WorktreeNodeExpansionState {
@@ -2724,12 +2724,14 @@ function buildWorkspaceSidebarWorktreeNodes(
   favoriteSessionIdSet: ReadonlySet<string>,
   sessionDisplaySortMode: SessionDisplaySortMode,
   hiddenSessionIdSet: ReadonlySet<string> = new Set(),
-  peerSummaryByWorkspaceId: Readonly<Record<string, PeerWorkspaceSummaryView>> = {}
+  resolvePeerNavigationForWorkspace?: (workspace: WorkspaceDto) => PeerWorkspaceNavigationView | null
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.map((node) => {
-    const scopedSessions = node.sessions.filter((session) => !hiddenSessionIdSet.has(session.sessionId));
+    const peerNavigation = resolvePeerNavigationForWorkspace?.(node.workspace);
+    const scopedSessions = (peerNavigation?.sessions ?? node.sessions).filter(
+      (session) => !hiddenSessionIdSet.has(session.sessionId)
+    );
     const visibleSessions = filterVisibleWorkspaceSessions(scopedSessions);
-    const peerSummary = peerSummaryByWorkspaceId[node.workspace.id] ?? null;
 
     return {
       workspace: node.workspace,
@@ -2751,10 +2753,8 @@ function buildWorkspaceSidebarWorktreeNodes(
         favoriteSessionIdSet,
         sessionDisplaySortMode,
         hiddenSessionIdSet,
-        peerSummaryByWorkspaceId
-      ),
-      peerSummary,
-      usesPeerSummary: peerSummary !== null
+        resolvePeerNavigationForWorkspace
+      )
     };
   });
 }
@@ -2791,36 +2791,6 @@ function collectSidebarWorktreeWorkspaceDtos(
     node.workspace,
     ...collectSidebarWorktreeWorkspaceDtos(node.children)
   ]);
-}
-
-function formatPeerWorkspaceSummaryTime(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-
-  const diffMs = Date.now() - timestamp;
-  const diffMinutes = Math.max(0, Math.floor(diffMs / 60_000));
-
-  if (diffMinutes < 1) {
-    return t("shell.peerWorkspaceSummaryJustNow");
-  }
-
-  if (diffMinutes < 60) {
-    return t("shell.peerWorkspaceSummaryMinutesAgo", { count: diffMinutes });
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    return t("shell.peerWorkspaceSummaryHoursAgo", { count: diffHours });
-  }
-
-  const diffDays = Math.floor(diffHours / 24);
-  return t("shell.peerWorkspaceSummaryDaysAgo", { count: diffDays });
 }
 
 function findSidebarBatchTarget(
@@ -8337,35 +8307,6 @@ function SidebarContent({
     );
   }
 
-  function renderPeerWorkspaceSummary(workspace: WorkspaceDto, summary: PeerWorkspaceSummaryView): JSX.Element {
-    const workspaceContext = getWorkspaceContext(workspace);
-    const lastActivityLabel = formatPeerWorkspaceSummaryTime(summary.lastActivityAt);
-
-    return (
-      <div className="workbench-peer-workspace-summary" data-workspace-tone={workspaceContext.tone}>
-        <div className="workbench-peer-workspace-summary-row">
-          <span>{t("shell.peerWorkspaceSummarySessions")}</span>
-          <strong>{summary.totalSessionCount}</strong>
-        </div>
-        <div className="workbench-peer-workspace-summary-row">
-          <span>{t("shell.peerWorkspaceSummaryRunning")}</span>
-          <strong>{summary.runningSessionCount}</strong>
-        </div>
-        <div className="workbench-peer-workspace-summary-row">
-          <span>{t("shell.peerWorkspaceSummaryUnread")}</span>
-          <strong>{summary.unreadSessionCount}</strong>
-        </div>
-        <div className="workbench-peer-workspace-summary-row">
-          <span>{t("shell.peerWorkspaceSummaryActivity")}</span>
-          <strong>{lastActivityLabel ?? t("common.none")}</strong>
-        </div>
-        {summary.latestSessionTitle ? (
-          <p className="workbench-peer-workspace-summary-title">{summary.latestSessionTitle}</p>
-        ) : null}
-      </div>
-    );
-  }
-
   function renderWorktreeNode(node: WorkspaceSidebarWorktreeNode): JSX.Element {
     const visibleSessionTree =
       visibleSessionTreeByWorkspaceId.get(node.workspace.id) ?? node.visibleSessionTree;
@@ -8423,47 +8364,38 @@ function SidebarContent({
 
         {!isCollapsed ? (
           <>
-            {node.usesPeerSummary && node.peerSummary ? (
-              <>
-                {renderPeerWorkspaceSummary(node.workspace, node.peerSummary)}
-                <div className="workbench-session-list" data-workspace-tone={workspaceContext.tone} style={createWorkspaceToneStyle(workspaceContext)}>
-                  <p className="workbench-session-empty">{t("shell.peerWorkspaceSummaryHint")}</p>
-                </div>
-              </>
-            ) : (
-              <div
-                className="workbench-session-list"
-                data-workspace-tone={workspaceContext.tone}
-                style={createWorkspaceToneStyle(workspaceContext)}
-              >
-                {visibleSessionTree.length === 0 ? (
-                  <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-                ) : (
-                  visibleSessionTree
-                    .slice(0, getVisibleWorkspaceSessionCount(node.workspace.id))
-                    .map((treeNode) =>
-                      renderSessionTreeBranch({
-                        node: treeNode,
+            <div
+              className="workbench-session-list"
+              data-workspace-tone={workspaceContext.tone}
+              style={createWorkspaceToneStyle(workspaceContext)}
+            >
+              {visibleSessionTree.length === 0 ? (
+                <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+              ) : (
+                visibleSessionTree
+                  .slice(0, getVisibleWorkspaceSessionCount(node.workspace.id))
+                  .map((treeNode) =>
+                    renderSessionTreeBranch({
+                      node: treeNode,
                       workspace: node.workspace,
                       workspaceContext,
                       menuKeyPrefix: `worktree:${node.workspace.id}`,
                       showWorkspaceName: false,
                       selectionMode: batchWorkspaceId === node.workspace.id,
                       favoriteEnabled: true
-                        })
-                    )
-                )}
-                {visibleSessionTree.length > getVisibleWorkspaceSessionCount(node.workspace.id) ? (
-                  <button
-                    type="button"
-                    className="workbench-subsession-expand ghost-button"
-                    onClick={() => handleExpandWorkspaceSessions(node.workspace.id, visibleSessionTree.length)}
-                  >
-                    {t("shell.sessionExpandMore")}
-                  </button>
-                ) : null}
-              </div>
-            )}
+                    })
+                  )
+              )}
+              {visibleSessionTree.length > getVisibleWorkspaceSessionCount(node.workspace.id) ? (
+                <button
+                  type="button"
+                  className="workbench-subsession-expand ghost-button"
+                  onClick={() => handleExpandWorkspaceSessions(node.workspace.id, visibleSessionTree.length)}
+                >
+                  {t("shell.sessionExpandMore")}
+                </button>
+              ) : null}
+            </div>
 
             {node.children.length > 0 ? (
               <div className="workbench-session-list workbench-worktree-child-list">
@@ -8697,13 +8629,9 @@ function SidebarContent({
             onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
             onToggleSubagents={() => handleToggleSubagentList(expansionStateKey)}
             onOpen={() => {
-              navigate(
-                buildWorkspaceSessionPath(
-                  sessionWorkspace.id,
-                  session.sessionId,
-                  resolveWorkspaceRefForHost(sessionWorkspace, resolveWorkspaceHostId(sessionWorkspace))
-                )
-              );
+              const targetWorkspaceHostId = resolveWorkspaceHostId(sessionWorkspace);
+              const targetWorkspaceRef = resolveWorkspaceRefForHost(sessionWorkspace, targetWorkspaceHostId) ?? undefined;
+              navigate(buildWorkspaceSessionPath(sessionWorkspace.id, session.sessionId, targetWorkspaceRef));
               onClose?.();
             }}
             onRename={() => handleOpenRenameSession(session, sessionWorkspace)}
@@ -10113,42 +10041,36 @@ function SidebarContent({
 
               {!isWorkspaceCollapsed ? (
                 <>
-                  {group.usesPeerSummary && group.peerSummary ? (
-                    <div className="workbench-session-list">
-                      {renderPeerWorkspaceSummary(group.workspace, group.peerSummary)}
-                    </div>
-                  ) : (
-                    <div className="workbench-session-list">
-                      {visibleSessionTree.length === 0 ? (
-                        <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-                      ) : (
-                        visibleSessionTree
-                          .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
-                          .map((node) =>
-                            renderSessionTreeBranch({
-                              node,
-                              workspace: group.workspace,
-                              workspaceContext: getWorkspaceContext(group.workspace),
-                              menuKeyPrefix: `workspace:${group.workspace.id}`,
-                              showWorkspaceName: false,
-                              selectionMode: batchWorkspaceId === group.workspace.id,
-                              favoriteEnabled: true
-                            })
-                          )
-                      )}
-                      {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
-                        <button
-                          type="button"
-                          className="workbench-subsession-expand ghost-button"
-                          onClick={() =>
-                            handleExpandWorkspaceSessions(group.workspace.id, visibleSessionTree.length)
-                          }
-                        >
-                          {t("shell.sessionExpandMore")}
-                        </button>
-                      ) : null}
-                    </div>
-                  )}
+                  <div className="workbench-session-list">
+                    {visibleSessionTree.length === 0 ? (
+                      <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                    ) : (
+                      visibleSessionTree
+                        .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
+                        .map((node) =>
+                          renderSessionTreeBranch({
+                            node,
+                            workspace: group.workspace,
+                            workspaceContext: getWorkspaceContext(group.workspace),
+                            menuKeyPrefix: `workspace:${group.workspace.id}`,
+                            showWorkspaceName: false,
+                            selectionMode: batchWorkspaceId === group.workspace.id,
+                            favoriteEnabled: true
+                          })
+                        )
+                    )}
+                    {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
+                      <button
+                        type="button"
+                        className="workbench-subsession-expand ghost-button"
+                        onClick={() =>
+                          handleExpandWorkspaceSessions(group.workspace.id, visibleSessionTree.length)
+                        }
+                      >
+                        {t("shell.sessionExpandMore")}
+                      </button>
+                    ) : null}
+                  </div>
 
                   {group.childWorktrees.length > 0 ? (
                     <div className="workbench-session-list workbench-worktree-child-list">
@@ -12318,8 +12240,8 @@ export function WorkbenchLayout({
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
-  const [peerWorkspaceSummaryByWorkspaceId, setPeerWorkspaceSummaryByWorkspaceId] = useState<
-    Record<string, PeerWorkspaceSummaryView>
+  const [peerWorkspaceNavigationByWorkspaceId, setPeerWorkspaceNavigationByWorkspaceId] = useState<
+    Record<string, PeerWorkspaceNavigationView>
   >({});
   const useMacOsNativeTitlebarDragRegion = shouldUseMacOsNativeTitlebarDragRegion(platform);
 
@@ -13361,6 +13283,7 @@ export function WorkbenchLayout({
       }
 
       return [{
+        summaryKey: buildPeerWorkspaceSummaryStateKey(activeHostId, workspace.id, targetHostId),
         localWorkspaceId: workspace.id,
         remoteWorkspaceId,
         targetHostId
@@ -13368,14 +13291,15 @@ export function WorkbenchLayout({
     });
 
     if (peerBindings.length === 0) {
-      setPeerWorkspaceSummaryByWorkspaceId({});
+      setPeerWorkspaceNavigationByWorkspaceId({});
       return;
     }
 
-    const grouped = new Map<string, Array<{ localWorkspaceId: string; remoteWorkspaceId: string }>>();
+    const grouped = new Map<string, Array<{ summaryKey: string; localWorkspaceId: string; remoteWorkspaceId: string }>>();
     peerBindings.forEach((item) => {
       const bucket = grouped.get(item.targetHostId) ?? [];
       bucket.push({
+        summaryKey: item.summaryKey,
         localWorkspaceId: item.localWorkspaceId,
         remoteWorkspaceId: item.remoteWorkspaceId
       });
@@ -13385,32 +13309,28 @@ export function WorkbenchLayout({
     let disposed = false;
 
     const load = async () => {
-      const nextState: Record<string, PeerWorkspaceSummaryView> = {};
+      const nextNavigationState: Record<string, PeerWorkspaceNavigationView> = {};
 
       await Promise.allSettled(
         [...grouped.entries()].map(async ([targetHostId, items]) => {
-          const response = await listPeerWorkspaceSummaries(
-            targetHostId,
-            items.map((item) => item.remoteWorkspaceId)
-          );
-          const itemByRemoteWorkspaceId = new Map(items.map((item) => [item.remoteWorkspaceId, item.localWorkspaceId] as const));
+          const snapshotResponse = await getScopedWorkbenchSnapshot(targetHostId, {
+            awaitDiscovery: false
+          });
+          const itemByRemoteWorkspaceId = new Map(items.map((item) => [item.remoteWorkspaceId, item] as const));
 
-          response.items.forEach((entry) => {
-            const localWorkspaceId = itemByRemoteWorkspaceId.get(entry.workspaceId);
-            if (!localWorkspaceId) {
+          snapshotResponse.items.forEach((item) => {
+            const binding = itemByRemoteWorkspaceId.get(item.workspace.id);
+
+            if (!binding) {
               return;
             }
 
-            nextState[localWorkspaceId] = {
-              remoteWorkspaceId: entry.workspaceId,
+            nextNavigationState[binding.summaryKey] = {
+              localWorkspaceId: binding.localWorkspaceId,
+              activeHostId,
+              remoteWorkspaceId: item.workspace.id,
               targetHostId,
-              runningSessionCount: entry.summary.runningSessionCount,
-              unreadSessionCount: entry.summary.unreadSessionCount,
-              totalSessionCount: entry.summary.totalSessionCount,
-              archivedSessionCount: entry.summary.archivedSessionCount,
-              latestSessionTitle: entry.summary.latestSessionTitle,
-              lastActivityAt: entry.summary.lastActivityAt,
-              updatedAt: entry.summary.updatedAt
+              sessions: item.sessions
             };
           });
         })
@@ -13420,7 +13340,7 @@ export function WorkbenchLayout({
         return;
       }
 
-      setPeerWorkspaceSummaryByWorkspaceId(nextState);
+      setPeerWorkspaceNavigationByWorkspaceId(nextNavigationState);
     };
 
     void load();
@@ -14185,7 +14105,7 @@ export function WorkbenchLayout({
       return null;
     }
 
-    if (entry.workspace.id === routeWorkspaceId) {
+    if (entry.workspace.id === routeWorkspaceId && entry.session.sessionId === currentSessionId) {
       const routeTargetHostId = normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId;
 
       if (routeTargetHostId) {
@@ -14231,6 +14151,7 @@ export function WorkbenchLayout({
     resolveRemoteSelectedHostId,
     resolveSelectableHostId,
     resolveWorkspaceRefForTargetHost,
+    currentSessionId,
     routeScopedWorkspaceRef,
     routeWorkspaceId,
     workspaceHostAssignments
@@ -15198,17 +15119,38 @@ export function WorkbenchLayout({
     sessionWorkspaceId
   ]);
 
+  const resolvePeerNavigationForWorkspace = useCallback((workspace: WorkspaceDto): PeerWorkspaceNavigationView | null => {
+    const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+    const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+    const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+
+    if (!targetHostId || targetHostId === "current") {
+      return null;
+    }
+
+    return peerWorkspaceNavigationByWorkspaceId[
+      buildPeerWorkspaceSummaryStateKey(activeHostId, workspace.id, targetHostId)
+    ] ?? null;
+  }, [
+    activeHostId,
+    peerWorkspaceNavigationByWorkspaceId,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    workspaceHostAssignments
+  ]);
+
   const workspaceSidebarGroups = useMemo(
     () =>
       navigationGroups.map((group) => {
-        const visibleSessions = filterVisibleWorkspaceSessions(group.sessions);
-        const projectedSessionIds = new Set(group.sessions.map((session) => session.sessionId));
-        const peerSummary = peerWorkspaceSummaryByWorkspaceId[group.workspace.id] ?? null;
+        const peerNavigation = resolvePeerNavigationForWorkspace(group.workspace);
+        const scopedSessions = peerNavigation?.sessions ?? group.sessions;
+        const visibleSessions = filterVisibleWorkspaceSessions(scopedSessions);
+        const projectedSessionIds = new Set(scopedSessions.map((session) => session.sessionId));
 
         return {
           workspace: group.workspace,
           visibleSessions,
-          archivedSessions: group.sessions.filter(
+          archivedSessions: scopedSessions.filter(
             (session) => isArchivedSession(session)
           ),
           visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
@@ -15221,18 +15163,17 @@ export function WorkbenchLayout({
             favoriteSessionIdSet,
             sessionDisplaySortMode,
             projectedSessionIds,
-            peerWorkspaceSummaryByWorkspaceId
+            resolvePeerNavigationForWorkspace
           ),
-          isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id),
-          peerSummary,
-          usesPeerSummary: peerSummary !== null
+          isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
         };
       }),
     [
       collapsedWorkspaceIdSet,
       favoriteSessionIdSet,
       navigationGroups,
-      peerWorkspaceSummaryByWorkspaceId,
+      peerWorkspaceNavigationByWorkspaceId,
+      resolvePeerNavigationForWorkspace,
       sessionDisplaySortMode
     ]
   );
@@ -16163,6 +16104,8 @@ export function WorkbenchLayout({
       hostId: "current",
       workspaceId
     } : workspaceRef;
+    const nextTargetHostId = normalizeScopeTargetHostId(effectiveWorkspaceRef);
+    const routeTargetHostId = normalizeScopeTargetHostId(routeScopedWorkspaceRef);
 
     logPerfDebug("resource_scope.select_workspace", {
       pathname: location.pathname,
@@ -16199,6 +16142,13 @@ export function WorkbenchLayout({
     // 桌面端如果还停在旧的终端路由，routeScopedWorkspaceRef 会继续把整个页面压在旧 HOST 上。
     // 这里必须立刻退出旧 terminal route，不能只改选中态。
     if (isTerminalsRoute(location.pathname)) {
+      navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
+      return;
+    }
+
+    // 同一个工作区只切 HOST 作用域时，也必须立刻把 targetHostId 写回路由。
+    // 否则地址栏仍停在主 HOST，页面内部却已经切到 PeerHOST，请求作用域会继续打架。
+    if (!isSameTargetHostId(routeTargetHostId, nextTargetHostId)) {
       navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
       return;
     }

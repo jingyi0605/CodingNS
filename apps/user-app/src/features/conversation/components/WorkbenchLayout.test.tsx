@@ -1461,6 +1461,23 @@ describe("WorkbenchLayout", () => {
     global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
       const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
 
+      if (url.includes("/api/host-proxy/hosts/peer-host-1/api/workbench")) {
+        return createJsonResponse(
+          createWorkbenchSnapshot([
+            {
+              workspace: createWorkspace("remote-workspace-1", "GXAD"),
+              sessions: [
+                createSessionSummary({
+                  sessionId: "session-peer-1",
+                  title: "远端会话",
+                  workspaceId: "remote-workspace-1"
+                })
+              ]
+            }
+          ])
+        );
+      }
+
       if (url.endsWith("/api/workbench")) {
         return createJsonResponse(currentSnapshot);
       }
@@ -1557,6 +1574,102 @@ describe("WorkbenchLayout", () => {
       expect(completedCard.querySelector(".session-state-indicator.is-running-inferred")).toBeNull();
       expect(completedCard.querySelector(".session-state-indicator.is-error")).toBeNull();
     });
+  });
+
+  it("主 HOST 侧栏直接显示 PeerHOST 远端会话列表", async () => {
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      activeHostId: "host-local",
+      hosts: [
+        {
+          id: "host-local",
+          name: "主 Host",
+          alias: "MAC",
+          baseUrl: "http://127.0.0.1:3002",
+          kind: "local",
+          peerEnabled: false,
+          peerHostId: null,
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-14T00:00:00.000Z",
+          lastUserId: "user-1",
+          lastUsername: "admin"
+        },
+        {
+          id: "host-win",
+          name: "Windows Host",
+          alias: "WIN",
+          baseUrl: "http://10.255.0.85:3009",
+          kind: "lan",
+          peerEnabled: true,
+          peerHostId: "peer-host-1",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          lastConnectedAt: "2026-04-15T00:00:00.000Z",
+          lastUserId: null,
+          lastUsername: null
+        }
+      ],
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    authStore.hydrate({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 3600,
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "GXAD"),
+        sessions: []
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/peer-hosts/workspace-bindings")) {
+        return createJsonResponse({
+          items: [
+            {
+              activeHostId: "host-local",
+              workspaceKey: "workspace-1::C:/repo/workspace-1",
+              selectedHostId: "peer-host-1",
+              remoteWorkspaceId: "remote-workspace-1",
+              remoteWorkspacePath: "C:/repo/remote-workspace-1",
+              remoteWorkspaceName: "GXAD"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions");
+
+    await waitFor(async () => {
+      const workspaceGroup = await findWorkspaceGroupByName("GXAD");
+      expect(within(workspaceGroup).getByText("远端会话")).toBeInTheDocument();
+    });
+
+    const workspaceGroup = await findWorkspaceGroupByName("GXAD");
+    expect(within(workspaceGroup).queryByRole("button", { name: "进入远端会话列表" })).toBeNull();
+    expect(within(workspaceGroup).queryByText(/轻摘要/)).toBeNull();
   });
 
   it("活动工作区短暂丢失时，文件面板继续保留上一次有效工作区", async () => {
