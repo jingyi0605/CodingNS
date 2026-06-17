@@ -6309,6 +6309,10 @@ export function MessageTimeline({
     logTimelineScrollDebug(scope, buildTimelineScrollDebugDetail(list, extra));
   }
 
+  function buildPersistedTailMessageSignature(): string | null {
+    return buildMessageSignature(visibleMessages.at(-1) ?? null);
+  }
+
   function buildCurrentScrollState(list: HTMLDivElement) {
     const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
     const stickToBottom = distanceToBottom <= STICK_TO_BOTTOM_DISTANCE_PX;
@@ -6319,7 +6323,7 @@ export function MessageTimeline({
       lastMessageSignature:
         hasNewMessagesBelowRef.current && !stickToBottom
           ? restoredTailSignatureRef.current
-          : buildMessageSignature(renderItems.at(-1) ?? null)
+          : buildPersistedTailMessageSignature()
     };
   }
 
@@ -6336,7 +6340,7 @@ export function MessageTimeline({
     if (nextStickToBottom && hasNewMessagesBelowRef.current) {
       finishManualRestore();
       hasNewMessagesBelowRef.current = false;
-      restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
+      restoredTailSignatureRef.current = buildPersistedTailMessageSignature();
       setHasNewMessagesBelow(false);
     }
     setShowScrollToBottomButton(
@@ -6580,11 +6584,12 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     const list = listRef.current;
-    const currentLastSignature = buildMessageSignature(renderItems.at(-1) ?? null);
+    const currentTailRenderSignature = buildMessageSignature(renderItems.at(-1) ?? null);
+    const currentPersistedTailSignature = buildPersistedTailMessageSignature();
 
     if (!list) {
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       return;
     }
 
@@ -6594,12 +6599,13 @@ export function MessageTimeline({
     const hasTailUpdate =
       previousCount === 0 ||
       renderItems.length !== previousCount ||
-      currentLastSignature !== previousLastSignature;
+      currentTailRenderSignature !== previousLastSignature;
 
     emitTimelineScrollDebug("messages.effect.start", list, {
       previousCount,
       previousLastMessage: summarizeMessageSignature(previousLastSignature),
-      currentLastMessage: summarizeMessageSignature(currentLastSignature),
+      currentLastMessage: summarizeMessageSignature(currentTailRenderSignature),
+      currentPersistedTailMessage: summarizeMessageSignature(currentPersistedTailSignature),
       hasTailUpdate
     });
 
@@ -6608,8 +6614,8 @@ export function MessageTimeline({
       const hasTailUpdates =
         !pendingRestoreState.stickToBottom
         && pendingRestoreState.lastMessageSignature !== null
-        && currentLastSignature !== null
-        && pendingRestoreState.lastMessageSignature !== currentLastSignature;
+        && currentPersistedTailSignature !== null
+        && pendingRestoreState.lastMessageSignature !== currentPersistedTailSignature;
 
       if (pendingRestoreState.stickToBottom) {
         finishManualRestore();
@@ -6630,7 +6636,7 @@ export function MessageTimeline({
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6649,7 +6655,7 @@ export function MessageTimeline({
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6657,7 +6663,7 @@ export function MessageTimeline({
     if (manualRestoreInProgressRef.current) {
       applyManualRestorePosition(list, manualRestoreTargetRef.current ?? list.scrollTop);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6703,7 +6709,7 @@ export function MessageTimeline({
 
     syncScrollAffordance(list);
     previousMessageCountRef.current = renderItems.length;
-    previousLastMessageSignatureRef.current = currentLastSignature;
+    previousLastMessageSignatureRef.current = currentTailRenderSignature;
   }, [historyState, loadingOlderMessages, renderItems, sessionId]);
 
   useEffect(() => {
@@ -6972,7 +6978,7 @@ export function MessageTimeline({
             finishManualRestore();
             jumpToBottom(list, "scroll_button_click");
             hasNewMessagesBelowRef.current = false;
-            restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
+            restoredTailSignatureRef.current = buildPersistedTailMessageSignature();
             setHasNewMessagesBelow(false);
             syncScrollAffordance(list);
             persistCurrentScrollState(list);

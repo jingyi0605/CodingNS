@@ -1377,6 +1377,7 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
   workspace_id TEXT NOT NULL,
   name TEXT NOT NULL,
   cwd TEXT NOT NULL,
+  shell TEXT,
   command TEXT NOT NULL,
   args_json TEXT NOT NULL,
   env_json TEXT NOT NULL,

@@ -46,6 +46,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalRuntimeSchema(db);
   ensureTerminalLogSchema(db);
   ensureTerminalCommandTemplatePortColumn(db);
+  ensureTerminalCommandTemplateShellColumn(db);
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
   ensureTerminalCommandTemplateProxySchema(db);
   ensureDebugTargetSchema(db);
@@ -2822,6 +2823,18 @@ function ensureTerminalCommandTemplatePortColumn(db: BetterSqliteDatabase): void
   }
 
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN port INTEGER");
+}
+
+function ensureTerminalCommandTemplateShellColumn(db: BetterSqliteDatabase): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_command_templates)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "shell")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE terminal_command_templates ADD COLUMN shell TEXT");
 }
 
 function ensureTerminalCommandTemplateRuntimeTypeColumn(db: BetterSqliteDatabase): void {

@@ -297,6 +297,7 @@ describe("TerminalManagerPanel", () => {
           workspaceId: "workspace-1",
           name: savedTemplateBody.name,
           cwd: savedTemplateBody.cwd ?? "C:/Code/demo",
+          shell: (savedTemplateBody.shell as string | null | undefined) ?? null,
           command: savedTemplateBody.command,
           args: savedTemplateBody.args ?? [],
           env: {},
@@ -375,6 +376,7 @@ describe("TerminalManagerPanel", () => {
         workspaceId: "workspace-1",
         name: "scripts/dev.ps1 -Port 5173",
         cwd: "apps/user-app",
+        shell: "powershell.exe",
         command: "scripts/dev.ps1",
         args: ["-Port", "5173"],
         port: 5173,
@@ -520,6 +522,7 @@ describe("TerminalManagerPanel", () => {
       workspaceId: "workspace-1",
       name: "启动前端",
       cwd: "C:/Code/demo",
+      shell: "powershell.exe",
       command: "pnpm",
       args: ["dev"],
       env: {},
@@ -574,6 +577,7 @@ describe("TerminalManagerPanel", () => {
           workspaceId: "workspace-1",
           name: String(updatedTemplateBody.name),
           cwd: String(updatedTemplateBody.cwd),
+          shell: (updatedTemplateBody.shell as string | null | undefined) ?? null,
           command: String(updatedTemplateBody.command),
           args: (updatedTemplateBody.args as string[]) ?? [],
           env: {},
@@ -623,6 +627,7 @@ describe("TerminalManagerPanel", () => {
         workspaceId: "workspace-1",
         name: "前端开发",
         cwd: "apps/user-app",
+        shell: "powershell.exe",
         command: "npm",
         args: ["run", "dev:frontend"],
         port: 4174,
@@ -655,6 +660,113 @@ describe("TerminalManagerPanel", () => {
     renderPanel("workspace-1", { externalWindowMode: true });
 
     expect(screen.queryByRole("button", { name: "在新窗口打开" })).not.toBeInTheDocument();
+  });
+
+  it("Windows Peer Host 会显示并回填正确的持久化方案名称", async () => {
+    buildMockSnapshot = () => ({
+      workspaceId: "remote-workspace-1",
+      terminals: [],
+      shellOptions: [
+        {
+          id: "cmd",
+          label: "命令提示符 (CMD)",
+          shell: "C:\\Windows\\System32\\cmd.exe",
+          available: true,
+          unavailableReason: null
+        },
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          available: true,
+          unavailableReason: null
+        },
+        {
+          id: "git-bash",
+          label: "Git Bash",
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ],
+      templates: [
+        {
+          id: "template-win-1",
+          workspaceId: "remote-workspace-1",
+          name: "Web",
+          cwd: "C:/Code/GCAC",
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          command: "./scripts/dev-web.sh",
+          args: [],
+          env: {},
+          port: 5172,
+          proxyEnabled: false,
+          proxySlug: null,
+          runtimeType: "conpty-git-bash",
+          createdAt: "2026-03-24T00:00:00.000Z",
+          updatedAt: "2026-03-24T00:10:00.000Z"
+        }
+      ],
+      templateStatuses: [
+        {
+          templateId: "template-win-1",
+          port: 5172,
+          occupied: false,
+          processId: null,
+          parentProcessId: null,
+          processGroupId: null,
+          processName: null,
+          processCommandLine: null,
+          parentProcessName: null,
+          parentProcessCommandLine: null,
+          terminationScope: null
+        }
+      ]
+    });
+
+    writeViewSnapshot("terminal-manager.snapshot.host.peer-host-windows.remote-workspace-1", {
+      revision: "revision-peer-windows",
+      workspaceId: "remote-workspace-1",
+      targetHostId: "peer-host-windows",
+      terminals: [],
+      templates: buildMockSnapshot().templates,
+      templateStatuses: buildMockSnapshot().templateStatuses,
+      shellOptions: buildMockSnapshot().shellOptions
+    });
+
+    renderPanel("workspace-1", {
+      requestWorkspaceId: "remote-workspace-1",
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-windows",
+        currentWorkspaceRef: {
+          hostId: "peer-host-windows",
+          workspaceId: "remote-workspace-1"
+        }
+      }
+    });
+
+    await waitFor(() => {
+      expect(terminalManagerSnapshotListener).not.toBeNull();
+    });
+    terminalManagerSnapshotListener?.({
+      ...buildMockSnapshot(),
+      workspaceId: "remote-workspace-1",
+      targetHostId: "peer-host-windows"
+    } as never);
+
+    expect(await screen.findByText("Git Bash 持久会话")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "显示详细信息" }));
+    await userEvent.click(screen.getByRole("button", { name: "编辑启动项" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑快捷启动项" });
+    const comboboxes = within(dialog).getAllByRole("combobox");
+    expect(comboboxes).toHaveLength(2);
+    expect(comboboxes[0]).toHaveValue("git-bash");
+    expect(comboboxes[1]).toHaveValue("tmux");
+    expect(
+      within(dialog).getByText("使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。")
+    ).toBeInTheDocument();
   });
 });
 

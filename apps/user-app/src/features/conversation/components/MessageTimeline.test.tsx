@@ -3038,6 +3038,95 @@ ARGUMENTS: capabilities list`)
     ).toHaveTextContent("NEW");
   });
 
+  it("runtime_thinking 和 runtime_notice 变化时，仍按最后一条真实消息恢复阅读位置", () => {
+    const baseMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-runtime-anchor-1"),
+        sessionId: "session-runtime-anchor"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-runtime-anchor-2"),
+        sessionId: "session-runtime-anchor",
+        sequence: 2,
+        rawRef: "codex://raw#line=runtime-anchor-2"
+      }
+    ];
+    const initialItems = buildConversationTimelineSourceItems({
+      messages: baseMessages,
+      runtimeThinkingPlaceholder: "Claude 正在执行初始化",
+      sessionDetail: "Claude 正在展开用户指令：/tmp/old"
+    });
+    const updatedItems = buildConversationTimelineSourceItems({
+      messages: baseMessages,
+      runtimeThinkingPlaceholder: "Claude 正在创建工作树",
+      sessionDetail: "Claude 正在展开用户指令：/tmp/new"
+    });
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-runtime-anchor"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        items={initialItems}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2000,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-runtime-anchor-other"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("其他会话", "assistant-runtime-anchor-other"),
+            sessionId: "session-runtime-anchor-other"
+          }
+        ]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-runtime-anchor"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        items={updatedItems}
+      />
+    );
+
+    const restoredMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(restoredMessageList).not.toBeNull();
+    expect(restoredMessageList!.scrollTop).toBe(420);
+    const jumpButton = screen.queryByRole("button", {
+      name: t("conversation.scrollToBottomAction")
+    });
+
+    expect(jumpButton?.getAttribute("data-has-new")).toBe("false");
+    expect(screen.queryByText("NEW")).not.toBeInTheDocument();
+  });
+
   it("恢复阅读位置后用户一旦滚动，就不会再被手动恢复逻辑拉回旧位置", () => {
     vi.useFakeTimers();
 

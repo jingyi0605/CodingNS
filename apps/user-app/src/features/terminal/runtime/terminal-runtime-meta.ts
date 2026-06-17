@@ -1,5 +1,6 @@
 import { t } from "../../../shared/i18n";
 import type { PlatformOsFamily } from "../../../platform/platform-adapter";
+import type { TerminalShellOptionDto } from "../api/terminal-api";
 
 export type SelectableTerminalRuntimeType = "" | "tmux" | "embedded-pty";
 type OsFamily = PlatformOsFamily;
@@ -31,6 +32,20 @@ export function listTerminalRuntimeOptions(osFamily: OsFamily): TerminalRuntimeO
       description: t("terminal.runtimeEmbeddedDescription")
     }
   ];
+}
+
+export function normalizeSelectableTerminalRuntimeType(
+  runtimeType?: string | null
+): SelectableTerminalRuntimeType {
+  if (!runtimeType) {
+    return "";
+  }
+
+  if (runtimeType === "embedded-pty") {
+    return "embedded-pty";
+  }
+
+  return "tmux";
 }
 
 export function getTerminalRuntimeLabel(runtimeType?: string | null, osFamily?: OsFamily): string {
@@ -79,4 +94,40 @@ export function getTerminalRuntimeShortLabel(
   }
 
   return runtimeType;
+}
+
+export function resolveTargetTerminalOsFamily(
+  shellOptions: TerminalShellOptionDto[],
+  targetHostId: string | null | undefined,
+  fallbackOsFamily: OsFamily
+): OsFamily {
+  if (looksLikeWindowsShellOptions(shellOptions)) {
+    return "windows";
+  }
+
+  if (targetHostId) {
+    return fallbackOsFamily;
+  }
+
+  return fallbackOsFamily;
+}
+
+export function looksLikeWindowsShellOptions(shellOptions: TerminalShellOptionDto[]): boolean {
+  if (shellOptions.length === 0) {
+    return false;
+  }
+
+  return shellOptions.some((option) => {
+    const shellValue = option.shell.trim().toLowerCase();
+    const optionId = option.id.trim().toLowerCase();
+
+    return (
+      optionId === "cmd" ||
+      optionId === "powershell" ||
+      optionId === "git-bash" ||
+      shellValue.endsWith(".exe") ||
+      shellValue.includes("\\windows\\") ||
+      shellValue.includes("\\program files\\git\\")
+    );
+  });
 }

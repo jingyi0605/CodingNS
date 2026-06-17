@@ -39,6 +39,7 @@ interface CommandTemplateBody {
   workspaceId?: string;
   name?: string;
   cwd?: string;
+  shell?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -220,6 +221,7 @@ export class TerminalController {
       workspaceId,
       name: request.body.name,
       cwd: request.body.cwd,
+      shell: request.body.shell?.trim(),
       command: request.body.command,
       args: normalizeArgs(request.body.args),
       env: request.body.env,
@@ -240,6 +242,7 @@ export class TerminalController {
         workspaceId: request.body.workspaceId,
         name: request.body.name,
         cwd: request.body.cwd,
+        shell: request.body.shell?.trim(),
         command: request.body.command,
         args: normalizeArgs(request.body.args),
         env: request.body.env,

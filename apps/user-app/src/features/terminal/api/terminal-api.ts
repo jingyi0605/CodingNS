@@ -28,6 +28,7 @@ export interface TerminalTemplateDto {
   workspaceId: string;
   name: string;
   cwd: string;
+  shell?: string | null;
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -185,6 +186,7 @@ export function createTerminalTemplate(payload: {
   workspaceId: string;
   name: string;
   cwd?: string;
+  shell?: string | null;
   command: string;
   args: string[];
   port?: number | null;
@@ -204,6 +206,7 @@ export function updateTerminalTemplate(
     workspaceId?: string;
     name?: string;
     cwd?: string;
+    shell?: string | null;
     command?: string;
     args?: string[];
     port?: number | null;

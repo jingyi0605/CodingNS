@@ -78,6 +78,7 @@ import {
   getTerminalRuntimeLabel,
   getTerminalRuntimeShortLabel,
   listTerminalRuntimeOptions,
+  resolveTargetTerminalOsFamily,
   type SelectableTerminalRuntimeType
 } from "../runtime/terminal-runtime-meta";
 import { isTmuxDependencyMissingError } from "../runtime/terminal-runtime-errors";
@@ -5758,42 +5759,6 @@ function shouldPromptForTerminalShellSelection(
   }
 
   return shellOptions.filter((option) => option.available).length > 1;
-}
-
-function resolveTargetTerminalOsFamily(
-  shellOptions: TerminalShellOptionDto[],
-  targetHostId: string | null | undefined,
-  fallbackOsFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"]
-): ReturnType<typeof usePlatform>["ui"]["osFamily"] {
-  if (looksLikeWindowsShellOptions(shellOptions)) {
-    return "windows";
-  }
-
-  if (targetHostId) {
-    return fallbackOsFamily;
-  }
-
-  return fallbackOsFamily;
-}
-
-function looksLikeWindowsShellOptions(shellOptions: TerminalShellOptionDto[]): boolean {
-  if (shellOptions.length === 0) {
-    return false;
-  }
-
-  return shellOptions.some((option) => {
-    const shellValue = option.shell.trim().toLowerCase();
-    const optionId = option.id.trim().toLowerCase();
-
-    return (
-      optionId === "cmd" ||
-      optionId === "powershell" ||
-      optionId === "git-bash" ||
-      shellValue.endsWith(".exe") ||
-      shellValue.includes("\\windows\\") ||
-      shellValue.includes("\\program files\\git\\")
-    );
-  });
 }
 
 function shouldBypassTerminalKeyboardFallback(

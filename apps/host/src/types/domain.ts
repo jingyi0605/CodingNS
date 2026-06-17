@@ -1974,6 +1974,7 @@ export interface TerminalCommandTemplate {
   workspaceId: string;
   name: string;
   cwd: string;
+  shell?: string | null;
   command: string;
   args: string[];
   env: Record<string, string>;

@@ -32,6 +32,8 @@ import {
 import {
   getTerminalRuntimeLabel,
   listTerminalRuntimeOptions,
+  normalizeSelectableTerminalRuntimeType,
+  resolveTargetTerminalOsFamily,
   type SelectableTerminalRuntimeType
 } from "../../terminal/runtime/terminal-runtime-meta";
 import { isTmuxDependencyMissingError } from "../../terminal/runtime/terminal-runtime-errors";
@@ -136,6 +138,35 @@ function pickDefaultShellId(options: TerminalShellOptionDto[]): string {
     options[0]?.id ??
     ""
   );
+}
+
+function inferShellIdFromTemplate(
+  template: TerminalTemplateDto,
+  shellOptions: TerminalShellOptionDto[]
+): string {
+  const templateShell = template.shell?.trim().toLowerCase();
+
+  if (templateShell) {
+    const matchedOption = shellOptions.find((option) => option.shell.trim().toLowerCase() === templateShell);
+
+    if (matchedOption) {
+      return matchedOption.id;
+    }
+  }
+
+  if (template.runtimeType === "conpty-cmd") {
+    return shellOptions.find((option) => option.id === "cmd")?.id ?? "";
+  }
+
+  if (template.runtimeType === "conpty-powershell") {
+    return shellOptions.find((option) => option.id === "powershell")?.id ?? "";
+  }
+
+  if (template.runtimeType === "conpty-git-bash") {
+    return shellOptions.find((option) => option.id === "git-bash")?.id ?? "";
+  }
+
+  return "";
 }
 
 function buildLaunchName(draft: LaunchDraftState): string {
@@ -594,9 +625,13 @@ export function TerminalManagerPanel({
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
     [selectedShellId, shellOptions]
   );
+  const targetTerminalOsFamily = useMemo(
+    () => resolveTargetTerminalOsFamily(shellOptions, currentTargetHostId, platform.ui.osFamily),
+    [currentTargetHostId, platform.ui.osFamily, shellOptions]
+  );
   const runtimeOptions = useMemo(
-    () => listTerminalRuntimeOptions(platform.ui.osFamily),
-    [platform.ui.osFamily]
+    () => listTerminalRuntimeOptions(targetTerminalOsFamily),
+    [targetTerminalOsFamily]
   );
   const runtimeStatusByTemplateId = useMemo(
     () => new Map(templateStatuses.map((status) => [status.templateId, status] as const)),
@@ -795,6 +830,7 @@ export function TerminalManagerPanel({
   function openCreateTemplateEditor() {
     setEditingTemplateId(null);
     setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+    setSelectedShellId(pickDefaultShellId(shellOptions));
     setSelectedRuntimeType("");
     setTemplateEditorMode("create");
   }
@@ -802,7 +838,8 @@ export function TerminalManagerPanel({
   function openEditTemplateEditor(template: TerminalTemplateDto) {
     setEditingTemplateId(template.id);
     setLaunchDraft(buildLaunchDraftFromTemplate(template));
-    setSelectedRuntimeType((template.runtimeType as SelectableTerminalRuntimeType) ?? "");
+    setSelectedShellId(inferShellIdFromTemplate(template, shellOptions) || pickDefaultShellId(shellOptions));
+    setSelectedRuntimeType(normalizeSelectableTerminalRuntimeType(template.runtimeType));
     setTemplateEditorMode("edit");
   }
 
@@ -860,6 +897,7 @@ export function TerminalManagerPanel({
         workspaceId: activeRequestWorkspaceId,
         name: buildLaunchName(launchDraft),
         cwd: launchDraft.cwd.trim() || undefined,
+        shell: selectedShellOption?.shell ?? null,
         command: launchDraft.target.trim(),
         args: splitArgs(launchDraft.args),
         port: parsedPort,
@@ -953,7 +991,8 @@ export function TerminalManagerPanel({
       return;
     }
 
-    const shell = selectedShellOption?.available ? selectedShellOption.shell : undefined;
+    const template = templates.find((item) => item.id === templateId) ?? null;
+    const shell = template?.shell ?? undefined;
     setRunningTemplateId(templateId);
 
     try {
