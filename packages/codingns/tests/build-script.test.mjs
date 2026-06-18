@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import {
   rewritePackageJsonForPublish,
   stripPackLifecycleScripts
 } from "../scripts/publish-package-utils.mjs";
+import { resolveNode22Runtime } from "../scripts/node22-runtime.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -134,3 +136,63 @@ test("codingns CLI 在非 Node 22 进程下会自动切换到 Node 22", () => {
   assert.equal(fs.realpathSync(payload.execPath), fs.realpathSync(node22Path));
   assert.equal(result.error, undefined);
 });
+
+test("resolveNode22Runtime 会优先复用 install.sh 产出的 Windows 私有运行时 active.json", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-node22-runtime-"));
+  const runtimeRoot = path.join(tempRoot, "runtime");
+  const versionDir = path.join(runtimeRoot, "node-22", "versions", "node-v22.16.0-win-x64");
+  const activeMetaPath = path.join(runtimeRoot, "node-22", "active.json");
+  fs.mkdirSync(versionDir, { recursive: true });
+  fs.writeFileSync(path.join(versionDir, "npm.cmd"), "");
+  fs.writeFileSync(path.join(versionDir, "npx.cmd"), "");
+
+  const node22Path = process.execPath;
+  const previousPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const previousEnv = {
+    CODINGNS_DATA_DIR: process.env.CODINGNS_DATA_DIR,
+    CODINGNS_RUNTIME_ROOT: process.env.CODINGNS_RUNTIME_ROOT,
+    CODINGNS_WINDOWS_NODE_VERSION: process.env.CODINGNS_WINDOWS_NODE_VERSION
+  };
+
+  try {
+    fs.writeFileSync(
+      activeMetaPath,
+      `${JSON.stringify({
+        version: "22.16.0",
+        nodeExe: node22Path,
+        npmCmd: path.join(versionDir, "npm.cmd"),
+        npxCmd: path.join(versionDir, "npx.cmd")
+      }, null, 2)}\n`
+    );
+
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32"
+    });
+    process.env.CODINGNS_DATA_DIR = tempRoot;
+    process.env.CODINGNS_RUNTIME_ROOT = runtimeRoot;
+    process.env.CODINGNS_WINDOWS_NODE_VERSION = "22.16.0";
+
+    const runtime = resolveNode22Runtime(workspaceRoot, {});
+    assert.ok(runtime);
+    assert.equal(fs.realpathSync(runtime.nodePath), fs.realpathSync(node22Path));
+    assert.equal(runtime.npmCmd, path.join(versionDir, "npm.cmd"));
+  } finally {
+    if (previousPlatformDescriptor) {
+      Object.defineProperty(process, "platform", previousPlatformDescriptor);
+    }
+    restoreEnv("CODINGNS_DATA_DIR", previousEnv.CODINGNS_DATA_DIR);
+    restoreEnv("CODINGNS_RUNTIME_ROOT", previousEnv.CODINGNS_RUNTIME_ROOT);
+    restoreEnv("CODINGNS_WINDOWS_NODE_VERSION", previousEnv.CODINGNS_WINDOWS_NODE_VERSION);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+function restoreEnv(key, value) {
+  if (typeof value === "string") {
+    process.env[key] = value;
+    return;
+  }
+
+  delete process.env[key];
+}
