@@ -7,7 +7,8 @@ import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runti
 
 ensureNode22ForCurrentScript({
   rootDir: resolvePackageRoot(import.meta.url),
-  scriptLabel: "codingns-postinstall"
+  scriptLabel: "codingns-postinstall",
+  allowWindowsPrivateRuntimeInstall: true
 });
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));

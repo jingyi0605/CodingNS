@@ -8,7 +8,8 @@ import { ensureNode22ForCurrentScript, resolvePackageRoot } from "../scripts/nod
 
 ensureNode22ForCurrentScript({
   rootDir: resolvePackageRoot(import.meta.url),
-  scriptLabel: "codingns-cli"
+  scriptLabel: "codingns-cli",
+  allowWindowsPrivateRuntimeInstall: process.platform === "win32"
 });
 
 if (process.env.CODINGNS_CLI_RUNTIME_PROBE === "1") {
