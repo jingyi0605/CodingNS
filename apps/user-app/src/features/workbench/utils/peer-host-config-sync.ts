@@ -1,6 +1,10 @@
 import { clientConfigStore } from "../../../config/client-config-store";
 import type { HostProfile } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config-shared";
+import {
+  readWorkspaceHostAssignments,
+  writeWorkspaceHostAssignmentsSilently
+} from "../../conversation/components/workspace-host-assignment-storage";
 import { listPeerHosts, type PeerHostDto } from "../api/peer-hosts-api";
 import { normalizeHostAliasLabel } from "./host-alias";
 
@@ -13,9 +17,10 @@ export async function mergePeerHostsIntoClientConfig(peerHosts: readonly PeerHos
   const current = clientConfigStore.getState();
   const activeHostId = current.activeHostId ?? current.hosts[0]?.id ?? null;
   const now = new Date().toISOString();
+  const livePeerHostIds = new Set(peerHosts.map((peerHost) => peerHost.id));
   const existingByPeerHostId = new Map<string, HostProfile>();
   const existingByBaseUrl = new Map<string, HostProfile>();
-  const nextHosts = current.hosts.map((host) => {
+  let nextHosts = current.hosts.map((host) => {
     if (host.peerHostId) {
       existingByPeerHostId.set(host.peerHostId, host);
     }
@@ -50,7 +55,20 @@ export async function mergePeerHostsIntoClientConfig(peerHosts: readonly PeerHos
     }
   }
 
-  const livePeerHostIds = new Set(peerHosts.map((peerHost) => peerHost.id));
+  nextHosts = nextHosts.map((host) => {
+    if (!host.peerHostId || livePeerHostIds.has(host.peerHostId)) {
+      return host;
+    }
+
+    changed = true;
+    return {
+      ...host,
+      peerEnabled: false,
+      peerHostId: null,
+      updatedAt: now
+    };
+  });
+
   const filteredHosts = nextHosts.filter((host) => !host.peerHostId || livePeerHostIds.has(host.peerHostId));
   const dedupedHosts = dedupePeerHosts(filteredHosts, activeHostId);
 
@@ -61,6 +79,8 @@ export async function mergePeerHostsIntoClientConfig(peerHosts: readonly PeerHos
   if (changed) {
     await clientConfigStore.update({ hosts: dedupedHosts });
   }
+
+  clearStaleWorkspaceAssignments(dedupedHosts);
 }
 
 function buildHostProfileFromPeer(peerHost: PeerHostDto, existing: HostProfile | undefined, now: string): HostProfile {
@@ -160,4 +180,37 @@ function scorePeerHostEntry(host: HostProfile, activeHostId: string | null): num
   }
 
   return score;
+}
+
+function clearStaleWorkspaceAssignments(hosts: readonly HostProfile[]): void {
+  const validHostIds = new Set(
+    hosts
+      .filter((host) => host.peerEnabled && host.peerHostId)
+      .map((host) => host.id)
+  );
+  const currentAssignments = readWorkspaceHostAssignments();
+  let changed = false;
+  const nextAssignments = Object.fromEntries(
+    Object.entries(currentAssignments).map(([key, assignment]) => {
+      if (
+        assignment.selectedHostId
+        && assignment.selectedHostId !== "current"
+        && !validHostIds.has(assignment.selectedHostId)
+      ) {
+        changed = true;
+        return [key, {
+          selectedHostId: "current",
+          remoteWorkspaceId: null,
+          remoteWorkspacePath: null,
+          remoteWorkspaceName: null
+        }];
+      }
+
+      return [key, assignment];
+    })
+  );
+
+  if (changed) {
+    writeWorkspaceHostAssignmentsSilently(nextAssignments);
+  }
 }
