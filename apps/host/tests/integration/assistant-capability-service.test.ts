@@ -1,8 +1,217 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AssistantCapabilityService } from "../../src/modules/assistant-capability/assistant-capability-service.js";
+import { AppError } from "../../src/shared/errors/app-error.js";
 
 describe("AssistantCapabilityService", () => {
+  it("Butler 未初始化时，自动化列表会降级为空数组", () => {
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn()
+      } as any,
+      {
+        listTasks: vi.fn(() => {
+          throw new AppError({
+            statusCode: 409,
+            errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
+            detail: "代码助手尚未完成初始化，不能启动控制会话"
+          });
+        }),
+        listRecentRuns: vi.fn(),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession: vi.fn(),
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    const receipt = service.listAutomations({
+      userId: "user-1",
+      status: null,
+      controlSessionId: null
+    });
+
+    expect(receipt.payload.items).toEqual([]);
+  });
+
+  it("Butler 未初始化时，最近自动化运行列表会降级为空数组", () => {
+    const service = new AssistantCapabilityService(
+      {
+        list: vi.fn(),
+        getById: vi.fn(),
+        getOverview: vi.fn()
+      } as any,
+      {
+        listByProject: vi.fn(),
+        ensureProjectSessionsSynced: vi.fn(),
+        startSession: vi.fn()
+      } as any,
+      {
+        getCurrentSession: vi.fn()
+      } as any,
+      {
+        listTasks: vi.fn(),
+        listRecentRuns: vi.fn(() => {
+          throw new AppError({
+            statusCode: 409,
+            errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
+            detail: "代码助手尚未完成初始化，不能启动控制会话"
+          });
+        }),
+        getTask: vi.fn(),
+        createTask: vi.fn(),
+        cancelTask: vi.fn(),
+        listRuns: vi.fn()
+      } as any,
+      {
+        listTimers: vi.fn(),
+        getTimer: vi.fn(),
+        createTimer: vi.fn(),
+        cancelTimer: vi.fn()
+      } as any,
+      {
+        getSession: vi.fn(),
+        readSessionHistory: vi.fn(),
+        forkSession: vi.fn()
+      } as any,
+      {
+        startLiveSession: vi.fn(),
+        getSessionRuntime: vi.fn(),
+        sendLiveMessage: vi.fn()
+      } as any,
+      {
+        listTerminals: vi.fn(),
+        readTerminalHistory: vi.fn(),
+        writeInput: vi.fn(),
+        closeTerminal: vi.fn()
+      } as any,
+      {
+        analyze: vi.fn(),
+        getFrameworkAnalysis: vi.fn(),
+        refreshFrameworkAnalysis: vi.fn(),
+        createLaunchPlan: vi.fn(),
+        run: vi.fn(),
+        getLatestRuntimeDetail: vi.fn(),
+        getRecentRuntimeDetails: vi.fn(),
+        getRuntimeDetail: vi.fn(),
+        getCompatibilityMatrix: vi.fn()
+      } as any,
+      {
+        list: vi.fn(),
+        browseDirectories: vi.fn(),
+        createDirectory: vi.fn(),
+        importWorkspace: vi.fn(),
+        cloneWorkspace: vi.fn(),
+        reorderWorkspaces: vi.fn(),
+        getManagementSummary: vi.fn(),
+        removeWorkspace: vi.fn(),
+        updateNavigationState: vi.fn()
+      } as any,
+      {
+        findByWorkspaceId: vi.fn()
+      } as any,
+      {
+        getTree: vi.fn(),
+        create: vi.fn()
+      } as any,
+      {
+        syncRoot: vi.fn()
+      } as any,
+      {
+        preview: vi.fn(),
+        apply: vi.fn()
+      } as any,
+      {
+        cleanup: vi.fn()
+      } as any,
+      {
+        upsert: vi.fn()
+      } as any
+    );
+
+    const receipt = service.listRecentAutomationRuns({
+      userId: "user-1",
+      controlSessionId: null,
+      limit: 20
+    });
+
+    expect(receipt.payload.items).toEqual([]);
+  });
+
   it("新建项目会话时会默认继承当前助手控制会话的 provider 与模型配置", async () => {
     const service = new AssistantCapabilityService(
       {

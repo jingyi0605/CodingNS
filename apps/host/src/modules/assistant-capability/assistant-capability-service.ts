@@ -1287,11 +1287,7 @@ export class AssistantCapabilityService {
   ): AssistantCapabilityReceipt<{
     items: ReturnType<AssistantAutomationService["listTasks"]>;
   }> {
-    const items = this.assistantAutomationService.listTasks({
-      userId: input.userId,
-      statuses: input.status ? [input.status] : undefined,
-      controlSessionId: input.controlSessionId ?? null
-    });
+    const items = this.safeListAutomations(input);
 
     return this.createReceipt("automations.list", {
       kind: "none",
@@ -1431,11 +1427,7 @@ export class AssistantCapabilityService {
   ): AssistantCapabilityReceipt<{
     items: ReturnType<AssistantAutomationService["listRecentRuns"]>;
   }> {
-    const items = this.assistantAutomationService.listRecentRuns({
-      userId: input.userId,
-      controlSessionId: input.controlSessionId ?? null,
-      limit: input.limit ?? undefined
-    });
+    const items = this.safeListRecentAutomationRuns(input);
 
     return this.createReceipt("automations.runs.recent", {
       kind: "none",
@@ -1443,6 +1435,42 @@ export class AssistantCapabilityService {
     }, {
       items
     });
+  }
+
+  private safeListAutomations(
+    input: ListAssistantAutomationsInput
+  ): ReturnType<AssistantAutomationService["listTasks"]> {
+    try {
+      return this.assistantAutomationService.listTasks({
+        userId: input.userId,
+        statuses: input.status ? [input.status] : undefined,
+        controlSessionId: input.controlSessionId ?? null
+      });
+    } catch (error) {
+      if (isButlerProfileNotInitializedError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
+  private safeListRecentAutomationRuns(
+    input: ListAssistantAutomationRunsInput
+  ): ReturnType<AssistantAutomationService["listRecentRuns"]> {
+    try {
+      return this.assistantAutomationService.listRecentRuns({
+        userId: input.userId,
+        controlSessionId: input.controlSessionId ?? null,
+        limit: input.limit ?? undefined
+      });
+    } catch (error) {
+      if (isButlerProfileNotInitializedError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
   }
 
   listFollowUps(
@@ -2546,6 +2574,10 @@ function requireAssistantConditionKind(
 
 function assertNeverAssistantAutomationTriggerType(value: never): never {
   throw new Error(`Unexpected assistant automation triggerType: ${String(value)}`);
+}
+
+function isButlerProfileNotInitializedError(error: unknown): boolean {
+  return error instanceof AppError && error.errorCode === "BUTLER_PROFILE_NOT_INITIALIZED";
 }
 
 function augmentAssistantCapabilities(
