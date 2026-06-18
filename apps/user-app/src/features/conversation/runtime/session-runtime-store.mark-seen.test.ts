@@ -369,7 +369,7 @@ describe("SessionRuntimeStore mark seen", () => {
     });
     await vi.advanceTimersByTimeAsync(600);
 
-    expect(mocked.markSessionSeen).toHaveBeenCalledWith("session-1");
+    expect(mocked.markSessionSeen).toHaveBeenCalledWith("session-1", { targetHostId: undefined });
     expect(onSeen).toHaveBeenCalledTimes(1);
     expect(onSeen).toHaveBeenCalledWith(
       "session-1",

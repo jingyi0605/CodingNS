@@ -396,7 +396,8 @@ describe("SessionRuntimeStore send message", () => {
       expect.objectContaining({
         content: "继续按这个方向补充",
         permissionMode: null
-      })
+      }),
+      { targetHostId: undefined }
     );
     expect(store.getState().session?.runningState).toBe("running");
     expect(store.getState().runtimeCanInterrupt).toBe(true);
@@ -634,7 +635,8 @@ describe("SessionRuntimeStore send message", () => {
       expect.objectContaining({
         content: "直接执行 git add",
         permissionMode: "bypassPermissions"
-      })
+      }),
+      { targetHostId: undefined }
     );
   });
 
@@ -682,7 +684,8 @@ describe("SessionRuntimeStore send message", () => {
       expect.objectContaining({
         content: "旧链路继续发",
         permissionMode: "bypassPermissions"
-      })
+      }),
+      { targetHostId: undefined }
     );
   });
 

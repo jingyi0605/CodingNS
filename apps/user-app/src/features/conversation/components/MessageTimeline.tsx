@@ -1,6 +1,8 @@
 import {
   createContext,
   isValidElement,
+  memo,
+  useDeferredValue,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -104,6 +106,21 @@ interface MessageActionState {
   canCopy: boolean;
   canFork: boolean;
 }
+
+const DEFAULT_MESSAGE_ACTION_STATE: MessageActionState = {
+  canCopy: false,
+  canFork: false
+};
+
+const DEFAULT_USER_MESSAGE_ACTION_STATE: MessageActionState = {
+  canCopy: true,
+  canFork: false
+};
+
+const OFFSCREEN_MESSAGE_STYLE = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "0 180px"
+} as const;
 
 function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
@@ -4574,6 +4591,17 @@ function ToolCallItem({
   );
 }
 
+const MemoizedToolCallItem = memo(ToolCallItem, (previous, next) => {
+  return previous.group === next.group
+    && previous.sessionId === next.sessionId
+    && previous.workspaceId === next.workspaceId
+    && previous.workspacePath === next.workspacePath
+    && previous.exportMode === next.exportMode
+    && previous.onSubmitStructuredQuestion === next.onSubmitStructuredQuestion
+    && previous.permissionRequests === next.permissionRequests
+    && previous.replyingPermissionRequestId === next.replyingPermissionRequestId;
+});
+
 function AssistantCapabilityToolItem({
   tool,
   snapshot,
@@ -4672,7 +4700,11 @@ function SubagentNotificationReportCard({
     : t("conversation.assistantCapabilityRawExpand");
 
   return (
-    <article className="message-item tool-message-row subagent-notification-row" data-message-id={message.id}>
+    <article
+      className="message-item tool-message-row subagent-notification-row"
+      data-message-id={message.id}
+      style={OFFSCREEN_MESSAGE_STYLE}
+    >
       <div className="tool-call-item assistant-capability-item" data-kind="session">
         <div className="assistant-capability-header">
           <div className="assistant-capability-heading">
@@ -5071,7 +5103,11 @@ function RulesMessageCard({
         : t("conversation.rulesMessageExpand");
 
   return (
-    <article className={`message-item ${tone} rules-message-row`} data-message-id={message.id}>
+    <article
+      className={`message-item ${tone} rules-message-row`}
+      data-message-id={message.id}
+      style={OFFSCREEN_MESSAGE_STYLE}
+    >
       <div className="message-content-wrapper">
         <div className="rules-message-card">
           {forceExpanded ? (
@@ -5219,7 +5255,7 @@ function MessageItem({
     const displayText = turnAborted.detail ? `${abortedText}\n\n${turnAborted.detail}` : abortedText;
 
     return (
-      <article className="message-item assistant-message" data-message-id={message.id}>
+      <article className="message-item assistant-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageMarkdownBody
@@ -5321,7 +5357,7 @@ function MessageItem({
     ) : null;
 
     return (
-      <article className="message-item user-message" data-message-id={message.id}>
+      <article className="message-item user-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
         <div className="message-content-wrapper">
           <MessageAttachments
             sessionId={message.sessionId}
@@ -5361,7 +5397,11 @@ function MessageItem({
 
   if (isThinking) {
     return (
-      <article className="message-item assistant-message thinking-message-row" data-message-id={message.id}>
+      <article
+        className="message-item assistant-message thinking-message-row"
+        data-message-id={message.id}
+        style={OFFSCREEN_MESSAGE_STYLE}
+      >
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="thinking-message-content">
           <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
@@ -5391,7 +5431,7 @@ function MessageItem({
 
   if (isAssistantText) {
     return (
-      <article className="message-item assistant-message" data-message-id={message.id}>
+      <article className="message-item assistant-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageAttachments
@@ -5422,7 +5462,7 @@ function MessageItem({
   }
 
   return (
-    <article className="message-item system-message" data-message-id={message.id}>
+    <article className="message-item system-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
       <div className="message-content-wrapper">
         <MessageAttachments
           sessionId={message.sessionId}
@@ -5445,6 +5485,19 @@ function MessageItem({
     </article>
   );
 }
+
+const MemoizedMessageItem = memo(MessageItem, (previous, next) => {
+  return previous.message === next.message
+    && previous.provider === next.provider
+    && previous.interruptedSource === next.interruptedSource
+    && previous.foldedPromptKind === next.foldedPromptKind
+    && previous.actionState === next.actionState
+    && previous.onRetry === next.onRetry
+    && previous.onForkMessage === next.onForkMessage
+    && previous.assistantAvatar === next.assistantAvatar
+    && previous.exportMode === next.exportMode
+    && previous.onSubmitStructuredQuestion === next.onSubmitStructuredQuestion;
+});
 
 function StructuredQuestionPromptPreviewCard({
   prompt
@@ -5777,7 +5830,11 @@ function renderRuntimeThinkingItem(item: Extract<TimelineRenderItem, { type: "ru
 
 function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "session_error" }>) {
   return (
-    <article key={item.key} className="message-item assistant-message session-runtime-error-row">
+    <article
+      key={item.key}
+      className="message-item assistant-message session-runtime-error-row"
+      style={OFFSCREEN_MESSAGE_STYLE}
+    >
       <div className="session-runtime-error-row__spacer" aria-hidden="true" />
       <section
         className="message-content-wrapper session-runtime-error-panel"
@@ -5818,7 +5875,7 @@ function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "sessi
 
 function renderRuntimeNoticeItem(item: Extract<TimelineRenderItem, { type: "runtime_notice" }>) {
   return (
-    <article key={item.key} className="message-item assistant-message">
+    <article key={item.key} className="message-item assistant-message" style={OFFSCREEN_MESSAGE_STYLE}>
       <div className="message-avatar"><DefaultAssistantAvatar /></div>
       <section className="permission-request-card permission-request-card-inline permission-request-card-readonly runtime-notice-card">
         <header className="permission-request-card-header">
@@ -5879,8 +5936,8 @@ export function ConversationTranscriptExport({
 
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
-            <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem
+            <article key={item.key} className="message-item tool-message-row" style={OFFSCREEN_MESSAGE_STYLE}>
+              <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
                 workspaceId={workspaceId}
@@ -5896,7 +5953,7 @@ export function ConversationTranscriptExport({
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
-            <MessageItem
+            <MemoizedMessageItem
               key={item.key}
               message={item.message}
               provider={provider}
@@ -5905,7 +5962,7 @@ export function ConversationTranscriptExport({
                   ? "system_prompt"
                   : null
               }
-              actionState={{ canCopy: false, canFork: false }}
+              actionState={DEFAULT_MESSAGE_ACTION_STATE}
               onRetry={() => undefined}
               onForkMessage={null}
               interruptedSource={interruptedSource}
@@ -6006,21 +6063,23 @@ export function MessageTimeline({
   const hasNewMessagesBelowRef = useRef(false);
   const previousRenderMessageIdsRef = useRef<string[] | null>(null);
   const manualRestoreDurationMs = platform.isMobile ? 0 : MANUAL_RESTORE_DURATION_MS;
+  const deferredItems = useDeferredValue(items);
+  const deferredSessionSummary = useDeferredValue(sessionSummary);
   const messages = useMemo(
-    () => extractConversationTimelineMessages(items),
-    [items]
+    () => extractConversationTimelineMessages(deferredItems),
+    [deferredItems]
   );
   const runtimeThinkingPlaceholder = useMemo(
-    () => findConversationTimelineRuntimeThinkingLabel(items),
-    [items]
+    () => findConversationTimelineRuntimeThinkingLabel(deferredItems),
+    [deferredItems]
   );
   const timelineViewModel = useMemo(
     () => buildTimelineViewModel({
-      sessionSummary,
-      items,
+      sessionSummary: deferredSessionSummary,
+      items: deferredItems,
       provider
     }),
-    [items, provider, sessionSummary]
+    [deferredItems, deferredSessionSummary, provider]
   );
   const visibleMessages = timelineViewModel.visibleMessages;
   const renderItems = timelineViewModel.renderItems;
@@ -6919,8 +6978,8 @@ export function MessageTimeline({
 
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
-            <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem
+            <article key={item.key} className="message-item tool-message-row" style={OFFSCREEN_MESSAGE_STYLE}>
+              <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
                 workspaceId={workspaceId}
@@ -6937,7 +6996,7 @@ export function MessageTimeline({
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
-            <MessageItem
+            <MemoizedMessageItem
               key={item.key}
               message={item.message}
               provider={provider}
@@ -6947,10 +7006,10 @@ export function MessageTimeline({
                   : null
               }
               actionState={
-                actionStateByMessageId.get(item.message.id) ?? {
-                  canCopy: item.message.role === "user",
-                  canFork: false
-                }
+                actionStateByMessageId.get(item.message.id)
+                ?? (item.message.role === "user"
+                  ? DEFAULT_USER_MESSAGE_ACTION_STATE
+                  : DEFAULT_MESSAGE_ACTION_STATE)
               }
               onRetry={onRetryMessage}
               onForkMessage={onForkMessage}

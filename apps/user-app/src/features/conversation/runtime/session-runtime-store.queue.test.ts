@@ -519,7 +519,8 @@ describe("SessionRuntimeStore queue", () => {
       "session-1",
       expect.objectContaining({
         content: "排队继续执行"
-      })
+      }),
+      { targetHostId: undefined }
     );
     expect(store.getState().messages).toHaveLength(0);
     expect(store.getState().queuedMessages).toHaveLength(1);
@@ -545,7 +546,8 @@ describe("SessionRuntimeStore queue", () => {
       expect.objectContaining({
         content: "排队执行 git add",
         permissionMode: "bypassPermissions"
-      })
+      }),
+      { targetHostId: undefined }
     );
   });
 
@@ -560,8 +562,8 @@ describe("SessionRuntimeStore queue", () => {
 
     await store.deleteQueuedMessage("queue-1");
 
-    expect(mocked.deleteSessionQueueItem).toHaveBeenCalledWith("session-1", "queue-1");
-    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1");
+    expect(mocked.deleteSessionQueueItem).toHaveBeenCalledWith("session-1", "queue-1", { targetHostId: undefined });
+    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1", { targetHostId: undefined });
   });
 
   it("steerQueuedMessage 会立刻引导等待项并刷新运行态与队列", async () => {
@@ -587,9 +589,9 @@ describe("SessionRuntimeStore queue", () => {
 
     await store.steerQueuedMessage("queue-1");
 
-    expect(mocked.steerSessionQueueItem).toHaveBeenCalledWith("session-1", "queue-1");
-    expect(mocked.getSessionRuntime).toHaveBeenCalledWith("session-1");
-    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1");
+    expect(mocked.steerSessionQueueItem).toHaveBeenCalledWith("session-1", "queue-1", { targetHostId: undefined });
+    expect(mocked.getSessionRuntime).toHaveBeenCalledWith("session-1", { targetHostId: undefined });
+    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1", { targetHostId: undefined });
   });
 });
 

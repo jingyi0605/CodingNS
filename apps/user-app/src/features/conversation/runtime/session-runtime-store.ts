@@ -88,6 +88,8 @@ const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
 const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
 const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
+const SESSION_RUNTIME_MESSAGE_FLUSH_DELAY_MS = 16;
+const SESSION_RUNTIME_SNAPSHOT_PERSIST_DELAY_MS = 1_000;
 const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_WINDOW_MS = 2 * 60 * 1000;
 const TIMELINE_CODEX_EQUIVALENT_AUTHORITATIVE_SEQUENCE_WINDOW = 8;
 const TIMELINE_INTERNAL_ATTACHMENT_DEBUG_BLOCK_PATTERN =
@@ -203,6 +205,10 @@ export class SessionRuntimeStore {
     requestedCursor: string;
     page: HistoryPageDto;
   } | null = null;
+  private pendingRuntimeMessageEvents: SessionRuntimeMessageEvent[] = [];
+  private runtimeMessageFlushHandle: number | null = null;
+  private runtimeMessageFlushMode: "animation_frame" | "timeout" | null = null;
+  private snapshotPersistTimer: number | null = null;
   private readonly pendingReplyDebugTraces: PendingReplyDebugTrace[] = [];
   private readonly hasAuthoritativeBootstrapMessages: boolean;
   private readonly debugStoreInstanceId = nextSessionRuntimeStoreDebugInstanceId++;
@@ -664,8 +670,11 @@ export class SessionRuntimeStore {
     this.destroyed = true;
     this.clearHistoryBootstrapFallbackTimer();
     this.clearOlderHistoryPrefetch();
+    this.flushPendingRuntimeMessages();
     this.realtimeClient?.close();
     this.realtimeClient = null;
+    this.clearRuntimeMessageFlush();
+    this.flushPendingSnapshotPersist();
     this.pendingReplyDebugTraces.length = 0;
 
     if (this.markSeenTimer !== null) {
@@ -920,7 +929,7 @@ export class SessionRuntimeStore {
       || Object.prototype.hasOwnProperty.call(nextInput, "permissionRequests")
       || Object.prototype.hasOwnProperty.call(nextInput, "queuedMessages")
     ) {
-      this.persistSnapshot();
+      this.scheduleSnapshotPersist();
     }
 
     if (isPerfDebugEnabled()) {
@@ -1681,6 +1690,7 @@ export class SessionRuntimeStore {
   }
 
   private handleRuntimeStatus(event: SessionRuntimeStatusEvent): void {
+    this.flushPendingRuntimeMessages();
     const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, event.status);
 
     this.patch({
@@ -1749,46 +1759,11 @@ export class SessionRuntimeStore {
     if (event.message.role === "assistant") {
       this.completePendingReplyDebugTrace(event);
     }
-    const mergedResult = this.applyTimelineEvent({
-      type: "runtime.message",
-      source: event.source,
-      message: toViewMessage(this.sessionId, event.message)
-    });
-    const merged = mergedResult.messages;
-
-    this.logCodexMergeDebug(
-      "runtime_message",
-      mergedResult.previousMessages,
-      [event.message],
-      merged,
-      {
-        runtimeSource: event.source
-      }
-    );
-
-    this.patch({
-      messages: merged,
-      historyState: "ready",
-      hasOlderMessages: resolveHasOlderMessages({
-        session: this.state.session,
-        loadedMessageCount: this.authoritativeMessages.length,
-        olderCursor: this.state.olderCursor,
-        pagesLoaded: this.state.pagesLoaded,
-        currentHasOlderMessages: this.state.hasOlderMessages
-      }),
-      session: withRunningState(
-        this.state.session,
-        resolveEnvelopeRunningState("session.delta", this.state.session?.runningState)
-      )
-    });
-    this.scheduleMarkSeen();
-
-    if (this.state.queuedMessages.length > 0) {
-      void this.refreshQueue();
-    }
+    this.enqueueRuntimeMessage(event);
   }
 
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {
+    this.flushPendingRuntimeMessages();
     const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "failed");
 
     this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_runtime_error", {
@@ -1808,6 +1783,7 @@ export class SessionRuntimeStore {
   }
 
   private handleInterrupted(event: SessionInterruptedEvent): void {
+    this.flushPendingRuntimeMessages();
     const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "interrupted");
 
     this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_interrupted", {
@@ -1900,6 +1876,26 @@ export class SessionRuntimeStore {
     }
   }
 
+  private scheduleSnapshotPersist(): void {
+    if (this.destroyed || this.snapshotPersistTimer !== null) {
+      return;
+    }
+
+    this.snapshotPersistTimer = window.setTimeout(() => {
+      this.snapshotPersistTimer = null;
+      this.persistSnapshot();
+    }, SESSION_RUNTIME_SNAPSHOT_PERSIST_DELAY_MS);
+  }
+
+  private flushPendingSnapshotPersist(): void {
+    if (this.snapshotPersistTimer !== null) {
+      window.clearTimeout(this.snapshotPersistTimer);
+      this.snapshotPersistTimer = null;
+    }
+
+    this.persistSnapshot();
+  }
+
   private persistSnapshot(): void {
     writeViewSnapshot<SessionRuntimeSnapshot>(buildSessionRuntimeSnapshotKey(this.sessionId, this.options.targetHostId), {
       session: this.state.session,
@@ -1921,6 +1917,103 @@ export class SessionRuntimeStore {
       pagesLoaded: this.state.pagesLoaded,
       interruptSource: this.state.interruptSource
     });
+  }
+
+  private enqueueRuntimeMessage(event: SessionRuntimeMessageEvent): void {
+    this.pendingRuntimeMessageEvents.push(event);
+
+    if (this.runtimeMessageFlushHandle !== null) {
+      return;
+    }
+
+    const flush = () => {
+      this.runtimeMessageFlushHandle = null;
+      this.runtimeMessageFlushMode = null;
+      this.flushPendingRuntimeMessages();
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      this.runtimeMessageFlushMode = "animation_frame";
+      this.runtimeMessageFlushHandle = window.requestAnimationFrame(flush);
+      return;
+    }
+
+    this.runtimeMessageFlushMode = "timeout";
+    this.runtimeMessageFlushHandle = window.setTimeout(flush, SESSION_RUNTIME_MESSAGE_FLUSH_DELAY_MS);
+  }
+
+  private clearRuntimeMessageFlush(): void {
+    if (this.runtimeMessageFlushHandle === null) {
+      return;
+    }
+
+    if (this.runtimeMessageFlushMode === "animation_frame" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(this.runtimeMessageFlushHandle);
+    } else {
+      window.clearTimeout(this.runtimeMessageFlushHandle);
+    }
+
+    this.runtimeMessageFlushHandle = null;
+    this.runtimeMessageFlushMode = null;
+  }
+
+  private flushPendingRuntimeMessages(): void {
+    if (this.pendingRuntimeMessageEvents.length === 0) {
+      return;
+    }
+
+    this.clearRuntimeMessageFlush();
+
+    const runtimeEvents = this.pendingRuntimeMessageEvents;
+    this.pendingRuntimeMessageEvents = [];
+
+    let nextMessages = this.state.messages;
+    let nextSession = this.state.session;
+    let nextHasOlderMessages = this.state.hasOlderMessages;
+
+    for (const event of runtimeEvents) {
+      const mergedResult = this.applyTimelineEvent({
+        type: "runtime.message",
+        source: event.source,
+        message: toViewMessage(this.sessionId, event.message)
+      });
+
+      nextMessages = mergedResult.messages;
+      nextHasOlderMessages = resolveHasOlderMessages({
+        session: nextSession,
+        loadedMessageCount: this.authoritativeMessages.length,
+        olderCursor: this.state.olderCursor,
+        pagesLoaded: this.state.pagesLoaded,
+        currentHasOlderMessages: nextHasOlderMessages
+      });
+
+      this.logCodexMergeDebug(
+        "runtime_message",
+        mergedResult.previousMessages,
+        [event.message],
+        mergedResult.messages,
+        {
+          runtimeSource: event.source
+        }
+      );
+
+      nextSession = withRunningState(
+        nextSession,
+        resolveEnvelopeRunningState("session.delta", nextSession?.runningState)
+      );
+    }
+
+    this.patch({
+      messages: nextMessages,
+      historyState: "ready",
+      hasOlderMessages: nextHasOlderMessages,
+      session: nextSession
+    });
+    this.scheduleMarkSeen();
+
+    if (this.state.queuedMessages.length > 0) {
+      void this.refreshQueue();
+    }
   }
 
   private beginPendingReplyDebugTrace(
