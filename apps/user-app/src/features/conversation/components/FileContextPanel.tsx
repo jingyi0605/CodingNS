@@ -1316,6 +1316,7 @@ export function FileContextPanel({
       workspaceId,
       workspaceName: currentWorkspace?.name ?? null,
       sessionId: sessionId ?? null,
+      targetHostId: currentTargetHostId,
       filePath,
       bounds: modalBounds
     });
@@ -2416,6 +2417,7 @@ export function FileContextPanel({
         <>
           <FileViewerModal
             workspaceId={workspaceId}
+            targetHostId={currentTargetHostId}
             filePath={viewerFilePath}
             open={viewerFilePath !== null}
             onClose={() => {

@@ -17,6 +17,7 @@ export interface WindowBounds {
 export interface WindowDescriptorPayload {
   // 单文件预览窗口使用 workspace 相对路径。后续新增窗口上下文字段也统一放这里。
   filePath?: string | null;
+  targetHostId?: string | null;
   routePath?: string | null;
 }
 
@@ -50,6 +51,7 @@ function normalizeWindowDescriptorPayload(
 ): WindowDescriptorPayload {
   return {
     filePath: payload?.filePath ?? null,
+    targetHostId: payload?.targetHostId ?? null,
     routePath: payload?.routePath ?? null
   };
 }

@@ -56,6 +56,7 @@ declare global {
 export interface FileViewerModalProps {
   workspaceId: string | null | undefined;
   filePath: string | null;
+  targetHostId?: string | null;
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
@@ -67,6 +68,7 @@ export interface FileViewerModalProps {
 export interface FileViewerPanelProps {
   workspaceId: string | null | undefined;
   filePath: string | null;
+  targetHostId?: string | null;
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
@@ -312,6 +314,7 @@ export function FileViewerModal(props: FileViewerModalProps) {
 export function FileViewerPanel({
   workspaceId,
   filePath,
+  targetHostId = null,
   open,
   onClose,
   onSaved,
@@ -348,6 +351,37 @@ export function FileViewerPanel({
   const showToastRef = useRef(showToast);
   const isDirtyRef = useRef(false);
   const loadedTargetKeyRef = useRef<string | null>(null);
+  const normalizedTargetHostId = targetHostId?.trim() || null;
+  const effectivePreviewLoader = useMemo(() => {
+    if (previewLoader !== getFilePreview || !normalizedTargetHostId) {
+      return previewLoader;
+    }
+
+    return (targetWorkspaceId: string, targetFilePath: string, options?: FilePreviewRequestOptions) => (
+      getFilePreview(targetWorkspaceId, targetFilePath, {
+        ...options,
+        targetHostId: normalizedTargetHostId
+      })
+    );
+  }, [normalizedTargetHostId, previewLoader]);
+  const effectiveSaveHandler = useMemo(() => {
+    if (saveHandler !== defaultFileViewerSaveHandler || !normalizedTargetHostId) {
+      return saveHandler;
+    }
+
+    return (input: {
+      workspaceId: string;
+      filePath: string;
+      content: string;
+      expectedVersion: string;
+      preview: FilePreviewDto;
+    }) => (
+      defaultFileViewerSaveHandler({
+        ...input,
+        targetHostId: normalizedTargetHostId
+      })
+    );
+  }, [normalizedTargetHostId, saveHandler]);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
@@ -506,7 +540,7 @@ export function FileViewerPanel({
       setLoading(true);
 
       try {
-        const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+        const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
           officeDisplayMode
         });
 
@@ -554,7 +588,7 @@ export function FileViewerPanel({
     return () => {
       cancelled = true;
     };
-  }, [filePath, officeDisplayMode, open, previewLoader, workspaceId]);
+  }, [effectivePreviewLoader, filePath, officeDisplayMode, open, workspaceId]);
 
   if (!open || !filePath) {
     return null;
@@ -575,14 +609,14 @@ export function FileViewerPanel({
         ? presentationSavedContent ?? editorContent
         : editorContent;
 
-      await saveHandler({
+      await effectiveSaveHandler({
         workspaceId: safeWorkspaceId,
         filePath: safeFilePath,
         content: nextContent,
         expectedVersion: preview.version,
         preview
       });
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+      const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
         officeDisplayMode
       });
       applyPreviewState(nextPreview, safeFilePath, {
@@ -622,7 +656,7 @@ export function FileViewerPanel({
     setLoading(true);
 
     try {
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+      const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
         officeDisplayMode
       });
       applyPreviewState(nextPreview, safeFilePath, {
@@ -1235,8 +1269,19 @@ async function defaultFileViewerSaveHandler(input: {
   content: string;
   expectedVersion: string;
   preview: FilePreviewDto;
+  targetHostId?: string | null;
 }): Promise<void> {
-  await saveFileContent(input.workspaceId, input.filePath, input.content, input.expectedVersion);
+  await saveFileContent(
+    input.workspaceId,
+    input.filePath,
+    input.content,
+    input.expectedVersion,
+    input.targetHostId
+      ? {
+          targetHostId: input.targetHostId
+        }
+      : undefined
+  );
 }
 
 function buildFormatActions(input: {

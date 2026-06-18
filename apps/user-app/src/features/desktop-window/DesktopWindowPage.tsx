@@ -427,6 +427,7 @@ export function DesktopWindowPage() {
       <FileViewerPanel
         workspaceId={descriptor.workspaceId}
         filePath={previewFilePath}
+        targetHostId={descriptor.payload.targetHostId}
         open
         chrome="window"
         windowTitle={resolveFileNameFromPath(previewFilePath) ?? previewFilePath}

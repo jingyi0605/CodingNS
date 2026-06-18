@@ -1492,6 +1492,9 @@ export function GitSidebar({
   const canPush = allChanges.length === 0 && (status?.snapshot.ahead ?? 0) > 0;
   const canCommit = stagedChanges.length > 0 && commitSubject.trim().length > 0;
   const currentBranch = branches?.currentBranch ?? status?.snapshot.branch ?? t("common.unknown");
+  const previewWorkspaceId = currentTargetHostId
+    ? currentWorkspaceRef?.workspaceId?.trim() || workspaceId?.trim() || null
+    : workspaceId?.trim() || null;
   const remoteAuthTargetRemote = resolvePreferredRemote(pushRemotes, remoteAuthTargetRemoteName);
   const githubRemoteDetected = remoteAuthProvider === "github";
   const remoteAuthDescription = githubRemoteDetected
@@ -2687,7 +2690,8 @@ export function GitSidebar({
       </WorkbenchModal>
 
       <FileViewerModal
-        workspaceId={workspaceId}
+        workspaceId={previewWorkspaceId}
+        targetHostId={currentTargetHostId}
         filePath={viewerFilePath}
         open={viewerFilePath !== null}
         onClose={() => {

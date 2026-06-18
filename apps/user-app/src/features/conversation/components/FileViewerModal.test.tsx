@@ -323,6 +323,64 @@ describe("FileViewerModal", () => {
     });
   });
 
+  it("PEERHOST 预览会把 targetHostId 传给加载和保存请求", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/readme.md",
+        content: "first",
+        version: "preview-version-1"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "preview-version-2",
+      updatedAt: "2026-04-18T00:00:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="docs/readme.md"
+          targetHostId="peer-host-1"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByText("first");
+    expect(fileApiMock.getFilePreview).toHaveBeenCalledWith(
+      "workspace-1",
+      "docs/readme.md",
+      expect.objectContaining({
+        targetHostId: "peer-host-1"
+      })
+    );
+
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "changed");
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledWith(
+        "workspace-1",
+        "docs/readme.md",
+        "changed",
+        "preview-version-1",
+        {
+          targetHostId: "peer-host-1"
+        }
+      );
+    });
+    expect(onSaved).toHaveBeenCalledWith("docs/readme.md");
+  });
+
   it("有 diff 数据时依然保持代码预览，并显示新增和修改标尺", async () => {
     fileApiMock.getFilePreview.mockResolvedValue(
       createPreviewResponse({

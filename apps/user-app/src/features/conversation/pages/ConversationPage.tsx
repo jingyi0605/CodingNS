@@ -939,6 +939,7 @@ function LiveConversationPage({
             open={mobileToolPanel.isOpen}
             sessionId={sessionId}
             workspaceId={mobileToolWorkspaceId}
+            currentTargetHostId={currentTargetHostId}
             navigationGroups={navigationGroups}
             onClose={() => {
               mobileToolPanel.closePanel();
@@ -1606,6 +1607,7 @@ function DraftConversationPage({
           open={mobileToolPanel.isOpen}
           sessionId={draft.sessionId}
           workspaceId={draft.workspaceId}
+          currentTargetHostId={currentTargetHostId}
           navigationGroups={navigationGroups}
           onClose={() => {
             mobileToolPanel.closePanel();
@@ -2218,6 +2220,7 @@ function MobileConversationToolPanelOverlay(props: {
   activePanel: MobileConversationToolPanel;
   workspaceId: string;
   sessionId: string;
+  currentTargetHostId?: string | null;
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
   onClose: () => void;
   onSelectPanel: (panel: MobileConversationToolPanel) => void;
@@ -2334,12 +2337,18 @@ function MobileConversationToolPanelOverlay(props: {
             hideHeading
             sessionId={props.sessionId}
             workspaceId={props.workspaceId}
+            workbenchShellOverrides={{
+              currentTargetHostId: props.currentTargetHostId
+            }}
           />
         ) : props.activePanel === "git" ? (
           <GitSidebar
             className="mobile-conversation-tool-surface"
             panelActive
             workspaceId={props.workspaceId}
+            workbenchShellOverrides={{
+              currentTargetHostId: props.currentTargetHostId
+            }}
           />
         ) : (
           <TerminalManagerPanel

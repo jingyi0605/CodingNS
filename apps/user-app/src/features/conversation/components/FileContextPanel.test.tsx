@@ -761,6 +761,52 @@ describe("FileContextPanel", () => {
     clearViewSnapshot(peerWorkspaceTreeSnapshotKey);
   });
 
+  it("H5 弹窗预览 PEERHOST 文件时会带上 targetHostId", async () => {
+    const user = userEvent.setup();
+    const peerWorkspaceTreeSnapshotKey = "file-panel.workspace-tree.host.peer-host-1.remote-workspace-1";
+
+    writeViewSnapshot(peerWorkspaceTreeSnapshotKey, {
+      treeCache: {
+        "": [
+          {
+            path: "peer-cached.ts",
+            name: "peer-cached.ts",
+            kind: "file",
+            size: 1,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      treeRevisionByPath: {
+        "": "peer-revision"
+      },
+      expandedDirectories: [],
+      activeDirectoryPath: ""
+    });
+
+    renderPanel("session-1", "remote-workspace-1", {
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-1"
+      }
+    });
+
+    const peerFile = await screen.findByText("peer-cached.ts");
+    await user.click(peerFile);
+    await user.click(peerFile);
+
+    await waitFor(() => {
+      expect(fileApiMock.getFilePreview).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        "peer-cached.ts",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    clearViewSnapshot(peerWorkspaceTreeSnapshotKey);
+  });
+
   it("从 PEERHOST 文件作用域切回主 HOST 后不会复用旧缓存或接收旧快照", async () => {
     const peerWorkspaceTreeSnapshotKey = "file-panel.workspace-tree.host.peer-host-1.remote-workspace-1";
 

@@ -32,6 +32,7 @@ pub struct WindowDescriptor {
 #[serde(rename_all = "camelCase")]
 pub struct WindowDescriptorPayload {
     pub file_path: Option<String>,
+    pub target_host_id: Option<String>,
     pub route_path: Option<String>,
 }
 
@@ -215,6 +216,20 @@ mod tests {
         let descriptor = state.get_descriptor("window-files").unwrap();
         assert_eq!(descriptor.bounds.width, 1600);
         assert_eq!(descriptor.bounds.min_height, 520);
+    }
+
+    #[test]
+    fn sync_descriptor_preserves_payload_target_host_id() {
+        let state = WindowManagerState::default();
+        let mut descriptor = create_descriptor("window-file-preview", WindowKind::FilePreview);
+        descriptor.payload.target_host_id = Some("peer-host-1".to_string());
+        descriptor.payload.file_path = Some("docs/readme.md".to_string());
+
+        state.sync_descriptor(descriptor);
+
+        let saved = state.get_descriptor("window-file-preview").unwrap();
+        assert_eq!(saved.payload.target_host_id.as_deref(), Some("peer-host-1"));
+        assert_eq!(saved.payload.file_path.as_deref(), Some("docs/readme.md"));
     }
 
     #[test]

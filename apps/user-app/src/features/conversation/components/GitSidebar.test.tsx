@@ -57,6 +57,7 @@ const platformMock = vi.hoisted(() => ({
 }));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const fileViewerModalMock = vi.hoisted(() => vi.fn());
 const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
 let gitSnapshotListener: ((snapshot: ReturnType<typeof createGitSnapshot>) => void) | null = null;
 const initialPreferenceState = userPreferenceStore.getState();
@@ -149,11 +150,28 @@ vi.mock("../../../shared/haptics", () => ({
   })
 }));
 
+vi.mock("./FileViewerModal", () => ({
+  FileViewerModal: (props: {
+    workspaceId: string | null;
+    targetHostId?: string | null;
+    filePath: string | null;
+    open: boolean;
+  }) => {
+    fileViewerModalMock(props);
+    return props.open ? (
+      <div data-testid="file-viewer-modal-props">
+        {`${props.workspaceId ?? "null"}|${props.targetHostId ?? "null"}|${props.filePath ?? "null"}|${props.open ? "open" : "closed"}`}
+      </div>
+    ) : null;
+  }
+}));
+
 describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workbenchShellMock.currentTargetHostId = null;
     workbenchShellMock.currentWorkspaceRef = null;
+    fileViewerModalMock.mockReset();
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     setViewportWidth(430);
     hapticsMock.trigger.mockReset();
@@ -762,6 +780,50 @@ describe("GitSidebar", () => {
       expect(navigateMock).toHaveBeenCalledWith(
         "/workspaces/workspace-1/sessions/session-commit-explain?targetHostId=peer-host-1"
       );
+    });
+  });
+
+  it("PEERHOST Git 双击预览文件时会使用远端 request workspaceId", async () => {
+    setViewportWidth(1280);
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+    workbenchShellMock.currentWorkspaceRef = {
+      hostId: "peer-host-1",
+      workspaceId: "remote-workspace-1"
+    };
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+    });
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      gitSnapshotListener = listener;
+      listener({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+      return () => {
+        if (gitSnapshotListener === listener) {
+          gitSnapshotListener = null;
+        }
+      };
+    });
+
+    renderSidebar();
+
+    const changedFile = await screen.findByText("App.tsx");
+    await userEvent.click(changedFile);
+    await userEvent.click(changedFile);
+
+    await waitFor(() => {
+      expect(
+        fileViewerModalMock.mock.calls.some(([props]) =>
+          props.workspaceId === "remote-workspace-1" &&
+          props.targetHostId === "peer-host-1" &&
+          props.filePath === "apps/user-app/src/app/App.tsx" &&
+          props.open === true
+        )
+      ).toBe(true);
     });
   });
 

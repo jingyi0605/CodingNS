@@ -254,23 +254,27 @@ vi.mock("../components/SessionBranchTreePanel", () => ({
 vi.mock("../components/FileContextPanel", () => ({
   FileContextPanel: ({
     sessionId,
-    workspaceId
+    workspaceId,
+    workbenchShellOverrides
   }: {
     sessionId: string;
     workspaceId: string;
+    workbenchShellOverrides?: { currentTargetHostId?: string | null };
   }) => (
     <div data-testid="file-context-panel">
-      files:{workspaceId}:{sessionId}
+      files:{workspaceId}:{sessionId}:{workbenchShellOverrides?.currentTargetHostId ?? "null"}
     </div>
   )
 }));
 
 vi.mock("../components/GitSidebar", () => ({
   GitSidebar: ({
-    workspaceId
+    workspaceId,
+    workbenchShellOverrides
   }: {
     workspaceId: string;
-  }) => <div data-testid="git-sidebar">git:{workspaceId}</div>
+    workbenchShellOverrides?: { currentTargetHostId?: string | null };
+  }) => <div data-testid="git-sidebar">git:{workspaceId}:{workbenchShellOverrides?.currentTargetHostId ?? "null"}</div>
 }));
 
 vi.mock("../../workbench/components/TerminalManagerPanel", () => ({

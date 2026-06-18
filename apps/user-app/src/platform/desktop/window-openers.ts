@@ -16,6 +16,7 @@ export interface OpenExternalWorkspaceWindowInput {
   sessionId?: string | null;
   focusOwner?: string | null;
   routePath?: string | null;
+  targetHostId?: string | null;
 }
 
 export interface OpenFilePreviewExternalWindowInput extends OpenExternalWorkspaceWindowInput {
@@ -112,6 +113,21 @@ export function buildFilePreviewExternalWindowId(workspaceId: string, filePath: 
   return `file-preview-${encodeFilePreviewWindowSegment(normalizedWorkspaceId)}-${encodeFilePreviewWindowSegment(normalizedPath)}`;
 }
 
+function buildScopedFilePreviewExternalWindowId(
+  workspaceId: string,
+  filePath: string,
+  targetHostId?: string | null
+): string {
+  const baseWindowId = buildFilePreviewExternalWindowId(workspaceId, filePath);
+  const normalizedTargetHostId = targetHostId?.trim() ?? "";
+
+  if (!normalizedTargetHostId) {
+    return baseWindowId;
+  }
+
+  return `${baseWindowId}-${encodeFilePreviewWindowSegment(normalizedTargetHostId)}`;
+}
+
 async function openExternalWorkspaceWindow(
   platform: Pick<PlatformAdapter, "isDesktop" | "bridge" | "windows">,
   kind: ExternalWindowKind,
@@ -186,6 +202,7 @@ async function openFilePreviewWorkspaceWindow(
 ): Promise<DesktopBridgeResult<WindowDescriptor>> {
   const workspaceId = input.workspaceId.trim();
   const filePath = normalizeFilePreviewWindowPath(input.filePath);
+  const targetHostId = input.targetHostId?.trim() || null;
 
   if (!platform.isDesktop || !platform.bridge.supported) {
     return {
@@ -211,7 +228,7 @@ async function openFilePreviewWorkspaceWindow(
     };
   }
 
-  const windowId = buildFilePreviewExternalWindowId(workspaceId, filePath);
+  const windowId = buildScopedFilePreviewExternalWindowId(workspaceId, filePath, targetHostId);
   const previousDescriptor = platform.windows.getDescriptor(windowId);
   const previousDescriptorSnapshot = previousDescriptor ? cloneDescriptor(previousDescriptor) : null;
   const wasOpen = platform.windows.isWindowOpen(windowId);
@@ -230,7 +247,8 @@ async function openFilePreviewWorkspaceWindow(
     },
     focusOwner: input.focusOwner ?? "file-preview-window",
     payload: {
-      filePath
+      filePath,
+      targetHostId
     }
   });
 

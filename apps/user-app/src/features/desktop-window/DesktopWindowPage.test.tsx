@@ -74,13 +74,14 @@ vi.mock("../conversation/components/FileViewerModal", () => ({
   FileViewerPanel: (props: {
     workspaceId: string | null | undefined;
     filePath: string | null;
+    targetHostId?: string | null;
     chrome?: string;
     windowTitle?: string | null;
   }) => {
     fileViewerPanelMock(props);
     return (
       <div data-testid="desktop-file-preview-window">
-        {props.workspaceId}:{props.filePath}:{props.chrome}:{props.windowTitle ?? "null"}
+        {props.workspaceId}:{props.filePath}:{props.targetHostId ?? "null"}:{props.chrome}:{props.windowTitle ?? "null"}
       </div>
     );
   }
@@ -282,7 +283,8 @@ describe("DesktopWindowPage", () => {
         },
         focusOwner: "file-preview-window",
         payload: {
-          filePath: "docs/readme.md"
+          filePath: "docs/readme.md",
+          targetHostId: "peer-host-1"
         }
       }
     });
@@ -291,13 +293,14 @@ describe("DesktopWindowPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-file-preview-window")).toHaveTextContent(
-        "workspace-1:docs/readme.md:window:readme.md"
+        "workspace-1:docs/readme.md:peer-host-1:window:readme.md"
       );
     });
     expect(fileViewerPanelMock).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "workspace-1",
         filePath: "docs/readme.md",
+        targetHostId: "peer-host-1",
         chrome: "window",
         windowTitle: "readme.md"
       })
