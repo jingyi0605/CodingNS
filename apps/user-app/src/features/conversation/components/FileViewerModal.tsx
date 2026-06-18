@@ -3296,7 +3296,9 @@ function readConfigScalar(
     };
   }
 
-  const wordMatch = /^[A-Za-z0-9_.:+/-]+/.exec(text);
+  // 配置值里经常会出现邮箱、密码、URL 查询串这类特殊字符。
+  // 这里只排除空白和注释起始符，避免把 @、! 后面的正文错误吞掉。
+  const wordMatch = /^[^\s#;]+/.exec(text);
 
   if (!wordMatch) {
     return null;

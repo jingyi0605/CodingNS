@@ -284,6 +284,38 @@ describe("FileViewerModal", () => {
     expect(screen.getByTestId("file-viewer-editor")).toHaveValue("local draft");
   });
 
+  it("配置文件值里带 @ 和 ! 时，代码视图会完整显示后续文本", async () => {
+    const envContent = [
+      "MAIL_FROM=bot@example.com",
+      "PASSWORD=abc!123"
+    ].join("\n");
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: ".env",
+        content: envContent
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath=".env"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("bot@example.com")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("abc!123")).toBeInTheDocument();
+  });
+
   it("传入自定义 saveHandler 时，会优先走自定义保存逻辑", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
