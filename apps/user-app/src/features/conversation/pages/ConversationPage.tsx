@@ -195,18 +195,23 @@ function LiveConversationPageGuard(props: {
     navigationGroups,
     currentWorkspaceRef,
     currentTargetHostId,
+    findSessionEntryByScope,
     resolveNavigationWorkspaceRef
   } = useWorkbenchShell();
   const navigate = useNavigate();
+  const params = useParams<{ workspaceId?: string }>();
   const flattenedNavigationEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
-  const navigationSession = useMemo(
-    () =>
-      flattenedNavigationEntries.find((entry) => entry.session.sessionId === props.sessionId)?.session ?? null,
-    [flattenedNavigationEntries, props.sessionId]
+  const navigationEntry = useMemo(
+    () => findSessionEntryByScope(props.sessionId, {
+      displayWorkspaceId: params.workspaceId ?? null,
+      targetHostId: currentTargetHostId
+    }),
+    [currentTargetHostId, findSessionEntryByScope, params.workspaceId, props.sessionId]
   );
+  const navigationSession = navigationEntry?.session ?? null;
   const liveSessionMissingFromNavigation =
     !isDraftSessionId(props.sessionId)
     && props.bootstrapMessages.length === 0
@@ -227,6 +232,7 @@ function LiveConversationPageGuard(props: {
     });
   }, [
     currentTargetHostId,
+    findSessionEntryByScope,
     currentWorkspaceRef,
     flattenedNavigationEntries,
     liveSessionMissingFromNavigation,

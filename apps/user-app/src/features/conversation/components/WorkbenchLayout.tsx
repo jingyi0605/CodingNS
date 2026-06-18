@@ -1930,6 +1930,13 @@ interface WorkbenchShellContextValue {
   currentWorkspaceRef: WorkspaceRef | null;
   currentTargetHostId: string | null;
   currentSessionId: string | null;
+  findSessionEntryByScope: (
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ) => WorkbenchNavigationEntry | null;
   resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
     preferredTargetHostId?: string | null;
     fallbackToCurrent?: boolean;
@@ -13566,10 +13573,6 @@ export function WorkbenchLayout({
   const routeSessionMatch = resolveRouteSessionMatch(location.pathname);
   const currentSessionId = routeSessionMatch?.sessionId ?? null;
   const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
-  const flattenedSessions = useMemo(
-    () => flattenNavigationSessions(navigationGroups),
-    [navigationGroups]
-  );
   const fullNavigationTree = useMemo(
     () => buildNavigationSessionTreeFromEntries(flattenedSessions, sessionDisplaySortMode),
     [flattenedSessions, sessionDisplaySortMode]
@@ -15192,6 +15195,20 @@ export function WorkbenchLayout({
     resolveWorkspaceRefForTargetHost,
     workspaceHostAssignments
   ]);
+  const flattenedSessions = useMemo(
+    () =>
+      flattenNavigationSessions(
+        navigationGroups.map((group) => {
+          const peerNavigation = resolvePeerNavigationForWorkspace(group.workspace);
+
+          return {
+            ...group,
+            sessions: peerNavigation?.sessions ?? group.sessions
+          };
+        })
+      ),
+    [navigationGroups, resolvePeerNavigationForWorkspace]
+  );
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -16716,6 +16733,7 @@ export function WorkbenchLayout({
       currentWorkspaceRef,
       currentTargetHostId,
       currentSessionId,
+      findSessionEntryByScope,
       resolveNavigationWorkspaceRef,
       favoriteSessionIds,
       favoriteSessions,
@@ -16773,6 +16791,7 @@ export function WorkbenchLayout({
       currentTargetHostId,
       currentWorkspaceRef,
       currentWorkspaceId,
+      findSessionEntryByScope,
       resolveNavigationWorkspaceRef,
       globalNotifications,
       favoriteSessionIds,
@@ -17989,6 +18008,7 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       currentWorkspaceRef: null,
       currentTargetHostId: null,
       currentSessionId: null,
+      findSessionEntryByScope: () => null,
       resolveNavigationWorkspaceRef: () => null,
       favoriteSessionIds: [],
       favoriteSessions: [],

@@ -667,6 +667,46 @@ describe("ConversationPage", () => {
     });
   });
 
+  it("PeerHOST 投影会话只要能被 scope 查到，就不会在打开后瞬间回退到上一个会话", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-gcac"
+      },
+      findSessionEntryByScope: (sessionId: string | null | undefined) => {
+        if (sessionId !== "session-peer-open-1") {
+          return null;
+        }
+
+        return {
+          workspace: {
+            id: "workspace-gcac",
+            name: "GCAC",
+            path: "/Users/jackson/workspace-gcac"
+          },
+          session: {
+            ...createBaseLiveSession(),
+            sessionId: "session-peer-open-1",
+            workspaceId: "remote-workspace-gcac",
+            title: "PEER 会话"
+          }
+        };
+      }
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-gcac/sessions/session-peer-open-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-gcac/sessions/session-peer-open-1?targetHostId=peer-host-1"
+      );
+    });
+  });
+
   it("桌面端并行会话会切到并行分屏视图", () => {
     mockLiveRuntimeState.session = {
       ...mockLiveRuntimeState.session,
@@ -1863,6 +1903,32 @@ function renderLiveConversationPage(options?: {
 }
 
 function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}) {
+  const collectGroupSessions = (group: {
+    sessions?: Array<Record<string, unknown>>;
+    childWorktrees?: Array<{
+      sessions?: Array<Record<string, unknown>>;
+      children?: Array<unknown>;
+    }>;
+  }) => {
+    const collected = [...(group.sessions ?? [])];
+    const queue = [...(group.childWorktrees ?? [])];
+
+    while (queue.length > 0) {
+      const node = queue.shift() as {
+        sessions?: Array<Record<string, unknown>>;
+        children?: Array<{
+          sessions?: Array<Record<string, unknown>>;
+          children?: Array<unknown>;
+        }>;
+      };
+
+      collected.push(...(node.sessions ?? []));
+      queue.push(...(node.children ?? []));
+    }
+
+    return collected;
+  };
+
   return {
     shellMode: "mobile",
     navigationGroups: [
@@ -1912,6 +1978,46 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
     requestNavigationRefresh: vi.fn(),
     selectWorkspace: vi.fn(),
     setSessionWorkspace: vi.fn(),
+    findSessionEntryByScope: (sessionId: string | null | undefined) => {
+      if (!sessionId) {
+        return null;
+      }
+
+      const groups = overrides.navigationGroups as Array<{
+        workspace: { id: string; name: string; path: string };
+        sessions: Array<Record<string, unknown>>;
+      }> | undefined;
+      const sourceGroups = groups ?? [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            {
+              sessionId: "session-live-1",
+              workspaceId: "workspace-1",
+              provider: "codex",
+              title: "父会话"
+            }
+          ]
+        }
+      ];
+
+      for (const group of sourceGroups) {
+        const matchedSession = collectGroupSessions(group).find((item) => item.sessionId === sessionId);
+
+        if (matchedSession) {
+          return {
+            workspace: group.workspace,
+            session: matchedSession
+          };
+        }
+      }
+
+      return null;
+    },
     resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
       preferredTargetHostId?: string | null;
       fallbackToCurrent?: boolean;
