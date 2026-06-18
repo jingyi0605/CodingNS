@@ -291,6 +291,14 @@ import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
 import { ParallelSessionCreateModal, type ParallelSessionCreateSource } from "./ParallelSessionCreateModal";
 import { useArchiveSessionSearch } from "./useArchiveSessionSearch";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
+import {
+  buildWorkspaceHostAssignmentKey,
+  readWorkspaceHostAssignments,
+  type WorkspaceHostAssignment,
+  WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT,
+  writeWorkspaceHostAssignments,
+  writeWorkspaceHostAssignmentsSilently
+} from "./workspace-host-assignment-storage";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -298,8 +306,6 @@ const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
-const WORKSPACE_HOST_ASSIGNMENT_KEY = "workbench.workspace.host.assignment.v1";
-const WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT = "codingns:workspace-host-assignment-changed";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
 
 type CodeShortcutRailSide = "left" | "right";
@@ -5686,91 +5692,6 @@ function getHostAlias(host: Pick<HostProfile, "alias" | "name" | "baseUrl"> | nu
   return normalizeHostAlias(host?.alias ?? null, createHostAliasFallback(host));
 }
 
-
-function buildWorkspaceHostAssignmentKey(workspaceId: string, workspacePath?: string | null): string {
-  const pathPart = workspacePath?.trim() || "unknown";
-  return `${workspaceId}::${pathPart}`;
-}
-
-interface WorkspaceHostAssignment {
-  selectedHostId: string;
-  remoteWorkspaceId: string | null;
-  remoteWorkspacePath: string | null;
-  remoteWorkspaceName: string | null;
-}
-
-function normalizeWorkspaceHostAssignment(value: unknown): WorkspaceHostAssignment | null {
-  if (typeof value === "string" && value.trim()) {
-    return {
-      selectedHostId: value.trim(),
-      remoteWorkspaceId: null,
-      remoteWorkspacePath: null,
-      remoteWorkspaceName: null
-    };
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const raw = value as Partial<Record<keyof WorkspaceHostAssignment, unknown>>;
-  const selectedHostId = typeof raw.selectedHostId === "string" ? raw.selectedHostId.trim() : "";
-
-  if (!selectedHostId) {
-    return null;
-  }
-
-  return {
-    selectedHostId,
-    remoteWorkspaceId: typeof raw.remoteWorkspaceId === "string" && raw.remoteWorkspaceId.trim()
-      ? raw.remoteWorkspaceId.trim()
-      : null,
-    remoteWorkspacePath: typeof raw.remoteWorkspacePath === "string" && raw.remoteWorkspacePath.trim()
-      ? raw.remoteWorkspacePath.trim()
-      : null,
-    remoteWorkspaceName: typeof raw.remoteWorkspaceName === "string" && raw.remoteWorkspaceName.trim()
-      ? raw.remoteWorkspaceName.trim()
-      : null
-  };
-}
-
-function readWorkspaceHostAssignments(): Record<string, WorkspaceHostAssignment> {
-  const raw = readStoredString(WORKSPACE_HOST_ASSIGNMENT_KEY);
-
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const result: Record<string, WorkspaceHostAssignment> = {};
-
-    for (const [key, value] of Object.entries(parsed)) {
-      const assignment = normalizeWorkspaceHostAssignment(value);
-      if (typeof key === "string" && key.trim() && assignment) {
-        result[key] = assignment;
-      }
-    }
-
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function writeWorkspaceHostAssignments(assignments: Record<string, WorkspaceHostAssignment>): void {
-  writeStoredValue(WORKSPACE_HOST_ASSIGNMENT_KEY, JSON.stringify(assignments));
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT));
-  }
-}
-
 function applyRemoteWorkspaceHostBindings(
   localAssignments: Record<string, WorkspaceHostAssignment>,
   activeHostId: string,
@@ -6163,7 +6084,7 @@ function SidebarContent({
               : resolveSelectableHostId(item.selectedHostId) ?? item.selectedHostId
           }))
       );
-      writeWorkspaceHostAssignments(nextAssignments);
+      writeWorkspaceHostAssignmentsSilently(nextAssignments);
       setWorkspaceHostAssignments(nextAssignments);
     }).catch(() => undefined);
 
