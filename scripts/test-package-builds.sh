@@ -90,7 +90,7 @@ contains_target() {
   local needle="$1"
   local item
 
-  for item in "${SELECTED_TARGETS[@]}"; do
+  for item in "${SELECTED_TARGETS[@]-}"; do
     if [[ "$item" == "$needle" ]]; then
       return 0
     fi
@@ -563,11 +563,11 @@ main() {
 
   echo ""
   log_info "本次测试目标："
-  for target in "${SELECTED_TARGETS[@]}"; do
+  for target in "${SELECTED_TARGETS[@]-}"; do
     echo "  - $(target_label "$target")"
   done
 
-  for target in "${SELECTED_TARGETS[@]}"; do
+  for target in "${SELECTED_TARGETS[@]-}"; do
     run_single_target "$target"
   done
 
