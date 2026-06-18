@@ -117,11 +117,6 @@ const DEFAULT_USER_MESSAGE_ACTION_STATE: MessageActionState = {
   canFork: false
 };
 
-const OFFSCREEN_MESSAGE_STYLE = {
-  contentVisibility: "auto",
-  containIntrinsicSize: "0 180px"
-} as const;
-
 function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
 }
@@ -4699,12 +4694,11 @@ function SubagentNotificationReportCard({
     ? t("conversation.assistantCapabilityRawCollapse")
     : t("conversation.assistantCapabilityRawExpand");
 
-  return (
-    <article
-      className="message-item tool-message-row subagent-notification-row"
-      data-message-id={message.id}
-      style={OFFSCREEN_MESSAGE_STYLE}
-    >
+    return (
+      <article
+        className="message-item tool-message-row subagent-notification-row"
+        data-message-id={message.id}
+      >
       <div className="tool-call-item assistant-capability-item" data-kind="session">
         <div className="assistant-capability-header">
           <div className="assistant-capability-heading">
@@ -5102,12 +5096,11 @@ function RulesMessageCard({
           ? t("conversation.skillContextExpand")
         : t("conversation.rulesMessageExpand");
 
-  return (
-    <article
-      className={`message-item ${tone} rules-message-row`}
-      data-message-id={message.id}
-      style={OFFSCREEN_MESSAGE_STYLE}
-    >
+    return (
+      <article
+        className={`message-item ${tone} rules-message-row`}
+        data-message-id={message.id}
+      >
       <div className="message-content-wrapper">
         <div className="rules-message-card">
           {forceExpanded ? (
@@ -5255,7 +5248,7 @@ function MessageItem({
     const displayText = turnAborted.detail ? `${abortedText}\n\n${turnAborted.detail}` : abortedText;
 
     return (
-      <article className="message-item assistant-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
+      <article className="message-item assistant-message" data-message-id={message.id}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageMarkdownBody
@@ -5357,7 +5350,7 @@ function MessageItem({
     ) : null;
 
     return (
-      <article className="message-item user-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
+      <article className="message-item user-message" data-message-id={message.id}>
         <div className="message-content-wrapper">
           <MessageAttachments
             sessionId={message.sessionId}
@@ -5400,7 +5393,6 @@ function MessageItem({
       <article
         className="message-item assistant-message thinking-message-row"
         data-message-id={message.id}
-        style={OFFSCREEN_MESSAGE_STYLE}
       >
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="thinking-message-content">
@@ -5431,7 +5423,7 @@ function MessageItem({
 
   if (isAssistantText) {
     return (
-      <article className="message-item assistant-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
+      <article className="message-item assistant-message" data-message-id={message.id}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageAttachments
@@ -5462,7 +5454,7 @@ function MessageItem({
   }
 
   return (
-    <article className="message-item system-message" data-message-id={message.id} style={OFFSCREEN_MESSAGE_STYLE}>
+    <article className="message-item system-message" data-message-id={message.id}>
       <div className="message-content-wrapper">
         <MessageAttachments
           sessionId={message.sessionId}
@@ -5833,7 +5825,6 @@ function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "sessi
     <article
       key={item.key}
       className="message-item assistant-message session-runtime-error-row"
-      style={OFFSCREEN_MESSAGE_STYLE}
     >
       <div className="session-runtime-error-row__spacer" aria-hidden="true" />
       <section
@@ -5875,7 +5866,7 @@ function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "sessi
 
 function renderRuntimeNoticeItem(item: Extract<TimelineRenderItem, { type: "runtime_notice" }>) {
   return (
-    <article key={item.key} className="message-item assistant-message" style={OFFSCREEN_MESSAGE_STYLE}>
+    <article key={item.key} className="message-item assistant-message">
       <div className="message-avatar"><DefaultAssistantAvatar /></div>
       <section className="permission-request-card permission-request-card-inline permission-request-card-readonly runtime-notice-card">
         <header className="permission-request-card-header">
@@ -5936,7 +5927,7 @@ export function ConversationTranscriptExport({
 
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
-            <article key={item.key} className="message-item tool-message-row" style={OFFSCREEN_MESSAGE_STYLE}>
+            <article key={item.key} className="message-item tool-message-row">
               <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
@@ -6978,7 +6969,7 @@ export function MessageTimeline({
 
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
-            <article key={item.key} className="message-item tool-message-row" style={OFFSCREEN_MESSAGE_STYLE}>
+            <article key={item.key} className="message-item tool-message-row">
               <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
