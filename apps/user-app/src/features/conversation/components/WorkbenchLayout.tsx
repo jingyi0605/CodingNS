@@ -13573,6 +13573,35 @@ export function WorkbenchLayout({
   const routeSessionMatch = resolveRouteSessionMatch(location.pathname);
   const currentSessionId = routeSessionMatch?.sessionId ?? null;
   const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
+  const flattenedSessions = useMemo(
+    () =>
+      flattenNavigationSessions(
+        navigationGroups.map((group) => {
+          const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, group.workspace);
+          const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+          const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+          const peerNavigation =
+            targetHostId && targetHostId !== "current"
+              ? peerWorkspaceNavigationByWorkspaceId[
+                buildPeerWorkspaceSummaryStateKey(activeHostId, group.workspace.id, targetHostId)
+              ] ?? null
+              : null;
+
+          return {
+            ...group,
+            sessions: peerNavigation?.sessions ?? group.sessions
+          };
+        })
+      ),
+    [
+      activeHostId,
+      navigationGroups,
+      peerWorkspaceNavigationByWorkspaceId,
+      resolveRemoteSelectedHostId,
+      resolveSelectableHostId,
+      workspaceHostAssignments
+    ]
+  );
   const fullNavigationTree = useMemo(
     () => buildNavigationSessionTreeFromEntries(flattenedSessions, sessionDisplaySortMode),
     [flattenedSessions, sessionDisplaySortMode]
@@ -15195,21 +15224,6 @@ export function WorkbenchLayout({
     resolveWorkspaceRefForTargetHost,
     workspaceHostAssignments
   ]);
-  const flattenedSessions = useMemo(
-    () =>
-      flattenNavigationSessions(
-        navigationGroups.map((group) => {
-          const peerNavigation = resolvePeerNavigationForWorkspace(group.workspace);
-
-          return {
-            ...group,
-            sessions: peerNavigation?.sessions ?? group.sessions
-          };
-        })
-      ),
-    [navigationGroups, resolvePeerNavigationForWorkspace]
-  );
-
   const workspaceSidebarGroups = useMemo(
     () =>
       navigationGroups.map((group) => {

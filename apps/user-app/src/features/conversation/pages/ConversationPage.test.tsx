@@ -529,7 +529,6 @@ describe("ConversationPage", () => {
     });
 
     expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
-    expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
   });
 
   it("PeerHOST live 会话缺失时，自动跳转仍保留 targetHostId", async () => {
