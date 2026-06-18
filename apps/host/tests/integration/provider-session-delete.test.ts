@@ -188,6 +188,7 @@ describe("provider session delete", () => {
     context.db.exec(`
       INSERT INTO butler_control_sessions (
         id,
+        user_id,
         provider_id,
         session_id,
         purpose,
@@ -203,6 +204,7 @@ describe("provider session delete", () => {
         updated_at
       ) VALUES (
         'control-channel-1',
+        'user-1',
         'codex',
         'session-channel-1',
         'chat',
@@ -549,6 +551,7 @@ function createServiceContext(
     );
   workspaceRepository.create({
     id: "workspace-1",
+    ownerUserId: "user-1",
     name: "Fixture Workspace",
     path: fixture.workspaceDir,
     repoRoot: fixture.workspaceDir,
@@ -580,6 +583,7 @@ function seedSession(
 ): void {
   context.sessionBindingRepository.upsert({
     sessionId: input.sessionId,
+    userId: "user-1",
     workspaceId: "workspace-1",
     provider: input.provider,
     providerSessionId: input.providerSessionId,

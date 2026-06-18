@@ -127,7 +127,6 @@ describe("ButlerProfileService", () => {
     expect(profile.providerId).toBe("codex");
     expect(profile.workspacePath).toBe(workspacePath);
     expect(profile.agentsMode).toBe("inline");
-    expect(profile.focus.summaryDebounceSeconds).toBe(300);
     expect(repository.create).toHaveBeenCalledOnce();
     expect(fs.existsSync(workspacePath)).toBe(true);
   });
@@ -151,8 +150,7 @@ describe("ButlerProfileService", () => {
       focus: {
         projectIds: [],
         riskPreference: "conservative",
-        reportPriority: ["risk"],
-        summaryDebounceSeconds: 300
+        reportPriority: ["risk"]
       },
       setupCompleted: false,
       initializedAt: "2026-05-01T00:00:00.000Z",
@@ -312,8 +310,7 @@ describe("ButlerProfileService", () => {
           focus: {
             projectIds: [],
             riskPreference: "conservative",
-            reportPriority: ["risk"],
-            summaryDebounceSeconds: 300
+            reportPriority: ["risk"]
           },
           initializedAt: "2026-04-09T00:00:00.000Z",
           updatedAt: "2026-04-09T00:00:00.000Z"

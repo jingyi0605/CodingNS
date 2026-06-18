@@ -83,7 +83,6 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureVerificationRunSchema(db);
-  ensureButlerSessionSummarySchema(db);
 
   return {
     db,
@@ -2231,18 +2230,6 @@ function ensureButlerFollowUpTaskSchema(db: BetterSqliteDatabase): void {
   if (!columnNames.has("assistant_session_id")) {
     db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN assistant_session_id TEXT NOT NULL DEFAULT ''");
   }
-}
-
-function ensureButlerSessionSummarySchema(db: BetterSqliteDatabase): void {
-  const columns = db
-    .prepare("PRAGMA table_info(butler_session_summary_states)")
-    .all() as Array<{ name: string }>;
-
-  if (columns.length === 0 || columns.some((column) => column.name === "last_summarized_sequence")) {
-    return;
-  }
-
-  db.exec("ALTER TABLE butler_session_summary_states ADD COLUMN last_summarized_sequence INTEGER");
 }
 
 function ensureInstanceTailscaleStatusSchema(db: BetterSqliteDatabase): void {

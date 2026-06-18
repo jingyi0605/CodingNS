@@ -834,6 +834,111 @@ export interface SessionDiscoveryDiagnosticRecord {
   createdAt: string;
 }
 
+export type SessionCleanupTaskKind = "scan" | "backup" | "restore" | "delete";
+export type SessionCleanupItemStatus = "success" | "partial" | "failed" | "skipped" | "conflict";
+
+export interface SessionCleanupScanRecord {
+  id: string;
+  userId: string;
+  providerFilterJson: string;
+  timeRangeStart: string | null;
+  timeRangeEnd: string | null;
+  candidateCount: number;
+  summaryJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionCleanupArchiveRecord {
+  id: string;
+  userId: string;
+  archivePath: string;
+  manifestVersion: string;
+  sessionCount: number;
+  summaryJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionCleanupOperationItemRecord {
+  id: string;
+  operationId: string;
+  taskKind: SessionCleanupTaskKind;
+  candidateId: string;
+  provider: ProviderId;
+  sessionId: string | null;
+  providerSessionId: string | null;
+  rawStoreRef: string | null;
+  status: SessionCleanupItemStatus;
+  backupStatus: string | null;
+  providerDeleteStatus: string | null;
+  localDeleteStatus: string | null;
+  restoreStatus: string | null;
+  detail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionCleanupCandidate {
+  candidateId: string;
+  provider: ProviderId;
+  sessionId: string | null;
+  providerSessionId: string | null;
+  rawStoreRef: string | null;
+  workspaceId: string | null;
+  workspacePath: string | null;
+  title: string | null;
+  startedAt: string | null;
+  lastMessageAt: string | null;
+  estimatedBytes: number | null;
+  sourceHealth: "healthy" | "partial" | "missing" | "conflict";
+  deletable: boolean;
+  backupable: boolean;
+  restorable: boolean;
+}
+
+export interface SessionCleanupBackupManifestEntryFile {
+  filePath: string;
+  relativePath: string;
+  sizeBytes: number;
+  status: "included" | "missing";
+}
+
+export interface SessionCleanupBackupManifestEntry {
+  entryId: string;
+  candidateId: string;
+  provider: ProviderId;
+  sessionId: string | null;
+  providerSessionId: string | null;
+  rawStoreRef: string | null;
+  workspaceId: string | null;
+  workspacePath: string | null;
+  title: string | null;
+  startedAt: string | null;
+  lastMessageAt: string | null;
+  estimatedBytes: number | null;
+  sourceHealth: SessionCleanupCandidate["sourceHealth"];
+  completeness: "complete" | "partial";
+  restorable: boolean;
+  bindingSnapshot: SessionBinding | null;
+  indexSnapshot: SessionIndexRecord | null;
+  sourceIndexSnapshot: SessionSourceIndexRecord | null;
+  files: SessionCleanupBackupManifestEntryFile[];
+}
+
+export interface SessionCleanupBackupManifest {
+  version: string;
+  createdAt: string;
+  createdBy: string | null;
+  entries: SessionCleanupBackupManifestEntry[];
+  summary: {
+    sessionCount: number;
+    providerCounts: Partial<Record<ProviderId, number>>;
+    completeCount: number;
+    partialCount: number;
+  };
+}
+
 export interface AffairsAssistantSessionSnapshotRecord {
   workspaceId: string;
   userId: string;
@@ -1226,7 +1331,6 @@ export interface ButlerFocusProfile {
   projectIds: string[];
   riskPreference: string;
   reportPriority: string[];
-  summaryDebounceSeconds: number;
   [key: string]: unknown;
 }
 export type ButlerApprovalMode = "readonly" | "controlled" | "auto";
@@ -1235,7 +1339,6 @@ export type ButlerRiskLevel = "low" | "medium" | "high";
 export type ButlerSessionRole = "patrol" | "execution" | "verification" | "adhoc";
 export type ButlerSessionOwnershipMode = "managed" | "observed";
 export type ButlerSessionStatus = "idle" | "running" | "blocked" | "failed" | "closed";
-export type ButlerSessionSummaryStatus = "idle" | "scheduled" | "running" | "failed";
 export type ButlerControlSessionPurpose = "chat" | "todo_analysis";
 export type ButlerCheckpointSourceKind = "snapshot" | "summary" | "verification" | "manual";
 export type ButlerCheckpointProgressState = "unknown" | "working" | "blocked" | "done";
@@ -1566,18 +1669,6 @@ export interface ButlerFollowUpRound {
   observedRunningState: SessionRunningState | null;
   autoContinueCount: number;
   createdAt: string;
-}
-
-export interface ButlerSessionSummaryState {
-  butlerSessionId: string;
-  sourceMessageCount: number;
-  sourceLastMessageAt: string | null;
-  lastSummarizedAt: string | null;
-  lastSummarizedSequence: number | null;
-  debounceUntil: string | null;
-  status: ButlerSessionSummaryStatus;
-  errorDetail: string | null;
-  updatedAt: string;
 }
 
 export interface SessionCheckpoint {

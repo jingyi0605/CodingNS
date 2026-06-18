@@ -896,6 +896,62 @@ CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_workspace_id
 CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_provider
   ON session_discovery_diagnostics(provider, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS session_cleanup_scans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider_filter_json TEXT NOT NULL,
+  time_range_start TEXT,
+  time_range_end TEXT,
+  candidate_count INTEGER NOT NULL,
+  summary_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_scans_user_id
+  ON session_cleanup_scans(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_cleanup_archives (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  archive_path TEXT NOT NULL,
+  manifest_version TEXT NOT NULL,
+  session_count INTEGER NOT NULL,
+  summary_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_archives_user_id
+  ON session_cleanup_archives(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_cleanup_operation_items (
+  id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  task_kind TEXT NOT NULL CHECK (task_kind IN ('scan', 'backup', 'restore', 'delete')),
+  candidate_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  session_id TEXT,
+  provider_session_id TEXT,
+  raw_store_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed', 'skipped', 'conflict')),
+  backup_status TEXT,
+  provider_delete_status TEXT,
+  local_delete_status TEXT,
+  restore_status TEXT,
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_operation_items_operation_id
+  ON session_cleanup_operation_items(operation_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_operation_items_provider
+  ON session_cleanup_operation_items(provider, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS affairs_assistant_session_snapshots (
   workspace_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
@@ -1827,22 +1883,6 @@ CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_status
   ON butler_follow_up_tasks(status, next_check_at ASC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_session
   ON butler_follow_up_tasks(butler_session_id, status, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS butler_session_summary_states (
-  butler_session_id TEXT PRIMARY KEY,
-  source_message_count INTEGER NOT NULL DEFAULT 0,
-  source_last_message_at TEXT,
-  last_summarized_at TEXT,
-  last_summarized_sequence INTEGER,
-  debounce_until TEXT,
-  status TEXT NOT NULL CHECK (status IN ('idle', 'scheduled', 'running', 'failed')),
-  error_detail TEXT,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_butler_session_summary_states_status
-  ON butler_session_summary_states(status, debounce_until ASC, updated_at ASC);
 
 CREATE TABLE IF NOT EXISTS session_checkpoints (
   id TEXT PRIMARY KEY,

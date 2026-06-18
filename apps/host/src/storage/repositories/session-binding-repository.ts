@@ -6,6 +6,7 @@ export class SessionBindingRepository {
   private readonly findBySessionIdStatement: Database.Statement<any[], any>;
   private readonly findByProviderSessionStatement: Database.Statement<any[], any>;
   private readonly findByRawStoreRefStatement: Database.Statement<any[], any>;
+  private readonly listByUserIdStatement: Database.Statement<any[], any>;
   private readonly upsertStatement: Database.Statement<any[], any>;
 
   constructor(private readonly db: Database.Database) {
@@ -58,6 +59,23 @@ export class SessionBindingRepository {
        FROM session_bindings
        WHERE provider = ?
          AND raw_store_ref = ?`
+    );
+    this.listByUserIdStatement = this.db.prepare(
+      `SELECT
+         session_id,
+         user_id,
+         workspace_id,
+         provider,
+         provider_session_id,
+         raw_store_ref,
+         provider_config_mode,
+         provider_preset_id,
+         runtime_home_dir,
+         created_at,
+         updated_at
+       FROM session_bindings
+       WHERE user_id = ?
+       ORDER BY updated_at DESC, created_at DESC`
     );
     this.upsertStatement = this.db.prepare(
       `INSERT INTO session_bindings (
@@ -157,6 +175,12 @@ export class SessionBindingRepository {
     const row = this.findByRawStoreRefStatement.get(provider, rawStoreRef) as SessionBindingRow | undefined;
 
     return row ? mapSessionBindingRow(row) : null;
+  }
+
+  listByUserId(userId: string): SessionBinding[] {
+    return this.listByUserIdStatement
+      .all(userId)
+      .map((row) => mapSessionBindingRow(row as SessionBindingRow));
   }
 
   findByRawStoreRefForUser(provider: string, rawStoreRef: string, userId: string): SessionBinding | null {

@@ -437,7 +437,7 @@ describe("sqlite 启动引导", () => {
         persona_json, focus_json, setup_completed, initialized_at, updated_at
       ) VALUES (
         'default', '代码助手', 'codex', '/tmp/butler-workspace', 'inline', NULL, '',
-        '{}', '{"projectIds":[],"riskPreference":"balanced","reportPriority":[],"summaryDebounceSeconds":300}',
+        '{}', '{"projectIds":[],"riskPreference":"balanced","reportPriority":[]}',
         1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
       );
       INSERT INTO butler_projects (
