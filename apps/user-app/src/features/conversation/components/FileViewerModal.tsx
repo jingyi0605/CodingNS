@@ -443,7 +443,7 @@ export function FileViewerPanel({
   }, [currentContent, filePath, presentationProbe]);
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
-  const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
+  const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html" && previewKind !== "markdown";
   const canShowEditTab = canUseEditMode(previewKind) && canEdit && !saveDisabledReason;
   const isMobileViewer = platform.isMobile;
   const isWindowViewer = chrome === "window";

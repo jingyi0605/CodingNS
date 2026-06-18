@@ -921,6 +921,32 @@ describe("FileViewerModal", () => {
     );
   });
 
+  it("Markdown 文件标题区不显示代码视图按钮", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "AGENTS.md",
+        kind: "markdown",
+        content: "# AGENTS\n\n- rule"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="AGENTS.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("tab", { name: t("conversation.fileViewerPreview") });
+    expect(screen.queryByRole("tab", { name: t("conversation.fileViewerCode") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") })).toBeInTheDocument();
+  });
+
   it("Office 文件预览模态框默认铺满，并隐藏默认模式按钮", async () => {
     const destroyEditor = vi.fn();
     const docEditor = vi.fn(() => ({
