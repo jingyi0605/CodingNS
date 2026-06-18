@@ -38,6 +38,8 @@ export function DesktopUnifiedUpdatePanel() {
   const clientHasUpdate = latestState?.hasUpdate ?? false;
   const serviceHasUpdate = Boolean(servicePackage?.hasUpdate && !servicePackage.restartRequired);
   const hasAnyUpdate = serviceHasUpdate || Boolean(clientHasUpdate && clientManifest);
+  const canInstallService = Boolean(serviceHasUpdate && servicePackage?.packageName);
+  const canInstallClient = Boolean(clientHasUpdate && clientManifest);
   const installPromptOpen = Boolean(
     downloadedVersion && !pendingRestartVersion && downloadedVersion === clientManifest?.version
   );
@@ -95,43 +97,51 @@ export function DesktopUnifiedUpdatePanel() {
     }
   }
 
-  async function handleInstallAll() {
-    if (!hasAnyUpdate || pendingRestartVersion) {
+  async function handleInstallService() {
+    if (!canInstallService || pendingRestartVersion || !servicePackage?.packageName) {
       return;
     }
 
     setInstalling(true);
-    setStatusText(t("settings.updateInstallingSequential"));
+    setStatusText(t("settings.updateInstallingServerFirst"));
 
     try {
-      if (serviceHasUpdate && servicePackage?.packageName) {
-        const startedTask = await installServiceUpdate(servicePackage.packageName);
-        setServiceTask(startedTask);
-        setStatusText(t("settings.updateInstallingServerFirst"));
-        const finishedTask = await waitForServiceTask(startedTask);
-        setServiceTask(finishedTask);
+      const startedTask = await installServiceUpdate(servicePackage.packageName);
+      setServiceTask(startedTask);
+      const finishedTask = await waitForServiceTask(startedTask);
+      setServiceTask(finishedTask);
 
-        if (finishedTask.status !== "succeeded") {
-          setStatusText(finishedTask.errorMessage ?? t("settings.serverInstallFailed"));
-          return;
-        }
-      }
-
-      if (clientHasUpdate && clientManifest) {
-        setStatusText(t("settings.updateInstallingClientNext"));
-        const result = await installDesktopUpdate();
-        if (!result.ok) {
-          setStatusText(result.detail ?? t("settings.releaseInstallFailed"));
-          return;
-        }
-
-        markDesktopRestartRequired(clientManifest.version);
-        setDownloadedVersion(null);
-        setStatusText(t("settings.releaseRestartRequired"));
+      if (finishedTask.status !== "succeeded") {
+        setStatusText(finishedTask.errorMessage ?? t("settings.serverInstallFailed"));
         return;
       }
 
       setStatusText(t("settings.serverInstallSucceeded"));
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : t("settings.serverInstallFailed"));
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  async function handleInstallClient() {
+    if (!canInstallClient || pendingRestartVersion || !clientManifest) {
+      return;
+    }
+
+    setInstalling(true);
+    setStatusText(t("settings.updateInstallingClientNext"));
+
+    try {
+      const result = await installDesktopUpdate();
+      if (!result.ok) {
+        setStatusText(result.detail ?? t("settings.releaseInstallFailed"));
+        return;
+      }
+
+      markDesktopRestartRequired(clientManifest.version);
+      setDownloadedVersion(null);
+      setStatusText(t("settings.releaseRestartRequired"));
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseInstallFailed"));
     } finally {
@@ -222,10 +232,18 @@ export function DesktopUnifiedUpdatePanel() {
           <button
             className="primary-button"
             type="button"
-            disabled={!hasAnyUpdate || busy || Boolean(pendingRestartVersion)}
-            onClick={handleInstallAll}
+            disabled={!canInstallService || busy || Boolean(pendingRestartVersion)}
+            onClick={handleInstallService}
           >
-            {installing ? t("common.loading") : t("settings.updateInstallAll")}
+            {installing ? t("common.loading") : t("settings.serverInstallNow")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={!canInstallClient || busy || Boolean(pendingRestartVersion)}
+            onClick={handleInstallClient}
+          >
+            {installing ? t("common.loading") : t("settings.releaseInstallNow")}
           </button>
           <button
             className="secondary-button"
@@ -244,7 +262,7 @@ export function DesktopUnifiedUpdatePanel() {
         onClose={() => setDownloadedVersion(null)}
         onConfirm={() => {
           setDownloadedVersion(null);
-          void handleInstallAll();
+          void handleInstallClient();
         }}
       />
     </>

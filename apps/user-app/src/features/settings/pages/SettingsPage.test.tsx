@@ -816,7 +816,8 @@ describe("SettingsPage", () => {
     expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.autoDownloadUpdate"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.updateCheckAll") })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("settings.updateInstallAll") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "安装服务端更新" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.releaseInstallNow") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("settings.releaseOpenPage") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("settings.serverCheckNow") })).not.toBeInTheDocument();
