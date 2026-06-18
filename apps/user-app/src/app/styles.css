@@ -23050,6 +23050,149 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   min-width: 0;
 }
 
+.settings-session-cleanup-entry,
+.settings-session-cleanup-entry-compact {
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-session-cleanup-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-session-cleanup-filter-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-session-cleanup-provider-filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-session-cleanup-provider-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--modal-list-item-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--modal-list-item-hover) 36%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.settings-session-cleanup-provider-filter-pill input {
+  margin: 0;
+}
+
+.settings-session-cleanup-filter-grid .settings-text-input {
+  width: 100%;
+}
+
+.settings-session-cleanup-time-range-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-session-cleanup-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-session-cleanup-summary-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+}
+
+.settings-session-cleanup-summary-tile span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-session-cleanup-summary-tile strong {
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.settings-session-cleanup-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-session-cleanup-list-shell {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--modal-list-item-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--modal-list-item-hover) 22%, transparent);
+}
+
+.settings-session-cleanup-list-shell .modal-list {
+  border-top: none;
+}
+
+.settings-session-cleanup-task-note {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-session-cleanup-progress-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.settings-session-cleanup-progress-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-session-cleanup-progress-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-session-cleanup-progress-bar {
+  position: relative;
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--modal-list-item-hover) 50%, transparent);
+}
+
+.settings-session-cleanup-progress-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 70%, white));
+  transition: width 180ms ease;
+}
+
+.settings-session-cleanup-progress-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .settings-affairs-library-capability-control {
   display: inline-flex;
   align-items: center;
@@ -26497,6 +26640,14 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   padding: 14px 0;
 }
 
+.settings-mobile-session-cleanup-shell .settings-session-cleanup-entry {
+  margin-top: 4px;
+}
+
+.settings-mobile-session-cleanup-shell .settings-session-cleanup-time-range-grid {
+  grid-template-columns: 1fr;
+}
+
 .settings-mobile-list > * {
   min-width: 0;
 }
@@ -26602,6 +26753,20 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .settings-mobile-row-description {
   font-size: 13px;
   line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .settings-session-cleanup-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-session-cleanup-time-range-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-session-cleanup-list-shell {
+    max-height: 220px;
+  }
 }
 
 .settings-mobile-nav-trailing {

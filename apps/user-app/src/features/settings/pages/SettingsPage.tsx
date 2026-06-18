@@ -30,6 +30,7 @@ import { ProviderManagementPanel } from "../../../settings/ProviderManagementPan
 import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { UserManagementPanel } from "../../../settings/UserManagementPanel";
+import { SessionCleanupPanel } from "../../../settings/SessionCleanupPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { BetaChannelConsentModal } from "../../../settings/BetaChannelConsentModal";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
@@ -646,6 +647,18 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
               </div>
               <div className="settings-row-control">
                 <ProviderManagementPanel />
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.sessionCleanupTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.sessionCleanupDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <SessionCleanupPanel />
               </div>
             </div>
 
@@ -1658,6 +1671,15 @@ function MobileAbilityManagementSection() {
               </span>
             </div>
             <ProviderManagementPanel />
+          </div>
+          <div className="settings-mobile-panel-shell settings-mobile-session-cleanup-shell">
+            <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+              <span className="settings-mobile-row-title">{t("settings.sessionCleanupTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.sessionCleanupDescription")}
+              </span>
+            </div>
+            <SessionCleanupPanel compact mobile />
           </div>
           <div className="settings-mobile-panel-shell settings-mobile-model-shell">
             <div className="settings-mobile-row-copy settings-mobile-ability-copy settings-mobile-row-copy-single-line">
