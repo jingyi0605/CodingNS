@@ -663,11 +663,13 @@ async function requestAssistantCapability<T>(
     assistantCapabilityCompatibilityCache.set(compatibilityHostKey, true);
     return response;
   } catch (error) {
-    if (!isAssistantCapabilityUnsupportedError(error)) {
+    if (!isAssistantCapabilityReadFallbackError(error)) {
       throw error;
     }
 
-    assistantCapabilityCompatibilityCache.set(compatibilityHostKey, false);
+    if (isAssistantCapabilityUnsupportedError(error)) {
+      assistantCapabilityCompatibilityCache.set(compatibilityHostKey, false);
+    }
 
     if (compatibility.unsupportedFallback !== undefined) {
       return resolveAssistantCompatibilityFallback(compatibility.unsupportedFallback);
@@ -687,6 +689,15 @@ function resolveAssistantCompatibilityFallback<T>(value: T | (() => T)): T {
 
 function isAssistantCapabilityUnsupportedError(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 404 || error.status === 405 || error.status === 501);
+}
+
+function isAssistantCapabilityReadFallbackError(error: unknown): boolean {
+  return isAssistantCapabilityUnsupportedError(error)
+    || (
+      error instanceof ApiError
+      && error.status === 409
+      && error.errorCode === "BUTLER_PROFILE_NOT_INITIALIZED"
+    );
 }
 
 function createAssistantCapabilityUnsupportedError(): Error {

@@ -2529,6 +2529,16 @@ export function AffairsWorkbenchProvider({
   useEffect(() => {
     let disposed = false;
 
+    if (!butlerInitialized) {
+      setAutomations([]);
+      setAutomationRuns([]);
+      setAutomationLoading(false);
+      setAutomationError(null);
+      return () => {
+        disposed = true;
+      };
+    }
+
     setAutomationLoading(true);
     setAutomationError(null);
     void Promise.all([listAssistantAutomations({ limit: 200 }), listRecentAssistantAutomationRuns({ limit: 200 })])
@@ -2561,7 +2571,7 @@ export function AffairsWorkbenchProvider({
     return () => {
       disposed = true;
     };
-  }, [workspaceId, workspaceSessionIdSet, workspaceSessionIdSignature]);
+  }, [butlerInitialized, workspaceId, workspaceSessionIdSet, workspaceSessionIdSignature]);
 
   const libraryDocumentItems = libraryDocumentPage?.items ?? [];
   const documentRecords = useMemo(
