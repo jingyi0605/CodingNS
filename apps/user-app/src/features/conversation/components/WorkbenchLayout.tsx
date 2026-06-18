@@ -1930,6 +1930,10 @@ interface WorkbenchShellContextValue {
   currentWorkspaceRef: WorkspaceRef | null;
   currentTargetHostId: string | null;
   currentSessionId: string | null;
+  resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+    preferredTargetHostId?: string | null;
+    fallbackToCurrent?: boolean;
+  }) => WorkspaceRef | null;
   favoriteSessionIds: string[];
   favoriteSessions: WorkbenchNavigationEntry[];
   globalNotifications: WorkbenchGlobalNotification[];
@@ -15138,6 +15142,56 @@ export function WorkbenchLayout({
     resolveSelectableHostId,
     workspaceHostAssignments
   ]);
+  const resolveNavigationWorkspaceRef = useCallback((
+    workspaceId: string,
+    options?: {
+      preferredTargetHostId?: string | null;
+      fallbackToCurrent?: boolean;
+    }
+  ): WorkspaceRef | null => {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId) {
+      return null;
+    }
+
+    const workspace =
+      navigationGroups.find((group) => group.workspace.id === normalizedWorkspaceId)?.workspace
+      ?? null;
+    const preferredTargetHostId = normalizeTargetHostId(options?.preferredTargetHostId);
+    const fallbackToCurrent = options?.fallbackToCurrent !== false;
+
+    if (preferredTargetHostId && workspace) {
+      const preferredWorkspaceRef = resolveWorkspaceRefForTargetHost(workspace, preferredTargetHostId);
+
+      if (preferredWorkspaceRef) {
+        return preferredWorkspaceRef;
+      }
+    }
+
+    if (workspace) {
+      const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+      const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+      const assignedTargetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+
+      if (assignedTargetHostId && assignedTargetHostId !== "current") {
+        const assignedWorkspaceRef = resolveWorkspaceRefForTargetHost(workspace, assignedTargetHostId);
+
+        if (assignedWorkspaceRef) {
+          return assignedWorkspaceRef;
+        }
+      }
+    }
+
+    return fallbackToCurrent ? makeWorkspaceRef(normalizedWorkspaceId, "current") : null;
+  }, [
+    activeHostId,
+    navigationGroups,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    resolveWorkspaceRefForTargetHost,
+    workspaceHostAssignments
+  ]);
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -16662,6 +16716,7 @@ export function WorkbenchLayout({
       currentWorkspaceRef,
       currentTargetHostId,
       currentSessionId,
+      resolveNavigationWorkspaceRef,
       favoriteSessionIds,
       favoriteSessions,
       globalNotifications,
@@ -16718,6 +16773,7 @@ export function WorkbenchLayout({
       currentTargetHostId,
       currentWorkspaceRef,
       currentWorkspaceId,
+      resolveNavigationWorkspaceRef,
       globalNotifications,
       favoriteSessionIds,
       favoriteSessions,
@@ -17933,6 +17989,7 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       currentWorkspaceRef: null,
       currentTargetHostId: null,
       currentSessionId: null,
+      resolveNavigationWorkspaceRef: () => null,
       favoriteSessionIds: [],
       favoriteSessions: [],
       globalNotifications: [],

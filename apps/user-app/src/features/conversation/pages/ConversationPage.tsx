@@ -190,7 +190,13 @@ function LiveConversationPageGuard(props: {
   initialComposerProviderPresetId: string | null;
   initialToolPanel: MobileConversationToolPanel | null;
 }) {
-  const { shellMode, navigationGroups, currentWorkspaceRef, currentTargetHostId } = useWorkbenchShell();
+  const {
+    shellMode,
+    navigationGroups,
+    currentWorkspaceRef,
+    currentTargetHostId,
+    resolveNavigationWorkspaceRef
+  } = useWorkbenchShell();
   const navigate = useNavigate();
   const flattenedNavigationEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
@@ -215,8 +221,9 @@ function LiveConversationPageGuard(props: {
       shellMode,
       navigationGroups,
       flattenedNavigationEntries,
-      workspaceRef: currentWorkspaceRef,
-      targetHostId: currentTargetHostId
+      currentWorkspaceRef,
+      currentTargetHostId,
+      resolveNavigationWorkspaceRef
     });
   }, [
     currentTargetHostId,
@@ -224,6 +231,7 @@ function LiveConversationPageGuard(props: {
     flattenedNavigationEntries,
     liveSessionMissingFromNavigation,
     navigationGroups,
+    resolveNavigationWorkspaceRef,
     shellMode
   ]);
 
@@ -272,7 +280,8 @@ function LiveConversationPage({
     startDraftSession,
     upsertNavigationSession,
     currentWorkspaceRef,
-    currentTargetHostId
+    currentTargetHostId,
+    resolveNavigationWorkspaceRef
   } = useWorkbenchShell();
   const navigate = useNavigate();
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -300,7 +309,12 @@ function LiveConversationPage({
         : null)
       ?? flattenedNavigationEntries[0]
       ?? null;
-    const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef, fallbackWorkspaceId);
+    const workspaceRef = fallbackWorkspaceId
+      ? resolveNavigationWorkspaceRef(fallbackWorkspaceId, {
+        preferredTargetHostId: currentTargetHostId,
+        fallbackToCurrent: true
+      })
+      : null;
     const targetPath =
       fallbackSessionEntry
         ? buildWorkspaceSessionPath(
@@ -372,13 +386,10 @@ function LiveConversationPage({
     onRequestNavigationRefresh: requestNavigationRefresh,
     onUpsertNavigationSession: upsertNavigationSession,
     onNavigateToSession: (workspaceId, targetSessionId) => {
-      const workspaceRef =
-        currentTargetHostId
-          ? currentWorkspaceRef
-          : {
-            hostId: "current",
-            workspaceId
-          };
+      const workspaceRef = resolveNavigationWorkspaceRef(workspaceId, {
+        preferredTargetHostId: currentTargetHostId,
+        fallbackToCurrent: true
+      });
       selectWorkspace(workspaceId, workspaceRef);
       navigate(buildWorkspaceSessionPath(workspaceId, targetSessionId, workspaceRef));
     },
@@ -622,7 +633,10 @@ function LiveConversationPage({
                 anchorMember.session,
                 anchorMember.sessionIsolatedWorkspace
               );
-              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              const workspaceRef = resolveNavigationWorkspaceRef(navigationWorkspaceId, {
+                preferredTargetHostId: currentTargetHostId,
+                fallbackToCurrent: true
+              });
               selectWorkspace(navigationWorkspaceId, workspaceRef);
               navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId, workspaceRef));
             }
@@ -754,7 +768,10 @@ function LiveConversationPage({
             }}
             onActivate={(entry) => {
               mobilePreview.closePreview();
-              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              const workspaceRef = resolveNavigationWorkspaceRef(entry.workspace.id, {
+                preferredTargetHostId: currentTargetHostId,
+                fallbackToCurrent: true
+              });
               selectWorkspace(entry.workspace.id, workspaceRef);
               navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
             }}
@@ -773,13 +790,20 @@ function LiveConversationPage({
               }
 
               if (mobileNavigationWorkspaceId) {
+                const mobileWorkspaceRef = resolveNavigationWorkspaceRef(mobileNavigationWorkspaceId, {
+                  preferredTargetHostId: currentTargetHostId,
+                  fallbackToCurrent: true
+                });
                 selectWorkspace(
                   mobileNavigationWorkspaceId,
-                  buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                  mobileWorkspaceRef
                 );
                 writeMobileConversationPreviewMode("preview");
                 if (nextMobileSessionEntry) {
-                  const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+                  const workspaceRef = resolveNavigationWorkspaceRef(nextMobileSessionEntry.workspace.id, {
+                    preferredTargetHostId: currentTargetHostId,
+                    fallbackToCurrent: true
+                  });
                   navigate(
                     buildWorkspaceSessionPath(
                       nextMobileSessionEntry.workspace.id,
@@ -793,7 +817,7 @@ function LiveConversationPage({
                 navigate(
                   buildWorkspaceSessionIndexPath(
                     mobileNavigationWorkspaceId,
-                    buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                    mobileWorkspaceRef
                   )
                 );
                 return;
@@ -935,7 +959,10 @@ function LiveConversationPage({
         onClose={() => setBranchTreeOpen(false)}
         onOpenSession={(targetSession) => {
           setBranchTreeOpen(false);
-          const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+          const workspaceRef = resolveNavigationWorkspaceRef(targetSession.workspaceId, {
+            preferredTargetHostId: currentTargetHostId,
+            fallbackToCurrent: true
+          });
           selectWorkspace(targetSession.workspaceId, workspaceRef);
           writeMobileConversationPreviewMode("preview");
           navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId, workspaceRef));
@@ -967,13 +994,20 @@ function LiveConversationPage({
             });
 
             if (mobileNavigationWorkspaceId) {
+              const mobileWorkspaceRef = resolveNavigationWorkspaceRef(mobileNavigationWorkspaceId, {
+                preferredTargetHostId: currentTargetHostId,
+                fallbackToCurrent: true
+              });
               selectWorkspace(
                 mobileNavigationWorkspaceId,
-                buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                mobileWorkspaceRef
               );
               writeMobileConversationPreviewMode("preview");
               if (nextMobileSessionEntry) {
-                const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+                const workspaceRef = resolveNavigationWorkspaceRef(nextMobileSessionEntry.workspace.id, {
+                  preferredTargetHostId: currentTargetHostId,
+                  fallbackToCurrent: true
+                });
                 navigate(
                   buildWorkspaceSessionPath(
                     nextMobileSessionEntry.workspace.id,
@@ -987,7 +1021,7 @@ function LiveConversationPage({
               navigate(
                 buildWorkspaceSessionIndexPath(
                   mobileNavigationWorkspaceId,
-                  buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef)
+                  mobileWorkspaceRef
                 )
               );
               return;
@@ -1069,7 +1103,10 @@ function LiveConversationPage({
                 anchorMember.session,
                 anchorMember.sessionIsolatedWorkspace
               );
-              const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+              const workspaceRef = resolveNavigationWorkspaceRef(navigationWorkspaceId, {
+                preferredTargetHostId: currentTargetHostId,
+                fallbackToCurrent: true
+              });
               selectWorkspace(navigationWorkspaceId, workspaceRef);
               navigate(buildWorkspaceSessionPath(navigationWorkspaceId, anchorMember.session.sessionId, workspaceRef));
             }
@@ -1156,7 +1193,8 @@ function DraftConversationPage({
     unarchiveSession,
     startDraftSession,
     currentTargetHostId,
-    currentWorkspaceRef
+    currentWorkspaceRef,
+    resolveNavigationWorkspaceRef
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
@@ -1406,7 +1444,10 @@ function DraftConversationPage({
           }}
           onActivate={(entry) => {
             mobilePreview.closePreview();
-            const workspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
+            const workspaceRef = resolveNavigationWorkspaceRef(entry.workspace.id, {
+              preferredTargetHostId: currentTargetHostId,
+              fallbackToCurrent: true
+            });
             selectWorkspace(entry.workspace.id, workspaceRef);
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId, workspaceRef));
           }}
@@ -1500,9 +1541,12 @@ function DraftConversationPage({
                   }
 
                   const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draftTargetWorkspaceId;
-                  const resolvedWorkspaceRef = buildTargetWorkspaceRef(currentTargetHostId, currentWorkspaceRef);
                   // peerhost 场景下 URL 路径必须用本地 workspaceId，否则路由上下文会断裂
                   const pathWorkspaceId = draft.routeWorkspaceId || resolvedWorkspaceId;
+                  const resolvedWorkspaceRef = resolveNavigationWorkspaceRef(pathWorkspaceId, {
+                    preferredTargetHostId: currentTargetHostId,
+                    fallbackToCurrent: true
+                  });
 
                   setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
                   writeMobileConversationPreviewMode("preview");
@@ -3424,8 +3468,9 @@ function resolveMissingLiveSessionTarget(input: {
   shellMode: "desktop" | "mobile";
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
   flattenedNavigationEntries: WorkbenchNavigationEntry[];
-  workspaceRef?: WorkspaceRef | null;
-  targetHostId?: string | null;
+  currentWorkspaceRef?: WorkspaceRef | null;
+  currentTargetHostId?: string | null;
+  resolveNavigationWorkspaceRef: ReturnType<typeof useWorkbenchShell>["resolveNavigationWorkspaceRef"];
 }): string {
   const fallbackWorkspaceId = input.navigationGroups[0]?.workspace.id ?? null;
   const fallbackSessionEntry =
@@ -3436,15 +3481,10 @@ function resolveMissingLiveSessionTarget(input: {
     ?? null;
 
   if (fallbackSessionEntry) {
-    const workspaceRef =
-      input.targetHostId
-        ? input.workspaceRef?.workspaceId
-          ? {
-            hostId: input.targetHostId,
-            workspaceId: input.workspaceRef.workspaceId
-          }
-          : null
-        : input.workspaceRef ?? null;
+    const workspaceRef = input.resolveNavigationWorkspaceRef(fallbackSessionEntry.workspace.id, {
+      preferredTargetHostId: input.currentTargetHostId,
+      fallbackToCurrent: true
+    });
 
     return buildWorkspaceSessionPath(
       fallbackSessionEntry.workspace.id,
@@ -3454,40 +3494,15 @@ function resolveMissingLiveSessionTarget(input: {
   }
 
   if (fallbackWorkspaceId) {
-    const workspaceRef =
-      input.targetHostId
-        ? input.workspaceRef?.workspaceId
-          ? {
-            hostId: input.targetHostId,
-            workspaceId: input.workspaceRef.workspaceId
-          }
-          : null
-        : input.workspaceRef ?? null;
+    const workspaceRef = input.resolveNavigationWorkspaceRef(fallbackWorkspaceId, {
+      preferredTargetHostId: input.currentTargetHostId,
+      fallbackToCurrent: true
+    });
 
     return buildWorkspaceSessionIndexPath(fallbackWorkspaceId, workspaceRef);
   }
 
   return input.shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing";
-}
-
-function buildTargetWorkspaceRef(
-  currentTargetHostId?: string | null,
-  workspaceRef?: WorkspaceRef | null,
-  fallbackWorkspaceId?: string | null
-): WorkspaceRef | null {
-  if (!currentTargetHostId) {
-    return null;
-  }
-
-  const workspaceId = workspaceRef?.workspaceId?.trim() || fallbackWorkspaceId?.trim() || null;
-  if (!workspaceId) {
-    return null;
-  }
-
-  return {
-    hostId: currentTargetHostId,
-    workspaceId
-  };
 }
 
 function createDraftLiveBootstrapMessage(input: {

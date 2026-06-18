@@ -611,6 +611,62 @@ describe("ConversationPage", () => {
     expect(mockRuntimeStoreSessionIds).toContain("session-live-1");
   });
 
+  it("当前停在 PeerHOST 远端工作区时，缺失会话回退到主 HOST 工作区不会继续复用旧 targetHostId", async () => {
+    mockLiveRuntimeState.errorCode = null;
+    mockLiveRuntimeState.errorDetail = null;
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-gcac"
+      },
+      resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+        preferredTargetHostId?: string | null;
+        fallbackToCurrent?: boolean;
+      }) => {
+        if (workspaceId === "workspace-host-1") {
+          return { hostId: "current", workspaceId };
+        }
+
+        if (options?.preferredTargetHostId === "peer-host-1") {
+          return { hostId: "peer-host-1", workspaceId: `remote-${workspaceId}` };
+        }
+
+        return { hostId: "current", workspaceId };
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-host-1",
+            name: "主 HOST 工作区",
+            path: "/Users/jackson/workspace-host-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-host-fallback-1",
+              workspaceId: "workspace-host-1",
+              title: "主 HOST 回退会话"
+            }
+          ],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-gcac/sessions/session-missing-2?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-host-1/sessions/session-host-fallback-1"
+      );
+      expect(screen.getByTestId("route-probe")).not.toHaveTextContent("targetHostId=peer-host-1");
+    });
+  });
+
   it("桌面端并行会话会切到并行分屏视图", () => {
     mockLiveRuntimeState.session = {
       ...mockLiveRuntimeState.session,
@@ -1856,6 +1912,22 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
     requestNavigationRefresh: vi.fn(),
     selectWorkspace: vi.fn(),
     setSessionWorkspace: vi.fn(),
+    resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+      preferredTargetHostId?: string | null;
+      fallbackToCurrent?: boolean;
+    }) => {
+      if (options?.preferredTargetHostId) {
+        return {
+          hostId: options.preferredTargetHostId,
+          workspaceId
+        };
+      }
+
+      return {
+        hostId: "current",
+        workspaceId
+      };
+    },
     upsertNavigationSession: vi.fn(),
     markNavigationSessionSeen: vi.fn(),
     favoriteSessions: [],
