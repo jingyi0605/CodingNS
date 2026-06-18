@@ -49,6 +49,7 @@ export interface HostConfig {
   serverUpdatePackageName: string;
   npmRegistryBaseUrl: string;
   pm2ProcessName: string;
+  authAdminUserId: string;
   demoMode: boolean;
 }
 
@@ -230,6 +231,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.pm2ProcessName ??
       process.env.CODINGNS_PM2_PROCESS_NAME ??
       "codingns",
+    authAdminUserId:
+      overrides.authAdminUserId ??
+      process.env.CODINGNS_AUTH_ADMIN_USER_ID ??
+      "a0c91011-a0a3-45f1-b67a-0641d369bd93",
     demoMode:
       overrides.demoMode ?? process.env.DEMO_MODE === "true"
   };

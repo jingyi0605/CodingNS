@@ -1331,7 +1331,7 @@ export function GitSidebar({
                 }
 
                 setSelectedPath(targets[0] ?? null);
-                void handleOpenFile(targets[0], change);
+                void handleFilePreview(targets[0], change);
               }
             } satisfies DesktopContextMenuItem
           ]
