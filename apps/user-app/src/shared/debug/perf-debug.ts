@@ -85,6 +85,40 @@ export function logPerfDebug(scope: string, detail?: Record<string, unknown>): v
   console.info(`[perf-ui] ${scope} ${timestamp}ms`);
 }
 
+export function emitPerfDebugProbe(scope: string, detail?: Record<string, unknown>): void {
+  if (!isPerfDebugEnabled() || typeof performance === "undefined") {
+    return;
+  }
+
+  const timestamp = Math.round(performance.now());
+  const payload = {
+    scope,
+    timestampMs: timestamp,
+    ...(detail ?? {})
+  };
+
+  try {
+    const debugWindow = window as typeof window & {
+      __CODINGNS_PERF_DEBUG__?: Array<Record<string, unknown>>;
+    };
+    const bucket = debugWindow.__CODINGNS_PERF_DEBUG__ ?? [];
+    bucket.push(payload);
+    if (bucket.length > PERF_DEBUG_BUCKET_LIMIT) {
+      bucket.splice(0, bucket.length - PERF_DEBUG_BUCKET_LIMIT);
+    }
+    debugWindow.__CODINGNS_PERF_DEBUG__ = bucket;
+  } catch {
+    // 调试日志不能影响主流程。
+  }
+
+  if (detail && Object.keys(detail).length > 0) {
+    console.warn(`[perf-ui-probe] ${scope} ${timestamp}ms`, detail);
+    return;
+  }
+
+  console.warn(`[perf-ui-probe] ${scope} ${timestamp}ms`);
+}
+
 export function isSessionMessageDedupDebugEnabled(): boolean {
   if (typeof window === "undefined") {
     return false;

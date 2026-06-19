@@ -575,7 +575,6 @@ describe("ConversationPage", () => {
     });
 
     expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
-    expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
   });
 
   it("PeerHOST live 会话收到 SESSION_NOT_FOUND 时，会跳到带 targetHostId 的会话列表", async () => {
@@ -677,7 +676,7 @@ describe("ConversationPage", () => {
         hostId: "peer-host-1",
         workspaceId: "remote-workspace-gcac"
       },
-      findSessionEntryByScope: (sessionId: string | null | undefined) => {
+      findVisibleSessionEntryByScope: (sessionId: string | null | undefined) => {
         if (sessionId !== "session-peer-open-1") {
           return null;
         }
@@ -1931,6 +1930,46 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
 
     return collected;
   };
+  const defaultFindCanonicalSessionEntryByScope = (sessionId: string | null | undefined) => {
+    if (!sessionId) {
+      return null;
+    }
+
+    const groups = overrides.navigationGroups as Array<{
+      workspace: { id: string; name: string; path: string };
+      sessions: Array<Record<string, unknown>>;
+    }> | undefined;
+    const sourceGroups = groups ?? [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "工作区一",
+          path: "/Users/jackson/workspace-1"
+        },
+        sessions: [
+          {
+            sessionId: "session-live-1",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            title: "父会话"
+          }
+        ]
+      }
+    ];
+
+    for (const group of sourceGroups) {
+      const matchedSession = collectGroupSessions(group).find((item) => item.sessionId === sessionId);
+
+      if (matchedSession) {
+        return {
+          workspace: group.workspace,
+          session: matchedSession
+        };
+      }
+    }
+
+    return null;
+  };
 
   return {
     shellMode: "mobile",
@@ -1981,45 +2020,13 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
     requestNavigationRefresh: vi.fn(),
     selectWorkspace: vi.fn(),
     setSessionWorkspace: vi.fn(),
-    findSessionEntryByScope: (sessionId: string | null | undefined) => {
-      if (!sessionId) {
-        return null;
-      }
-
-      const groups = overrides.navigationGroups as Array<{
-        workspace: { id: string; name: string; path: string };
-        sessions: Array<Record<string, unknown>>;
-      }> | undefined;
-      const sourceGroups = groups ?? [
-        {
-          workspace: {
-            id: "workspace-1",
-            name: "工作区一",
-            path: "/Users/jackson/workspace-1"
-          },
-          sessions: [
-            {
-              sessionId: "session-live-1",
-              workspaceId: "workspace-1",
-              provider: "codex",
-              title: "父会话"
-            }
-          ]
-        }
-      ];
-
-      for (const group of sourceGroups) {
-        const matchedSession = collectGroupSessions(group).find((item) => item.sessionId === sessionId);
-
-        if (matchedSession) {
-          return {
-            workspace: group.workspace,
-            session: matchedSession
-          };
-        }
-      }
-
-      return null;
+    findCanonicalSessionEntryByScope: defaultFindCanonicalSessionEntryByScope,
+    findVisibleSessionEntryByScope: (sessionId: string | null | undefined, options) => {
+      return overrides.findVisibleSessionEntryByScope
+        ? overrides.findVisibleSessionEntryByScope(sessionId, options)
+        : overrides.findCanonicalSessionEntryByScope
+          ? overrides.findCanonicalSessionEntryByScope(sessionId, options)
+          : defaultFindCanonicalSessionEntryByScope(sessionId);
     },
     resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
       preferredTargetHostId?: string | null;

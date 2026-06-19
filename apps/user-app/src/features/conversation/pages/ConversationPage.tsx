@@ -23,7 +23,7 @@ import {
 } from "../../../components/ModalAtoms";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useHaptics } from "../../../shared/haptics";
-import { logPerfDebug } from "../../../shared/debug/perf-debug";
+import { emitPerfDebugProbe, logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -195,21 +195,42 @@ function LiveConversationPageGuard(props: {
     navigationGroups,
     currentWorkspaceRef,
     currentTargetHostId,
-    findSessionEntryByScope,
+    findVisibleSessionEntryByScope,
     resolveNavigationWorkspaceRef
   } = useWorkbenchShell();
+  const location = useLocation();
   const navigate = useNavigate();
   const params = useParams<{ workspaceId?: string }>();
+  const routeTargetHostId = useMemo(
+    () => new URLSearchParams(location.search).get("targetHostId")?.trim() || null,
+    [location.search]
+  );
+  const effectiveGuardTargetHostId = routeTargetHostId ?? currentTargetHostId;
+  useEffect(() => {
+    emitPerfDebugProbe("conversation_guard.enter", {
+      sessionId: props.sessionId,
+      routeWorkspaceId: params.workspaceId ?? null,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId: effectiveGuardTargetHostId
+    });
+  }, [
+    currentTargetHostId,
+    effectiveGuardTargetHostId,
+    params.workspaceId,
+    props.sessionId,
+    routeTargetHostId
+  ]);
   const flattenedNavigationEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
   const navigationEntry = useMemo(
-    () => findSessionEntryByScope(props.sessionId, {
+    () => findVisibleSessionEntryByScope(props.sessionId, {
       displayWorkspaceId: params.workspaceId ?? null,
-      targetHostId: currentTargetHostId
+      targetHostId: effectiveGuardTargetHostId
     }),
-    [currentTargetHostId, findSessionEntryByScope, params.workspaceId, props.sessionId]
+    [effectiveGuardTargetHostId, findVisibleSessionEntryByScope, params.workspaceId, props.sessionId]
   );
   const navigationSession = navigationEntry?.session ?? null;
   const liveSessionMissingFromNavigation =
@@ -217,6 +238,31 @@ function LiveConversationPageGuard(props: {
     && props.bootstrapMessages.length === 0
     && flattenedNavigationEntries.length > 0
     && navigationSession === null;
+  useEffect(() => {
+    logPerfDebug("conversation_guard.visible_lookup", {
+      sessionId: props.sessionId,
+      routeWorkspaceId: params.workspaceId ?? null,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId: effectiveGuardTargetHostId,
+      bootstrapMessageCount: props.bootstrapMessages.length,
+      flattenedNavigationEntryCount: flattenedNavigationEntries.length,
+      matched: navigationEntry !== null,
+      matchedWorkspaceId: navigationEntry?.workspace.id ?? null,
+      matchedSessionWorkspaceId: navigationEntry?.session.workspaceId ?? null,
+      liveSessionMissingFromNavigation
+    });
+  }, [
+    currentTargetHostId,
+    effectiveGuardTargetHostId,
+    flattenedNavigationEntries.length,
+    liveSessionMissingFromNavigation,
+    navigationEntry,
+    params.workspaceId,
+    props.bootstrapMessages.length,
+    props.sessionId,
+    routeTargetHostId
+  ]);
   const missingSessionTarget = useMemo(() => {
     if (!liveSessionMissingFromNavigation) {
       return null;
@@ -227,12 +273,12 @@ function LiveConversationPageGuard(props: {
       navigationGroups,
       flattenedNavigationEntries,
       currentWorkspaceRef,
-      currentTargetHostId,
+      currentTargetHostId: effectiveGuardTargetHostId,
       resolveNavigationWorkspaceRef
     });
   }, [
-    currentTargetHostId,
-    findSessionEntryByScope,
+    effectiveGuardTargetHostId,
+    findVisibleSessionEntryByScope,
     currentWorkspaceRef,
     flattenedNavigationEntries,
     liveSessionMissingFromNavigation,
@@ -246,8 +292,26 @@ function LiveConversationPageGuard(props: {
       return;
     }
 
+    logPerfDebug("conversation_guard.missing_redirect", {
+      sessionId: props.sessionId,
+      routeWorkspaceId: params.workspaceId ?? null,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId: effectiveGuardTargetHostId,
+      missingSessionTarget
+    });
+
     navigate(missingSessionTarget, { replace: true });
-  }, [currentTargetHostId, currentWorkspaceRef, missingSessionTarget, navigate, props.sessionId]);
+  }, [
+    currentTargetHostId,
+    currentWorkspaceRef,
+    effectiveGuardTargetHostId,
+    missingSessionTarget,
+    navigate,
+    params.workspaceId,
+    props.sessionId,
+    routeTargetHostId
+  ]);
 
   if (missingSessionTarget) {
     return null;
@@ -287,9 +351,24 @@ function LiveConversationPage({
     upsertNavigationSession,
     currentWorkspaceRef,
     currentTargetHostId,
+    findVisibleSessionEntryByScope,
     resolveNavigationWorkspaceRef
   } = useWorkbenchShell();
+  const location = useLocation();
   const navigate = useNavigate();
+  const routeTargetHostId = useMemo(
+    () => new URLSearchParams(location.search).get("targetHostId")?.trim() || null,
+    [location.search]
+  );
+  const effectiveTargetHostId = routeTargetHostId ?? currentTargetHostId;
+  useEffect(() => {
+    emitPerfDebugProbe("conversation_page.enter", {
+      sessionId,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId
+    });
+  }, [currentTargetHostId, effectiveTargetHostId, routeTargetHostId, sessionId]);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
@@ -300,11 +379,34 @@ function LiveConversationPage({
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
-  const navigationSession = useMemo(
-    () =>
-      flattenedNavigationEntries.find((entry) => entry.session.sessionId === sessionId)?.session ?? null,
-    [flattenedNavigationEntries, sessionId]
+  const navigationEntry = useMemo(
+    () => findVisibleSessionEntryByScope(sessionId, {
+      displayWorkspaceId: null,
+      targetHostId: effectiveTargetHostId
+    }),
+    [effectiveTargetHostId, findVisibleSessionEntryByScope, sessionId]
   );
+  const navigationSession = useMemo(
+    () => navigationEntry?.session ?? null,
+    [navigationEntry]
+  );
+  useEffect(() => {
+    logPerfDebug("conversation_page.visible_session_resolved", {
+      sessionId,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId,
+      matched: navigationEntry !== null,
+      matchedWorkspaceId: navigationEntry?.workspace.id ?? null,
+      matchedSessionWorkspaceId: navigationEntry?.session.workspaceId ?? null
+    });
+  }, [
+    currentTargetHostId,
+    effectiveTargetHostId,
+    navigationEntry,
+    routeTargetHostId,
+    sessionId
+  ]);
   const { showToast } = useToast();
   const handleResolveMissingSession = () => {
     const fallbackWorkspaceId =
@@ -317,7 +419,7 @@ function LiveConversationPage({
       ?? null;
     const workspaceRef = fallbackWorkspaceId
       ? resolveNavigationWorkspaceRef(fallbackWorkspaceId, {
-        preferredTargetHostId: currentTargetHostId,
+        preferredTargetHostId: effectiveTargetHostId,
         fallbackToCurrent: true
       })
       : null;
@@ -339,9 +441,19 @@ function LiveConversationPage({
       navigationSessionWorkspaceId: navigationSession?.workspaceId ?? null,
       fallbackWorkspaceId,
       fallbackSessionId: fallbackSessionEntry?.session.sessionId ?? null,
-      currentTargetHostId: currentTargetHostId ?? null,
+      currentTargetHostId: effectiveTargetHostId ?? null,
       currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
       currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      targetPath
+    });
+    logPerfDebug("conversation_page.missing_redirect", {
+      sessionId,
+      routeTargetHostId,
+      currentTargetHostId: currentTargetHostId ?? null,
+      effectiveTargetHostId,
+      navigationSessionWorkspaceId: navigationSession?.workspaceId ?? null,
+      fallbackWorkspaceId,
+      fallbackSessionId: fallbackSessionEntry?.session.sessionId ?? null,
       targetPath
     });
 
@@ -383,7 +495,7 @@ function LiveConversationPage({
     steerQueuedMessage
   } = useLiveSessionController({
     sessionId,
-    targetHostId: currentTargetHostId,
+    targetHostId: effectiveTargetHostId,
     externalSession: navigationSession,
     bootstrapMessages,
     onSeen: (seenSessionId, seenAt) => {
@@ -393,7 +505,7 @@ function LiveConversationPage({
     onUpsertNavigationSession: upsertNavigationSession,
     onNavigateToSession: (workspaceId, targetSessionId) => {
       const workspaceRef = resolveNavigationWorkspaceRef(workspaceId, {
-        preferredTargetHostId: currentTargetHostId,
+        preferredTargetHostId: effectiveTargetHostId,
         fallbackToCurrent: true
       });
       selectWorkspace(workspaceId, workspaceRef);
@@ -426,6 +538,7 @@ function LiveConversationPage({
   const mobileToolWorkspaceId = currentSessionSummary
     ? resolveSessionToolWorkspaceId(currentSessionSummary, currentSessionIsolatedWorkspace)
     : null;
+  const mobileToolRequestWorkspaceId = currentSessionSummary?.workspaceId?.trim() || null;
   const mobileToolPanel = useMobileConversationToolPanelController({
     enabled: !showInlineHeader,
     initialPanel: initialToolPanel,
@@ -939,6 +1052,7 @@ function LiveConversationPage({
             open={mobileToolPanel.isOpen}
             sessionId={sessionId}
             workspaceId={mobileToolWorkspaceId}
+            requestWorkspaceId={mobileToolRequestWorkspaceId}
             currentTargetHostId={currentTargetHostId}
             navigationGroups={navigationGroups}
             onClose={() => {
@@ -1607,6 +1721,7 @@ function DraftConversationPage({
           open={mobileToolPanel.isOpen}
           sessionId={draft.sessionId}
           workspaceId={draft.workspaceId}
+          requestWorkspaceId={draftTargetWorkspaceId}
           currentTargetHostId={currentTargetHostId}
           navigationGroups={navigationGroups}
           onClose={() => {
@@ -2219,6 +2334,7 @@ function MobileConversationToolPanelOverlay(props: {
   open: boolean;
   activePanel: MobileConversationToolPanel;
   workspaceId: string;
+  requestWorkspaceId?: string | null;
   sessionId: string;
   currentTargetHostId?: string | null;
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
@@ -2337,8 +2453,10 @@ function MobileConversationToolPanelOverlay(props: {
             hideHeading
             sessionId={props.sessionId}
             workspaceId={props.workspaceId}
+            requestWorkspaceId={props.requestWorkspaceId}
             workbenchShellOverrides={{
-              currentTargetHostId: props.currentTargetHostId
+              currentTargetHostId: props.currentTargetHostId,
+              currentRequestWorkspaceId: props.requestWorkspaceId
             }}
           />
         ) : props.activePanel === "git" ? (
@@ -2346,8 +2464,10 @@ function MobileConversationToolPanelOverlay(props: {
             className="mobile-conversation-tool-surface"
             panelActive
             workspaceId={props.workspaceId}
+            requestWorkspaceId={props.requestWorkspaceId}
             workbenchShellOverrides={{
-              currentTargetHostId: props.currentTargetHostId
+              currentTargetHostId: props.currentTargetHostId,
+              currentRequestWorkspaceId: props.requestWorkspaceId
             }}
           />
         ) : (

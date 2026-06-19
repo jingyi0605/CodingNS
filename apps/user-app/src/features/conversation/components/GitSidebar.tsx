@@ -79,6 +79,7 @@ import {
 interface GitSidebarProps {
   className?: string;
   workspaceId: string | null | undefined;
+  requestWorkspaceId?: string | null | undefined;
   panelActive?: boolean;
   externalWindowMode?: boolean;
   workbenchShellOverrides?: GitSidebarWorkbenchShellOverrides;
@@ -86,6 +87,7 @@ interface GitSidebarProps {
 
 export interface GitSidebarWorkbenchShellOverrides {
   currentTargetHostId?: string | null;
+  currentRequestWorkspaceId?: string | null;
   subscribeGitSnapshot?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
   requestGitRefresh?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
   addGitSnapshotListener?: (
@@ -181,6 +183,7 @@ const INITIAL_REMOTE_AUTH_FORM: RemoteAuthFormState = {
 export function GitSidebar({
   className,
   workspaceId,
+  requestWorkspaceId,
   panelActive = true,
   externalWindowMode = false,
   workbenchShellOverrides
@@ -196,6 +199,7 @@ export function GitSidebar({
     selectWorkspace,
     upsertNavigationSession,
     currentTargetHostId,
+    currentRequestWorkspaceId,
     currentWorkspaceRef
   } = {
     ...workbenchShell,
@@ -255,6 +259,11 @@ export function GitSidebar({
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
+  const activeRequestWorkspaceId =
+    requestWorkspaceId?.trim()
+    || currentRequestWorkspaceId?.trim()
+    || workspaceId?.trim()
+    || null;
   const recentFileActivationRef = useRef<{ filePath: string; timestamp: number } | null>(null);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
@@ -273,9 +282,11 @@ export function GitSidebar({
   useEffect(() => {
     logPerfDebug("git_sidebar.props", {
       workspaceId,
+      requestWorkspaceId: activeRequestWorkspaceId,
+      currentTargetHostId: currentTargetHostId ?? null,
       externalWindowMode
     });
-  }, [externalWindowMode, workspaceId]);
+  }, [activeRequestWorkspaceId, currentTargetHostId, externalWindowMode, workspaceId]);
 
   useEffect(() => {
     panelActiveRef.current = panelActive;
@@ -565,16 +576,16 @@ export function GitSidebar({
   }
 
   function requestGitSnapshotRefresh(options?: { resetTreeScroll?: boolean }) {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setLoading(true);
     logPerfDebug("git_sidebar.refresh_requested", {
-      workspaceId: workspaceId.trim(),
+      workspaceId: activeRequestWorkspaceId,
       resetTreeScroll: options?.resetTreeScroll ?? false
     });
-    requestGitRefresh(workspaceId.trim(), {
+    requestGitRefresh(activeRequestWorkspaceId, {
       knownRevision: revision,
       targetHostId: currentTargetHostId
     });
@@ -587,11 +598,11 @@ export function GitSidebar({
   }
 
   async function handleManualRefresh(options?: { resetTreeScroll?: boolean }) {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
-    const currentWorkspaceId = workspaceId.trim();
+    const currentWorkspaceId = activeRequestWorkspaceId;
     setLoading(true);
 
     try {
@@ -626,14 +637,14 @@ export function GitSidebar({
   }
 
   async function loadMoreHistory() {
-    if (!workspaceId || !historyNextCursor || historyLoadingMore) {
+    if (!activeRequestWorkspaceId || !historyNextCursor || historyLoadingMore) {
       return;
     }
 
     setHistoryLoadingMore(true);
 
     try {
-      const nextHistory = await getGitHistory(workspaceId, GIT_HISTORY_PAGE_SIZE, historyNextCursor, {
+      const nextHistory = await getGitHistory(activeRequestWorkspaceId, GIT_HISTORY_PAGE_SIZE, historyNextCursor, {
         targetHostId: currentTargetHostId
       });
 
@@ -669,14 +680,14 @@ export function GitSidebar({
   }
 
   async function handleDraft() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const response = await createCommitDraft(workspaceId, "ai", { targetHostId: currentTargetHostId });
+      const response = await createCommitDraft(activeRequestWorkspaceId, "ai", { targetHostId: currentTargetHostId });
       setCommitSubject(response.validation.normalizedDraft.subject || response.draft.subject);
     } catch (error) {
       showToast({
@@ -689,7 +700,7 @@ export function GitSidebar({
   }
 
   async function handleStageToggle(targets: string[], staged: boolean) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -701,8 +712,8 @@ export function GitSidebar({
 
     try {
       const nextStatus = staged
-        ? await unstageGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId })
-        : await stageGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+        ? await unstageGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId })
+        : await stageGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
 
       setStatus(nextStatus);
       setSelectedPath(targets[targets.length - 1] ?? null);
@@ -721,7 +732,7 @@ export function GitSidebar({
   }
 
   async function handleDiscard(targets: string[]) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -732,7 +743,7 @@ export function GitSidebar({
     setActioning(true);
 
     try {
-      const nextStatus = await discardGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+      const nextStatus = await discardGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
       setStatus(nextStatus);
 
       if (targets.includes(selectedPath ?? "")) {
@@ -754,14 +765,14 @@ export function GitSidebar({
   }
 
   async function handleAddToGitIgnore(targets: string[]) {
-    if (!workspaceId || targets.length === 0) {
+    if (!activeRequestWorkspaceId || targets.length === 0) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const nextStatus = await addGitIgnoreTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+      const nextStatus = await addGitIgnoreTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
       setStatus(nextStatus);
       requestGitSnapshotRefresh();
       showToast({
@@ -779,14 +790,14 @@ export function GitSidebar({
   }
 
   async function handleCommit() {
-    if (!workspaceId || !commitSubject.trim()) {
+    if (!activeRequestWorkspaceId || !commitSubject.trim()) {
       return;
     }
 
     setActioning(true);
 
     try {
-      await commitDraft(workspaceId, buildCommitDraft(commitSubject), { targetHostId: currentTargetHostId });
+      await commitDraft(activeRequestWorkspaceId, buildCommitDraft(commitSubject), { targetHostId: currentTargetHostId });
       showToast({
         title: t("git.commitSuccess"),
         tone: "success"
@@ -805,7 +816,7 @@ export function GitSidebar({
   }
 
   async function handleInitializeRepository() {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -813,7 +824,7 @@ export function GitSidebar({
     setLoading(true);
 
     try {
-      const nextStatus = await initializeGitRepository(workspaceId.trim(), { targetHostId: currentTargetHostId });
+      const nextStatus = await initializeGitRepository(activeRequestWorkspaceId, { targetHostId: currentTargetHostId });
       setStatus(nextStatus);
       setHistory([]);
       setHistoryTotalCount(0);
@@ -836,7 +847,7 @@ export function GitSidebar({
   }
 
   async function ensurePushRemotesLoaded() {
-    const currentWorkspaceId = workspaceId?.trim();
+    const currentWorkspaceId = activeRequestWorkspaceId;
 
     if (!currentWorkspaceId) {
       return [] as GitRemoteItemDto[];
@@ -844,7 +855,7 @@ export function GitSidebar({
 
     const remotes = await getGitRemotes(currentWorkspaceId, { targetHostId: currentTargetHostId });
 
-    if (workspaceId?.trim() !== currentWorkspaceId) {
+    if (activeRequestWorkspaceId !== currentWorkspaceId) {
       return [] as GitRemoteItemDto[];
     }
 
@@ -872,7 +883,7 @@ export function GitSidebar({
   }
 
   async function openRemoteAuthManager() {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -958,7 +969,7 @@ export function GitSidebar({
   }
 
   async function handlePush() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -985,7 +996,7 @@ export function GitSidebar({
   }
 
   async function handlePushToRemotes(remoteNames: string[]) {
-    if (!workspaceId || remoteNames.length === 0) {
+    if (!activeRequestWorkspaceId || remoteNames.length === 0) {
       return;
     }
 
@@ -1002,7 +1013,7 @@ export function GitSidebar({
 
         try {
           const result = await syncGitRemote(
-            workspaceId,
+            activeRequestWorkspaceId,
             "push",
             remoteName,
             remoteAuthState?.auth,
@@ -1048,7 +1059,7 @@ export function GitSidebar({
   }
 
   async function handleRemoteAction(action: "fetch" | "pull" | "push") {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -1067,7 +1078,7 @@ export function GitSidebar({
         ? remoteSessionAuthStates[preferredRemoteName] ?? null
         : null;
       const result = await syncGitRemote(
-        workspaceId,
+        activeRequestWorkspaceId,
         action,
         undefined,
         remoteAuthState?.auth,
@@ -1103,14 +1114,14 @@ export function GitSidebar({
   }
 
   async function handleUndoLastCommit() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const result = await undoLastCommit(workspaceId, { targetHostId: currentTargetHostId });
+      const result = await undoLastCommit(activeRequestWorkspaceId, { targetHostId: currentTargetHostId });
       setCommitSubject(result.commitSubject ?? "");
       showToast({
         title: result.summary || t("git.undoLastCommitSuccess"),
@@ -1129,14 +1140,14 @@ export function GitSidebar({
   }
 
   async function handleSwitchBranch(branchName: string) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const nextBranches = await switchGitBranch(workspaceId, branchName, false, {
+      const nextBranches = await switchGitBranch(activeRequestWorkspaceId, branchName, false, {
         targetHostId: currentTargetHostId
       });
       setBranches(nextBranches);
@@ -1153,7 +1164,7 @@ export function GitSidebar({
   }
 
   async function ensureCommitDetail(commitHash: string): Promise<GitCommitDetailDto> {
-    const normalizedWorkspaceId = workspaceId?.trim();
+    const normalizedWorkspaceId = activeRequestWorkspaceId;
 
     if (!normalizedWorkspaceId) {
       throw new Error(t("git.panelLoadFailed"));
@@ -1425,9 +1436,9 @@ export function GitSidebar({
     if (change.status === "A" || change.status === "?") {
       setViewerDiffContent(null);
       setViewerFilePath(filePath);
-    } else if (workspaceId) {
+    } else if (activeRequestWorkspaceId) {
       try {
-        const diffResult = await getGitDiff(workspaceId, filePath, change.staged, {
+        const diffResult = await getGitDiff(activeRequestWorkspaceId, filePath, change.staged, {
           targetHostId: currentTargetHostId
         });
         setViewerDiffContent(diffResult.content);
