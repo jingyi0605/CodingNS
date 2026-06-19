@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { ApiError } from "../../../shared/network/api-error";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
@@ -1067,6 +1068,24 @@ describe("GitSidebar", () => {
         "GitHub 不支持用账号密码做 Git HTTPS 认证。basic 模式请填写 GitHub 用户名 + PAT；token 模式可以直接填写 PAT。"
       )
     ).toBeInTheDocument();
+  });
+
+  it("远程同步失败时会展示 Git 关键报错摘要", async () => {
+    gitApiMock.syncGitRemote.mockRejectedValueOnce(new ApiError(502, {
+      error_code: "GIT_REMOTE_FAILED",
+      detail: "Remote network request failed",
+      data: {
+        gitDetail: "fatal: unable to access 'https://github.com/example/repo.git/': The requested URL returned error: 403"
+      }
+    }));
+
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fetch" }));
+
+    expect(await screen.findByText(/The requested URL returned error: 403/)).toBeInTheDocument();
   });
 
   it("非 GitHub 远程认证弹窗保持通用用户名密码提示", async () => {

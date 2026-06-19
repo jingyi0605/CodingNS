@@ -4141,7 +4141,19 @@ function formatCommitDateTime(value: string) {
 
 function readError(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    return mapGitError(error) ?? error.message;
+    const mappedError = mapGitError(error);
+
+    if (mappedError) {
+      return mappedError;
+    }
+
+    const gitDetail = typeof error.data?.gitDetail === "string" ? error.data.gitDetail.trim() : "";
+
+    if (gitDetail) {
+      return `${error.message}：${gitDetail}`;
+    }
+
+    return error.message;
   }
 
   if (typeof error === "object" && error && "message" in error) {
@@ -4179,6 +4191,9 @@ function isGitRepositoryEnabled(status: GitStatusDto | null | undefined): boolea
 }
 
 function mapGitError(error: ApiError): string | null {
+  const gitDetail = typeof error.data?.gitDetail === "string" ? error.data.gitDetail.trim() : "";
+  const withGitDetail = (message: string) => (gitDetail ? `${message} ${gitDetail}` : message);
+
   switch (error.errorCode) {
     case "UNAUTHORIZED":
       return t("git.errors.unauthorized");
@@ -4205,13 +4220,13 @@ function mapGitError(error: ApiError): string | null {
     case "REMOTE_NOT_FOUND":
       return t("git.errors.remoteNotFound");
     case "GIT_REMOTE_AUTH_FAILED":
-      return t("git.errors.remoteAuthFailed");
+      return withGitDetail(t("git.errors.remoteAuthFailed"));
     case "GIT_PUSH_FAILED":
-      return t("git.errors.pushFailed");
+      return withGitDetail(t("git.errors.pushFailed"));
     case "GIT_PULL_FAILED":
-      return t("git.errors.pullFailed");
+      return withGitDetail(t("git.errors.pullFailed"));
     case "GIT_REMOTE_FAILED":
-      return t("git.errors.remoteFailed");
+      return withGitDetail(t("git.errors.remoteFailed"));
     case "GIT_COMMAND_TIMEOUT":
       return t("git.errors.commandTimeout");
     case "GIT_INIT_FAILED":
