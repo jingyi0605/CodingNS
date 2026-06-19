@@ -232,6 +232,29 @@ test("resolveNode22Runtime 在 Windows 下当前 Node 已满足版本要求时�
   }
 });
 
+test("Windows Node 下载链路包含大陆镜像回退", () => {
+  const source = fs.readFileSync(
+    path.join(workspaceRoot, "codingns", "scripts", "node22-runtime.mjs"),
+    "utf8"
+  );
+
+  assert.match(source, /https:\/\/nodejs\.org\/dist/);
+  assert.match(source, /https:\/\/npmmirror\.com\/mirrors\/node/);
+  assert.match(source, /https:\/\/registry\.npmmirror\.com\/-\/binary\/node/);
+});
+
+test("postinstall 的 npm 修复链路包含多个 registry 回退", () => {
+  const source = fs.readFileSync(
+    path.join(workspaceRoot, "codingns", "scripts", "postinstall.mjs"),
+    "utf8"
+  );
+
+  assert.match(source, /https:\/\/registry\.npmjs\.org\//);
+  assert.match(source, /https:\/\/registry\.npmmirror\.com\//);
+  assert.match(source, /https:\/\/mirrors\.cloud\.tencent\.com\/npm\//);
+  assert.match(source, /https:\/\/repo\.huaweicloud\.com\/repository\/npm\//);
+});
+
 function restoreEnv(key, value) {
   if (typeof value === "string") {
     process.env[key] = value;

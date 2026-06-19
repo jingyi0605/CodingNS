@@ -344,30 +344,45 @@ function runNpmInstall(args, options = {}) {
     installPrefix,
     "--install-strategy=nested"
   ];
+  const registries = resolveNpmRegistryCandidates();
+  let lastResult = null;
 
-  const command = resolveNpmInvocation(installArgs);
-  logInfo(
-    `[codingns] 执行运行时修复命令：${command.file} ${command.args.map(formatCommandArg).join(" ")}`
-  );
+  for (const registry of registries) {
+    const registryArgs = [...installArgs, "--registry", registry];
+    const command = resolveNpmInvocation(registryArgs);
+    logInfo(
+      `[codingns] 执行运行时修复命令（registry: ${registry}）：${command.file} ${command.args.map(formatCommandArg).join(" ")}`
+    );
 
-  const result = spawnSync(command.file, command.args, {
-    cwd: installCwd,
-    env,
-    stdio: "inherit"
-  });
+    const result = spawnSync(command.file, command.args, {
+      cwd: installCwd,
+      env,
+      stdio: "inherit"
+    });
 
-  if (result.error) {
-    const detail = result.error instanceof Error ? result.error.message : String(result.error);
-    console.error(`[codingns] 运行时修复命令启动失败：${detail}`);
+    if (result.error) {
+      const detail = result.error instanceof Error ? result.error.message : String(result.error);
+      console.error(`[codingns] 运行时修复命令启动失败：${detail}`);
+    }
+
+    if (typeof result.status === "number") {
+      logInfo(`[codingns] 运行时修复命令退出码：${result.status}`);
+    } else if (result.signal) {
+      console.error(`[codingns] 运行时修复命令被信号中断：${result.signal}`);
+    }
+
+    if (result.status === 0) {
+      return result;
+    }
+
+    lastResult = result;
   }
 
-  if (typeof result.status === "number") {
-    logInfo(`[codingns] 运行时修复命令退出码：${result.status}`);
-  } else if (result.signal) {
-    console.error(`[codingns] 运行时修复命令被信号中断：${result.signal}`);
-  }
-
-  return result;
+  return lastResult ?? {
+    status: 1,
+    signal: null,
+    error: new Error("[codingns] 未解析到可用的 npm registry")
+  };
 }
 
 function resolveNpmInvocation(args) {
@@ -411,6 +426,39 @@ function quoteWindowsArg(value) {
 
 function formatCommandArg(value) {
   return /[\s"]/u.test(value) ? JSON.stringify(value) : value;
+}
+
+function resolveNpmRegistryCandidates() {
+  return uniqueNonEmptyValues([
+    ...splitEnvList(process.env.CODINGNS_NPM_REGISTRIES),
+    process.env.CODINGNS_NPM_REGISTRY,
+    process.env.npm_config_registry,
+    "https://registry.npmjs.org/",
+    "https://registry.npmmirror.com/",
+    "https://mirrors.cloud.tencent.com/npm/",
+    "https://repo.huaweicloud.com/repository/npm/"
+  ]);
+}
+
+function splitEnvList(value) {
+  return String(value || "")
+    .split(/[,\n;]/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueNonEmptyValues(values) {
+  const result = [];
+
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (!normalized || result.includes(normalized)) {
+      continue;
+    }
+    result.push(normalized);
+  }
+
+  return result;
 }
 
 function logInfo(message) {

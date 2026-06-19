@@ -167,7 +167,7 @@ function resolveWindowsRuntimeLayout(desiredVersion) {
     versionDir,
     activeMetaPath: path.join(nodeRuntimeRoot, "active.json"),
     downloadDir,
-    distBaseUrl: String(process.env.CODINGNS_WINDOWS_NODE_DIST_BASE || "https://nodejs.org/dist").replace(/\/+$/u, "")
+    distBaseUrls: resolveWindowsNodeDistBaseUrls()
   };
 }
 
@@ -210,12 +210,10 @@ function ensureManagedWindowsNode22Runtime(runtimeLayout, desiredVersion) {
     runtimeLayout.downloadDir,
     `SHASUMS256-v${runtimeLayout.version}.txt`
   );
-  const versionBaseUrl = `${runtimeLayout.distBaseUrl}/v${runtimeLayout.version}`;
-  const archiveUrl = `${versionBaseUrl}/${archiveName}`;
-  const shasumsUrl = `${versionBaseUrl}/SHASUMS256.txt`;
+  const downloadSource = resolveWindowsRuntimeDownloadSource(runtimeLayout, archiveName);
 
   if (!existsSync(shasumsPath)) {
-    downloadFile(shasumsUrl, shasumsPath);
+    downloadFile(downloadSource.shasumsUrls, shasumsPath);
   }
 
   const expectedSha256 = readArchiveSha256(shasumsPath, archiveName);
@@ -231,7 +229,7 @@ function ensureManagedWindowsNode22Runtime(runtimeLayout, desiredVersion) {
   }
 
   if (!existsSync(archivePath)) {
-    downloadFile(archiveUrl, archivePath);
+    downloadFile(downloadSource.archiveUrls, archivePath);
   }
 
   const archiveSha256 = computeFileSha256(archivePath);
@@ -242,7 +240,7 @@ function ensureManagedWindowsNode22Runtime(runtimeLayout, desiredVersion) {
 
   rmSync(runtimeLayout.versionDir, { recursive: true, force: true });
   extractZipArchive(archivePath, path.join(runtimeLayout.nodeRuntimeRoot, "versions"));
-  writeWindowsActiveRuntimeMeta(runtimeLayout, archiveUrl, expectedSha256);
+  writeWindowsActiveRuntimeMeta(runtimeLayout, downloadSource.archiveUrls[0], expectedSha256);
 
   const runtime = inspectNodeCandidate(path.join(runtimeLayout.versionDir, "node.exe"), desiredVersion);
   if (!runtime) {
@@ -279,27 +277,37 @@ function ensureDir(targetPath) {
 }
 
 function downloadFile(sourceUrl, targetPath) {
-  try {
-    execFileSync("powershell.exe", [
-      "-NoLogo",
-      "-NoProfile",
-      "-Command",
-      `$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '${escapePowerShellString(sourceUrl)}' -OutFile '${escapePowerShellString(targetPath)}'`
-    ], {
+  const sourceUrls = uniqueNormalizedUrls(Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl]);
+  const failures = [];
+
+  for (const currentSourceUrl of sourceUrls) {
+    try {
+      execFileSync("powershell.exe", [
+        "-NoLogo",
+        "-NoProfile",
+        "-Command",
+        `$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '${escapePowerShellString(currentSourceUrl)}' -OutFile '${escapePowerShellString(targetPath)}'`
+      ], {
+        stdio: "ignore"
+      });
+      return;
+    } catch (error) {
+      failures.push(formatDownloadFailure(currentSourceUrl, error));
+    }
+
+    const result = spawnSync("curl", ["-fL", currentSourceUrl, "-o", targetPath], {
       stdio: "ignore"
     });
-    return;
-  } catch {
+    if (result.status === 0) {
+      return;
+    }
+
+    failures.push(`${currentSourceUrl} (curl exit ${result.status ?? "unknown"})`);
   }
 
-  const result = spawnSync("curl", ["-fL", sourceUrl, "-o", targetPath], {
-    stdio: "ignore"
-  });
-  if (result.status === 0) {
-    return;
-  }
-
-  throw new Error(`[codingns-node22-runtime] 下载失败：${sourceUrl}`);
+  throw new Error(
+    `[codingns-node22-runtime] 下载失败，已尝试以下地址：${failures.join("；")}`
+  );
 }
 
 function extractZipArchive(archivePath, outputDir) {
@@ -416,6 +424,24 @@ function normalizeNodeVersion(versionText) {
   return String(versionText || "").trim().replace(/^v/, "");
 }
 
+function resolveWindowsNodeDistBaseUrls() {
+  return uniqueNormalizedUrls([
+    ...splitEnvList(process.env.CODINGNS_WINDOWS_NODE_DIST_BASE),
+    "https://nodejs.org/dist",
+    "https://npmmirror.com/mirrors/node",
+    "https://registry.npmmirror.com/-/binary/node"
+  ]);
+}
+
+function resolveWindowsRuntimeDownloadSource(runtimeLayout, archiveName) {
+  const versionBaseUrls = runtimeLayout.distBaseUrls.map((baseUrl) => `${baseUrl}/v${runtimeLayout.version}`);
+
+  return {
+    archiveUrls: versionBaseUrls.map((versionBaseUrl) => `${versionBaseUrl}/${archiveName}`),
+    shasumsUrls: versionBaseUrls.map((versionBaseUrl) => `${versionBaseUrl}/SHASUMS256.txt`)
+  };
+}
+
 function isNodeVersionSatisfied(versionText, desiredVersion) {
   const normalizedVersion = normalizeNodeVersion(versionText);
   const normalizedDesiredVersion = normalizeNodeVersion(desiredVersion || "22");
@@ -458,6 +484,35 @@ function compareVersionParts(left, right) {
   }
 
   return 0;
+}
+
+function splitEnvList(value) {
+  return String(value || "")
+    .split(/[,\n;]/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueNormalizedUrls(values) {
+  const result = [];
+
+  for (const value of values) {
+    const normalized = String(value || "").trim().replace(/\/+$/u, "");
+    if (!normalized || result.includes(normalized)) {
+      continue;
+    }
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function formatDownloadFailure(sourceUrl, error) {
+  if (error instanceof Error && error.message) {
+    return `${sourceUrl} (${error.message})`;
+  }
+
+  return `${sourceUrl} (${String(error)})`;
 }
 
 function pushCandidate(target, value) {
