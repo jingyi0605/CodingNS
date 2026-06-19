@@ -148,6 +148,7 @@ test("resolveNode22Runtime 会优先复用 install.sh 产出的 Windows 私有�
 
   const node22Path = process.execPath;
   const previousPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const previousExecPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
   const previousEnv = {
     CODINGNS_DATA_DIR: process.env.CODINGNS_DATA_DIR,
     CODINGNS_RUNTIME_ROOT: process.env.CODINGNS_RUNTIME_ROOT,
@@ -169,6 +170,10 @@ test("resolveNode22Runtime 会优先复用 install.sh 产出的 Windows 私有�
       configurable: true,
       value: "win32"
     });
+    Object.defineProperty(process, "execPath", {
+      configurable: true,
+      value: path.join(tempRoot, "missing-node.exe")
+    });
     process.env.CODINGNS_DATA_DIR = tempRoot;
     process.env.CODINGNS_RUNTIME_ROOT = runtimeRoot;
     process.env.CODINGNS_WINDOWS_NODE_VERSION = "22.16.0";
@@ -181,10 +186,49 @@ test("resolveNode22Runtime 会优先复用 install.sh 产出的 Windows 私有�
     if (previousPlatformDescriptor) {
       Object.defineProperty(process, "platform", previousPlatformDescriptor);
     }
+    if (previousExecPathDescriptor) {
+      Object.defineProperty(process, "execPath", previousExecPathDescriptor);
+    }
     restoreEnv("CODINGNS_DATA_DIR", previousEnv.CODINGNS_DATA_DIR);
     restoreEnv("CODINGNS_RUNTIME_ROOT", previousEnv.CODINGNS_RUNTIME_ROOT);
     restoreEnv("CODINGNS_WINDOWS_NODE_VERSION", previousEnv.CODINGNS_WINDOWS_NODE_VERSION);
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveNode22Runtime 在 Windows 下当前 Node 已满足版本要求时优先复用当前进程", () => {
+  const previousPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const previousExecPath = process.execPath;
+  const previousEnv = {
+    CODINGNS_WINDOWS_NODE_VERSION: process.env.CODINGNS_WINDOWS_NODE_VERSION
+  };
+
+  try {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32"
+    });
+    Object.defineProperty(process, "execPath", {
+      configurable: true,
+      value: previousExecPath
+    });
+    process.env.CODINGNS_WINDOWS_NODE_VERSION = "22.16.0";
+
+    const runtime = resolveNode22Runtime(workspaceRoot, {
+      allowWindowsPrivateRuntimeInstall: true
+    });
+    assert.ok(runtime);
+    assert.equal(fs.realpathSync(runtime.nodePath), fs.realpathSync(previousExecPath));
+    assert.equal(runtime.source, "current-process");
+  } finally {
+    if (previousPlatformDescriptor) {
+      Object.defineProperty(process, "platform", previousPlatformDescriptor);
+    }
+    Object.defineProperty(process, "execPath", {
+      configurable: true,
+      value: previousExecPath
+    });
+    restoreEnv("CODINGNS_WINDOWS_NODE_VERSION", previousEnv.CODINGNS_WINDOWS_NODE_VERSION);
   }
 });
 

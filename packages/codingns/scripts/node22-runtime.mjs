@@ -15,9 +15,10 @@ export function ensureNode22ForCurrentScript(options = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const scriptLabel = options.scriptLabel ?? "script";
   const allowWindowsPrivateRuntimeInstall = options.allowWindowsPrivateRuntimeInstall === true;
+  const desiredVersion = readDesiredNodeVersion(rootDir);
 
-  if (Number.parseInt(process.versions.node.split(".")[0] ?? "", 10) === 22) {
-    return resolveNode22Runtime(rootDir, {
+  if (isNodeVersionSatisfied(process.versions.node, desiredVersion)) {
+    return inspectNodeCandidate(process.execPath, desiredVersion) ?? resolveNode22Runtime(rootDir, {
       allowWindowsPrivateRuntimeInstall
     });
   }
@@ -64,6 +65,13 @@ export function ensureNode22ForCurrentScript(options = {}) {
 
 export function resolveNode22Runtime(rootDir, options = {}) {
   const desiredVersion = readDesiredNodeVersion(rootDir);
+  const currentRuntime = inspectNodeCandidate(process.execPath, desiredVersion);
+  if (currentRuntime) {
+    return {
+      ...currentRuntime,
+      source: "current-process"
+    };
+  }
   const managedWindowsRuntime = resolveManagedWindowsNode22Runtime(rootDir, desiredVersion, options);
   if (managedWindowsRuntime) {
     return managedWindowsRuntime;
@@ -389,9 +397,7 @@ function inspectNodeCandidate(nodePath, desiredVersion) {
     }
 
     const normalized = normalizeNodeVersion(versionText);
-    const major = normalized.split(".")[0];
-
-    if (major !== "22") {
+    if (!isNodeVersionSatisfied(normalized, desiredVersion)) {
       return null;
     }
 
@@ -408,6 +414,50 @@ function inspectNodeCandidate(nodePath, desiredVersion) {
 
 function normalizeNodeVersion(versionText) {
   return String(versionText || "").trim().replace(/^v/, "");
+}
+
+function isNodeVersionSatisfied(versionText, desiredVersion) {
+  const normalizedVersion = normalizeNodeVersion(versionText);
+  const normalizedDesiredVersion = normalizeNodeVersion(desiredVersion || "22");
+  const currentParts = parseVersionParts(normalizedVersion);
+  const desiredParts = parseVersionParts(normalizedDesiredVersion);
+
+  if (!currentParts || !desiredParts) {
+    return false;
+  }
+
+  if (currentParts[0] !== 22 || desiredParts[0] !== 22) {
+    return false;
+  }
+
+  return compareVersionParts(currentParts, desiredParts) >= 0;
+}
+
+function parseVersionParts(versionText) {
+  const parts = normalizeNodeVersion(versionText)
+    .split(".")
+    .map((value) => Number.parseInt(value, 10));
+
+  if (parts.length === 0 || parts.some((value) => Number.isNaN(value))) {
+    return null;
+  }
+
+  while (parts.length < 3) {
+    parts.push(0);
+  }
+
+  return parts.slice(0, 3);
+}
+
+function compareVersionParts(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  return 0;
 }
 
 function pushCandidate(target, value) {
