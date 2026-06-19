@@ -65,7 +65,10 @@ describe("spec005 远程同步错误映射", () => {
 
     await expect(service.syncRemote("workspace-1", "fetch")).rejects.toMatchObject({
       errorCode: "GIT_REMOTE_FAILED",
-      statusCode: 502
+      statusCode: 502,
+      data: {
+        gitDetail: "fatal: unable to access 'https://example.com/repo.git/': Failed to connect to example.com port 443"
+      }
     });
   });
 

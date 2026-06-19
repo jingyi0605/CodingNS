@@ -176,7 +176,10 @@ describe("GitWriteService", () => {
         env: expect.objectContaining({
           CODINGNS_GIT_AUTH_SECRET: "secret-token",
           GIT_TERMINAL_PROMPT: "0",
-          GCM_INTERACTIVE: "Never"
+          GCM_INTERACTIVE: "Never",
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "credential.helper",
+          GIT_CONFIG_VALUE_0: ""
         })
       })
     );
@@ -222,7 +225,10 @@ describe("GitWriteService", () => {
       expect.objectContaining({
         env: expect.objectContaining({
           CODINGNS_GIT_AUTH_USERNAME: "jackson",
-          CODINGNS_GIT_AUTH_SECRET: "saved-password"
+          CODINGNS_GIT_AUTH_SECRET: "saved-password",
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "credential.helper",
+          GIT_CONFIG_VALUE_0: ""
         })
       })
     );

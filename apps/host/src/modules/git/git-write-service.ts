@@ -5,6 +5,7 @@ import path from "node:path";
 import { AppError } from "../../shared/errors/app-error.js";
 import {
   createGitAuthContext,
+  createGitCredentialHelperBypassEnv,
   createGitNonInteractiveEnv,
   type GitAuthInput
 } from "./git-auth.js";
@@ -297,7 +298,9 @@ export class GitWriteService {
             ? ["push", remote, currentBranch]
             : ["push", "--set-upstream", remote, currentBranch];
     const authContext = createGitAuthContext(effectiveAuth);
-    const commandEnv = createGitNonInteractiveEnv(authContext?.env);
+    const commandEnv = createGitNonInteractiveEnv(
+      effectiveAuth ? createGitCredentialHelperBypassEnv(authContext?.env) : authContext?.env
+    );
 
     try {
       const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
@@ -473,6 +476,8 @@ function mapBranchSwitchError(detail: string): AppError {
 }
 
 function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): AppError {
+  const gitDetail = summarizeGitRemoteDetail(detail);
+
   if (
     /authentication failed|could not read from remote repository|could not read Username|could not read Password|permission denied|terminal prompts disabled/i.test(
       detail
@@ -481,7 +486,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 401,
       errorCode: "GIT_REMOTE_AUTH_FAILED",
-      detail: "Remote authentication failed"
+      detail: "Remote authentication failed",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -489,7 +495,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 404,
       errorCode: "REMOTE_NOT_FOUND",
-      detail: "Remote repository or branch not found"
+      detail: "Remote repository or branch not found",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -497,7 +504,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 409,
       errorCode: "BRANCH_CONFLICT",
-      detail: "Remote sync failed because of non-fast-forward conflict"
+      detail: "Remote sync failed because of non-fast-forward conflict",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -505,7 +513,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 502,
       errorCode: "GIT_REMOTE_FAILED",
-      detail: "Remote network request failed"
+      detail: "Remote network request failed",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -517,8 +526,24 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
         : action === "push"
           ? "GIT_PUSH_FAILED"
           : "GIT_REMOTE_FAILED",
-    detail: detail.trim() || "Remote sync failed"
+    detail: detail.trim() || "Remote sync failed",
+    data: gitDetail ? { gitDetail } : undefined
   });
+}
+
+function summarizeGitRemoteDetail(detail: string): string | null {
+  const normalized = detail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^fatal:\s*$/i.test(line));
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const joined = normalized.join(" | ");
+  return joined.length > 300 ? `${joined.slice(0, 297)}...` : joined;
 }
 
 function buildRemoteSummary(action: GitRemoteSyncResult["action"], branch: string): string {
