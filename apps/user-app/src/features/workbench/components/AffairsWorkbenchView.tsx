@@ -116,6 +116,7 @@ import {
   getGlobalAffairsLibraryBinding,
   listAffairsTags,
   listAffairsLightweightSessions,
+  listWorkspaces,
   markAffairsLightweightSessionSeen,
   getAffairsLibraryConfig,
   getAffairsLibraryPreview,
@@ -1401,7 +1402,7 @@ async function validateShortcutSourceSelection(
 }
 
 function buildWorkspaceHtmlSourceWorkspaceOptions(
-  navigationGroups: WorkspaceSessionGroup[],
+  workspaces: readonly Pick<WorkspaceDto, "id" | "name" | "path">[],
   currentWorkspaceId: string,
   currentLibraryWorkspace?: WorkspaceHtmlSourceScopeOption | null
 ): WorkspaceHtmlSourceScopeOption[] {
@@ -1425,19 +1426,19 @@ function buildWorkspaceHtmlSourceWorkspaceOptions(
     options.push(currentLibraryWorkspace);
   }
 
-  navigationGroups.forEach((group) => {
-    const workspaceId = group.workspace.id.trim();
+  workspaces.forEach((workspace) => {
+    const workspaceId = workspace.id.trim();
     if (!workspaceId || seenWorkspaceIds.has(workspaceId)) {
       return;
     }
-    appendOption(workspaceId, group.workspace.name?.trim() || group.workspace.path || workspaceId);
+    appendOption(workspaceId, workspace.name?.trim() || workspace.path || workspaceId);
   });
 
   if (!seenWorkspaceIds.has(currentWorkspaceId)) {
     options.unshift({
       value: currentWorkspaceId,
       workspaceId: currentWorkspaceId,
-      label: navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name?.trim() || currentWorkspaceId,
+      label: workspaces.find((workspace) => workspace.id === currentWorkspaceId)?.name?.trim() || currentWorkspaceId,
       kind: "workspace"
     });
   }
@@ -4583,13 +4584,47 @@ export function AffairsShortcutAppsRail({
     () => resolveAffairsLibrarySourceWorkspaceOption(globalLibraryBinding, workspaceId),
     [globalLibraryBinding, workspaceId]
   );
+  const [hiddenWorkspaceCatalog, setHiddenWorkspaceCatalog] = useState<WorkspaceDto[] | null>(null);
+  useEffect(() => {
+    if (hiddenWorkspaceCatalog !== null) {
+      return;
+    }
+
+    let disposed = false;
+
+    void listWorkspaces({ includeHidden: true })
+      .then((response) => {
+        if (disposed) {
+          return;
+        }
+        setHiddenWorkspaceCatalog(Array.isArray(response.items) ? response.items : []);
+      })
+      .catch(() => {
+        if (disposed) {
+          return;
+        }
+        setHiddenWorkspaceCatalog([]);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [hiddenWorkspaceCatalog]);
+  const sourceWorkspaceCatalog = useMemo(
+    () => (
+      hiddenWorkspaceCatalog && hiddenWorkspaceCatalog.length > 0
+        ? hiddenWorkspaceCatalog
+        : navigationGroups.map((group) => group.workspace)
+    ),
+    [hiddenWorkspaceCatalog, navigationGroups]
+  );
   const sourceWorkspaceOptions = useMemo(
     () => buildWorkspaceHtmlSourceWorkspaceOptions(
-      navigationGroups,
+      sourceWorkspaceCatalog,
       workspaceId,
       currentLibraryWorkspaceOption
     ),
-    [currentLibraryWorkspaceOption, navigationGroups, workspaceId]
+    [currentLibraryWorkspaceOption, sourceWorkspaceCatalog, workspaceId]
   );
   const defaultSourceWorkspaceId = useMemo(
     () => resolveWorkspaceHtmlSourceDefaultWorkspaceId({
@@ -14731,7 +14766,7 @@ function AffairsDashboardView({
   );
   const htmlSourceWorkspaceOptions = useMemo(
     () => buildWorkspaceHtmlSourceWorkspaceOptions(
-      navigationGroups,
+      navigationGroups.map((group) => group.workspace),
       workspaceId,
       currentLibraryWorkspaceOption
     ),

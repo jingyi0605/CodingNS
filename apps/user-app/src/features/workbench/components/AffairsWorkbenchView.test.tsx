@@ -236,6 +236,7 @@ const conversationApiMock = vi.hoisted(() => ({
   listProviderCapabilities: vi.fn(),
   listAffairsTags: vi.fn(),
   listAffairsLibraryDocuments: vi.fn(),
+  listWorkspaces: vi.fn(),
   requestAffairsLibraryRefresh: vi.fn(),
   requestAffairsTagFullRecompute: vi.fn(),
   requestAffairsTagRecoveryRecompute: vi.fn(),
@@ -333,6 +334,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     listProviderCapabilities: conversationApiMock.listProviderCapabilities,
     listAffairsTags: conversationApiMock.listAffairsTags,
     listAffairsLibraryDocuments: conversationApiMock.listAffairsLibraryDocuments,
+    listWorkspaces: conversationApiMock.listWorkspaces,
     requestAffairsLibraryRefresh: conversationApiMock.requestAffairsLibraryRefresh,
     requestAffairsTagFullRecompute: conversationApiMock.requestAffairsTagFullRecompute,
     requestAffairsTagRecoveryRecompute: conversationApiMock.requestAffairsTagRecoveryRecompute,
@@ -1785,6 +1787,9 @@ describe("AffairsWorkbenchView", () => {
 
     conversationApiMock.listAffairsLibraryFiles.mockResolvedValue({ items: [] });
     conversationApiMock.listAffairsLibraryDocuments.mockResolvedValue(createDocumentListResponse());
+    conversationApiMock.listWorkspaces.mockResolvedValue({
+      items: navigationGroups.map((group) => group.workspace)
+    });
     conversationApiMock.downloadAffairsLibraryFile.mockResolvedValue({
       workspaceId: "workspace-1",
       path: "Exchange 分层通讯簿.txt",
@@ -7734,6 +7739,38 @@ describe("AffairsWorkbenchView", () => {
     await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
 
     expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("__affairs_current_library__");
+  });
+
+  it("添加快捷应用时可以选择隐藏的工作区作为来源", async () => {
+    conversationApiMock.listWorkspaces.mockResolvedValue({
+      items: [
+        navigationGroups[0].workspace,
+        {
+          id: "workspace-hidden",
+          name: "隐藏项目",
+          path: "/Users/jackson/WorkFile/隐藏项目",
+          repoRoot: "/Users/jackson/WorkFile/隐藏项目",
+          hidden: true
+        }
+      ]
+    });
+
+    renderWorkbenchWithCustomNavigationGroups(createState(), [navigationGroups[0]]);
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailExpandAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailEditAction") }));
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.affairsShortcutRailAddAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "隐藏项目" })).toBeInTheDocument();
+    });
+
+    await userEvent.selectOptions(
+      screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField")),
+      "workspace-hidden"
+    );
+
+    expect(screen.getByLabelText(t("shell.affairsWorkbenchHtmlSourceWorkspaceField"))).toHaveValue("workspace-hidden");
   });
 
   it("当前文档库文件选择器会按真实目录列出非 HTML 文件", async () => {
