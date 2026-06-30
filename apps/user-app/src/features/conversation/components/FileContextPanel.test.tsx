@@ -1791,6 +1791,61 @@ describe("FileContextPanel", () => {
     );
   });
 
+  it("PeerHost 下复制路径会优先使用 requestWorkspaceId 对应的远端工作区信息", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "macos";
+    platformMock.bridge.supported = true;
+    workbenchShellMock.navigationGroups = [
+      {
+        workspace: {
+          id: "remote-workspace-1",
+          name: "Remote CodingNS",
+          path: "/Users/jackson/PeerHost/CodingNS",
+          repoRoot: "/Users/jackson/PeerHost/CodingNS"
+        },
+        sessions: []
+      }
+    ];
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    render(
+      <ToastProvider>
+        <FileContextPanel
+          sessionId="session-1"
+          workspaceId="workspace-1"
+          requestWorkspaceId="remote-workspace-1"
+          workbenchShellOverrides={{
+            currentTargetHostId: "peer-host-1",
+            currentRequestWorkspaceId: "remote-workspace-1",
+            currentWorkspacePath: "/Users/jackson/PeerHost/CodingNS"
+          }}
+        />
+      </ToastProvider>
+    );
+
+    await userEvent.click(await screen.findByText("index.ts"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyAbsolutePath") })
+    );
+
+    expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith(
+      "/Users/jackson/PeerHost/CodingNS/packages/session-sync-core/src/index.ts"
+    );
+  });
+
   it("鍙屽嚮 markdown 鏂囦欢鍚庝細鎵撳紑鏌ョ湅鍣ㄥ苟鏀寔缂栬緫淇濆瓨", async () => {
     renderPanel();
 
@@ -1814,7 +1869,8 @@ describe("FileContextPanel", () => {
         "workspace-1",
         "docs.md",
         "# 鏂版爣棰?",
-        "md-version-1"
+        "md-version-1",
+        undefined
       );
     });
   });

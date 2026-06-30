@@ -1026,7 +1026,7 @@ describe("ConversationPage", () => {
           providerConfigMode: "cc-switch-preset",
           providerPresetId: "preset-x"
         }),
-        { targetHostId: undefined }
+        { targetHostId: null }
       );
     });
 
@@ -1050,7 +1050,7 @@ describe("ConversationPage", () => {
           providerConfigMode: "cc-switch-preset",
           providerPresetId: "preset-deepseek"
         }),
-        { targetHostId: undefined }
+        { targetHostId: null }
       );
     });
 
@@ -1132,6 +1132,62 @@ describe("ConversationPage", () => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
         "/workspaces/workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
       );
+    });
+  });
+
+  it("切回主 HOST 后草稿会话不会继续复用 shell 残留的 PeerHOST 目标", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      }
+    }));
+    mockStartLiveSession.mockResolvedValueOnce({
+      sessionId: "session-host-1",
+      provider: "codex",
+      session: {
+        ...createBaseLiveSession(),
+        sessionId: "session-host-1",
+        workspaceId: "workspace-1"
+      },
+      message: {
+        messageId: "message-host-1",
+        provider: "codex",
+        providerSessionId: "provider-session-host-1",
+        role: "assistant",
+        content: "已创建主 HOST 会话",
+        timestamp: "2026-04-25T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "store://session-host-1#1"
+      }
+    });
+
+    renderDraftConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/draft-codex-1?provider=codex&workspaceId=workspace-1",
+      withRouteProbe: true
+    });
+
+    fireEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("codex", "workspace-1", undefined, {
+        targetHostId: null
+      });
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          provider: "codex"
+        }),
+        { targetHostId: null }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-host-1"
+      );
+      expect(screen.getByTestId("route-probe")).not.toHaveTextContent("targetHostId=peer-host-1");
     });
   });
 

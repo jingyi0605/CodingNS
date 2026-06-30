@@ -5744,6 +5744,20 @@ function resolveWorkspaceHostAssignment(
   return assignments[`${activeHostId}::${buildWorkspaceHostAssignmentKey(workspace.id, workspace.path)}`] ?? null;
 }
 
+function resolveWorkspacePathForScope(
+  workspace: Pick<WorkspaceDto, "path"> | null | undefined,
+  assignment: WorkspaceHostAssignment | null,
+  targetHostId?: string | null
+): string | null {
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
+
+  if (normalizedTargetHostId && normalizedTargetHostId !== "current") {
+    return assignment?.remoteWorkspacePath?.trim() || null;
+  }
+
+  return workspace?.path?.trim() || null;
+}
+
 function WorkspaceHostBadge({
   host,
   hostId,
@@ -11031,7 +11045,9 @@ function WorkbenchInfoPanel({
   requestWorkspaceId,
   currentWorkspaceRef,
   currentTargetHostId,
+  activeHostId,
   navigationGroups,
+  workspaceHostAssignments,
   workspaceContext,
   worktreeMeta,
   worktreeMergeState,
@@ -11049,7 +11065,9 @@ function WorkbenchInfoPanel({
   requestWorkspaceId?: string | null;
   currentWorkspaceRef?: WorkspaceRef | null;
   currentTargetHostId?: string | null;
+  activeHostId: string;
   navigationGroups: WorkspaceSessionGroup[];
+  workspaceHostAssignments: Record<string, WorkspaceHostAssignment>;
   workspaceContext: WorkspaceVisualContext | null;
   worktreeMeta: WorktreeMetaDto | null;
   worktreeMergeState: WorktreeMergeViewState | null;
@@ -11101,6 +11119,22 @@ function WorkbenchInfoPanel({
     effectiveFilesWorkspaceId && effectiveFilesWorkspaceId === normalizedActiveWorkspaceId
       ? fileRevealRequest
       : null;
+  const activeWorkspaceForFilesPanel = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === activeWorkspaceId)?.workspace ?? null,
+    [activeWorkspaceId, navigationGroups]
+  );
+  const activeWorkspaceHostAssignment = useMemo(
+    () => (
+      activeWorkspaceForFilesPanel
+        ? resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, activeWorkspaceForFilesPanel)
+        : null
+    ),
+    [activeHostId, activeWorkspaceForFilesPanel, workspaceHostAssignments]
+  );
+  const currentWorkspacePath = useMemo(
+    () => resolveWorkspacePathForScope(activeWorkspaceForFilesPanel, activeWorkspaceHostAssignment, currentTargetHostId),
+    [activeWorkspaceForFilesPanel, activeWorkspaceHostAssignment, currentTargetHostId]
+  );
 
   useEffect(() => {
     if (normalizedActiveWorkspaceId) {
@@ -11515,7 +11549,8 @@ function WorkbenchInfoPanel({
                 externalRevealRequest={effectiveFileRevealRequest}
                 workbenchShellOverrides={{
                   currentTargetHostId,
-                  currentRequestWorkspaceId: requestWorkspaceId ?? effectiveFilesWorkspaceId
+                  currentRequestWorkspaceId: requestWorkspaceId ?? effectiveFilesWorkspaceId,
+                  currentWorkspacePath
                 }}
               />
             </Suspense>
@@ -16857,7 +16892,9 @@ export function WorkbenchLayout({
         requestWorkspaceId={currentRequestWorkspaceId}
         currentWorkspaceRef={currentWorkspaceRef}
         currentTargetHostId={currentTargetHostId}
+        activeHostId={activeHostId}
         navigationGroups={navigationGroups}
+        workspaceHostAssignments={workspaceHostAssignments}
         workspaceContext={currentAuxiliaryWorkspaceContext}
         worktreeMeta={currentWorktreeMeta}
         worktreeMergeState={currentWorktreeMergeState}

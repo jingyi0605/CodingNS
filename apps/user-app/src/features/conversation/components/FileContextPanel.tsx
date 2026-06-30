@@ -69,6 +69,7 @@ export interface FileContextPanelWorkbenchShellOverrides {
   navigationGroups?: WorkspaceSessionGroup[];
   currentTargetHostId?: string | null;
   currentRequestWorkspaceId?: string | null;
+  currentWorkspacePath?: string | null;
   subscribeFileTree?: (
     workspaceId: string,
     paths: string[],
@@ -953,8 +954,11 @@ export function FileContextPanel({
     visibleTreeCache,
     visibleWorkspaceItems
   ]);
+  const currentWorkspaceLookupId = activeRequestWorkspaceId ?? workspaceId ?? null;
   const currentWorkspace =
-    navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
+    navigationGroups.find((group) => group.workspace.id === currentWorkspaceLookupId)?.workspace
+    ?? navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace
+    ?? null;
   const primarySelectedTarget = getPrimarySelectedTarget(selectedTargets);
   const primarySelectedPath = primarySelectedTarget?.path ?? null;
   const primarySelectedFilePath =
@@ -2009,7 +2013,7 @@ export function FileContextPanel({
     mode: "absolute" | "relative",
     explicitTarget = primarySelectedTarget
   ) {
-    const workspacePath = currentWorkspace?.path ?? "";
+    const workspacePath = workbenchShellOverrides?.currentWorkspacePath?.trim() || currentWorkspace?.path || "";
     const targetPath = explicitTarget?.path ?? null;
 
     if (targetPath === null || !workspacePath) {

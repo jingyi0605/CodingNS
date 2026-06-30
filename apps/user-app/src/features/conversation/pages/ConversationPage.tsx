@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -225,12 +226,22 @@ function LiveConversationPageGuard(props: {
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
+  const resolveVisibleSessionEntry = useCallback((
+    sessionId: string | null | undefined,
+    options: { displayWorkspaceId?: string | null; targetHostId?: string | null }
+  ) => {
+    if (typeof findVisibleSessionEntryByScope === "function") {
+      return findVisibleSessionEntryByScope(sessionId, options);
+    }
+
+    return flattenedNavigationEntries.find((entry) => entry.session.sessionId === sessionId) ?? null;
+  }, [findVisibleSessionEntryByScope, flattenedNavigationEntries]);
   const navigationEntry = useMemo(
-    () => findVisibleSessionEntryByScope(props.sessionId, {
+    () => resolveVisibleSessionEntry(props.sessionId, {
       displayWorkspaceId: params.workspaceId ?? null,
       targetHostId: effectiveGuardTargetHostId
     }),
-    [effectiveGuardTargetHostId, findVisibleSessionEntryByScope, params.workspaceId, props.sessionId]
+    [effectiveGuardTargetHostId, params.workspaceId, props.sessionId, resolveVisibleSessionEntry]
   );
   const navigationSession = navigationEntry?.session ?? null;
   const liveSessionMissingFromNavigation =
@@ -379,12 +390,22 @@ function LiveConversationPage({
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
   );
+  const resolveVisibleSessionEntry = useCallback((
+    targetSessionId: string | null | undefined,
+    options: { displayWorkspaceId?: string | null; targetHostId?: string | null }
+  ) => {
+    if (typeof findVisibleSessionEntryByScope === "function") {
+      return findVisibleSessionEntryByScope(targetSessionId, options);
+    }
+
+    return flattenedNavigationEntries.find((entry) => entry.session.sessionId === targetSessionId) ?? null;
+  }, [findVisibleSessionEntryByScope, flattenedNavigationEntries]);
   const navigationEntry = useMemo(
-    () => findVisibleSessionEntryByScope(sessionId, {
+    () => resolveVisibleSessionEntry(sessionId, {
       displayWorkspaceId: null,
       targetHostId: effectiveTargetHostId
     }),
-    [effectiveTargetHostId, findVisibleSessionEntryByScope, sessionId]
+    [effectiveTargetHostId, resolveVisibleSessionEntry, sessionId]
   );
   const navigationSession = useMemo(
     () => navigationEntry?.session ?? null,
@@ -1319,7 +1340,12 @@ function DraftConversationPage({
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
-  const draftTargetWorkspaceId = resolveDraftTargetWorkspaceId(draft, currentTargetHostId, currentWorkspaceRef);
+  const effectiveDraftTargetHostId = draft.targetHostId;
+  const draftTargetWorkspaceId = resolveDraftTargetWorkspaceId(
+    draft,
+    effectiveDraftTargetHostId,
+    currentWorkspaceRef
+  );
   const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
@@ -1452,7 +1478,7 @@ function DraftConversationPage({
     setCapabilities(fallbackCapabilities);
 
     void getProviderCapabilities(draft.provider, draftTargetWorkspaceId, undefined, {
-      targetHostId: currentTargetHostId
+      targetHostId: effectiveDraftTargetHostId
     })
       .then((nextCapabilities) => {
         if (!disposed) {
@@ -1466,7 +1492,7 @@ function DraftConversationPage({
     return () => {
       disposed = true;
     };
-  }, [currentTargetHostId, draft.provider, draftTargetWorkspaceId, fallbackCapabilities]);
+  }, [draft.provider, draftTargetWorkspaceId, effectiveDraftTargetHostId, fallbackCapabilities]);
 
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,
@@ -1645,7 +1671,7 @@ function DraftConversationPage({
                     providerConfigMode: options?.providerConfigMode ?? "global-default",
                     providerPresetId: options?.providerPresetId ?? null
                   }, {
-                    targetHostId: currentTargetHostId
+                    targetHostId: effectiveDraftTargetHostId
                   });
                   logPerfDebug("session_send.start_live.client_response", {
                     draftSessionId: draft.sessionId,
@@ -1665,7 +1691,7 @@ function DraftConversationPage({
                   // peerhost 场景下 URL 路径必须用本地 workspaceId，否则路由上下文会断裂
                   const pathWorkspaceId = draft.routeWorkspaceId || resolvedWorkspaceId;
                   const resolvedWorkspaceRef = resolveNavigationWorkspaceRef(pathWorkspaceId, {
-                    preferredTargetHostId: currentTargetHostId,
+                    preferredTargetHostId: effectiveDraftTargetHostId,
                     fallbackToCurrent: true
                   });
 
@@ -1722,7 +1748,7 @@ function DraftConversationPage({
           sessionId={draft.sessionId}
           workspaceId={draft.workspaceId}
           requestWorkspaceId={draftTargetWorkspaceId}
-          currentTargetHostId={currentTargetHostId}
+          currentTargetHostId={effectiveDraftTargetHostId}
           navigationGroups={navigationGroups}
           onClose={() => {
             mobileToolPanel.closePanel();
@@ -1780,6 +1806,8 @@ interface DraftConversationContext {
   workspaceId: string;
   /** 路由路径中的本地 workspaceId，用于构建 URL 路径（peerhost 场景下和 workspaceId 不同） */
   routeWorkspaceId: string | null;
+  /** 草稿显式绑定的目标 host；为空时表示当前主 host。 */
+  targetHostId: string | null;
   provider: ProviderId;
 }
 
@@ -1806,18 +1834,19 @@ function parseDraftContext(
     sessionId,
     workspaceId,
     routeWorkspaceId: routeWorkspaceId,
+    targetHostId,
     provider: provider as ProviderId
   };
 }
 
 function resolveDraftTargetWorkspaceId(
   draft: DraftConversationContext,
-  currentTargetHostId?: string | null,
+  effectiveTargetHostId?: string | null,
   currentWorkspaceRef?: WorkspaceRef | null
 ): string {
   if (
-    currentTargetHostId
-    && currentWorkspaceRef?.hostId === currentTargetHostId
+    effectiveTargetHostId
+    && currentWorkspaceRef?.hostId === effectiveTargetHostId
     && currentWorkspaceRef.workspaceId.trim()
   ) {
     return currentWorkspaceRef.workspaceId.trim();
