@@ -1954,7 +1954,8 @@ export function TerminalPage({
     const result = await openTerminalsExternalWindow(platform, {
       workspaceId,
       workspaceName,
-      focusOwner: "terminal-page"
+      focusOwner: "terminal-page",
+      targetHostId: currentTargetHostId
     });
 
     if (!result.ok) {
@@ -1963,7 +1964,7 @@ export function TerminalPage({
         tone: "error"
       });
     }
-  }, [platform, showToast]);
+  }, [currentTargetHostId, platform, showToast]);
 
   return (
     <main

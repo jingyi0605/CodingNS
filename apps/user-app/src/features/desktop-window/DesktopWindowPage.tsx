@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { authStore } from "../auth/store/auth-store";
 import {
-  getWorkbenchSnapshot,
+  getScopedWorkbenchSnapshot,
   type WorkbenchSnapshotDto
 } from "../conversation/api/conversation-api";
 import {
@@ -34,10 +34,13 @@ import { usePlatform } from "../../platform/platform-provider";
 import { t } from "../../shared/i18n";
 
 function createEmptyWorkbenchShellOverrides(
-  navigationGroups: WorkspaceSessionGroup[]
+  navigationGroups: WorkspaceSessionGroup[],
+  descriptor: WindowDescriptor | null
 ): FileContextPanelWorkbenchShellOverrides {
   return {
     navigationGroups,
+    currentTargetHostId: descriptor?.payload.targetHostId ?? null,
+    currentRequestWorkspaceId: descriptor?.payload.requestWorkspaceId ?? null,
     subscribeFileTree: () => undefined,
     requestFileTreeRefresh: () => undefined,
     addFileTreeSnapshotListener: () => () => undefined,
@@ -65,11 +68,20 @@ function createEmptyTerminalManagerWorkbenchShellOverrides(): TerminalManagerPan
 
 function createEmptyTerminalWorkbenchShellOverrides(
   currentWorkspaceId: string | null,
-  navigationGroups: WorkspaceSessionGroup[]
+  navigationGroups: WorkspaceSessionGroup[],
+  descriptor: WindowDescriptor | null
 ): TerminalPageWorkbenchShellOverrides {
   return {
     navigationGroups,
     currentWorkspaceId,
+    currentWorkspaceRef:
+      descriptor?.payload.targetHostId && descriptor?.payload.requestWorkspaceId
+        ? {
+            hostId: descriptor.payload.targetHostId,
+            workspaceId: descriptor.payload.requestWorkspaceId
+          }
+        : null,
+    currentTargetHostId: descriptor?.payload.targetHostId ?? null,
     selectWorkspace: () => undefined,
     subscribeTerminalManagerSnapshot: () => undefined,
     requestTerminalManagerRefresh: () => undefined,
@@ -229,11 +241,13 @@ export function DesktopWindowPage() {
       return;
     }
 
+    const currentDescriptor = descriptor;
+
     let cancelled = false;
 
     async function loadWorkbenchSnapshot() {
       try {
-        const snapshot = await getWorkbenchSnapshot();
+        const snapshot = await getScopedWorkbenchSnapshot(currentDescriptor.payload.targetHostId ?? undefined);
 
         if (cancelled) {
           return;
@@ -259,7 +273,7 @@ export function DesktopWindowPage() {
     return () => {
       cancelled = true;
     };
-  }, [descriptor?.workspaceId, sessionDisplaySortMode]);
+  }, [descriptor, sessionDisplaySortMode]);
 
   useEffect(() => {
     if (!descriptor) {
@@ -268,6 +282,7 @@ export function DesktopWindowPage() {
     }
 
     const client = new WorkbenchRealtimeClient({
+      targetHostId: descriptor.payload.targetHostId ?? null,
       onConnectionChange: () => undefined,
       onSnapshot: (snapshot) => {
         setNavigationGroups(mapWorkbenchSnapshotToNavigationGroups(snapshot, sessionDisplaySortMode));
@@ -304,11 +319,13 @@ export function DesktopWindowPage() {
 
   const workbenchShellOverrides = useMemo<FileContextPanelWorkbenchShellOverrides>(() => {
     if (!realtimeClient) {
-      return createEmptyWorkbenchShellOverrides(navigationGroups);
+      return createEmptyWorkbenchShellOverrides(navigationGroups, descriptor);
     }
 
     return {
       navigationGroups,
+      currentTargetHostId: descriptor?.payload.targetHostId ?? null,
+      currentRequestWorkspaceId: descriptor?.payload.requestWorkspaceId ?? null,
       subscribeFileTree: realtimeClient.subscribeFileTree.bind(realtimeClient),
       requestFileTreeRefresh: realtimeClient.requestFileTreeRefresh.bind(realtimeClient),
       addFileTreeSnapshotListener: realtimeClient.addFileTreeSnapshotListener.bind(realtimeClient),
@@ -316,7 +333,7 @@ export function DesktopWindowPage() {
       requestGitRefresh: realtimeClient.requestGitRefresh.bind(realtimeClient),
       addGitSnapshotListener: realtimeClient.addGitSnapshotListener.bind(realtimeClient)
     };
-  }, [navigationGroups, realtimeClient]);
+  }, [descriptor?.payload.requestWorkspaceId, descriptor?.payload.targetHostId, navigationGroups, realtimeClient]);
 
   const gitWorkbenchShellOverrides = useMemo<GitSidebarWorkbenchShellOverrides>(() => {
     if (!realtimeClient) {
@@ -347,20 +364,36 @@ export function DesktopWindowPage() {
     if (!realtimeClient) {
       return createEmptyTerminalWorkbenchShellOverrides(
         descriptor?.workspaceId ?? null,
-        navigationGroups
+        navigationGroups,
+        descriptor ?? null
       );
     }
 
     return {
       navigationGroups,
       currentWorkspaceId: descriptor?.workspaceId ?? null,
+      currentWorkspaceRef:
+        descriptor?.payload.targetHostId && descriptor?.payload.requestWorkspaceId
+          ? {
+              hostId: descriptor.payload.targetHostId,
+              workspaceId: descriptor.payload.requestWorkspaceId
+            }
+          : null,
+      currentTargetHostId: descriptor?.payload.targetHostId ?? null,
       selectWorkspace: () => undefined,
       subscribeTerminalManagerSnapshot: realtimeClient.subscribeTerminalManager.bind(realtimeClient),
       requestTerminalManagerRefresh: realtimeClient.requestTerminalManagerRefresh.bind(realtimeClient),
       addTerminalManagerSnapshotListener:
         realtimeClient.addTerminalManagerSnapshotListener.bind(realtimeClient)
     };
-  }, [descriptor?.workspaceId, navigationGroups, realtimeClient]);
+  }, [
+    descriptor,
+    descriptor?.payload.requestWorkspaceId,
+    descriptor?.payload.targetHostId,
+    descriptor?.workspaceId,
+    navigationGroups,
+    realtimeClient
+  ]);
   if (!platform.isDesktop) {
     return <Navigate to="/" replace />;
   }
@@ -439,12 +472,13 @@ export function DesktopWindowPage() {
     );
   } else if (descriptor.kind === "files") {
     content = (
-      <FileContextPanel
-        sessionId={descriptor.sessionId}
-        workspaceId={descriptor.workspaceId}
-        externalWindowMode
-        workbenchShellOverrides={workbenchShellOverrides}
-      />
+        <FileContextPanel
+          sessionId={descriptor.sessionId}
+          workspaceId={descriptor.workspaceId}
+          requestWorkspaceId={descriptor.payload.requestWorkspaceId}
+          externalWindowMode
+          workbenchShellOverrides={workbenchShellOverrides}
+        />
     );
   } else if (descriptor.kind === "git") {
     content = (

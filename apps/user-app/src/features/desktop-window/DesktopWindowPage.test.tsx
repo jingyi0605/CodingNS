@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DesktopWindowPage } from "./DesktopWindowPage";
 
-const getWorkbenchSnapshotMock = vi.hoisted(() => vi.fn());
+const getScopedWorkbenchSnapshotMock = vi.hoisted(() => vi.fn());
 const getWindowDescriptorMock = vi.hoisted(() => vi.fn());
 const registerDescriptorMock = vi.hoisted(() => vi.fn());
 const markWindowOpenMock = vi.hoisted(() => vi.fn());
@@ -45,7 +45,7 @@ const realtimeStartMock = vi.hoisted(() => vi.fn());
 const realtimeCloseMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../conversation/api/conversation-api", () => ({
-  getWorkbenchSnapshot: getWorkbenchSnapshotMock
+  getScopedWorkbenchSnapshot: getScopedWorkbenchSnapshotMock
 }));
 
 vi.mock("../../platform/platform-provider", () => ({
@@ -55,15 +55,23 @@ vi.mock("../../platform/platform-provider", () => ({
 vi.mock("../conversation/components/FileContextPanel", () => ({
   FileContextPanel: (props: {
     workspaceId: string | null | undefined;
+    requestWorkspaceId?: string | null | undefined;
     sessionId: string | null | undefined;
     externalWindowMode?: boolean;
-    workbenchShellOverrides?: { navigationGroups?: Array<{ workspace: { id: string } }> };
+    workbenchShellOverrides?: {
+      navigationGroups?: Array<{ workspace: { id: string } }>;
+      currentTargetHostId?: string | null;
+      currentRequestWorkspaceId?: string | null;
+    };
   }) => {
     fileContextPanelMock(props);
     return (
       <div data-testid="desktop-file-window">
         {props.workspaceId}:{props.sessionId ?? "null"}:
         {props.externalWindowMode ? "external" : "embedded"}:
+        {props.requestWorkspaceId ?? "null"}:
+        {props.workbenchShellOverrides?.currentTargetHostId ?? "null"}:
+        {props.workbenchShellOverrides?.currentRequestWorkspaceId ?? "null"}:
         {props.workbenchShellOverrides?.navigationGroups?.length ?? 0}
       </div>
     );
@@ -121,13 +129,19 @@ vi.mock("../terminal/pages/TerminalPage", () => ({
   TerminalPage: (props: {
     externalWindowMode?: boolean;
     externalWindowWorkspaceId?: string | null;
-    workbenchShellOverrides?: { navigationGroups?: Array<{ workspace: { id: string } }> };
+    workbenchShellOverrides?: {
+      navigationGroups?: Array<{ workspace: { id: string } }>;
+      currentTargetHostId?: string | null;
+      currentWorkspaceRef?: { hostId: string; workspaceId: string } | null;
+    };
   }) => {
     terminalPageMock(props);
     return (
       <div data-testid="desktop-terminal-window">
         {props.externalWindowWorkspaceId ?? "null"}:
         {props.externalWindowMode ? "external" : "embedded"}:
+        {props.workbenchShellOverrides?.currentTargetHostId ?? "null"}:
+        {props.workbenchShellOverrides?.currentWorkspaceRef?.workspaceId ?? "null"}:
         {props.workbenchShellOverrides?.navigationGroups?.length ?? 0}
       </div>
     );
@@ -170,7 +184,7 @@ function CurrentPathProbe() {
 describe("DesktopWindowPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getWorkbenchSnapshotMock.mockResolvedValue({
+    getScopedWorkbenchSnapshotMock.mockResolvedValue({
       items: [
         {
           workspace: {
@@ -242,7 +256,7 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: "file-context-panel",
-        payload: { filePath: null }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
       }
     });
 
@@ -250,7 +264,7 @@ describe("DesktopWindowPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-file-window")).toHaveTextContent(
-        "workspace-1:session-1:external:1"
+        "workspace-1:session-1:external:null:null:null:1"
       );
     });
     expect(registerDescriptorMock).toHaveBeenCalledWith(
@@ -284,7 +298,9 @@ describe("DesktopWindowPage", () => {
         focusOwner: "file-preview-window",
         payload: {
           filePath: "docs/readme.md",
-          targetHostId: "peer-host-1"
+          targetHostId: "peer-host-1",
+          requestWorkspaceId: "remote-workspace-1",
+          routePath: null
         }
       }
     });
@@ -328,7 +344,7 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: null,
-        payload: { filePath: null }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
       }
     });
 
@@ -363,7 +379,7 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: "terminal-manager-panel",
-        payload: { filePath: null }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
       }
     });
 
@@ -404,7 +420,7 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: "terminal-page",
-        payload: { filePath: null }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
       }
     });
 
@@ -412,7 +428,7 @@ describe("DesktopWindowPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-terminal-window")).toHaveTextContent(
-        "workspace-1:external:1"
+        "workspace-1:external:null:null:1"
       );
     });
     expect(terminalPageMock).toHaveBeenCalledWith(
@@ -467,7 +483,7 @@ describe("DesktopWindowPage", () => {
         mode: "external",
         bounds: { x: null, y: null, width: 1200, height: 780, minWidth: 720, minHeight: 480 },
         focusOwner: "code-workbench",
-        payload: { filePath: null, routePath: "/workspaces/workspace-1/sessions/session-1" }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: "/workspaces/workspace-1/sessions/session-1" }
       }
     });
 
@@ -495,7 +511,7 @@ describe("DesktopWindowPage", () => {
           minHeight: 480
         },
         focusOwner: null,
-        payload: { filePath: null }
+        payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
       }
     });
 
@@ -527,15 +543,63 @@ describe("DesktopWindowPage", () => {
         minHeight: 480
       },
       focusOwner: null,
-      payload: { filePath: null }
+      payload: { filePath: null, targetHostId: null, requestWorkspaceId: null, routePath: null }
     });
 
     renderPage();
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-file-window")).toHaveTextContent(
-        "workspace-1:null:external:1"
+        "workspace-1:null:external:null:null:null:1"
       );
     });
+  });
+
+  it("PeerHost 终端外部窗口会保留 targetHostId 和 requestWorkspaceId", async () => {
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "terminals-workspace-1",
+        kind: "terminals",
+        workspaceId: "workspace-1",
+        workspaceName: "项目一",
+        sessionId: null,
+        mode: "external",
+        bounds: {
+          x: null,
+          y: null,
+          width: 1200,
+          height: 780,
+          minWidth: 720,
+          minHeight: 480
+        },
+        focusOwner: "terminal-page",
+        payload: {
+          filePath: null,
+          targetHostId: "peer-host-1",
+          requestWorkspaceId: "remote-workspace-1",
+          routePath: null
+        }
+      }
+    });
+
+    renderPage("/desktop-window/terminals-workspace-1");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-terminal-window")).toHaveTextContent(
+        "workspace-1:external:peer-host-1:remote-workspace-1:1"
+      );
+    });
+    expect(terminalPageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workbenchShellOverrides: expect.objectContaining({
+          currentTargetHostId: "peer-host-1",
+          currentWorkspaceRef: {
+            hostId: "peer-host-1",
+            workspaceId: "remote-workspace-1"
+          }
+        })
+      })
+    );
   });
 });

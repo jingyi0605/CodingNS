@@ -166,6 +166,9 @@ async function openExternalWorkspaceWindow(
     bounds: previousDescriptorSnapshot?.bounds,
     focusOwner: input.focusOwner ?? kindConfig.defaultFocusOwner,
     payload: {
+      targetHostId: input.targetHostId ?? previousDescriptorSnapshot?.payload.targetHostId ?? null,
+      requestWorkspaceId:
+        input.workspaceId ?? previousDescriptorSnapshot?.payload.requestWorkspaceId ?? null,
       routePath: input.routePath ?? previousDescriptorSnapshot?.payload.routePath ?? null
     }
   });

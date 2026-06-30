@@ -108,6 +108,7 @@ describe("window-openers", () => {
         payload: {
           filePath: "docs/readme.md",
           targetHostId: "peer-host-1",
+          requestWorkspaceId: null,
           routePath: null
         }
       })
@@ -126,6 +127,7 @@ describe("window-openers", () => {
       payload: {
         filePath: "docs/readme.md",
         targetHostId: "peer-host-1",
+        requestWorkspaceId: null,
         routePath: null
       }
     });
@@ -268,7 +270,8 @@ describe("window-openers", () => {
       } as never,
       {
         workspaceId: "workspace-1",
-        workspaceName: "项目一"
+        workspaceName: "项目一",
+        targetHostId: "peer-host-1"
       }
     );
 
@@ -279,12 +282,24 @@ describe("window-openers", () => {
         kind: "terminals",
         workspaceId: "workspace-1",
         workspaceName: "项目一",
-        focusOwner: "terminal-page"
+        focusOwner: "terminal-page",
+        payload: {
+          filePath: null,
+          targetHostId: "peer-host-1",
+          requestWorkspaceId: "workspace-1",
+          routePath: null
+        }
       })
     );
     expect(windows.getDescriptor("terminals-workspace-1")).toMatchObject({
       kind: "terminals",
-      mode: "external"
+      mode: "external",
+      payload: {
+        filePath: null,
+        targetHostId: "peer-host-1",
+        requestWorkspaceId: "workspace-1",
+        routePath: null
+      }
     });
   });
 
