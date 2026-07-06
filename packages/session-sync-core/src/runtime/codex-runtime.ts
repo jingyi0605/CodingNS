@@ -1805,6 +1805,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
   let activeTurnId: string | null = null;
   let activeThreadId: string | null = null;
   let closeHandler: ((error: Error | null) => void) | null = null;
+  const stderrChunks: string[] = [];
   const pendingResponses = new Map<
     string,
     {
@@ -1837,10 +1838,15 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       return;
     }
 
-    const detail = signal
-      ? `codex app-server exited with signal ${signal}`
-      : `codex app-server exited with code ${String(code ?? "unknown")}`;
+    const stderr = stderrChunks.join("").trim();
+    const detail = stderr
+      || (signal
+        ? `codex app-server exited with signal ${signal}`
+        : `codex app-server exited with code ${String(code ?? "unknown")}`);
     finalize(new Error(detail));
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderrChunks.push(chunk.toString("utf8"));
   });
 
   stdout.on("line", (line: string) => {

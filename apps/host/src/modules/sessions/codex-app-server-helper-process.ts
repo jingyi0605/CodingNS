@@ -68,6 +68,7 @@ interface TransportRecord {
   stdout: readline.Interface;
   pendingResponses: Map<string, PendingJsonRpcResponse>;
   pendingServerRequests: Map<string, PendingServerRequest>;
+  stderrChunks: string[];
   closed: boolean;
   requestSequence: number;
   activeThreadId: string | null;
@@ -488,6 +489,7 @@ function createTransportRecord(commandPath: string): TransportRecord {
     stdout,
     pendingResponses: new Map(),
     pendingServerRequests: new Map(),
+    stderrChunks: [],
     closed: false,
     requestSequence: 0,
     activeThreadId: null,
@@ -502,10 +504,16 @@ function createTransportRecord(commandPath: string): TransportRecord {
       return;
     }
 
-    const detail = signal
-      ? `codex app-server exited with signal ${signal}`
-      : `codex app-server exited with code ${String(code ?? "unknown")}`;
+    const detail = buildCodexAppServerExitDetail(
+      transport.stderrChunks.join(""),
+      code,
+      signal
+    );
     closeTransportForRecord(transport, new Error(detail));
+  });
+
+  child.stderr.on("data", (chunk) => {
+    transport.stderrChunks.push(chunk.toString("utf8"));
   });
 
   stdout.on("line", (line) => {
@@ -513,6 +521,22 @@ function createTransportRecord(commandPath: string): TransportRecord {
   });
 
   return transport;
+}
+
+function buildCodexAppServerExitDetail(
+  stderrText: string,
+  code: number | null,
+  signal: NodeJS.Signals | null
+): string {
+  const stderr = stderrText.trim();
+
+  if (stderr) {
+    return stderr;
+  }
+
+  return signal
+    ? `codex app-server exited with signal ${signal}`
+    : `codex app-server exited with code ${String(code ?? "unknown")}`;
 }
 
 async function handleTransportStdout(transport: TransportRecord, line: string): Promise<void> {
@@ -765,6 +789,10 @@ function closeTransportForRecord(transport: TransportRecord, error: Error | null
     transport.child.kill("SIGTERM");
   }
 }
+
+export const __internal__ = {
+  buildCodexAppServerExitDetail
+};
 
 function emitResponse(transportId: string, requestId: string, result: Record<string, unknown>): void {
   emit({
