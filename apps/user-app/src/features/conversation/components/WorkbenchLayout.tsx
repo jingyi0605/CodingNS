@@ -11166,6 +11166,7 @@ function WorkbenchInfoPanel({
     if (tab === "files") {
       const result = await openFilesExternalWindow(platform, {
         workspaceId,
+        requestWorkspaceId: currentTargetHostId ? requestWorkspaceId ?? workspaceId : workspaceId,
         sessionId,
         focusOwner: "file-context-panel"
       });
@@ -11182,6 +11183,7 @@ function WorkbenchInfoPanel({
     if (tab === "git") {
       const result = await openGitExternalWindow(platform, {
         workspaceId,
+        requestWorkspaceId: currentTargetHostId ? requestWorkspaceId ?? workspaceId : workspaceId,
         focusOwner: "git-sidebar"
       });
 
@@ -11196,6 +11198,7 @@ function WorkbenchInfoPanel({
 
     const result = await openProcessesExternalWindow(platform, {
       workspaceId,
+      requestWorkspaceId: currentTargetHostId ? requestWorkspaceId ?? workspaceId : workspaceId,
       focusOwner: "terminal-manager-panel"
     });
 

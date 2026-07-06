@@ -2016,13 +2016,13 @@ export function FileContextPanel({
     const workspacePath = workbenchShellOverrides?.currentWorkspacePath?.trim() || currentWorkspace?.path || "";
     const targetPath = explicitTarget?.path ?? null;
 
-    if (targetPath === null || !workspacePath) {
+    if (targetPath === null || (mode === "absolute" && !workspacePath)) {
       setCopyPathMenuOpen(false);
       return;
     }
 
     try {
-      const backendPathStyle = resolveBackendPathStyle(workspacePath);
+      const backendPathStyle = resolveBackendPathStyle(workspacePath || targetPath);
       const copiedPath =
         mode === "absolute"
           ? buildAbsoluteWorkspacePath(workspacePath, targetPath, backendPathStyle)

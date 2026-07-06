@@ -37,10 +37,14 @@ function createEmptyWorkbenchShellOverrides(
   navigationGroups: WorkspaceSessionGroup[],
   descriptor: WindowDescriptor | null
 ): FileContextPanelWorkbenchShellOverrides {
+  const currentWorkspacePath =
+    navigationGroups.find((group) => group.workspace.id === (descriptor?.payload.requestWorkspaceId ?? descriptor?.workspaceId ?? null))?.workspace.path
+    ?? null;
   return {
     navigationGroups,
     currentTargetHostId: descriptor?.payload.targetHostId ?? null,
     currentRequestWorkspaceId: descriptor?.payload.requestWorkspaceId ?? null,
+    currentWorkspacePath,
     subscribeFileTree: () => undefined,
     requestFileTreeRefresh: () => undefined,
     addFileTreeSnapshotListener: () => () => undefined,
@@ -318,6 +322,9 @@ export function DesktopWindowPage() {
   }, [descriptor, navigationGroups, platform.bridge.supported, platform.isDesktop]);
 
   const workbenchShellOverrides = useMemo<FileContextPanelWorkbenchShellOverrides>(() => {
+    const currentWorkspacePath =
+      navigationGroups.find((group) => group.workspace.id === (descriptor?.payload.requestWorkspaceId ?? descriptor?.workspaceId ?? null))?.workspace.path
+      ?? null;
     if (!realtimeClient) {
       return createEmptyWorkbenchShellOverrides(navigationGroups, descriptor);
     }
@@ -326,6 +333,7 @@ export function DesktopWindowPage() {
       navigationGroups,
       currentTargetHostId: descriptor?.payload.targetHostId ?? null,
       currentRequestWorkspaceId: descriptor?.payload.requestWorkspaceId ?? null,
+      currentWorkspacePath,
       subscribeFileTree: realtimeClient.subscribeFileTree.bind(realtimeClient),
       requestFileTreeRefresh: realtimeClient.requestFileTreeRefresh.bind(realtimeClient),
       addFileTreeSnapshotListener: realtimeClient.addFileTreeSnapshotListener.bind(realtimeClient),
@@ -333,7 +341,7 @@ export function DesktopWindowPage() {
       requestGitRefresh: realtimeClient.requestGitRefresh.bind(realtimeClient),
       addGitSnapshotListener: realtimeClient.addGitSnapshotListener.bind(realtimeClient)
     };
-  }, [descriptor?.payload.requestWorkspaceId, descriptor?.payload.targetHostId, navigationGroups, realtimeClient]);
+  }, [descriptor?.payload.requestWorkspaceId, descriptor?.payload.targetHostId, descriptor?.workspaceId, navigationGroups, realtimeClient]);
 
   const gitWorkbenchShellOverrides = useMemo<GitSidebarWorkbenchShellOverrides>(() => {
     if (!realtimeClient) {

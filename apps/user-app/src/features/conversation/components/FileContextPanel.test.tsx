@@ -1717,6 +1717,44 @@ describe("FileContextPanel", () => {
     expect(clipboardWriteTextMock).toHaveBeenCalledWith("packages\\session-sync-core\\src\\index.ts");
   });
 
+  it("缺少工作区绝对路径时仍支持复制当前选中文件的相对路径", async () => {
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    render(
+      <ToastProvider>
+        <FileContextPanel
+          sessionId="session-1"
+          workspaceId="workspace-1"
+          requestWorkspaceId="remote-workspace-1"
+          workbenchShellOverrides={{
+            currentTargetHostId: "peer-host-1",
+            currentRequestWorkspaceId: "remote-workspace-1",
+            currentWorkspacePath: null
+          }}
+        />
+      </ToastProvider>
+    );
+
+    await userEvent.click(await screen.findByText("index.ts"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyRelativePath") })
+    );
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledWith("packages\\session-sync-core\\src\\index.ts");
+    expect(await screen.findByText(t("conversation.filePanelCopyRelativePathSuccess"))).toBeInTheDocument();
+  });
+
   it("支持复制当前选中目录的绝对路径", async () => {
     platformMock.platform = "desktop";
     platformMock.isDesktop = true;

@@ -120,12 +120,27 @@ interface ParallelConversationMemberPaneProps {
   readonly promotingWorkspaceId: string | null;
   readonly onRemoveSession: (sessionId: string) => void | Promise<void>;
   readonly removingSessionId: string | null;
+  readonly navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
 }
 
 interface ParallelPaneSubagentNode {
   readonly session: SessionSummaryDto;
   readonly workspaceId: string;
   readonly children: ParallelPaneSubagentNode[];
+}
+
+function resolveNavigationWorkspacePath(
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
+  workspaceId: string | null | undefined,
+  requestWorkspaceId?: string | null | undefined
+): string | null {
+  const lookupWorkspaceId = requestWorkspaceId?.trim() || workspaceId?.trim() || null;
+
+  if (!lookupWorkspaceId) {
+    return null;
+  }
+
+  return navigationGroups.find((group) => group.workspace.id === lookupWorkspaceId)?.workspace.path ?? null;
 }
 
 function clampParallelToolsPanelFrame(
@@ -703,6 +718,7 @@ export function ParallelConversationGroupView({
               onPromoteWorkspace={handlePromoteWorkspace}
               onRemoveSession={handleRemoveSession}
               removingSessionId={removingSessionId}
+              navigationGroups={navigationGroups}
             />
           );
         })}
@@ -750,13 +766,13 @@ function ParallelConversationMemberPane({
   onPromoteWorkspace,
   promotingWorkspaceId,
   onRemoveSession,
-  removingSessionId
+  removingSessionId,
+  navigationGroups
 }: ParallelConversationMemberPaneProps) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
   const {
-    navigationGroups,
     requestNavigationRefresh,
     currentTargetHostId,
     setSessionWorkspace,
@@ -1024,6 +1040,7 @@ function ParallelConversationMemberPane({
     if (activeToolPanel === "files") {
       const result = await openFilesExternalWindow(platform, {
         workspaceId: toolWorkspaceId,
+        requestWorkspaceId: activePaneSession.workspaceId,
         workspaceName: toolWorkspaceName,
         sessionId,
         focusOwner: "file-context-panel"
@@ -1041,6 +1058,7 @@ function ParallelConversationMemberPane({
     if (activeToolPanel === "git") {
       const result = await openGitExternalWindow(platform, {
         workspaceId: toolWorkspaceId,
+        requestWorkspaceId: activePaneSession.workspaceId,
         workspaceName: toolWorkspaceName,
         focusOwner: "git-sidebar"
       });
@@ -1056,6 +1074,7 @@ function ParallelConversationMemberPane({
 
     const result = await openProcessesExternalWindow(platform, {
       workspaceId: toolWorkspaceId,
+      requestWorkspaceId: activePaneSession.workspaceId,
       workspaceName: toolWorkspaceName,
       focusOwner: "terminal-manager-panel"
     });
@@ -1241,7 +1260,12 @@ function ParallelConversationMemberPane({
                   requestWorkspaceId={activePaneSession.workspaceId}
                   workbenchShellOverrides={{
                     currentTargetHostId,
-                    currentRequestWorkspaceId: activePaneSession.workspaceId
+                    currentRequestWorkspaceId: activePaneSession.workspaceId,
+                    currentWorkspacePath: resolveNavigationWorkspacePath(
+                      navigationGroups,
+                      toolWorkspaceId,
+                      activePaneSession.workspaceId
+                    )
                   }}
                 />
               ) : activeToolPanel === "git" ? (

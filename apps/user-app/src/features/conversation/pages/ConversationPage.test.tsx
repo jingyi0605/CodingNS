@@ -259,9 +259,15 @@ vi.mock("../components/FileContextPanel", () => ({
   }: {
     sessionId: string;
     workspaceId: string;
-    workbenchShellOverrides?: { currentTargetHostId?: string | null };
+    workbenchShellOverrides?: {
+      currentTargetHostId?: string | null;
+      currentWorkspacePath?: string | null;
+    };
   }) => (
-    <div data-testid="file-context-panel">
+    <div
+      data-testid="file-context-panel"
+      data-workspace-path={workbenchShellOverrides?.currentWorkspacePath ?? ""}
+    >
       files:{workspaceId}:{sessionId}:{workbenchShellOverrides?.currentTargetHostId ?? "null"}
     </div>
   )
@@ -705,6 +711,61 @@ describe("ConversationPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
         "/workspaces/workspace-gcac/sessions/session-peer-open-1?targetHostId=peer-host-1"
+      );
+    });
+  });
+
+  it("移动端工具面板里的文件面板会把 PeerHOST 工作区路径传给文件组件", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-live-1",
+              workspaceId: "remote-workspace-1",
+              title: "远端会话"
+            }
+          ],
+          childWorktrees: []
+        },
+        {
+          workspace: {
+            id: "remote-workspace-1",
+            name: "远端工作区",
+            path: "/Users/jackson/PeerHost/CodingNS"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    const view = renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-live-1?toolPanel=files&targetHostId=peer-host-1"
+    });
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 140, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 140, clientY: 184 }]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("file-context-panel")).toHaveAttribute(
+        "data-workspace-path",
+        "/Users/jackson/PeerHost/CodingNS"
       );
     });
   });

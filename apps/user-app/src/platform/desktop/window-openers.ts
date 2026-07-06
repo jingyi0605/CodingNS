@@ -12,6 +12,7 @@ type FilePreviewWindowKind = Extract<WindowKind, "file-preview">;
 
 export interface OpenExternalWorkspaceWindowInput {
   workspaceId: string;
+  requestWorkspaceId?: string | null;
   workspaceName?: string | null;
   sessionId?: string | null;
   focusOwner?: string | null;
@@ -168,7 +169,7 @@ async function openExternalWorkspaceWindow(
     payload: {
       targetHostId: input.targetHostId ?? previousDescriptorSnapshot?.payload.targetHostId ?? null,
       requestWorkspaceId:
-        input.workspaceId ?? previousDescriptorSnapshot?.payload.requestWorkspaceId ?? null,
+        input.requestWorkspaceId ?? previousDescriptorSnapshot?.payload.requestWorkspaceId ?? input.workspaceId,
       routePath: input.routePath ?? previousDescriptorSnapshot?.payload.routePath ?? null
     }
   });

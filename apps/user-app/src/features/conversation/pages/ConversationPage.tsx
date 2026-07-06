@@ -553,13 +553,17 @@ function LiveConversationPage({
     session?.sessionIsolatedWorkspace
     ?? navigationSession?.sessionIsolatedWorkspace
     ?? null;
+  const navigationRequestWorkspaceId = navigationSession?.workspaceId?.trim() || null;
   const mobileNavigationWorkspaceId = currentSessionSummary
     ? resolveSessionNavigationWorkspaceId(currentSessionSummary, currentSessionIsolatedWorkspace)
     : null;
   const mobileToolWorkspaceId = currentSessionSummary
     ? resolveSessionToolWorkspaceId(currentSessionSummary, currentSessionIsolatedWorkspace)
     : null;
-  const mobileToolRequestWorkspaceId = currentSessionSummary?.workspaceId?.trim() || null;
+  const mobileToolRequestWorkspaceId =
+    navigationRequestWorkspaceId
+    ?? currentSessionSummary?.workspaceId?.trim()
+    ?? null;
   const mobileToolPanel = useMobileConversationToolPanelController({
     enabled: !showInlineHeader,
     initialPanel: initialToolPanel,
@@ -1855,6 +1859,20 @@ function resolveDraftTargetWorkspaceId(
   return draft.workspaceId;
 }
 
+function resolveConversationWorkspacePath(
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
+  workspaceId: string | null | undefined,
+  requestWorkspaceId?: string | null | undefined
+): string | null {
+  const lookupWorkspaceId = requestWorkspaceId?.trim() || workspaceId?.trim() || null;
+
+  if (!lookupWorkspaceId) {
+    return null;
+  }
+
+  return navigationGroups.find((group) => group.workspace.id === lookupWorkspaceId)?.workspace.path ?? null;
+}
+
 function createDraftSessionSummary(draft: DraftConversationContext): SessionSummaryDto {
   const timestamp = new Date().toISOString();
 
@@ -2372,6 +2390,14 @@ function MobileConversationToolPanelOverlay(props: {
   onSelectPanelBySwipe: (panel: MobileConversationToolPanel | null) => void;
 }) {
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const currentWorkspacePath = useMemo(
+    () => resolveConversationWorkspacePath(
+      props.navigationGroups,
+      props.workspaceId,
+      props.requestWorkspaceId
+    ),
+    [props.navigationGroups, props.requestWorkspaceId, props.workspaceId]
+  );
 
   if (!props.open) {
     return null;
@@ -2485,7 +2511,8 @@ function MobileConversationToolPanelOverlay(props: {
             requestWorkspaceId={props.requestWorkspaceId}
             workbenchShellOverrides={{
               currentTargetHostId: props.currentTargetHostId,
-              currentRequestWorkspaceId: props.requestWorkspaceId
+              currentRequestWorkspaceId: props.requestWorkspaceId,
+              currentWorkspacePath
             }}
           />
         ) : props.activePanel === "git" ? (

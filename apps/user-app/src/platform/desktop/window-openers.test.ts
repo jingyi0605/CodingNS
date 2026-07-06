@@ -4,7 +4,6 @@ import { createWindowRegistryStore } from "./window-registry";
 import {
   buildExternalWorkspaceWindowId,
   buildFilePreviewExternalWindowId,
-  openAffairsExternalWindow,
   openCodeExternalWindow,
   openFilePreviewExternalWindow,
   openFilesExternalWindow,
@@ -62,6 +61,53 @@ describe("window-openers", () => {
       mode: "external"
     });
     expect(windows.isWindowOpen("files-workspace-1")).toBe(true);
+  });
+
+  it("openFilesExternalWindow 在 PeerHost 下会保留 requestWorkspaceId", async () => {
+    const windows = createWindowRegistryStore();
+    const createWindow = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await openFilesExternalWindow(
+      {
+        isDesktop: true,
+        bridge: {
+          supported: true,
+          createWindow
+        },
+        windows
+      } as never,
+      {
+        workspaceId: "workspace-1",
+        requestWorkspaceId: "remote-workspace-1",
+        workspaceName: "项目一",
+        sessionId: "session-1",
+        targetHostId: "peer-host-1"
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: "files-workspace-1",
+        kind: "files",
+        payload: {
+          filePath: null,
+          targetHostId: "peer-host-1",
+          requestWorkspaceId: "remote-workspace-1",
+          routePath: null
+        }
+      })
+    );
+    expect(windows.getDescriptor("files-workspace-1")).toMatchObject({
+      kind: "files",
+      mode: "external",
+      payload: {
+        filePath: null,
+        targetHostId: "peer-host-1",
+        requestWorkspaceId: "remote-workspace-1",
+        routePath: null
+      }
+    });
   });
 
   it("openFilePreviewExternalWindow 会把文件路径和弹窗尺寸放进 descriptor", async () => {
@@ -217,44 +263,6 @@ describe("window-openers", () => {
     expect(windows.isWindowOpen("processes-workspace-1")).toBe(false);
   });
 
-  it("openAffairsExternalWindow 会注册事务外部窗口 descriptor", async () => {
-    const windows = createWindowRegistryStore();
-    const createWindow = vi.fn().mockResolvedValue({ ok: true });
-
-    const result = await openAffairsExternalWindow(
-      {
-        isDesktop: true,
-        bridge: {
-          supported: true,
-          createWindow
-        },
-        windows
-      } as never,
-      {
-        workspaceId: "workspace-1",
-        workspaceName: "项目一",
-        routePath: "/workspaces/workspace-1/affairs"
-      }
-    );
-
-    expect(result.ok).toBe(true);
-    expect(createWindow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        windowId: "affairs-workspace-1",
-        kind: "affairs",
-        workspaceId: "workspace-1",
-        workspaceName: "项目一",
-        focusOwner: "affairs-workbench",
-        payload: { filePath: null, routePath: "/workspaces/workspace-1/affairs" }
-      })
-    );
-    expect(windows.getDescriptor("affairs-workspace-1")).toMatchObject({
-      kind: "affairs",
-      mode: "external",
-      payload: { filePath: null, routePath: "/workspaces/workspace-1/affairs" }
-    });
-  });
-
   it("openTerminalsExternalWindow 会注册终端页外部窗口 descriptor", async () => {
     const windows = createWindowRegistryStore();
     const createWindow = vi.fn().mockResolvedValue({ ok: true });
@@ -270,6 +278,7 @@ describe("window-openers", () => {
       } as never,
       {
         workspaceId: "workspace-1",
+        requestWorkspaceId: "remote-workspace-1",
         workspaceName: "项目一",
         targetHostId: "peer-host-1"
       }
@@ -286,7 +295,7 @@ describe("window-openers", () => {
         payload: {
           filePath: null,
           targetHostId: "peer-host-1",
-          requestWorkspaceId: "workspace-1",
+          requestWorkspaceId: "remote-workspace-1",
           routePath: null
         }
       })
@@ -297,7 +306,7 @@ describe("window-openers", () => {
       payload: {
         filePath: null,
         targetHostId: "peer-host-1",
-        requestWorkspaceId: "workspace-1",
+        requestWorkspaceId: "remote-workspace-1",
         routePath: null
       }
     });
@@ -377,39 +386,12 @@ describe("window-openers", () => {
       expect.objectContaining({
         windowId: "code-workspace-1",
         kind: "code",
-        payload: { filePath: null, routePath: "/workspaces/workspace-1/sessions/session-1" }
-      })
-    );
-  });
-
-  it("openAffairsExternalWindow 会复用已登记窗口的 bounds", async () => {
-    const windows = createWindowRegistryStore();
-    const createWindow = vi.fn().mockResolvedValue({ ok: true });
-
-    windows.registerDescriptor({
-      windowId: "affairs-workspace-1",
-      kind: "affairs",
-      workspaceId: "workspace-1",
-      sessionId: null,
-      mode: "external",
-      bounds: { x: 88, y: 66, width: 1440, height: 920, minWidth: 720, minHeight: 480 },
-      focusOwner: "affairs-workbench",
-      payload: { filePath: null, routePath: null }
-    });
-
-    const result = await openAffairsExternalWindow(
-      {
-        isDesktop: true,
-        bridge: { supported: true, createWindow },
-        windows
-      } as never,
-      { workspaceId: "workspace-1", workspaceName: "项目一" }
-    );
-
-    expect(result.ok).toBe(true);
-    expect(createWindow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bounds: expect.objectContaining({ x: 88, y: 66, width: 1440, height: 920 })
+        payload: {
+          filePath: null,
+          targetHostId: null,
+          requestWorkspaceId: "workspace-1",
+          routePath: "/workspaces/workspace-1/sessions/session-1"
+        }
       })
     );
   });

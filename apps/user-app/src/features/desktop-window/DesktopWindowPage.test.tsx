@@ -62,6 +62,7 @@ vi.mock("../conversation/components/FileContextPanel", () => ({
       navigationGroups?: Array<{ workspace: { id: string } }>;
       currentTargetHostId?: string | null;
       currentRequestWorkspaceId?: string | null;
+      currentWorkspacePath?: string | null;
     };
   }) => {
     fileContextPanelMock(props);
@@ -72,6 +73,7 @@ vi.mock("../conversation/components/FileContextPanel", () => ({
         {props.requestWorkspaceId ?? "null"}:
         {props.workbenchShellOverrides?.currentTargetHostId ?? "null"}:
         {props.workbenchShellOverrides?.currentRequestWorkspaceId ?? "null"}:
+        {props.workbenchShellOverrides?.currentWorkspacePath ?? "null"}:
         {props.workbenchShellOverrides?.navigationGroups?.length ?? 0}
       </div>
     );
@@ -264,7 +266,7 @@ describe("DesktopWindowPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-file-window")).toHaveTextContent(
-        "workspace-1:session-1:external:null:null:null:1"
+        "workspace-1:session-1:external:null:null:null:/Users/jackson/Documents/Code/CodingNS:1"
       );
     });
     expect(registerDescriptorMock).toHaveBeenCalledWith(
@@ -275,6 +277,74 @@ describe("DesktopWindowPage", () => {
     );
     expect(markWindowOpenMock).toHaveBeenCalledWith("files-workspace-1");
     expect(realtimeStartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PeerHost 文件外部窗口会把 requestWorkspaceId 对应的工作区路径传给文件面板", async () => {
+    getScopedWorkbenchSnapshotMock.mockResolvedValue({
+      items: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "本地项目",
+            path: "/Users/jackson/Documents/Code/CodingNS",
+            repoRoot: "/Users/jackson/Documents/Code/CodingNS"
+          },
+          sessions: []
+        },
+        {
+          workspace: {
+            id: "remote-workspace-1",
+            name: "远端项目",
+            path: "/Users/jackson/PeerHost/CodingNS",
+            repoRoot: "/Users/jackson/PeerHost/CodingNS"
+          },
+          sessions: []
+        }
+      ]
+    });
+    getWindowDescriptorMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "files-workspace-1",
+        kind: "files",
+        workspaceId: "workspace-1",
+        sessionId: "session-1",
+        mode: "external",
+        bounds: {
+          x: null,
+          y: null,
+          width: 1200,
+          height: 780,
+          minWidth: 720,
+          minHeight: 480
+        },
+        focusOwner: "file-context-panel",
+        payload: {
+          filePath: null,
+          targetHostId: "peer-host-1",
+          requestWorkspaceId: "remote-workspace-1",
+          routePath: null
+        }
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-file-window")).toHaveTextContent(
+        "workspace-1:session-1:external:remote-workspace-1:peer-host-1:remote-workspace-1:/Users/jackson/PeerHost/CodingNS:2"
+      );
+    });
+    expect(fileContextPanelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestWorkspaceId: "remote-workspace-1",
+        workbenchShellOverrides: expect.objectContaining({
+          currentTargetHostId: "peer-host-1",
+          currentRequestWorkspaceId: "remote-workspace-1",
+          currentWorkspacePath: "/Users/jackson/PeerHost/CodingNS"
+        })
+      })
+    );
   });
 
   it("会根据 descriptor 渲染单文件预览外部窗口", async () => {
@@ -550,7 +620,7 @@ describe("DesktopWindowPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-file-window")).toHaveTextContent(
-        "workspace-1:null:external:null:null:null:1"
+        "workspace-1:null:external:null:null:null:/Users/jackson/Documents/Code/CodingNS:1"
       );
     });
   });
