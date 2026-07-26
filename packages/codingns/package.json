@@ -11,6 +11,7 @@
     "dist",
     "README.md",
     "scripts/claude-hook-bridge.cjs",
+    "scripts/codex-runtime-layout.mjs",
     "scripts/node22-runtime.mjs",
     "scripts/postinstall.mjs",
     "node_modules/@codingns/session-sync-core",

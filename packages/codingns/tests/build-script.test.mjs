@@ -13,6 +13,7 @@ import {
   stripPackLifecycleScripts
 } from "../scripts/publish-package-utils.mjs";
 import { resolveNode22Runtime } from "../scripts/node22-runtime.mjs";
+import { resolveCodexVendorBinaryPath } from "../scripts/codex-runtime-layout.mjs";
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -253,6 +254,84 @@ test("postinstall 的 npm 修复链路包含多个 registry 回退", () => {
   assert.match(source, /https:\/\/registry\.npmmirror\.com\//);
   assert.match(source, /https:\/\/mirrors\.cloud\.tencent\.com\/npm\//);
   assert.match(source, /https:\/\/repo\.huaweicloud\.com\/repository\/npm\//);
+});
+
+test("Codex 平台包优先使用 codex-package.json 声明的新版入口", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-codex-layout-"));
+  const targetTriple = "aarch64-apple-darwin";
+  const targetRoot = path.join(root, targetTriple);
+  const binaryPath = path.join(targetRoot, "bin", "codex");
+
+  try {
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    fs.writeFileSync(binaryPath, "codex", "utf8");
+    fs.writeFileSync(
+      path.join(targetRoot, "codex-package.json"),
+      JSON.stringify({ entrypoint: "bin/codex" }),
+      "utf8"
+    );
+
+    assert.equal(
+      resolveCodexVendorBinaryPath({
+        vendorRoot: root,
+        targetTriple,
+        binaryName: "codex"
+      }),
+      binaryPath
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex 平台包仍兼容旧版 codex/codex 目录", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-codex-layout-legacy-"));
+  const targetTriple = "x86_64-unknown-linux-musl";
+  const binaryPath = path.join(root, targetTriple, "codex", "codex");
+
+  try {
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    fs.writeFileSync(binaryPath, "codex", "utf8");
+
+    assert.equal(
+      resolveCodexVendorBinaryPath({
+        vendorRoot: root,
+        targetTriple,
+        binaryName: "codex"
+      }),
+      binaryPath
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex 平台包拒绝清单入口逃出目标目录", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-codex-layout-safe-"));
+  const targetTriple = "aarch64-apple-darwin";
+  const targetRoot = path.join(root, targetTriple);
+  const escapedBinaryPath = path.join(root, "outside-codex");
+
+  try {
+    fs.mkdirSync(targetRoot, { recursive: true });
+    fs.writeFileSync(escapedBinaryPath, "codex", "utf8");
+    fs.writeFileSync(
+      path.join(targetRoot, "codex-package.json"),
+      JSON.stringify({ entrypoint: "../outside-codex" }),
+      "utf8"
+    );
+
+    assert.equal(
+      resolveCodexVendorBinaryPath({
+        vendorRoot: root,
+        targetTriple,
+        binaryName: "codex"
+      }),
+      null
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function restoreEnv(key, value) {

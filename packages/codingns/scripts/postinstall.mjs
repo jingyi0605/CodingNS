@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ensureNode22ForCurrentScript, resolvePackageRoot } from "./node22-runtime.mjs";
+import { resolveCodexVendorBinaryPath } from "./codex-runtime-layout.mjs";
 
 ensureNode22ForCurrentScript({
   rootDir: resolvePackageRoot(import.meta.url),
@@ -523,11 +524,15 @@ function resolveCodexNativeBinaryPath(codexBinPath) {
   const targetTriple = resolveCodexTargetTriple();
   const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
   const codexPackageRoot = findPackageRoot(codexBinPath);
-  const localBinaryPath = codexPackageRoot
-    ? path.join(codexPackageRoot, "vendor", targetTriple, "codex", codexBinaryName)
+  const localBinaryPath = codexPackageRoot && targetTriple
+    ? resolveCodexVendorBinaryPath({
+      vendorRoot: path.join(codexPackageRoot, "vendor"),
+      targetTriple,
+      binaryName: codexBinaryName
+    })
     : null;
 
-  if (localBinaryPath && fs.existsSync(localBinaryPath)) {
+  if (localBinaryPath) {
     return localBinaryPath;
   }
 
@@ -541,15 +546,13 @@ function resolveCodexNativeBinaryPath(codexBinPath) {
     return null;
   }
 
-  const platformBinaryPath = path.join(
-    path.dirname(platformPackageJsonPath),
-    "vendor",
-    targetTriple,
-    "codex",
-    codexBinaryName
-  );
-
-  return fs.existsSync(platformBinaryPath) ? platformBinaryPath : null;
+  return targetTriple
+    ? resolveCodexVendorBinaryPath({
+      vendorRoot: path.join(path.dirname(platformPackageJsonPath), "vendor"),
+      targetTriple,
+      binaryName: codexBinaryName
+    })
+    : null;
 }
 
 function resolveCodexPlatformPackageName() {
