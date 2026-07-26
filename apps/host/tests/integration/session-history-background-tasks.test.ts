@@ -352,11 +352,11 @@ describe("SessionHistoryService background tasks", () => {
 
     privateService.enrichProviderCapabilities = enrichMock;
 
-    const first = await service.instance.getProviderCapabilities("claude-code");
-    const second = await service.instance.getProviderCapabilities("claude-code");
+    const first = await service.instance.getProviderCapabilities("gemini");
+    const second = await service.instance.getProviderCapabilities("gemini");
 
-    expect(first.provider).toBe("claude-code");
-    expect(second.provider).toBe("claude-code");
+    expect(first.provider).toBe("gemini");
+    expect(second.provider).toBe("gemini");
     expect(enrichMock).toHaveBeenCalledTimes(1);
 
     const metricsBeforeFinish = service.instance.observeBackgroundTaskMetrics();
@@ -370,7 +370,7 @@ describe("SessionHistoryService background tasks", () => {
     refreshDeferred.resolve(first);
     await flushMicrotasks();
 
-    await service.instance.getProviderCapabilities("claude-code");
+    await service.instance.getProviderCapabilities("gemini");
 
     const metrics = service.instance.observeBackgroundTaskMetrics();
     expect(

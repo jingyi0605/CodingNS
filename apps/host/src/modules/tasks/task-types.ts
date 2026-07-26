@@ -5,6 +5,7 @@ export const HOST_TASK_TYPES = {
   workspaceDiscovery: "workspace.discovery",
   workspaceDiscoveryScan: "workspace.discovery_scan",
   providerCapabilityRefresh: "provider.capability_refresh",
+  providerClaudeModelDiscovery: "provider.claude_model_discovery",
   sessionCodexTitleGenerate: "session.codex_title_generate",
   sessionCleanupScan: "session_cleanup.scan",
   sessionCleanupBackup: "session_cleanup.backup",

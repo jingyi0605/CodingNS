@@ -70,7 +70,7 @@ export class ProviderController {
       request.query.workspaceId?.trim() || null
     );
 
-    const resolvedCapabilities = this.sessionProviderConfigService.resolveCapabilities({
+    const resolvedCapabilities = await this.sessionProviderConfigService.resolveCapabilities({
         provider: baseCapabilities.provider,
         baseCapabilities,
         providerConfigMode: normalizeProviderConfigMode(request.query.providerConfigMode),

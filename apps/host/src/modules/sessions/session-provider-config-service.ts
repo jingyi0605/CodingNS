@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,6 +13,13 @@ import {
 } from "../model-switch/cc-switch-adapter.js";
 import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import {
+  ClaudeModelOptionsService,
+  mergeClaudeConfiguredModels,
+  type ClaudeModelDiscoverySnapshot
+} from "../provider/claude-model-options.js";
+import { HOST_TASK_TYPES } from "../tasks/task-types.js";
+import type { TaskManager } from "../tasks/task-manager.js";
 import type {
   SessionBinding,
   SessionProviderConfigMode
@@ -71,6 +79,7 @@ interface WorkspaceSessionRuntimeContextPort {
 
 const SESSION_RUNTIME_METADATA_FILE = ".codingns-provider-runtime.json";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
+const CLAUDE_MODEL_CAPABILITY_CACHE_TTL_MS = 5_000;
 const SUPPORTED_SESSION_PRESET_PROVIDERS = new Set<SessionBinding["provider"]>([
   "claude-code",
   "codex",
@@ -93,7 +102,6 @@ const CLAUDE_RUNTIME_STATE_DIRECTORIES = [
   "shell-snapshots",
   "todos"
 ] as const;
-const CLAUDE_STANDARD_MODEL_PREFIX = "claude-";
 const CLAUDE_MODEL_ALIASES = [
   {
     id: "sonnet",
@@ -113,11 +121,20 @@ const CLAUDE_MODEL_ALIASES = [
 ] as const;
 
 export class SessionProviderConfigService {
+  private readonly claudeCapabilityCache = new Map<
+    string,
+    { expiresAt: number; value: ProviderCapabilities }
+  >();
+
   constructor(
     private readonly config: HostConfig,
     private readonly ccSwitchAdapter: CcSwitchAdapter,
-    private readonly workspaceSessionRuntimeContextService?: WorkspaceSessionRuntimeContextPort
-  ) {}
+    private readonly workspaceSessionRuntimeContextService?: WorkspaceSessionRuntimeContextPort,
+    private readonly claudeModelOptionsService: Pick<ClaudeModelOptionsService, "readSnapshot"> | null = null,
+    private readonly taskManager: TaskManager | null = null
+  ) {
+    this.registerClaudeModelDiscoveryTask();
+  }
 
   prepareSessionBinding(input: {
     sessionId: string;
@@ -293,12 +310,12 @@ export class SessionProviderConfigService {
     return preparedBinding;
   }
 
-  resolveCapabilities(input: {
+  async resolveCapabilities(input: {
     provider: SessionBinding["provider"];
     baseCapabilities: ProviderCapabilities;
     providerConfigMode?: SessionProviderConfigMode | null;
     providerPresetId?: string | null;
-  }): ProviderCapabilities {
+  }): Promise<ProviderCapabilities> {
     const selection = this.resolveRequestedSelection({
       providerConfigMode: input.providerConfigMode ?? undefined,
       providerPresetId: input.providerPresetId ?? undefined
@@ -324,13 +341,102 @@ export class SessionProviderConfigService {
 
     switch (input.provider) {
       case "claude-code":
-        return buildClaudePresetCapabilities(input.baseCapabilities, preset.settingsConfig);
+        return await this.resolveClaudePresetCapabilities(
+          input.baseCapabilities,
+          preset.id,
+          preset.settingsConfig
+        );
       case "codex":
         return buildCodexPresetCapabilities(input.baseCapabilities, preset.settingsConfig);
       case "gemini":
         return buildGeminiPresetCapabilities(input.baseCapabilities, preset.settingsConfig);
       default:
         return input.baseCapabilities;
+    }
+  }
+
+  private registerClaudeModelDiscoveryTask(): void {
+    if (
+      !this.claudeModelOptionsService
+      || !this.taskManager
+      || this.taskManager.has(HOST_TASK_TYPES.providerClaudeModelDiscovery)
+    ) {
+      return;
+    }
+
+    this.taskManager.register<{
+      claudeHomeDir: string;
+      runtimeEnv: Record<string, string>;
+    }, ClaudeModelDiscoverySnapshot>({
+      taskType: HOST_TASK_TYPES.providerClaudeModelDiscovery,
+      executionLane: "external_process",
+      timeoutMs: 10_000,
+      run: async (input) => await this.claudeModelOptionsService!.readSnapshot({
+        claudeHomeDir: input.claudeHomeDir,
+        runtimeEnv: input.runtimeEnv
+      })
+    });
+  }
+
+  private async resolveClaudePresetCapabilities(
+    baseCapabilities: ProviderCapabilities,
+    presetId: string,
+    settingsConfig: Record<string, unknown>
+  ): Promise<ProviderCapabilities> {
+    const fallback = buildClaudePresetCapabilities(baseCapabilities, settingsConfig);
+    const modelOptionsService = this.claudeModelOptionsService;
+    const taskManager = this.taskManager;
+
+    if (!modelOptionsService || !taskManager) {
+      return fallback;
+    }
+
+    const runtimeEnv = normalizeRuntimeEnv(settingsConfig);
+    const cacheKey = buildClaudePresetCapabilityCacheKey(
+      this.config.claudeCodeHomeDir,
+      presetId,
+      runtimeEnv
+    );
+    const cached = this.claudeCapabilityCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      taskManager.recordCacheHit(HOST_TASK_TYPES.providerClaudeModelDiscovery, cacheKey);
+      return cached.value;
+    }
+
+    try {
+      const task = taskManager.enqueue<{
+        claudeHomeDir: string;
+        runtimeEnv: Record<string, string>;
+      }, ClaudeModelDiscoverySnapshot>(HOST_TASK_TYPES.providerClaudeModelDiscovery, {
+        key: cacheKey,
+        source: "session_provider_config.claude_model_discovery",
+        input: {
+          claudeHomeDir: this.config.claudeCodeHomeDir,
+          runtimeEnv
+        }
+      });
+      const snapshot = await task.promise;
+      const value = {
+        ...baseCapabilities,
+        modelOptions: mergeClaudeConfiguredModels(snapshot.modelOptions, runtimeEnv)
+      };
+
+      this.claudeCapabilityCache.set(cacheKey, {
+        expiresAt: Date.now() + CLAUDE_MODEL_CAPABILITY_CACHE_TTL_MS,
+        value
+      });
+      return value;
+    } catch {
+      return {
+        ...fallback,
+        limitations: Array.from(
+          new Set([
+            ...fallback.limitations,
+            "当前配置无法读取 Claude Code 完整模型列表，暂时显示配置中声明的模型。"
+          ])
+        )
+      };
     }
   }
 
@@ -964,15 +1070,27 @@ function buildPresetDefaultModelOption(currentModel: string | null): ProviderMod
 }
 
 function isClaudeCustomModel(modelId: string): boolean {
-  if (CLAUDE_STANDARD_MODEL_IDS.has(modelId)) {
-    return false;
-  }
+  return !CLAUDE_STANDARD_MODEL_IDS.has(modelId);
+}
 
-  if (modelId.startsWith(CLAUDE_STANDARD_MODEL_PREFIX)) {
-    return false;
-  }
+function buildClaudePresetCapabilityCacheKey(
+  claudeHomeDir: string,
+  presetId: string,
+  runtimeEnv: Record<string, string>
+): string {
+  const envEntries = Object.keys(runtimeEnv)
+    .sort()
+    .map((key) => [key, runtimeEnv[key]]);
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({
+      claudeHomeDir: path.resolve(claudeHomeDir),
+      presetId,
+      env: envEntries
+    }))
+    .digest("hex")
+    .slice(0, 16);
 
-  return true;
+  return `claude-code::preset::${presetId}::${fingerprint}`;
 }
 
 function readTomlStringValue(content: string, key: string): string | null {

@@ -80,7 +80,11 @@ import {
   buildParallelGroupColorToken,
   resolveParallelDisplayParentSessionId
 } from "../parallel-sessions/parallel-session-group-service.js";
-import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
+import {
+  ClaudeModelOptionsService,
+  enrichClaudeCapabilities,
+  enrichClaudeCapabilitiesWithDiscovery
+} from "../provider/claude-model-options.js";
 import {
   CodexModelOptionsService,
   createFallbackCodexModelOptions,
@@ -353,6 +357,7 @@ export class SessionHistoryService {
   private readonly sessionDiscoveryDiagnosticsRepository: SessionDiscoveryDiagnosticsRepository;
   private readonly providerSessionDeleteCli: ProviderSessionDeleteCli;
   private readonly claudeCodeHomeDir: string;
+  private readonly claudeModelOptionsService: ClaudeModelOptionsService;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
   private readonly parallelSessionGroupRepository: Pick<ParallelSessionGroupRepository, "listByIds"> | null;
@@ -418,7 +423,8 @@ export class SessionHistoryService {
     > | null = null,
     sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null,
     providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null,
-    providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable"> | null = null
+    providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable"> | null = null,
+    claudeModelOptionsService: ClaudeModelOptionsService | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
@@ -445,6 +451,7 @@ export class SessionHistoryService {
       })
     };
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
+    this.claudeModelOptionsService = claudeModelOptionsService ?? new ClaudeModelOptionsService();
     this.providerSessionDiscoveryConfig = {
       claudeCodeHomeDir: config.claudeCodeHomeDir,
       legnaCodeHomeDir: config.legnaCodeHomeDir,
@@ -1179,6 +1186,11 @@ export class SessionHistoryService {
         return this.applyProviderEnabledState(refreshed);
       }
 
+      if (baseCapabilities.provider === "claude-code" && baseCapabilities.canSendMessage) {
+        const refreshed = await this.refreshProviderCapabilities(baseCapabilities, workspacePath);
+        return this.applyProviderEnabledState(refreshed);
+      }
+
       this.scheduleProviderCapabilityRefresh(baseCapabilities, workspacePath);
       return this.applyProviderEnabledState(
         this.resolveProviderCapabilitiesImmediate(baseCapabilities, workspacePath)
@@ -1227,10 +1239,14 @@ export class SessionHistoryService {
     capabilities: ProviderCapabilities,
     workspacePath: string | null
   ): Promise<ProviderCapabilities> {
-    const claudeEnriched = enrichClaudeCapabilities(capabilities, {
-      claudeHomeDir: this.claudeCodeHomeDir,
-      workspacePath
-    });
+    const claudeEnriched = await enrichClaudeCapabilitiesWithDiscovery(
+      capabilities,
+      {
+        claudeHomeDir: this.claudeCodeHomeDir,
+        workspacePath
+      },
+      this.claudeModelOptionsService
+    );
     const codexEnriched = await enrichCodexCapabilities(
       claudeEnriched,
       this.codexModelOptionsService
@@ -1285,7 +1301,57 @@ export class SessionHistoryService {
       return;
     }
 
-    const task = this.taskManager.enqueue<{
+    const task = this.enqueueProviderCapabilityRefresh(capabilities, workspacePath, cacheKey);
+
+    if (task.deduped) {
+      return;
+    }
+
+    void task.promise.catch((error) => {
+      logPerformance(
+        "provider.capabilities.background_failed",
+        0,
+        {
+          provider: capabilities.provider,
+          workspacePath,
+          error: error instanceof Error ? error.message : "unknown"
+        },
+        {
+          thresholdMs: 0,
+          force: true
+        }
+      );
+    });
+  }
+
+  private async refreshProviderCapabilities(
+    capabilities: ProviderCapabilities,
+    workspacePath: string | null
+  ): Promise<ProviderCapabilities> {
+    const cacheKey = buildProviderCapabilityCacheKey(capabilities.provider, workspacePath);
+    const cached = this.providerCapabilityCache.get(cacheKey);
+
+    if (
+      cached
+      && Date.now() - cached.refreshedAt <= PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS
+    ) {
+      this.taskManager.recordCacheHit(HOST_TASK_TYPES.providerCapabilityRefresh, cacheKey);
+      return cached.value;
+    }
+
+    const task = this.enqueueProviderCapabilityRefresh(capabilities, workspacePath, cacheKey);
+    await task.promise;
+
+    return this.providerCapabilityCache.get(cacheKey)?.value
+      ?? this.resolveProviderCapabilitiesImmediate(capabilities, workspacePath);
+  }
+
+  private enqueueProviderCapabilityRefresh(
+    capabilities: ProviderCapabilities,
+    workspacePath: string | null,
+    cacheKey: string
+  ): TaskHandle<void> {
+    return this.taskManager.enqueue<{
       capabilities: ProviderCapabilities;
       workspacePath: string | null;
     }, void>(HOST_TASK_TYPES.providerCapabilityRefresh, {
@@ -1296,26 +1362,6 @@ export class SessionHistoryService {
         workspacePath
       }
     });
-
-    if (task.deduped) {
-      return;
-    }
-
-    void task.promise.catch((error) => {
-        logPerformance(
-          "provider.capabilities.background_failed",
-          0,
-          {
-            provider: capabilities.provider,
-            workspacePath,
-            error: error instanceof Error ? error.message : "unknown"
-          },
-          {
-            thresholdMs: 0,
-            force: true
-          }
-        );
-      });
   }
 
   private applyProviderCliAvailability(capabilities: ProviderCapabilities): ProviderCapabilities {

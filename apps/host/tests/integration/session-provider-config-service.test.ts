@@ -3,11 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProviderCapabilities } from "@codingns/session-sync-core";
 
 import { resolveHostConfig } from "../../src/config/env.js";
 import type { ModelPresetRuntimeConfigDto } from "../../src/modules/model-switch/cc-switch-adapter.js";
 import { SessionProviderConfigService } from "../../src/modules/sessions/session-provider-config-service.js";
 import { WorkspaceSessionRuntimeContextService } from "../../src/modules/sessions/workspace-session-runtime-context-service.js";
+import { createTaskManager } from "../../src/modules/tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../../src/modules/tasks/task-types.js";
 import {
   appendSessionProviderErrorContext,
   mapSessionProviderError
@@ -663,4 +666,154 @@ describe("SessionProviderConfigService", () => {
 
     expect(generatedSettings.env?.ANTHROPIC_MODEL).toBe("claude-opus-4-1");
   });
+
+  it("Claude 多配置会分别探测模型，并按配置内容缓存和失效", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-claude-preset-models-"));
+    tempDirs.push(rootDir);
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      claudeCodeHomeDir: path.join(rootDir, ".claude")
+    });
+    const presets = new Map<string, ModelPresetRuntimeConfigDto>([
+      ["preset-one", createClaudePreset("preset-one", "https://one.example", "model-one-default")],
+      ["preset-two", createClaudePreset("preset-two", "https://two.example", "model-two-default")]
+    ]);
+    const ccSwitchAdapter = {
+      readPresetRuntimeConfig: (_app: string, presetId: string) => presets.get(presetId) ?? null
+    };
+    const readSnapshot = vi.fn(async (input: { runtimeEnv?: Record<string, string> }) => {
+      const baseUrl = input.runtimeEnv?.ANTHROPIC_BASE_URL;
+      const modelId = baseUrl === "https://one.example"
+        ? "model-one"
+        : baseUrl === "https://two.example"
+          ? "model-two"
+          : "model-three";
+
+      return {
+        modelOptions: [
+          {
+            id: "provider-default",
+            name: "Default",
+            usesProviderDefault: true
+          },
+          {
+            id: modelId,
+            name: modelId
+          }
+        ]
+      };
+    });
+    const taskManager = createTaskManager();
+    const service = new SessionProviderConfigService(
+      config,
+      ccSwitchAdapter as never,
+      undefined,
+      { readSnapshot },
+      taskManager
+    );
+    const baseCapabilities = createClaudeProviderCapabilities();
+
+    const first = await service.resolveCapabilities({
+      provider: "claude-code",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-one"
+    });
+    const second = await service.resolveCapabilities({
+      provider: "claude-code",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-two"
+    });
+    const firstCached = await service.resolveCapabilities({
+      provider: "claude-code",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-one"
+    });
+
+    expect(first.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "model-one",
+      "model-one-default"
+    ]);
+    expect(second.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "model-two",
+      "model-two-default"
+    ]);
+    expect(firstCached.modelOptions).toEqual(first.modelOptions);
+    expect(readSnapshot).toHaveBeenCalledTimes(2);
+    expect(readSnapshot).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      runtimeEnv: expect.objectContaining({
+        ANTHROPIC_BASE_URL: "https://one.example",
+        ANTHROPIC_AUTH_TOKEN: "preset-one-token"
+      })
+    }));
+    expect(readSnapshot).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      runtimeEnv: expect.objectContaining({
+        ANTHROPIC_BASE_URL: "https://two.example",
+        ANTHROPIC_AUTH_TOKEN: "preset-two-token"
+      })
+    }));
+    expect(
+      taskManager.observe().taskTypes[HOST_TASK_TYPES.providerClaudeModelDiscovery]?.counters.cache_hit
+    ).toBe(1);
+
+    presets.set(
+      "preset-one",
+      createClaudePreset("preset-one", "https://three.example", "model-three-default")
+    );
+    const firstChanged = await service.resolveCapabilities({
+      provider: "claude-code",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-one"
+    });
+
+    expect(firstChanged.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "model-three",
+      "model-three-default"
+    ]);
+    expect(readSnapshot).toHaveBeenCalledTimes(3);
+  });
 });
+
+function createClaudePreset(
+  id: string,
+  baseUrl: string,
+  model: string
+): ModelPresetRuntimeConfigDto {
+  return {
+    id,
+    name: id,
+    app: "claude-code",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN: `${id}-token`,
+        ANTHROPIC_MODEL: model
+      }
+    }
+  };
+}
+
+function createClaudeProviderCapabilities(): ProviderCapabilities {
+  return {
+    provider: "claude-code",
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: "streaming_guidance",
+    supportsSubagents: true,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: true,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    modelOptions: [],
+    limitations: []
+  };
+}
