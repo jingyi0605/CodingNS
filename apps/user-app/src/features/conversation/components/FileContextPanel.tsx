@@ -20,6 +20,7 @@ import {
   uploadFile,
   type FileNodeDto
 } from "../api/file-context-api";
+import { listScopedWorkspaces } from "../api/conversation-api";
 import { addGitIgnoreTargets, getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
 import { openFilePreviewExternalWindow } from "../../../platform/desktop/window-openers";
@@ -2013,16 +2014,28 @@ export function FileContextPanel({
     mode: "absolute" | "relative",
     explicitTarget = primarySelectedTarget
   ) {
-    const workspacePath = workbenchShellOverrides?.currentWorkspacePath?.trim() || currentWorkspace?.path || "";
     const targetPath = explicitTarget?.path ?? null;
+    const workspacePath =
+      mode === "absolute"
+        ? await resolveWorkspacePathForCopy()
+        : "";
 
-    if (targetPath === null || (mode === "absolute" && !workspacePath)) {
+    if (targetPath === null) {
       setCopyPathMenuOpen(false);
       return;
     }
 
     try {
-      const backendPathStyle = resolveBackendPathStyle(workspacePath || targetPath);
+      if (mode === "absolute" && !workspacePath) {
+        throw new Error(t("conversation.filePanelCopyPathFailed"));
+      }
+
+      const pathStyleSource =
+        workspacePath
+        || workbenchShellOverrides?.currentWorkspacePath?.trim()
+        || currentWorkspace?.path?.trim()
+        || targetPath;
+      const backendPathStyle = resolveBackendPathStyle(pathStyleSource);
       const copiedPath =
         mode === "absolute"
           ? buildAbsoluteWorkspacePath(workspacePath, targetPath, backendPathStyle)
@@ -2044,6 +2057,48 @@ export function FileContextPanel({
     } finally {
       setCopyPathMenuOpen(false);
       setWebContextMenu(null);
+    }
+  }
+
+  async function resolveWorkspacePathForCopy(): Promise<string> {
+    const lookupWorkspaceId = activeRequestWorkspaceId ?? workspaceId?.trim() ?? null;
+    const knownWorkspacePath = workbenchShellOverrides?.currentWorkspacePath?.trim() || "";
+
+    if (knownWorkspacePath) {
+      return knownWorkspacePath;
+    }
+
+    const scopedNavigationWorkspacePath =
+      lookupWorkspaceId
+        ? navigationGroups.find((group) => group.workspace.id === lookupWorkspaceId)?.workspace.path?.trim() ?? ""
+        : "";
+
+    if (scopedNavigationWorkspacePath) {
+      return scopedNavigationWorkspacePath;
+    }
+
+    const localWorkspacePath =
+      currentTargetHostId
+        ? ""
+        : currentWorkspace?.path?.trim() || "";
+
+    if (localWorkspacePath) {
+      return localWorkspacePath;
+    }
+
+    if (!lookupWorkspaceId) {
+      return "";
+    }
+
+    try {
+      const response = await listScopedWorkspaces(currentTargetHostId ?? undefined);
+      return (
+        response.items.find((item) => item.workspace.id === lookupWorkspaceId)?.workspace.path?.trim()
+        ?? response.items.find((item) => item.workspace.id === workspaceId?.trim())?.workspace.path?.trim()
+        ?? ""
+      );
+    } catch {
+      return "";
     }
   }
 

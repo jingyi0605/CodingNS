@@ -34,7 +34,8 @@ const fileApiMock = vi.hoisted(() => ({
 }));
 
 const conversationApiMock = vi.hoisted(() => ({
-  getSessionChangedFiles: vi.fn()
+  getSessionChangedFiles: vi.fn(),
+  listScopedWorkspaces: vi.fn()
 }));
 
 const gitApiMock = vi.hoisted(() => ({
@@ -234,7 +235,8 @@ vi.mock("../api/file-context-api", () => ({
 }));
 
 vi.mock("../api/conversation-api", () => ({
-  getSessionChangedFiles: conversationApiMock.getSessionChangedFiles
+  getSessionChangedFiles: conversationApiMock.getSessionChangedFiles,
+  listScopedWorkspaces: conversationApiMock.listScopedWorkspaces
 }));
 
 vi.mock("../api/git-api", () => ({
@@ -332,8 +334,31 @@ describe("FileContextPanel", () => {
     platformMock.bridge.writeClipboardText.mockResolvedValue({
       ok: true
     });
-    workbenchShellMock.navigationGroups[0].workspace.path = "C:/Code/CodingNS";
-    workbenchShellMock.navigationGroups[0].workspace.repoRoot = "C:/Code/CodingNS";
+    workbenchShellMock.navigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "CodingNS",
+          path: "C:/Code/CodingNS",
+          repoRoot: "C:/Code/CodingNS"
+        },
+        sessions: []
+      }
+    ];
+    conversationApiMock.listScopedWorkspaces.mockResolvedValue({
+      items: [
+        {
+          hostId: "current",
+          hostStatus: "current",
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "C:/Code/CodingNS",
+            repoRoot: "C:/Code/CodingNS"
+          }
+        }
+      ]
+    });
 
     fileApiMock.getFileTree.mockResolvedValue({
       items: [...rootItemsMock]
@@ -2661,6 +2686,165 @@ describe("FileContextPanel", () => {
 
     await waitFor(() => {
       expect(gitApiMock.addGitIgnoreTargets).toHaveBeenCalledWith("workspace-1", ["config.json"], undefined);
+    });
+  });
+
+  it("桌面端右键复制绝对路径会写入桌面剪贴板", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "macos";
+    platformMock.bridge.supported = true;
+    workbenchShellMock.navigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "CodingNS",
+          path: "/Users/jackson/Documents/Code/CodingNS",
+          repoRoot: "/Users/jackson/Documents/Code/CodingNS"
+        },
+        sessions: []
+      }
+    ];
+    showDesktopContextMenuMock.mockImplementation(async (items: Array<{ label: string; onSelect: () => void }>) => {
+      await items.find((item) => item.label === t("conversation.filePanelCopyAbsolutePath"))?.onSelect();
+    });
+
+    renderPanel();
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "config.json" }));
+
+    await waitFor(() => {
+      expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith(
+        "/Users/jackson/Documents/Code/CodingNS/config.json"
+      );
+    });
+    expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PeerHost 桌面端右键复制绝对路径会使用远端工作区路径写入桌面剪贴板", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "macos";
+    platformMock.bridge.supported = true;
+    workbenchShellMock.navigationGroups = [
+      {
+        workspace: {
+          id: "remote-workspace-1",
+          name: "Remote CodingNS",
+          path: "/Users/jackson/PeerHost/CodingNS",
+          repoRoot: "/Users/jackson/PeerHost/CodingNS"
+        },
+        sessions: []
+      }
+    ];
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+    showDesktopContextMenuMock.mockImplementation(async (items: Array<{ label: string; onSelect: () => void }>) => {
+      await items.find((item) => item.label === t("conversation.filePanelCopyAbsolutePath"))?.onSelect();
+    });
+    render(
+      <ToastProvider>
+        <FileContextPanel
+          sessionId="session-1"
+          workspaceId="workspace-1"
+          requestWorkspaceId="remote-workspace-1"
+          workbenchShellOverrides={{
+            currentTargetHostId: "peer-host-1",
+            currentRequestWorkspaceId: "remote-workspace-1",
+            currentWorkspacePath: "/Users/jackson/PeerHost/CodingNS"
+          }}
+        />
+      </ToastProvider>
+    );
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "index.ts" }));
+
+    await waitFor(() => {
+      expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith(
+        "/Users/jackson/PeerHost/CodingNS/packages/session-sync-core/src/index.ts"
+      );
+    });
+    expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PeerHost 桌面端右键复制绝对路径缺少注入路径时会查询远端工作区路径", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "macos";
+    platformMock.bridge.supported = true;
+    workbenchShellMock.navigationGroups = [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "Local CodingNS",
+          path: "/Users/jackson/Local/CodingNS",
+          repoRoot: "/Users/jackson/Local/CodingNS"
+        },
+        sessions: []
+      }
+    ];
+    conversationApiMock.listScopedWorkspaces.mockResolvedValue({
+      items: [
+        {
+          hostId: "peer-host-1",
+          workspace: {
+            id: "remote-workspace-1",
+            name: "Remote CodingNS",
+            path: "/Users/jackson/PeerHost/CodingNS",
+            repoRoot: "/Users/jackson/PeerHost/CodingNS"
+          }
+        }
+      ]
+    });
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+    showDesktopContextMenuMock.mockImplementation(async (items: Array<{ label: string; onSelect: () => void }>) => {
+      await items.find((item) => item.label === t("conversation.filePanelCopyAbsolutePath"))?.onSelect();
+    });
+
+    render(
+      <ToastProvider>
+        <FileContextPanel
+          sessionId="session-1"
+          workspaceId="workspace-1"
+          requestWorkspaceId="remote-workspace-1"
+          workbenchShellOverrides={{
+            currentTargetHostId: "peer-host-1",
+            currentRequestWorkspaceId: "remote-workspace-1",
+            currentWorkspacePath: null
+          }}
+        />
+      </ToastProvider>
+    );
+
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "index.ts" }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.listScopedWorkspaces).toHaveBeenCalledWith("peer-host-1");
+      expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith(
+        "/Users/jackson/PeerHost/CodingNS/packages/session-sync-core/src/index.ts"
+      );
     });
   });
 
