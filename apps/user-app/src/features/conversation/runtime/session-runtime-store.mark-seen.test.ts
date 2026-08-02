@@ -550,6 +550,71 @@ describe("SessionRuntimeStore mark seen", () => {
     store.destroy();
   });
 
+  it("applyNavigationSession 不会因旧摘要缺少选择字段而覆盖会话模型", () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        providerConfigMode: "cc-switch-preset",
+        providerPresetId: "preset-a",
+        selectedModel: "gpt-5.5",
+        title: "session-1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: null,
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
+
+    store.applyNavigationSession({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "raw-1",
+      rawStoreRef: "codex://raw-1",
+      title: "session-1",
+      messageCount: 1,
+      lastMessageAt: "2026-03-24T10:00:00.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:05:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:05:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: null,
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+
+    expect(store.getState().session).toMatchObject({
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-a",
+      selectedModel: "gpt-5.5"
+    });
+
+    store.destroy();
+  });
+
   it("applyNavigationSession 不会用缺少新终态证据的 running 摘要冲掉本地 completed 态", () => {
     const store = new SessionRuntimeStore("session-1", {
       initialSession: {

@@ -4908,6 +4908,7 @@ function areSessionRuntimeSessionsEquivalent(
     && previousSession.rawStoreRef === nextSession.rawStoreRef
     && previousSession.providerConfigMode === nextSession.providerConfigMode
     && previousSession.providerPresetId === nextSession.providerPresetId
+    && previousSession.selectedModel === nextSession.selectedModel
     && previousSession.parentSessionId === nextSession.parentSessionId
     && previousSession.sessionKind === nextSession.sessionKind
     && previousSession.annotationSourceMessageId === nextSession.annotationSourceMessageId
@@ -6059,29 +6060,50 @@ function pickFreshestSessionSummary(
   // 导航列表里可能会收到一个只有 updatedAt 更新、但活动证据完全没变的快照。
   // 这种快照不应该把当前本地已经确认的 running 态冲回 idle。
   if (shouldPreferActiveSessionSummary(left, right)) {
-    return left;
+    return mergeSessionSelectionFields(left, right);
   }
 
   if (shouldPreferTerminalSessionSummary(left, right)) {
-    return left;
+    return mergeSessionSelectionFields(left, right);
   }
 
   if (shouldPreferActiveSessionSummary(right, left)) {
-    return right;
+    return mergeSessionSelectionFields(right, left);
   }
 
   if (shouldPreferTerminalSessionSummary(right, left)) {
-    return right;
+    return mergeSessionSelectionFields(right, left);
   }
 
   const leftTimestamp = Date.parse(left.updatedAt || left.lastMessageAt || left.createdAt);
   const rightTimestamp = Date.parse(right.updatedAt || right.lastMessageAt || right.createdAt);
 
   if (!Number.isFinite(leftTimestamp) || !Number.isFinite(rightTimestamp)) {
-    return right;
+    return mergeSessionSelectionFields(right, left);
   }
 
-  return leftTimestamp >= rightTimestamp ? left : right;
+  return leftTimestamp >= rightTimestamp
+    ? mergeSessionSelectionFields(left, right)
+    : mergeSessionSelectionFields(right, left);
+}
+
+function mergeSessionSelectionFields(
+  preferred: SessionSummaryDto,
+  fallback: SessionSummaryDto
+): SessionSummaryDto {
+  return {
+    ...fallback,
+    ...preferred,
+    ...(preferred.providerConfigMode === undefined && fallback.providerConfigMode !== undefined
+      ? { providerConfigMode: fallback.providerConfigMode }
+      : {}),
+    ...(preferred.providerPresetId === undefined && fallback.providerPresetId !== undefined
+      ? { providerPresetId: fallback.providerPresetId }
+      : {}),
+    ...(preferred.selectedModel === undefined && fallback.selectedModel !== undefined
+      ? { selectedModel: fallback.selectedModel }
+      : {})
+  };
 }
 
 function shouldPreferActiveSessionSummary(

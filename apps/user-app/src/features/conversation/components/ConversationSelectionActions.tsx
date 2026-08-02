@@ -395,22 +395,18 @@ export function ConversationSelectionActions({
   }, [currentModelOption, selectedPresetOption, showDeploymentPresetColumn]);
   const applySelectedProvider = useCallback((nextProvider: BuiltinProviderId) => {
     setSelectedProvider(nextProvider);
-    setSelectedModel(preferredModelForProvider(nextProvider));
 
     if (session && nextProvider === session.provider && mapProviderToModelSwitchApp(nextProvider)) {
+      setSelectedModel(session.selectedModel ?? preferredModelForProvider(nextProvider));
       setSelectedProviderConfigMode(sessionProviderSelection.providerConfigMode);
       setSelectedProviderPresetId(sessionProviderSelection.providerPresetId);
       return;
     }
 
+    setSelectedModel(preferredModelForProvider(nextProvider));
     setSelectedProviderConfigMode("global-default");
     setSelectedProviderPresetId(null);
-  }, [
-    preferredModelForProvider,
-    session,
-    sessionProviderSelection.providerConfigMode,
-    sessionProviderSelection.providerPresetId
-  ]);
+  }, [preferredModelForProvider, session, sessionProviderSelection.providerConfigMode, sessionProviderSelection.providerPresetId]);
   const selectedProviderDisabledReason = useMemo(() => {
     const selectedCapabilities =
       providerCapabilitiesMap[selectedProvider]

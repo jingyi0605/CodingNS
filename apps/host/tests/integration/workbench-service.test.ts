@@ -241,6 +241,49 @@ describe("WorkbenchService", () => {
     ]);
   });
 
+  it("快照会保留会话级模型和 provider 配置，切换会话时不会丢失选择", () => {
+    const service = new WorkbenchService(
+      createWorkspaceRepositoryStub([
+        {
+          id: "workspace-1",
+          path: "/repo/workspace-1",
+          favorite: false
+        }
+      ]),
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => [
+          {
+            sessionId: "session-1",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            providerConfigMode: "cc-switch-preset",
+            providerPresetId: "preset-a",
+            selectedModel: "gpt-5.5"
+          }
+        ]),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never
+    );
+
+    const snapshot = service.getSnapshot("user-1");
+
+    expect(snapshot.items[0]?.sessions[0]).toMatchObject({
+      sessionId: "session-1",
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-a",
+      selectedModel: "gpt-5.5"
+    });
+  });
+
   it("标题同步任务取消后会把 AbortSignal 传给 sessionHistoryService", async () => {
     let receivedSignal: AbortSignal | null = null;
     const service = new WorkbenchService(

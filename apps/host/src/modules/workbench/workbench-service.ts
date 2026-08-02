@@ -748,6 +748,9 @@ interface WorkbenchSessionSummary {
   sessionId: string;
   workspaceId: string;
   provider: SessionListItem["provider"];
+  providerConfigMode?: SessionListItem["providerConfigMode"];
+  providerPresetId?: string | null;
+  selectedModel?: string | null;
   parentSessionId?: string | null;
   sessionKind?: SessionListItem["sessionKind"];
   forkMethod?: SessionListItem["forkMethod"];
@@ -786,6 +789,9 @@ function projectWorkbenchSession(session: SessionListItem): WorkbenchSessionSumm
     sessionId: session.sessionId,
     workspaceId: session.workspaceId,
     provider: session.provider,
+    providerConfigMode: session.providerConfigMode,
+    providerPresetId: session.providerPresetId ?? null,
+    selectedModel: session.selectedModel ?? null,
     parentSessionId: session.parentSessionId ?? null,
     sessionKind: session.sessionKind,
     forkMethod: session.forkMethod ?? null,
