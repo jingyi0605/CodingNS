@@ -88,6 +88,11 @@ interface ComposerPanelProps {
   workspaceId?: string | null;
   initialProviderConfigMode?: SessionProviderConfigMode;
   initialProviderPresetId?: string | null;
+  onSessionSelectionChange?: (selection: {
+    selectedModel: string | null;
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
+  }) => Promise<void>;
   forkDraft?: {
     sourceMessageId: string;
     sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
@@ -559,6 +564,7 @@ export function ComposerPanel({
   workspaceId = null,
   initialProviderConfigMode = "global-default",
   initialProviderPresetId = null,
+  onSessionSelectionChange,
   forkDraft = null,
   onClearForkDraft,
   onForkDraftChange,
@@ -631,6 +637,7 @@ export function ComposerPanel({
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
+  const pendingSessionSelectionWriteRef = useRef<Promise<void>>(Promise.resolve());
   const composingRef = useRef(false);
   const compositionCommitLockRef = useRef(false);
   const compositionCommitUnlockTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
@@ -638,6 +645,7 @@ export function ComposerPanel({
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
   const appliedInitialModelKeyRef = useRef<string | null>(null);
+  const userSelectedModelRef = useRef(false);
   const mentionRequestIdRef = useRef(0);
   const deploymentCapabilitiesRequestIdRef = useRef(0);
   const forkCapabilitiesRequestIdRef = useRef(0);
@@ -1181,29 +1189,62 @@ export function ComposerPanel({
           : t("conversation.sendButton")
     : t("conversation.sendButton");
 
-  const handleModelChange = useCallback((modelId: string) => {
-    setSelectedModel(modelId);
-    if (isPreferenceProviderId(provider)) {
-      void updatePreferences({
-        providers: {
-          [provider]: {
-            defaultModel: modelId
-          }
+  const persistSessionSelection = useCallback((selection: {
+    selectedModel: string | null;
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
+  }): Promise<void> => {
+    const write = pendingSessionSelectionWriteRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!onSessionSelectionChange) {
+          return;
         }
-      }).catch(() => undefined);
-    }
-  }, [provider]);
+
+        try {
+          await onSessionSelectionChange(selection);
+        } catch (error) {
+          showToast({
+            title: error instanceof Error ? error.message : t("conversation.capabilityDenied"),
+            tone: "error"
+          });
+        }
+      });
+
+    pendingSessionSelectionWriteRef.current = write;
+    return write;
+  }, [onSessionSelectionChange, showToast]);
+
+  const handleModelChange = useCallback((modelId: string) => {
+    userSelectedModelRef.current = true;
+    setSelectedModel(modelId);
+    persistSessionSelection({
+      selectedModel: modelId === PROVIDER_DEFAULT_MODEL_ID ? null : modelId,
+      providerConfigMode: currentProviderSelection.providerConfigMode,
+      providerPresetId: currentProviderSelection.providerPresetId
+    });
+  }, [currentProviderSelection, persistSessionSelection]);
 
   const handleDeploymentPresetChange = useCallback((presetValue: string) => {
     if (presetValue === "__global_default__") {
       setSelectedProviderConfigMode("global-default");
       setSelectedProviderPresetId(null);
+      persistSessionSelection({
+        selectedModel: selectedModel === PROVIDER_DEFAULT_MODEL_ID ? null : selectedModel || null,
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      });
       return;
     }
 
     setSelectedProviderConfigMode("cc-switch-preset");
     setSelectedProviderPresetId(presetValue);
-  }, []);
+    persistSessionSelection({
+      selectedModel: selectedModel === PROVIDER_DEFAULT_MODEL_ID ? null : selectedModel || null,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: presetValue
+    });
+  }, [persistSessionSelection, selectedModel]);
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
     setReasoningLevel(level);
@@ -1624,6 +1665,11 @@ export function ComposerPanel({
   }, [content]);
 
   useEffect(() => {
+    userSelectedModelRef.current = false;
+    appliedInitialModelKeyRef.current = null;
+  }, [draftStorageId, provider]);
+
+  useEffect(() => {
     if (!availableModels.length) {
       return;
     }
@@ -1634,6 +1680,12 @@ export function ComposerPanel({
       normalizedInitialModel &&
       availableModels.some((model) => model.id === normalizedInitialModel)
     );
+    const selectedModelAvailable = availableModels.some((model) => model.id === selectedModel);
+
+    if (userSelectedModelRef.current && selectedModelAvailable) {
+      appliedInitialModelKeyRef.current = initialModelKey;
+      return;
+    }
 
     if (initialModelAvailable) {
       if (appliedInitialModelKeyRef.current !== initialModelKey) {
@@ -1644,7 +1696,7 @@ export function ComposerPanel({
         return;
       }
 
-      if (availableModels.some((model) => model.id === selectedModel)) {
+      if (selectedModelAvailable) {
         return;
       }
 
@@ -1666,7 +1718,7 @@ export function ComposerPanel({
       return;
     }
 
-    if (availableModels.some((model) => model.id === selectedModel)) {
+    if (selectedModelAvailable) {
       return;
     }
 
@@ -2137,6 +2189,10 @@ export function ComposerPanel({
       const attachmentMeta = nextAttachments.map((attachment) =>
         toAttachmentMeta(attachment.file, attachment.id)
       );
+
+      // 模型和配置文件是会话级状态。发送前必须等最近一次选择写入完成，
+      // 否则发送请求可能先读到旧绑定，随后刷新又把界面恢复成默认值。
+      await pendingSessionSelectionWriteRef.current;
 
       const sendHandler =
         mode === "queue" && onQueueSend

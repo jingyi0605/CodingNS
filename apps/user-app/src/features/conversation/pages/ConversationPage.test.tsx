@@ -385,6 +385,38 @@ describe("ConversationPage", () => {
     mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
   });
 
+  it("切回会话时优先使用导航摘要中的会话模型，不被 runtime 缓存覆盖", async () => {
+    mockLiveRuntimeState.session = {
+      ...createBaseLiveSession(),
+      selectedModel: "gpt-5.4"
+    };
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "工作区一",
+              path: "/Users/jackson/workspace-1"
+            },
+            sessions: [
+              {
+                ...createBaseLiveSession(),
+                selectedModel: "gpt-5.5"
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    renderLiveConversationPage();
+
+    await waitFor(() => {
+      expect(readLatestComposerProps()?.initialModel).toBe("gpt-5.5");
+    });
+  });
+
   it("H5 会话预览列表右键会显示菜单并触发收藏", async () => {
     const toggleFavoriteSession = vi.fn().mockResolvedValue(undefined);
     mockUseWorkbenchShell.mockReturnValue(

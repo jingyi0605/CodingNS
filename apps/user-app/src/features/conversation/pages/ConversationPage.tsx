@@ -32,6 +32,7 @@ import {
   deleteSession,
   getProviderCapabilities,
   startLiveSession,
+  updateSessionComposerSettings,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
   type ProviderId,
@@ -386,6 +387,7 @@ function LiveConversationPage({
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
   const [branchTreeOpen, setBranchTreeOpen] = useState(false);
   const [parallelCreateOpen, setParallelCreateOpen] = useState(false);
+  const composerSelectionWriteRef = useRef<Promise<void>>(Promise.resolve());
   const flattenedNavigationEntries = useMemo(
     () => flattenNavigationSessions(navigationGroups),
     [navigationGroups]
@@ -429,6 +431,23 @@ function LiveConversationPage({
     sessionId
   ]);
   const { showToast } = useToast();
+  const persistComposerSelection = useCallback((selection: {
+    selectedModel: string | null;
+    providerConfigMode: "global-default" | "cc-switch-preset";
+    providerPresetId: string | null;
+  }): Promise<void> => {
+    const write = composerSelectionWriteRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const updatedSession = await updateSessionComposerSettings(sessionId, selection, {
+          targetHostId: effectiveTargetHostId
+        });
+        upsertNavigationSession(updatedSession);
+      });
+
+    composerSelectionWriteRef.current = write;
+    return write;
+  }, [effectiveTargetHostId, sessionId, upsertNavigationSession]);
   const handleResolveMissingSession = () => {
     const fallbackWorkspaceId =
       navigationSession?.workspaceId ?? navigationGroups[0]?.workspace.id ?? null;
@@ -546,6 +565,23 @@ function LiveConversationPage({
     enableThinkingPlaceholder: true,
     enableForkTimelineSanitizer: true
   });
+  const composerInitialModel =
+    navigationSession?.selectedModel !== undefined
+      ? navigationSession.selectedModel
+      : session?.selectedModel !== undefined
+        ? session.selectedModel
+        : initialComposerModel;
+  const composerInitialProviderConfigMode =
+    navigationSession?.providerConfigMode
+    ?? session?.providerConfigMode
+    ?? initialComposerProviderConfigMode
+    ?? "global-default";
+  const composerInitialProviderPresetId =
+    navigationSession?.providerPresetId !== undefined
+      ? navigationSession.providerPresetId
+      : session?.providerPresetId !== undefined
+        ? session.providerPresetId
+        : initialComposerProviderPresetId;
   const showInlineHeader = shellMode !== "mobile";
   const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const currentSessionSummary = session ?? navigationSession ?? null;
@@ -1038,18 +1074,11 @@ function LiveConversationPage({
               <ComposerPanel
                 capabilities={capabilities}
                 draftStorageId={sessionId}
-                initialModel={initialComposerModel}
+                initialModel={composerInitialModel}
                 workspaceId={(session ?? navigationSession)?.workspaceId ?? null}
-                initialProviderConfigMode={
-                  initialComposerProviderConfigMode
-                  ?? (session ?? navigationSession)?.providerConfigMode
-                  ?? "global-default"
-                }
-                initialProviderPresetId={
-                  initialComposerProviderPresetId
-                  ?? (session ?? navigationSession)?.providerPresetId
-                  ?? null
-                }
+                initialProviderConfigMode={composerInitialProviderConfigMode}
+                initialProviderPresetId={composerInitialProviderPresetId}
+                onSessionSelectionChange={persistComposerSelection}
                 forkDraft={forkDraft}
                 onClearForkDraft={() => setForkDraft(null)}
                 onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}

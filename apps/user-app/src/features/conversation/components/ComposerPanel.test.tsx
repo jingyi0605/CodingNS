@@ -1300,6 +1300,135 @@ describe("ComposerPanel", () => {
     }));
   });
 
+  it("切换模型时只上报当前会话选择，不改账号默认模型", async () => {
+    const onSessionSelectionChange = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+        onSessionSelectionChange={onSessionSelectionChange}
+      />
+    );
+
+    chooseOption(t("conversation.modelSelectorLabel"), "gpt-5.4");
+
+    await waitFor(() => {
+      expect(onSessionSelectionChange).toHaveBeenCalledWith({
+        selectedModel: "gpt-5.4",
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      });
+    });
+    expect(preferenceStoreMock.updatePreferences).not.toHaveBeenCalled();
+  });
+
+  it("切换模型后立即发送时，会先等待会话选择写入完成", async () => {
+    let resolveSelection: (() => void) | null = null;
+    const onSessionSelectionChange = vi.fn(
+      () => new Promise<void>((resolve) => {
+        resolveSelection = resolve;
+      })
+    );
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={onSend}
+        onSessionSelectionChange={onSessionSelectionChange}
+      />
+    );
+
+    chooseOption(t("conversation.modelSelectorLabel"), "gpt-5.4");
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "等待会话模型保存"
+      }
+    });
+    fireEvent.submit(container.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSessionSelectionChange).toHaveBeenCalledWith({
+        selectedModel: "gpt-5.4",
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      });
+    });
+    expect(onSend).not.toHaveBeenCalled();
+
+    resolveSelection?.();
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith("等待会话模型保存", expect.objectContaining({
+        model: "gpt-5.4"
+      }));
+    });
+  });
+
+  it("同一会话里手动选择模型后，不会被迟到的旧初始模型覆盖", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const capabilities = createCapabilities({
+      modelOptions: [
+        {
+          id: "provider-default",
+          name: "跟随 CLI 默认模型",
+          usesProviderDefault: true,
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+        },
+        {
+          id: "gpt-5.4",
+          name: "gpt-5.4",
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+        },
+        {
+          id: "gpt-5.5",
+          name: "gpt-5.5",
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+        }
+      ]
+    });
+
+    const { rerender, container } = render(
+      <ComposerPanel
+        capabilities={capabilities}
+        draftStorageId="session-1"
+        initialModel="gpt-5.4"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    chooseOption(t("conversation.modelSelectorLabel"), "gpt-5.5");
+
+    rerender(
+      <ComposerPanel
+        capabilities={capabilities}
+        draftStorageId="session-1"
+        initialModel="gpt-5.4"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.modelSelectorLabel"))).toHaveTextContent("gpt-5.5");
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "使用刚选择的模型"
+      }
+    });
+    fireEvent.submit(container.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith("使用刚选择的模型", expect.objectContaining({
+        model: "gpt-5.5"
+      }));
+    });
+  });
+
   it("provider-default 在工具栏和下拉里都显示为默认短标签", () => {
     render(
       <ComposerPanel
@@ -1742,7 +1871,7 @@ describe("ComposerPanel", () => {
       expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1", {
         providerConfigMode: "global-default",
         providerPresetId: null
-      }, { targetHostId: null });
+      }, expect.objectContaining({ targetHostId: null }));
     });
 
     fireEvent.click(screen.getByLabelText(t("conversation.forkTargetProviderLabel")));

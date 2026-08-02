@@ -982,6 +982,7 @@ export interface SessionSummaryDto {
   rawStoreRef: string;
   providerConfigMode?: SessionProviderConfigMode;
   providerPresetId?: string | null;
+  selectedModel?: string | null;
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
   annotationSourceMessageId?: string | null;
@@ -2455,6 +2456,25 @@ export function updateSessionFavoriteState(sessionId: string, favorite: boolean,
     targetHostId: options?.targetHostId ?? undefined,
     body: JSON.stringify({ favorite })
   });
+}
+
+export function updateSessionComposerSettings(
+  sessionId: string,
+  payload: {
+    selectedModel: string | null;
+    providerConfigMode: SessionProviderConfigMode;
+    providerPresetId: string | null;
+  },
+  options?: ScopedRequestOptions
+) {
+  return httpClient.request<SessionSummaryDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/composer-settings`,
+    {
+      method: "PATCH",
+      targetHostId: options?.targetHostId ?? undefined,
+      body: JSON.stringify(payload)
+    }
+  );
 }
 
 export function deleteSession(sessionId: string, options?: ScopedRequestOptions) {
