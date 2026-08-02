@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "codingns-desktop"
-version = "1.0.1-beta1"
+version = "1.0.1-beta.1"
 dependencies = [
  "chrono",
  "objc2",
