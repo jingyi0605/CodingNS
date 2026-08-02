@@ -95,6 +95,7 @@ describe("session user scope", () => {
         providerConfigMode: "global-default",
         providerPresetId: null,
         runtimeHomeDir: null,
+        selectedModel: item.sessionId === "session-a" ? "gpt-5.4" : "claude-sonnet-4",
         createdAt: timestamp,
         updatedAt: timestamp
       });
@@ -115,11 +116,13 @@ describe("session user scope", () => {
       "session-a"
     );
     expect(sessionBindingRepository.findBySessionIdForUser("session-a", "user-b")).toBeNull();
+    expect(sessionBindingRepository.findBySessionIdForUser("session-a", "user-a")?.selectedModel).toBe("gpt-5.4");
     expect(sessionIndexRepository.findBySessionId("session-a", "user-a")?.title).toBe("用户 A 会话");
     expect(sessionIndexRepository.findBySessionId("session-a", "user-b")).toBeNull();
     expect(sessionIndexRepository.listByWorkspace("workspace-a", "user-a").map((item) => item.sessionId)).toEqual([
       "session-a"
     ]);
+    expect(sessionIndexRepository.findBySessionId("session-a", "user-a")?.selectedModel).toBe("gpt-5.4");
     expect(sessionIndexRepository.listByWorkspace("workspace-a", "user-b")).toEqual([]);
   });
 });

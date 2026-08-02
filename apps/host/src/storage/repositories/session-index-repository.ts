@@ -55,6 +55,7 @@ export class SessionIndexRepository {
          bindings.raw_store_ref AS raw_store_ref,
          bindings.provider_config_mode AS provider_config_mode,
          bindings.provider_preset_id AS provider_preset_id,
+         bindings.selected_model AS selected_model,
          indices.parent_session_id AS parent_session_id,
          indices.session_kind AS session_kind,
          indices.annotation_source_message_id AS annotation_source_message_id,
@@ -105,6 +106,7 @@ export class SessionIndexRepository {
          bindings.raw_store_ref AS raw_store_ref,
          bindings.provider_config_mode AS provider_config_mode,
          bindings.provider_preset_id AS provider_preset_id,
+         bindings.selected_model AS selected_model,
          indices.parent_session_id AS parent_session_id,
          indices.session_kind AS session_kind,
          indices.annotation_source_message_id AS annotation_source_message_id,
@@ -227,6 +229,7 @@ interface SessionListItemRow {
   raw_store_ref: string;
   provider_config_mode: SessionListItem["providerConfigMode"];
   provider_preset_id: string | null;
+  selected_model: string | null;
   parent_session_id: string | null;
   session_kind: SessionListItem["sessionKind"];
   annotation_source_message_id: string | null;
@@ -302,6 +305,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     rawStoreRef: row.raw_store_ref,
     providerConfigMode: row.provider_config_mode,
     providerPresetId: row.provider_preset_id,
+    selectedModel: row.selected_model,
     parentSessionId: row.parent_session_id,
     sessionKind: row.session_kind ?? "default",
     annotationSourceMessageId: row.annotation_source_message_id,

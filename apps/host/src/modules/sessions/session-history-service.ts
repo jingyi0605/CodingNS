@@ -162,6 +162,14 @@ interface FavoriteSessionInput {
   isFavorite: boolean;
 }
 
+interface UpdateSessionComposerSettingsInput {
+  sessionId: string;
+  userId: string;
+  selectedModel?: string | null;
+  providerConfigMode?: SessionProviderConfigMode | null;
+  providerPresetId?: string | null;
+}
+
 export interface SessionHistoryEnvelope {
   type: "session.backfill" | "session.delta" | "session.history_older";
   sessionId: string;
@@ -375,7 +383,7 @@ export class SessionHistoryService {
   private readonly codexSessionTitleGenerator: CodexSessionTitleGenerator;
   private readonly sessionProviderConfigService: Pick<
     SessionProviderConfigService,
-    "prepareSessionBinding"
+    "prepareSessionBinding" | "resolveSessionBinding"
   > | null;
   private readonly providerControlRepository: Pick<ProviderControlRepository, "get">;
   private readonly taskManager: TaskManager;
@@ -421,7 +429,7 @@ export class SessionHistoryService {
       SessionIsolatedWorkspaceRepository,
       "findByOwnerSessionId" | "listByOwnerSessionIds" | "listBySourceWorkspaceId"
     > | null = null,
-    sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding"> | null = null,
+    sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding" | "resolveSessionBinding"> | null = null,
     providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null,
     providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable"> | null = null,
     claudeModelOptionsService: ClaudeModelOptionsService | null = null
@@ -1510,6 +1518,35 @@ export class SessionHistoryService {
     return this.startSessionDirect(input);
   }
 
+  updateSessionComposerSettings(input: UpdateSessionComposerSettingsInput): SessionListItem {
+    const binding = this.getBindingForUserOrThrow(input.sessionId, input.userId);
+    const selectedModel = normalizeOptionalText(input.selectedModel);
+    const requestedBinding = this.resolveComposerSettingsBinding(binding, input);
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.sessionBindingRepository.upsert({
+        ...binding,
+        selectedModel,
+        providerConfigMode: requestedBinding.providerConfigMode,
+        providerPresetId: requestedBinding.providerPresetId,
+        runtimeHomeDir: requestedBinding.runtimeHomeDir,
+        updatedAt: timestamp
+      });
+
+      const index = this.sessionIndexRepository.findIndexRecordBySessionId(binding.sessionId);
+
+      if (index) {
+        this.sessionIndexRepository.upsert({
+          ...index,
+          updatedAt: timestamp
+        });
+      }
+    })();
+
+    return this.enrichSessionItem(this.getSessionListItemOrThrow(binding.sessionId, input.userId));
+  }
+
   private async startSessionDirect(input: StartSessionInput): Promise<SessionListItem> {
     const workspace = this.getWorkspaceForUserOrThrow(input.workspaceId, input.userId);
     this.assertProviderCapabilityEnabled(
@@ -1547,6 +1584,7 @@ export class SessionHistoryService {
           providerConfigMode: providerBinding.providerConfigMode,
           providerPresetId: providerBinding.providerPresetId,
           runtimeHomeDir: providerBinding.runtimeHomeDir,
+          selectedModel: null,
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -1669,6 +1707,7 @@ export class SessionHistoryService {
           providerConfigMode: binding.providerConfigMode,
           providerPresetId: binding.providerPresetId,
           runtimeHomeDir: binding.runtimeHomeDir,
+          selectedModel: null,
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -1866,6 +1905,43 @@ export class SessionHistoryService {
       provider: input.provider as SessionBinding["provider"],
       providerConfigMode: input.providerConfigMode ?? undefined,
       providerPresetId: input.providerPresetId ?? null
+    });
+  }
+
+  private resolveComposerSettingsBinding(
+    binding: SessionBinding,
+    input: UpdateSessionComposerSettingsInput
+  ) {
+    if (!this.sessionProviderConfigService) {
+      const providerConfigMode = input.providerConfigMode ?? binding.providerConfigMode;
+      const providerPresetId = providerConfigMode === "cc-switch-preset"
+        ? (normalizeOptionalText(input.providerPresetId) ?? binding.providerPresetId)
+        : null;
+
+      if (providerConfigMode === "cc-switch-preset" && !providerPresetId) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "使用 cc-switch preset 时必须提供 providerPresetId",
+          field: "providerPresetId"
+        });
+      }
+
+      return {
+        providerConfigMode,
+        providerPresetId,
+        runtimeHomeDir: binding.runtimeHomeDir
+      };
+    }
+
+    return this.sessionProviderConfigService.resolveSessionBinding({
+      sessionId: binding.sessionId,
+      userId: input.userId,
+      workspaceId: binding.workspaceId,
+      provider: binding.provider,
+      existingBinding: binding,
+      providerConfigMode: input.providerConfigMode ?? undefined,
+      providerPresetId: input.providerPresetId ?? undefined
     });
   }
 
@@ -2554,6 +2630,10 @@ export class SessionHistoryService {
               currentBinding?.runtimeHomeDir
               ?? duplicateBinding?.runtimeHomeDir
               ?? null,
+            selectedModel:
+              currentBinding?.selectedModel
+              ?? duplicateBinding?.selectedModel
+              ?? null,
             createdAt:
               pickEarlierIso(currentBinding?.createdAt ?? null, duplicateBinding?.createdAt ?? null)
               ?? timestamp,
@@ -2713,6 +2793,7 @@ export class SessionHistoryService {
             providerConfigMode: existing?.providerConfigMode ?? "global-default",
             providerPresetId: existing?.providerPresetId ?? null,
             runtimeHomeDir: existing?.runtimeHomeDir ?? null,
+            selectedModel: existing?.selectedModel ?? null,
             createdAt,
             updatedAt: timestamp
           };
@@ -4904,6 +4985,7 @@ export class SessionHistoryService {
         providerConfigMode: sourceBinding.providerConfigMode,
         providerPresetId: sourceBinding.providerPresetId,
         runtimeHomeDir: sourceBinding.runtimeHomeDir,
+        selectedModel: sourceBinding.selectedModel ?? null,
         createdAt: sourceBinding.createdAt,
         updatedAt: input.timestamp
       });
@@ -5020,6 +5102,7 @@ export class SessionHistoryService {
       providerConfigMode: sourceBinding.providerConfigMode,
       providerPresetId: sourceBinding.providerPresetId,
       runtimeHomeDir: sourceBinding.runtimeHomeDir,
+      selectedModel: sourceBinding.selectedModel ?? null,
       createdAt: sourceBinding.createdAt,
       updatedAt: input.timestamp
     });

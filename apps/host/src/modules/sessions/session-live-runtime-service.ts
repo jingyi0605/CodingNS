@@ -500,7 +500,8 @@ export class SessionLiveRuntimeService {
         workspace.id,
         input.userId,
         input.provider,
-        providerBinding
+        providerBinding,
+        input.runtimeOptions?.model ?? null
       );
       const persistedAttachments = this.persistMessageAttachments(
         sessionId,
@@ -2062,9 +2063,12 @@ export class SessionLiveRuntimeService {
         });
       }
 
-      const providerBinding = hasActiveRun
+      const resolvedBinding = hasActiveRun
         ? existingBinding
         : this.persistResolvedSessionProviderBinding(existingBinding, resolvedProviderBinding);
+      const providerBinding = runtimeMode === "start"
+        ? this.persistSessionSelectedModel(resolvedBinding, input.runtimeOptions?.model ?? null)
+        : resolvedBinding;
       const providerLaunchContext = this.sessionProviderConfigService.resolveLaunchContext(providerBinding);
       const syntheticForkRawStoreRef =
         runtimeMode === "start" && shouldResumeCodexSyntheticForkSession(session)
@@ -2726,7 +2730,8 @@ export class SessionLiveRuntimeService {
       providerConfigMode: SessionProviderConfigMode;
       providerPresetId: string | null;
       runtimeHomeDir: string | null;
-    }
+    },
+    selectedModel: string | null = null
   ): void {
     const snapshot = this.buildBindingSnapshot(sessionId, provider, null, null);
     const timestamp = nowIso();
@@ -2742,6 +2747,7 @@ export class SessionLiveRuntimeService {
       providerConfigMode: providerBinding?.providerConfigMode ?? existingBinding?.providerConfigMode ?? "global-default",
       providerPresetId: providerBinding?.providerPresetId ?? existingBinding?.providerPresetId ?? null,
       runtimeHomeDir: providerBinding?.runtimeHomeDir ?? existingBinding?.runtimeHomeDir ?? null,
+      selectedModel: selectedModel ?? existingBinding?.selectedModel ?? null,
       createdAt: existingBinding?.createdAt ?? timestamp,
       updatedAt: timestamp
     });
@@ -2809,6 +2815,26 @@ export class SessionLiveRuntimeService {
       providerConfigMode: providerBinding.providerConfigMode,
       providerPresetId: providerBinding.providerPresetId,
       runtimeHomeDir: providerBinding.runtimeHomeDir,
+      updatedAt: nowIso()
+    };
+
+    this.sessionBindingRepository.upsert(nextBinding);
+    return nextBinding;
+  }
+
+  private persistSessionSelectedModel(
+    binding: NonNullable<ReturnType<SessionBindingRepository["findBySessionId"]>>,
+    model: string | null
+  ) {
+    const selectedModel = model?.trim() || null;
+
+    if ((binding.selectedModel ?? null) === selectedModel) {
+      return binding;
+    }
+
+    const nextBinding = {
+      ...binding,
+      selectedModel,
       updatedAt: nowIso()
     };
 

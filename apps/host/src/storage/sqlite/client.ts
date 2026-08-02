@@ -2410,6 +2410,10 @@ function ensureSessionBindingPresetSchema(db: BetterSqliteDatabase): void {
   if (!columnNames.has("runtime_home_dir")) {
     db.exec("ALTER TABLE session_bindings ADD COLUMN runtime_home_dir TEXT");
   }
+
+  if (!columnNames.has("selected_model")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN selected_model TEXT");
+  }
 }
 
 function ensureSessionBindingUserSchema(db: BetterSqliteDatabase): void {

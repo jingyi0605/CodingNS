@@ -95,6 +95,12 @@ interface FavoriteSessionBody {
   favorite?: boolean;
 }
 
+interface UpdateSessionComposerSettingsBody {
+  selectedModel?: string | null;
+  providerConfigMode?: SessionProviderConfigMode;
+  providerPresetId?: string | null;
+}
+
 interface RepairSourceIndexBody {
   workspaceId?: string;
   provider?: string | null;
@@ -348,6 +354,19 @@ export class SessionController {
     reply.send(
       this.sessionHistoryService.getSession(request.params.sessionId, requireUserId(request))
     );
+  };
+
+  readonly updateComposerSettings = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: UpdateSessionComposerSettingsBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.sessionHistoryService.updateSessionComposerSettings({
+      sessionId: request.params.sessionId,
+      userId: requireUserId(request),
+      selectedModel: request.body.selectedModel,
+      providerConfigMode: normalizeProviderConfigMode(request.body.providerConfigMode),
+      providerPresetId: request.body.providerPresetId?.trim() || null
+    }));
   };
 
   readonly getChangedFiles = async (

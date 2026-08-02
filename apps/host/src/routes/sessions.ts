@@ -19,6 +19,7 @@ export async function registerSessionRoutes(
   app.patch("/api/sessions/:sessionId/title", sessionController.renameTitle);
   app.patch("/api/sessions/:sessionId/archive", sessionController.updateArchiveState);
   app.patch("/api/sessions/:sessionId/favorite", sessionController.updateFavoriteState);
+  app.patch("/api/sessions/:sessionId/composer-settings", sessionController.updateComposerSettings);
   app.post("/api/sessions/:sessionId/forks", sessionController.fork);
   app.post("/api/sessions/:sessionId/messages", sessionController.sendMessage);
   app.post(

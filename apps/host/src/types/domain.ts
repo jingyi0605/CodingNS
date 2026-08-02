@@ -728,6 +728,7 @@ export interface SessionBinding {
   providerConfigMode: SessionProviderConfigMode;
   providerPresetId: string | null;
   runtimeHomeDir: string | null;
+  selectedModel?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1015,6 +1016,7 @@ export interface SessionListItem {
   rawStoreRef: string;
   providerConfigMode?: SessionProviderConfigMode;
   providerPresetId?: string | null;
+  selectedModel?: string | null;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;

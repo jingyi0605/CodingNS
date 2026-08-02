@@ -21,6 +21,7 @@ export class SessionBindingRepository {
          provider_config_mode,
          provider_preset_id,
          runtime_home_dir,
+         selected_model,
          created_at,
          updated_at
        FROM session_bindings
@@ -37,6 +38,7 @@ export class SessionBindingRepository {
          provider_config_mode,
          provider_preset_id,
          runtime_home_dir,
+         selected_model,
          created_at,
          updated_at
        FROM session_bindings
@@ -54,6 +56,7 @@ export class SessionBindingRepository {
          provider_config_mode,
          provider_preset_id,
          runtime_home_dir,
+         selected_model,
          created_at,
          updated_at
        FROM session_bindings
@@ -71,6 +74,7 @@ export class SessionBindingRepository {
          provider_config_mode,
          provider_preset_id,
          runtime_home_dir,
+         selected_model,
          created_at,
          updated_at
        FROM session_bindings
@@ -88,9 +92,10 @@ export class SessionBindingRepository {
          provider_config_mode,
          provider_preset_id,
          runtime_home_dir,
+         selected_model,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          user_id = COALESCE(excluded.user_id, session_bindings.user_id),
          workspace_id = excluded.workspace_id,
@@ -100,6 +105,7 @@ export class SessionBindingRepository {
          provider_config_mode = excluded.provider_config_mode,
          provider_preset_id = excluded.provider_preset_id,
          runtime_home_dir = excluded.runtime_home_dir,
+         selected_model = excluded.selected_model,
          updated_at = excluded.updated_at`
     );
   }
@@ -121,9 +127,10 @@ export class SessionBindingRepository {
            provider_session_id,
            raw_store_ref,
            provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
+         provider_preset_id,
+         runtime_home_dir,
+         selected_model,
+         created_at,
            updated_at
          FROM session_bindings
          WHERE session_id = ?
@@ -157,9 +164,10 @@ export class SessionBindingRepository {
            provider_session_id,
            raw_store_ref,
            provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
+         provider_preset_id,
+         runtime_home_dir,
+         selected_model,
+         created_at,
            updated_at
          FROM session_bindings
          WHERE provider = ?
@@ -194,9 +202,10 @@ export class SessionBindingRepository {
            provider_session_id,
            raw_store_ref,
            provider_config_mode,
-           provider_preset_id,
-           runtime_home_dir,
-           created_at,
+         provider_preset_id,
+         runtime_home_dir,
+         selected_model,
+         created_at,
            updated_at
          FROM session_bindings
          WHERE provider = ?
@@ -220,6 +229,7 @@ export class SessionBindingRepository {
         record.providerConfigMode,
         record.providerPresetId,
         record.runtimeHomeDir,
+        record.selectedModel ?? null,
         record.createdAt,
         record.updatedAt
       );
@@ -236,6 +246,7 @@ interface SessionBindingRow {
   provider_config_mode: SessionBinding["providerConfigMode"];
   provider_preset_id: string | null;
   runtime_home_dir: string | null;
+  selected_model: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -251,6 +262,7 @@ function mapSessionBindingRow(row: SessionBindingRow): SessionBinding {
     providerConfigMode: row.provider_config_mode,
     providerPresetId: row.provider_preset_id,
     runtimeHomeDir: row.runtime_home_dir,
+    selectedModel: row.selected_model,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
