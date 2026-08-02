@@ -6,8 +6,14 @@ const MAX_TERMINAL_COLS = 400;
 const MAX_TERMINAL_ROWS = 200;
 const MAX_TERMINAL_VIEWPORT_Y = 200_000;
 const MAX_TERMINAL_SNAPSHOT_CHARS = 120_000;
+const MAX_PERSISTED_TERMINAL_PAGE_CHARS = 750_000;
+const MAX_PERSISTED_WORKSPACE_RECORD_COUNT = 256;
+const MAX_PERSISTED_TERMINAL_CURSOR_COUNT = 512;
+const MAX_PERSISTED_TERMINAL_VIEW_STATE_COUNT = 12;
 const MIN_TERMINAL_ZOOM_SCALE = 0.7;
 const MAX_TERMINAL_ZOOM_SCALE = 2;
+
+type PersistTerminalPageStateResult = "success" | "quota_exceeded" | "failed";
 
 interface PersistedTerminalPageStateEnvelope {
   schemaVersion: number;
@@ -263,13 +269,126 @@ function updatePersistedTerminalPageState(
   const currentState = readRawPersistedTerminalPageState();
   const updatedAt = Date.now();
   const nextState = updater(currentState, updatedAt);
+  const compactedState = compactPersistedTerminalPageState(nextState);
+  const initialResult = tryPersistTerminalPageState(compactedState);
 
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      schemaVersion: STORAGE_SCHEMA_VERSION,
-      state: nextState
-    } satisfies PersistedTerminalPageStateEnvelope)
+  if (initialResult !== "quota_exceeded") {
+    return;
+  }
+
+  // localStorage 与应用内其他配置共用配额。超限时逐个淘汰最旧快照，
+  // 游标仍然保留，页面可以从 Host 继续补回终端输出。
+  const fallbackState: PersistedTerminalPageState = {
+    ...compactedState,
+    viewStateByTerminalId: {
+      ...compactedState.viewStateByTerminalId
+    }
+  };
+
+  for (const terminalId of listEnvelopeKeysByOldest(fallbackState.viewStateByTerminalId)) {
+    delete fallbackState.viewStateByTerminalId[terminalId];
+
+    const fallbackResult = tryPersistTerminalPageState(fallbackState);
+
+    if (fallbackResult !== "quota_exceeded") {
+      return;
+    }
+  }
+}
+
+function compactPersistedTerminalPageState(
+  state: PersistedTerminalPageState
+): PersistedTerminalPageState {
+  const compactedState: PersistedTerminalPageState = {
+    ...state,
+    activeTerminalIdByWorkspace: keepNewestEnvelopes(
+      state.activeTerminalIdByWorkspace,
+      MAX_PERSISTED_WORKSPACE_RECORD_COUNT
+    ),
+    pinnedTerminalIdsByWorkspace: keepNewestEnvelopes(
+      state.pinnedTerminalIdsByWorkspace,
+      MAX_PERSISTED_WORKSPACE_RECORD_COUNT
+    ),
+    cursorByTerminalId: keepNewestEnvelopes(
+      state.cursorByTerminalId,
+      MAX_PERSISTED_TERMINAL_CURSOR_COUNT
+    ),
+    viewStateByTerminalId: keepNewestEnvelopes(
+      state.viewStateByTerminalId,
+      MAX_PERSISTED_TERMINAL_VIEW_STATE_COUNT
+    )
+  };
+
+  for (const terminalId of listEnvelopeKeysByOldest(compactedState.viewStateByTerminalId)) {
+    if (serializePersistedTerminalPageState(compactedState).length <= MAX_PERSISTED_TERMINAL_PAGE_CHARS) {
+      break;
+    }
+
+    delete compactedState.viewStateByTerminalId[terminalId];
+  }
+
+  return compactedState;
+}
+
+function keepNewestEnvelopes<T>(
+  record: Record<string, PersistedValueEnvelope<T>>,
+  maxCount: number
+): Record<string, PersistedValueEnvelope<T>> {
+  const entries = Object.entries(record);
+
+  if (entries.length <= maxCount) {
+    return { ...record };
+  }
+
+  return Object.fromEntries(
+    entries
+      .map((entry, index) => ({ entry, index }))
+      .sort(
+        (left, right) =>
+          right.entry[1].updatedAt - left.entry[1].updatedAt || right.index - left.index
+      )
+      .slice(0, maxCount)
+      .map(({ entry }) => entry)
+  );
+}
+
+function listEnvelopeKeysByOldest<T>(
+  record: Record<string, PersistedValueEnvelope<T>>
+): string[] {
+  return Object.entries(record)
+    .map((entry, index) => ({ entry, index }))
+    .sort(
+      (left, right) =>
+        left.entry[1].updatedAt - right.entry[1].updatedAt || left.index - right.index
+    )
+    .map(({ entry: [key] }) => key);
+}
+
+function serializePersistedTerminalPageState(state: PersistedTerminalPageState): string {
+  return JSON.stringify({
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    state
+  } satisfies PersistedTerminalPageStateEnvelope);
+}
+
+function tryPersistTerminalPageState(
+  state: PersistedTerminalPageState
+): PersistTerminalPageStateResult {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, serializePersistedTerminalPageState(state));
+    return "success";
+  } catch (error) {
+    return isQuotaExceededError(error) ? "quota_exceeded" : "failed";
+  }
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === "QuotaExceededError" ||
+      error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+      error.code === 22 ||
+      error.code === 1014)
   );
 }
 

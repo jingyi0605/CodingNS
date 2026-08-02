@@ -132,4 +132,88 @@ describe("terminal page persistence", () => {
       viewState: null
     });
   });
+
+  it("会淘汰最旧的终端快照，避免 localStorage 无限增长", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 1;
+      return now;
+    });
+
+    for (let index = 1; index <= 16; index += 1) {
+      persistTerminalViewState(`terminal-${index}`, {
+        content: `snapshot-${index}`,
+        cursor: String(index),
+        cols: 120,
+        rows: 30,
+        viewportY: 0,
+        historyBeforeSeq: null,
+        historyHasOlder: false
+      });
+    }
+
+    const persistedState = readPersistedTerminalPageState();
+
+    expect(Object.keys(persistedState.viewStateByTerminalId)).toHaveLength(12);
+    expect(persistedState.viewStateByTerminalId["terminal-4"]).toBeUndefined();
+    expect(persistedState.viewStateByTerminalId["terminal-5"]?.content).toBe("snapshot-5");
+    expect(persistedState.viewStateByTerminalId["terminal-16"]?.content).toBe("snapshot-16");
+  });
+
+  it("会按序列化后的实际体积继续淘汰快照", () => {
+    for (let index = 1; index <= 4; index += 1) {
+      persistTerminalViewState(`terminal-large-${index}`, {
+        content: "\u0000".repeat(120_000),
+        cursor: String(index),
+        cols: 120,
+        rows: 30,
+        viewportY: 0,
+        historyBeforeSeq: null,
+        historyHasOlder: false
+      });
+    }
+
+    const serializedState = window.localStorage.getItem("codingns.user-app.terminal-page");
+
+    expect(serializedState?.length).toBeLessThanOrEqual(750_000);
+    expect(readPersistedTerminalViewState("terminal-large-1")).toBeNull();
+    expect(readPersistedTerminalViewState("terminal-large-4")).not.toBeNull();
+  });
+
+  it("localStorage 超配额时会丢弃快照并保留游标，不会抛出异常", () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let remainingQuotaFailures = 1;
+
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (remainingQuotaFailures > 0) {
+        remainingQuotaFailures -= 1;
+        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      }
+
+      originalSetItem.call(this, key, value);
+    });
+
+    expect(() =>
+      persistTerminalViewState("terminal-quota", {
+        content: "recoverable output",
+        cursor: "42",
+        cols: 120,
+        rows: 30,
+        viewportY: 0,
+        historyBeforeSeq: null,
+        historyHasOlder: false
+      })
+    ).not.toThrow();
+
+    expect(readPersistedTerminalViewState("terminal-quota")).toBeNull();
+    expect(readPersistedTerminalCursor("terminal-quota")).toBe("42");
+  });
+
+  it("localStorage 不可用时不会让终端操作崩溃", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage is disabled.", "SecurityError");
+    });
+
+    expect(() => persistTerminalCursor("terminal-disabled", "7")).not.toThrow();
+  });
 });
