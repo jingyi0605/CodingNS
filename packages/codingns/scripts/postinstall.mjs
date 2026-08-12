@@ -103,11 +103,19 @@ function verifyPtyRuntimeDependency() {
 
 
 async function ensureBetterSqliteRuntimeDependency() {
+  const installSpec = resolveBetterSqliteInstallSpec();
+  const isManagedWindowsRuntime = isWindowsManagedBetterSqliteInstallSpec(installSpec);
+
+  // npm 可能会先从 bundled dependency 或全局上级 node_modules 解析到一个
+  // 没有原生产物的 better-sqlite3。Windows Node 22 必须优先使用发布包自带的
+  // 受控二进制，不能把“能解析到 package.json”误认为运行时已经可用。
+  if (isManagedWindowsRuntime && !copyManagedBetterSqliteRuntime(installSpec)) {
+    return false;
+  }
+
   let packageJsonPath = resolveModuleExportFile("better-sqlite3", "package.json");
 
   if (!packageJsonPath) {
-    const installSpec = resolveBetterSqliteInstallSpec();
-
     if (!installSpec) {
       console.error(
         `[codingns] 未找到 SQLite 运行时依赖：better-sqlite3${betterSqliteRuntimeRange ? `（默认上游版本 ${betterSqliteRuntimeRange}）` : ""}`
@@ -121,11 +129,7 @@ async function ensureBetterSqliteRuntimeDependency() {
     }
 
     logInfo(`[codingns] 正在补装 SQLite 运行时依赖：${installSpec}`);
-    if (isWindowsManagedBetterSqliteInstallSpec(installSpec)) {
-      if (!copyManagedBetterSqliteRuntime(installSpec)) {
-        return false;
-      }
-    } else {
+    if (!isManagedWindowsRuntime) {
       const installResult = runNpmInstall([
         "install",
         "--no-save",
@@ -641,9 +645,28 @@ function copyManagedBetterSqliteRuntime(installSpec) {
   }
 
   const targetDirectory = path.join(packageRoot, "node_modules", "better-sqlite3");
-  fs.rmSync(targetDirectory, { recursive: true, force: true });
-  fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
-  fs.cpSync(sourceDirectory, targetDirectory, { recursive: true });
+  const targetBinaryPath = path.join(targetDirectory, "build", "Release", "better_sqlite3.node");
+
+  if (fs.existsSync(path.join(targetDirectory, "package.json")) && fs.existsSync(targetBinaryPath)) {
+    logInfo(`[codingns] SQLite 运行时依赖已存在：${targetDirectory}`);
+    return true;
+  }
+
+  try {
+    fs.rmSync(targetDirectory, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
+    fs.cpSync(sourceDirectory, targetDirectory, { recursive: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[codingns] Windows SQLite 受控包复制失败：${detail}`);
+    return false;
+  }
+
+  if (!fs.existsSync(targetBinaryPath)) {
+    console.error(`[codingns] Windows SQLite 受控包复制后仍缺少预编译产物：${targetBinaryPath}`);
+    return false;
+  }
+
   logInfo(`[codingns] SQLite 运行时依赖已复制到：${targetDirectory}`);
   return true;
 }

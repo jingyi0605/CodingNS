@@ -256,6 +256,27 @@ test("postinstall 的 npm 修复链路包含多个 registry 回退", () => {
   assert.match(source, /https:\/\/repo\.huaweicloud\.com\/repository\/npm\//);
 });
 
+test("Windows Node 22 会优先覆盖上级命中的 better-sqlite3", () => {
+  const source = fs.readFileSync(
+    path.join(workspaceRoot, "codingns", "scripts", "postinstall.mjs"),
+    "utf8"
+  );
+  const managedRuntimeCheck = source.indexOf(
+    "const isManagedWindowsRuntime = isWindowsManagedBetterSqliteInstallSpec(installSpec);"
+  );
+  const managedRuntimeCopy = source.indexOf(
+    "if (isManagedWindowsRuntime && !copyManagedBetterSqliteRuntime(installSpec))"
+  );
+  const moduleResolution = source.indexOf(
+    'let packageJsonPath = resolveModuleExportFile("better-sqlite3", "package.json");'
+  );
+
+  assert.ok(managedRuntimeCheck >= 0);
+  assert.ok(managedRuntimeCopy > managedRuntimeCheck);
+  assert.ok(moduleResolution > managedRuntimeCopy);
+  assert.match(source, /targetBinaryPath = path\.join\(targetDirectory, "build", "Release", "better_sqlite3\.node"\)/);
+});
+
 test("Codex 平台包优先使用 codex-package.json 声明的新版入口", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-codex-layout-"));
   const targetTriple = "aarch64-apple-darwin";
