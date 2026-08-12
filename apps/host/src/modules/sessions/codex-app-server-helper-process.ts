@@ -75,6 +75,13 @@ interface TransportRecord {
   activeTurnId: string | null;
 }
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 20_000;
+const CODEX_THREAD_LIST_SOURCE_KINDS = [
+  "cli",
+  "vscode",
+  "appServer",
+  "subAgent",
+  "subAgentThreadSpawn"
+] as const;
 
 const helperArgs = process.argv.slice(2);
 const rawCommandPath = readFlag(helperArgs, "--command-path");
@@ -728,7 +735,7 @@ async function listCodexThreads(
         sortKey: "updated_at",
         sortDirection: "desc",
         cwd: workspacePath,
-        sourceKinds: ["vscode", "appServer", "subAgent", "subAgentThreadSpawn"],
+        sourceKinds: [...CODEX_THREAD_LIST_SOURCE_KINDS],
         archived,
         ...(cursor ? { cursor } : {})
       }
@@ -791,7 +798,8 @@ function closeTransportForRecord(transport: TransportRecord, error: Error | null
 }
 
 export const __internal__ = {
-  buildCodexAppServerExitDetail
+  buildCodexAppServerExitDetail,
+  codexThreadListSourceKinds: CODEX_THREAD_LIST_SOURCE_KINDS
 };
 
 function emitResponse(transportId: string, requestId: string, result: Record<string, unknown>): void {
