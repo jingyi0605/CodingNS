@@ -161,7 +161,10 @@ export function MobileWorkspaceSwitcherHeader({
       if (item.kind === "host") {
         navigate(buildWorkspaceHomePath());
       } else if (item.scopedKey !== buildCurrentWorkspaceScopedKey(runtimeConfig.activeHostId, currentWorkspace?.id)) {
-        await onSelectWorkspace?.(item.workspace.id, item.workspaceRef);
+        await onSelectWorkspace?.(
+          item.workspace.id,
+          item.workspaceRef.hostId === "current" ? undefined : item.workspaceRef
+        );
       }
 
       setSwitcherOpen(false);

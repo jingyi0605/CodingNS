@@ -8,7 +8,8 @@ import {
 import {
   type ProviderId,
   type SessionSummaryDto,
-  type WorkspaceDto
+  type WorkspaceDto,
+  type WorkspaceRef
 } from "../../conversation/api/conversation-api";
 import {
   getButlerOverview,
@@ -127,6 +128,7 @@ export function WorkspaceHomePage() {
   const {
     navigationGroups,
     currentWorkspaceId,
+    currentWorkspaceRef,
     refreshNavigation,
     selectWorkspace,
     startDraftSession,
@@ -476,16 +478,16 @@ export function WorkspaceHomePage() {
 
   async function handleWorkspaceImported(workspace: WorkspaceDto) {
     await refreshNavigation();
-    selectWorkspace(workspace.id);
+    selectWorkspace(workspace.id, currentWorkspaceRef);
     setActionMode(null);
-    navigate(buildWorkspaceDetailPath(workspace.id));
+    navigate(buildWorkspaceDetailPath(workspace.id, currentWorkspaceRef));
   }
 
   async function handleWorkspaceCloned(workspace: WorkspaceDto) {
     await refreshNavigation();
-    selectWorkspace(workspace.id);
+    selectWorkspace(workspace.id, currentWorkspaceRef);
     setActionMode(null);
-    navigate(buildWorkspaceDetailPath(workspace.id));
+    navigate(buildWorkspaceDetailPath(workspace.id, currentWorkspaceRef));
   }
 
   function openCurrentWorkspaceGit() {
@@ -493,8 +495,8 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    selectWorkspace(currentWorkspace.id);
-    navigate(buildWorkspaceToolsPath(currentWorkspace.id, "git"));
+    selectWorkspace(currentWorkspace.id, currentWorkspaceRef);
+    navigate(buildWorkspaceToolsPath(currentWorkspace.id, "git", currentWorkspaceRef));
   }
 
   function openCurrentWorkspaceTerminals() {
@@ -502,8 +504,8 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    selectWorkspace(currentWorkspace.id);
-    navigate(buildWorkspaceTerminalsPath(currentWorkspace.id));
+    selectWorkspace(currentWorkspace.id, currentWorkspaceRef);
+    navigate(buildWorkspaceTerminalsPath(currentWorkspace.id, currentWorkspaceRef));
   }
 
   function openCurrentWorkspaceProcesses() {
@@ -511,8 +513,8 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    selectWorkspace(currentWorkspace.id);
-    navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id));
+    selectWorkspace(currentWorkspace.id, currentWorkspaceRef);
+    navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id, currentWorkspaceRef));
   }
 
   function openCurrentWorkspaceButler() {
@@ -520,8 +522,8 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    selectWorkspace(currentWorkspace.id);
-    navigate(buildWorkspaceButlerPath(currentWorkspace.id));
+    selectWorkspace(currentWorkspace.id, currentWorkspaceRef);
+    navigate(buildWorkspaceButlerPath(currentWorkspace.id, undefined, currentWorkspaceRef));
   }
 
   function openSessionIndex() {
@@ -529,7 +531,7 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    navigate(buildWorkspaceSessionIndexPath(currentWorkspace.id));
+    navigate(buildWorkspaceSessionIndexPath(currentWorkspace.id, currentWorkspaceRef));
   }
 
   function handleStartSession() {
@@ -550,11 +552,16 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    selectWorkspace(currentWorkspace.id);
-    navigate(buildWorkspaceDetailPath(currentWorkspace.id));
+    selectWorkspace(currentWorkspace.id, currentWorkspaceRef);
+    navigate(buildWorkspaceDetailPath(currentWorkspace.id, currentWorkspaceRef));
   }
 
-  function handleSelectWorkspace(workspaceId: string) {
+  function handleSelectWorkspace(workspaceId: string, workspaceRef?: WorkspaceRef) {
+    if (workspaceRef) {
+      selectWorkspace(workspaceId, workspaceRef);
+      return;
+    }
+
     selectWorkspace(workspaceId);
   }
 

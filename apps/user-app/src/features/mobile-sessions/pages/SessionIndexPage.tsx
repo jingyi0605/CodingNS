@@ -41,6 +41,7 @@ export function SessionIndexPage() {
   const {
     navigationGroups,
     favoriteSessionIds,
+    currentWorkspaceRef,
     currentWorkspaceId,
     currentSessionId,
     navigationLoading,
@@ -355,9 +356,9 @@ export function SessionIndexPage() {
         }
         workspaces={navigationGroups.map((group) => group.workspace)}
         workspaceOptions={workspaceOptions}
-        onSelectWorkspace={(workspaceId) => {
-          selectWorkspace(workspaceId);
-          navigate(buildWorkspaceSessionIndexPath(workspaceId));
+        onSelectWorkspace={(workspaceId, workspaceRef) => {
+          selectWorkspace(workspaceId, workspaceRef);
+          navigate(buildWorkspaceSessionIndexPath(workspaceId, workspaceRef));
         }}
         content={
           <button

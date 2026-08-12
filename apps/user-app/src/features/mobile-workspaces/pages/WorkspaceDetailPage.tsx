@@ -61,6 +61,7 @@ export function WorkspaceDetailPage() {
   const {
     navigationGroups,
     currentWorkspaceId,
+    currentWorkspaceRef,
     favoriteSessionIds,
     workspaceManagementStateById,
     selectWorkspace,
@@ -106,8 +107,8 @@ export function WorkspaceDetailPage() {
       return;
     }
 
-    selectWorkspace(workspaceId);
-  }, [selectWorkspace, workspaceId]);
+    selectWorkspace(workspaceId, currentWorkspaceRef);
+  }, [currentWorkspaceRef, selectWorkspace, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -265,9 +266,9 @@ export function WorkspaceDetailPage() {
         workspaceOptions={workspaceOptions}
         heading={t("shell.workspaceDetailTitle")}
         triggerLabel={workspaceSummary?.label ?? workspace.name}
-        onSelectWorkspace={(targetWorkspaceId) => {
-          selectWorkspace(targetWorkspaceId);
-          navigate(buildWorkspaceDetailPath(targetWorkspaceId));
+        onSelectWorkspace={(targetWorkspaceId, workspaceRef) => {
+          selectWorkspace(targetWorkspaceId, workspaceRef);
+          navigate(buildWorkspaceDetailPath(targetWorkspaceId, workspaceRef));
         }}
         content={
           <div className="mobile-workspace-detail-header-actions">
@@ -282,8 +283,8 @@ export function WorkspaceDetailPage() {
               type="button"
               className="secondary-button"
               onClick={() => {
-                selectWorkspace(workspace.id);
-                navigate(buildWorkspaceToolFilesPath(workspace.id));
+                selectWorkspace(workspace.id, currentWorkspaceRef);
+                navigate(buildWorkspaceToolFilesPath(workspace.id, currentWorkspaceRef));
               }}
             >
               {t("shell.filesEntry")}
@@ -292,8 +293,8 @@ export function WorkspaceDetailPage() {
               type="button"
               className="secondary-button"
               onClick={() => {
-                selectWorkspace(workspace.id);
-                navigate(buildWorkspaceTerminalsPath(workspace.id));
+                selectWorkspace(workspace.id, currentWorkspaceRef);
+                navigate(buildWorkspaceTerminalsPath(workspace.id, currentWorkspaceRef));
               }}
             >
               {t("shell.terminalsEntry")}
@@ -312,7 +313,7 @@ export function WorkspaceDetailPage() {
               <button
                 type="button"
                 className="secondary-button mobile-workspace-detail-switch-button"
-                onClick={() => selectWorkspace(workspace.id)}
+              onClick={() => selectWorkspace(workspace.id, currentWorkspaceRef)}
               >
                 {t("shell.switchWorkspace")}
               </button>
@@ -347,8 +348,8 @@ export function WorkspaceDetailPage() {
               type="button"
               className="secondary-button"
               onClick={() => {
-                selectWorkspace(workspace.id);
-                navigate(buildWorkspaceToolGitPath(workspace.id));
+                selectWorkspace(workspace.id, currentWorkspaceRef);
+                navigate(buildWorkspaceToolGitPath(workspace.id, currentWorkspaceRef));
               }}
             >
               {t("shell.gitEntry")}
@@ -357,8 +358,8 @@ export function WorkspaceDetailPage() {
               type="button"
               className="secondary-button"
               onClick={() => {
-                selectWorkspace(workspace.id);
-                navigate(buildWorkspaceToolProcessesPath(workspace.id));
+                selectWorkspace(workspace.id, currentWorkspaceRef);
+                navigate(buildWorkspaceToolProcessesPath(workspace.id, currentWorkspaceRef));
               }}
             >
               {t("shell.terminalManagerEntry")}
