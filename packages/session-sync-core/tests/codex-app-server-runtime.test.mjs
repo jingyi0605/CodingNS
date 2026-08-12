@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CodexAdapter } from "../dist/index.js";
-import { CodexRuntimeAdapter } from "../dist/runtime/codex-runtime.js";
+import { CodexRuntimeAdapter, createThreadOptions } from "../dist/runtime/codex-runtime.js";
 
 function createStableMessageId(providerSessionId, stableIdentity) {
   return createHash("sha1").update(`codex:${providerSessionId}:${stableIdentity}`).digest("hex");
@@ -37,6 +37,197 @@ function createRunRequest(overrides = {}) {
 function writeFakeCodexAppServer(scriptPath, source) {
   writeFileSync(scriptPath, source.trim(), "utf8");
 }
+
+test("Codex 运行时保留原生 app-server 的 max 思考级别", () => {
+  const options = createThreadOptions(createRunRequest({
+    options: {
+      ...createRunRequest().options,
+      reasoningLevel: "max"
+    }
+  }));
+
+  assert.equal(options.modelReasoningEffort, "max");
+});
+
+test("CodexRuntimeAdapter 对齐 Codex App 的 initialize 与 turn 元数据", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-contract-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-contract.jsonl").replace(/\\/g, "/");
+
+  writeFileSync(threadPath, "", "utf8");
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+function reject(msg, message) {
+  write({ jsonrpc: "2.0", id: msg.id, error: { message } });
+}
+function hasAppLaunchContract() {
+  const args = process.argv.slice(2);
+  return args.includes("features.code_mode_host=true")
+    && args.includes("app-server")
+    && args.includes("--analytics-default-enabled")
+    && process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === "Codex";
+}
+function hasProjectWorkspaceMetadata(params) {
+  return params?.responsesapiClientMetadata?.workspace_kind === "project";
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    if (!hasAppLaunchContract()) {
+      reject(msg, "CODEX_APP_LAUNCH_CONTRACT_MISSING");
+      return;
+    }
+    if (
+      msg.params?.clientInfo?.name !== "Codex Desktop"
+      || msg.params?.capabilities?.experimentalApi !== true
+    ) {
+      reject(msg, "CODEX_APP_INITIALIZE_CONTRACT_MISSING");
+      return;
+    }
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-contract",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    if (!hasProjectWorkspaceMetadata(msg.params)) {
+      reject(msg, "CODEX_APP_TURN_START_METADATA_MISSING");
+      return;
+    }
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-contract",
+        turn: { id: "turn-contract", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { turn: { id: "turn-contract", items: [], status: "inProgress" } }
+    });
+    return;
+  }
+  if (msg.method === "turn/steer") {
+    if (!hasProjectWorkspaceMetadata(msg.params)) {
+      reject(msg, "CODEX_APP_TURN_STEER_METADATA_MISSING");
+      return;
+    }
+    write({ jsonrpc: "2.0", id: msg.id, result: { turnId: "turn-contract" } });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-contract",
+        turnId: "turn-contract",
+        item: {
+          type: "agentMessage",
+          id: "assistant-contract",
+          text: "契约通过",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-contract",
+        turn: { id: "turn-contract", items: [], status: "completed" }
+      }
+    });
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  let launch = null;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+    launch = await adapter.startSession(createRunRequest(), {
+      async emit() {},
+      updateSessionBinding() {}
+    });
+
+    const steerOptions = {
+      ...createRunRequest().options,
+      content: "补充约束"
+    };
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        await launch.submitDuringRun(steerOptions);
+        lastError = null;
+        break;
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "SESSION_NOT_RUNNING") {
+          throw error;
+        }
+
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    await launch.completed;
+  } finally {
+    await launch?.interrupt?.();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 test("CodexRuntimeAdapter 通过 app-server 处理审批请求并继续完成 turn", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-"));
@@ -2553,6 +2744,120 @@ rl.on("line", (line) => {
     assert.match(toolResultEvent?.message.toolCall?.input ?? "", /^\*\*\* Begin Patch/m);
     assert.equal(toolResultEvent?.message.toolCall?.status, "failed");
     assert.equal(toolResultEvent?.message.toolCall?.error, warning);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 会把 dynamicToolCall 的 exec 补丁归一化成编辑工具", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-dynamic-exec-patch-"));
+  const threadId = "thread-dynamic-exec-patch";
+  const emitted = [];
+  const patchText = [
+    "*** Begin Patch",
+    "*** Update File: apps/user-app/src/main.ts",
+    "@@",
+    "-oldValue();",
+    "+newValue();",
+    "*** End Patch"
+  ].join("\n");
+  const toolInput = `const patch = ${JSON.stringify(patchText)}; await tools.apply_patch(patch);`;
+  let notificationHandler = null;
+  let closed = false;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return { providerSessionId: threadId, rawStoreRef: null };
+        },
+        async resumeThread() {
+          return { providerSessionId: threadId, rawStoreRef: null };
+        },
+        async resumeThreadFromHistory() {
+          return { providerSessionId: threadId, rawStoreRef: null };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/started",
+              params: {
+                threadId,
+                turnId: "turn-dynamic-exec-patch",
+                item: {
+                  type: "dynamicToolCall",
+                  id: "dynamic-exec-patch-1",
+                  tool: "exec",
+                  arguments: toolInput,
+                  status: "inProgress"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId,
+                turnId: "turn-dynamic-exec-patch",
+                item: {
+                  type: "dynamicToolCall",
+                  id: "dynamic-exec-patch-1",
+                  tool: "exec",
+                  arguments: toolInput,
+                  contentItems: "{}",
+                  status: "completed",
+                  success: true
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId,
+                turn: { id: "turn-dynamic-exec-patch", items: [], status: "completed" }
+              }
+            });
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-dynamic-exec-patch",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    const toolMessages = emitted
+      .filter((event) => event.type === "message" && event.message.role === "tool")
+      .map((event) => event.message);
+
+    assert.equal(toolMessages.length, 2);
+    assert.equal(toolMessages[0]?.toolCall?.name, "apply_patch");
+    assert.equal(toolMessages[1]?.toolCall?.name, "apply_patch");
+    assert.equal(toolMessages[0]?.toolCall?.input, patchText);
+    assert.equal(toolMessages[1]?.toolCall?.input, patchText);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

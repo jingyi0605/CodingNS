@@ -44,6 +44,7 @@ export interface ProviderModelOption {
   name: string;
   usesProviderDefault?: boolean;
   supportedReasoningEfforts?: string[];
+  defaultReasoningEffort?: string | null;
 }
 
 export interface ProviderCapabilities {

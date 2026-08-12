@@ -877,6 +877,7 @@ function extractCodexCommandEditPaths(value: string): string[] {
 
 function looksLikeCodexCommandEdit(value: string): boolean {
   return (
+    /\*\*\* Begin Patch[\s\S]*\*\*\* End Patch/.test(value) ||
     /\.write_(?:text|bytes)\s*\(/.test(value) ||
     /\bwriteFileSync\s*\(/.test(value) ||
     /\bcat\s+>\s*\S+/.test(value) ||

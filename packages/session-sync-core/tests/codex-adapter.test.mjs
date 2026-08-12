@@ -463,6 +463,62 @@ test("CodexAdapter 会把 Codex 新版命令式编辑脚本归一化成 apply_pa
   }
 });
 
+test("CodexAdapter 会把 custom_tool_call 的 exec 补丁归一化成 apply_patch", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-custom-exec-patch-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: src/runtime/codex-runtime.ts",
+    "@@",
+    "-const oldValue = true;",
+    "+const newValue = true;",
+    "*** End Patch"
+  ].join("\n");
+  const toolInput = `const patch = ${JSON.stringify(patch)}; await tools.apply_patch(patch);`;
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            call_id: "custom-exec-patch-1",
+            name: "exec",
+            input: toolInput,
+            status: "completed"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-12T10:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "custom-exec-patch-1",
+            output: "{}",
+            status: "completed"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("thread-custom-exec-patch", sessionFile, null, 50);
+    const toolMessages = page.messages.filter((message) => message.role === "tool");
+
+    assert.equal(toolMessages.length, 2);
+    assert.equal(toolMessages[0]?.toolCall?.name, "apply_patch");
+    assert.equal(toolMessages[1]?.toolCall?.name, "apply_patch");
+    assert.equal(toolMessages[0]?.toolCall?.input, patch);
+    assert.equal(toolMessages[1]?.toolCall?.input, patch);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 合并等价 assistant 记录时会保留 event_msg 提供的稳定 messageId", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-merged-stable-id-"));
   const sessionFile = join(tempDir, "session.jsonl");

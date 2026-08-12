@@ -27,6 +27,13 @@ import {
 } from "../patch-builder.js";
 import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 import { createCodexThreadPermissionOptions } from "./codex-permissions.js";
+import {
+  buildCodexAppServerArgs,
+  buildCodexAppServerNodeReplConfigOverrides,
+  buildCodexAppServerInitializeParams,
+  buildCodexAppServerRuntimeEnv,
+  buildCodexTurnRequestMetadata
+} from "./codex-app-server-contract.js";
 import type { NormalizedMessage, NormalizedToolCall, ProviderId } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
@@ -1784,13 +1791,17 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
 function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppServerTransport {
   const commandPath = resolveCodexCommand(options.commandPath);
-  const launch = resolveCodexCommandLaunch(commandPath, ["app-server"]);
-  const runtimeEnv = options.runtimeEnv ?? null;
+  const runtimeEnv = buildCodexAppServerRuntimeEnv({
+    baseEnv: options.runtimeEnv,
+    commandPath,
+    homeDir: options.homeDir
+  });
+  const launch = resolveCodexCommandLaunch(
+    commandPath,
+    buildCodexAppServerArgs(buildCodexAppServerNodeReplConfigOverrides(runtimeEnv))
+  );
   const child: ChildProcessWithoutNullStreams = spawn(launch.command, launch.args, {
-    env: {
-      ...process.env,
-      ...(runtimeEnv ?? {})
-    },
+    env: runtimeEnv,
     stdio: ["pipe", "pipe", "pipe"],
     shell: launch.shell,
     windowsHide: true
@@ -1928,13 +1939,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       const startedAtMs = performance.now();
       await sendJsonRpcRequest(child, pendingResponses, () => nextJsonRpcId("initialize", () => ++requestSequence), {
         method: "initialize",
-        params: {
-          clientInfo: {
-            name: "codingns-runtime",
-            version: "0.0.0"
-          },
-          capabilities: null
-        }
+        params: buildCodexAppServerInitializeParams(runtimeEnv)
       });
       writeJsonRpcMessage(child, {
         jsonrpc: "2.0",
@@ -3032,7 +3037,8 @@ function createTurnStartParams(
     threadId: providerSessionId,
     input: createCodexAppServerInput(request),
     cwd: request.workspacePath,
-    approvalsReviewer: "user"
+    approvalsReviewer: "user",
+    ...buildCodexTurnRequestMetadata()
   };
 
   if (permissionOptions.approvalPolicy) {
@@ -3064,7 +3070,8 @@ function createTurnSteerParams(
   return {
     threadId: providerSessionId,
     expectedTurnId: activeTurnId,
-    input: createCodexAppServerInputFromOptions(options)
+    input: createCodexAppServerInputFromOptions(options),
+    ...buildCodexTurnRequestMetadata()
   };
 }
 
@@ -3084,7 +3091,9 @@ function normalizeCodexReasoningEffort(value: string | null): string | null {
     normalized === "low" ||
     normalized === "medium" ||
     normalized === "high" ||
-    normalized === "xhigh"
+    normalized === "xhigh" ||
+    normalized === "max" ||
+    normalized === "ultra"
   ) {
     return normalized;
   }
@@ -4156,6 +4165,7 @@ function buildCodexFileChangeOutput(value: unknown): string {
 function isCodexExecCommandToolName(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return (
+    normalized === "exec" ||
     normalized === "exec_command" ||
     normalized === "shell_command" ||
     normalized === "command_execution"
