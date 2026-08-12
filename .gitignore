@@ -100,6 +100,7 @@ AGENTS.md
 apps/host/data/host/*
 apps/host/apps/host/*
 apps/host/runtime/
+packages/session-sync-core/runtime/
 /runtime/
 UsersjacksonAndroidSdk/
 apps/user-app/src-tauri/gen/apple/assets/index.html
