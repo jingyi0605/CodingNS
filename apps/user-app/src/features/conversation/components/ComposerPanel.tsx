@@ -195,6 +195,7 @@ type ModelOption = {
   provider: ProviderId;
   usesProviderDefault?: boolean;
   supportedReasoningEfforts?: ReasoningLevel[];
+  defaultReasoningEffort?: ReasoningLevel | null;
 };
 
 interface ComposerAttachment {
@@ -913,8 +914,15 @@ export function ComposerPanel({
       provider,
       supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
         (effort): effort is ReasoningLevel =>
-          effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh"
-      )
+          effort === "minimal"
+          || effort === "low"
+          || effort === "medium"
+          || effort === "high"
+          || effort === "xhigh"
+          || effort === "max"
+          || effort === "ultra"
+      ),
+      defaultReasoningEffort: normalizeModelReasoningLevel(model.defaultReasoningEffort)
     }));
 
     if (providerModels?.length) {
@@ -942,10 +950,13 @@ export function ComposerPanel({
   const slashMenuEnabled = shouldShowSlashMenu(capabilities);
   const reasoningLevelCatalog = useMemo(
     () => [
+      { value: "minimal" as const, label: t("conversation.reasoningMinimal") },
       { value: "low" as const, label: t("conversation.reasoningLow") },
       { value: "medium" as const, label: t("conversation.reasoningMedium") },
       { value: "high" as const, label: t("conversation.reasoningHigh") },
-      { value: "xhigh" as const, label: t("conversation.reasoningMaximum") }
+      { value: "xhigh" as const, label: t("conversation.reasoningExtraHigh") },
+      { value: "max" as const, label: t("conversation.reasoningMaximum") },
+      { value: "ultra" as const, label: t("conversation.reasoningUltra") }
     ],
     []
   );
@@ -956,7 +967,7 @@ export function ComposerPanel({
 
     const supportedEfforts = selectedModelOption?.supportedReasoningEfforts;
 
-    if (!supportedEfforts || supportedEfforts.length === 0) {
+    if (!supportedEfforts) {
       return reasoningLevelCatalog;
     }
 
@@ -1041,8 +1052,15 @@ export function ComposerPanel({
       provider: forkDraft.targetProvider,
       supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
         (effort): effort is ReasoningLevel =>
-          effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh"
-      )
+          effort === "minimal"
+          || effort === "low"
+          || effort === "medium"
+          || effort === "high"
+          || effort === "xhigh"
+          || effort === "max"
+          || effort === "ultra"
+      ),
+      defaultReasoningEffort: normalizeModelReasoningLevel(model.defaultReasoningEffort)
     }));
 
     if (providerModels?.length) {
@@ -1753,6 +1771,18 @@ export function ComposerPanel({
       return;
     }
 
+    const modelDefault = selectedModelOption?.defaultReasoningEffort;
+
+    if (
+      modelDefault &&
+      availableReasoningLevels.some((level) => level.value === modelDefault)
+    ) {
+      if (reasoningLevel !== modelDefault) {
+        setReasoningLevel(modelDefault);
+      }
+      return;
+    }
+
     if (availableReasoningLevels.some((level) => level.value === reasoningLevel)) {
       return;
     }
@@ -1764,7 +1794,8 @@ export function ComposerPanel({
     capabilities?.defaultReasoningLevel,
     provider,
     reasoningLevel,
-    accountPreferredReasoningLevel
+    accountPreferredReasoningLevel,
+    selectedModelOption?.defaultReasoningEffort
   ]);
 
   useEffect(() => {
@@ -3275,6 +3306,22 @@ function getContextUsageStateClassName(progress: number): string {
   }
 
   return "is-normal";
+}
+
+function normalizeModelReasoningLevel(value?: string | null): ReasoningLevel | null {
+  if (
+    value === "minimal"
+    || value === "low"
+    || value === "medium"
+    || value === "high"
+    || value === "xhigh"
+    || value === "max"
+    || value === "ultra"
+  ) {
+    return value;
+  }
+
+  return null;
 }
 
 function formatContextWindowSource(

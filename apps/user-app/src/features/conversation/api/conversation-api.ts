@@ -874,6 +874,7 @@ export interface ProviderModelOptionDto {
   name: string;
   usesProviderDefault?: boolean;
   supportedReasoningEfforts?: string[];
+  defaultReasoningEffort?: string | null;
 }
 
 export interface ImportWorkspacePayload {

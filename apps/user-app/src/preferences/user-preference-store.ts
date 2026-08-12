@@ -118,7 +118,15 @@ function normalizePermissionMode(value?: string | null): ClientPermissionMode | 
 }
 
 function normalizeReasoningLevel(value?: string | null): PreferenceReasoningLevel | null {
-  if (value === "low" || value === "medium" || value === "high" || value === "xhigh") {
+  if (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max" ||
+    value === "ultra"
+  ) {
     return value;
   }
 

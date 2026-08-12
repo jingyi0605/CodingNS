@@ -200,6 +200,7 @@ function createCapabilities(options?: {
     name: string;
     usesProviderDefault?: boolean;
     supportedReasoningEfforts?: string[];
+    defaultReasoningEffort?: string | null;
   }>;
   defaultReasoningLevel?: string | null;
 }): ProviderCapabilitiesDto {
@@ -255,7 +256,12 @@ function createCapabilities(options?: {
               }
             ]
         : undefined),
-    defaultReasoningLevel: options?.defaultReasoningLevel ?? (provider === "codex" ? "high" : undefined),
+    defaultReasoningLevel:
+      options && Object.prototype.hasOwnProperty.call(options, "defaultReasoningLevel")
+        ? options.defaultReasoningLevel
+        : provider === "codex"
+          ? "high"
+          : undefined,
     limitations: []
   };
 }
@@ -1265,6 +1271,42 @@ describe("ComposerPanel", () => {
           fileSize: 4
         })
       ]
+    }));
+  });
+
+  it("未设置账户或 Codex 配置时会使用当前模型声明的默认思考级别", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          defaultReasoningLevel: null,
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型",
+              usesProviderDefault: true,
+              supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+              defaultReasoningEffort: "low"
+            }
+          ]
+        })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "使用模型默认思考级别" }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("使用模型默认思考级别", expect.objectContaining({
+      model: undefined,
+      reasoningLevel: "low"
     }));
   });
 

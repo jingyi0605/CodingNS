@@ -8,7 +8,7 @@ export type PreferenceProviderId =
   | "gemini"
   | "kimi";
 export type PreferenceThemeId = "light" | "dark" | "sky-blue" | "eye-green";
-export type PreferenceReasoningLevel = "low" | "medium" | "high" | "xhigh";
+export type PreferenceReasoningLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type DebugPortPoolRole = "frontend" | "backend" | "worker" | "mock" | "custom";
 
 export interface DebugPortPoolRange {

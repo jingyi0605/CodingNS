@@ -2893,13 +2893,64 @@ function mergeTimelineBridgeToolCall(
   }
 
   const preferred = pickTimelineBridgeHigherPriorityToolCall(current, incoming);
+  const preferredName = pickTimelineBridgePreferredToolCallName(current, incoming, preferred);
+  const preferredInput = pickTimelineBridgePreferredToolCallInput(current, incoming, preferredName);
 
   return {
     ...preferred,
-    input: pickTimelineBridgeLongerText(current.input, incoming.input),
+    name: preferredName,
+    input: preferredInput,
     output: pickTimelineBridgeLongerNullableText(current.output, incoming.output),
     error: pickTimelineBridgeLongerNullableText(current.error, incoming.error)
   };
+}
+
+function pickTimelineBridgePreferredToolCallName(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>,
+  preferred: NonNullable<SessionMessageViewModel["toolCall"]>
+): string {
+  const currentName = current.name.trim().toLowerCase();
+  const incomingName = incoming.name.trim().toLowerCase();
+
+  if (currentName === "apply_patch" || incomingName === "apply_patch") {
+    return "apply_patch";
+  }
+
+  if (!currentName || currentName === "tool") {
+    return incoming.name;
+  }
+
+  if (!incomingName || incomingName === "tool") {
+    return current.name;
+  }
+
+  return preferred.name;
+}
+
+function pickTimelineBridgePreferredToolCallInput(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>,
+  preferredName: string
+): string {
+  if (preferredName === "apply_patch") {
+    const currentIsApplyPatch = current.name.trim().toLowerCase() === "apply_patch";
+    const incomingIsApplyPatch = incoming.name.trim().toLowerCase() === "apply_patch";
+
+    if (currentIsApplyPatch && incomingIsApplyPatch) {
+      return pickTimelineBridgeLongerText(current.input, incoming.input);
+    }
+
+    if (currentIsApplyPatch && current.input) {
+      return current.input;
+    }
+
+    if (incomingIsApplyPatch && incoming.input) {
+      return incoming.input;
+    }
+  }
+
+  return pickTimelineBridgeLongerText(current.input, incoming.input);
 }
 
 function pickTimelineBridgeHigherPriorityToolCall(

@@ -1203,6 +1203,71 @@ describe("session runtime machine", () => {
     expect(merged[0].toolCall?.callId).toBe("tool-call-1");
   });
 
+  it("Codex 等价工具消息换了 messageId 后仍保留 apply_patch 的编辑输入", () => {
+    const patchInput = "*** Begin Patch\n*** Update File: styles.css\n@@\n-old\n+new\n*** End Patch";
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-runtime-apply-patch",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "tool",
+            kind: "tool_call",
+            content: patchInput,
+            timestamp: "2026-08-12T10:00:00.000Z",
+            sequence: 20,
+            rawRef: "codex://demo#line=20",
+            toolCall: {
+              callId: "call-apply-patch-1",
+              name: "apply_patch",
+              input: patchInput,
+              output: null,
+              error: null,
+              status: "running"
+            }
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-history-command-execution",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "[tool result]",
+          timestamp: "2026-08-12T10:00:01.000Z",
+          sequence: 21,
+          rawRef: "codex://demo#line=21",
+          toolCall: {
+            callId: "call-apply-patch-1",
+            name: "command_execution",
+            input: "{\"cmd\":\"apply_patch\"}",
+            output: "[tool result]",
+            error: null,
+            status: "completed"
+          }
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "codex-history-command-execution",
+      kind: "tool_result"
+    });
+    expect(merged[0]?.toolCall).toMatchObject({
+      callId: "call-apply-patch-1",
+      name: "apply_patch",
+      input: patchInput,
+      output: "[tool result]",
+      status: "completed"
+    });
+  });
+
   it("不会把相隔太久的相同 codex assistant 文案误替换成同一条消息", () => {
     const merged = mergeAuthoritativeMessages(
       [

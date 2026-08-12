@@ -270,7 +270,7 @@ export function mergeAuthoritativeMessages(
       const equivalentCodexMessage = nextById.get(equivalentCodexMessageId) ?? null;
 
       if (equivalentCodexMessage) {
-        const mergedEquivalentMessage = mergeAuthoritativeVersion(
+        const mergedEquivalentMessage = mergeCodexEquivalentAuthoritativeVersion(
           equivalentCodexMessage,
           nextMessage
         );
@@ -281,7 +281,7 @@ export function mergeAuthoritativeMessages(
           merged: summarizeMessageForDebug(mergedEquivalentMessage)
         });
         nextById.delete(equivalentCodexMessageId);
-        nextById.set(message.messageId, mergedEquivalentMessage);
+        nextById.set(nextMessage.id, mergedEquivalentMessage);
         continue;
       }
     }
@@ -1181,6 +1181,17 @@ function mergeEquivalentAuthoritativeVersion(
   };
 }
 
+function mergeCodexEquivalentAuthoritativeVersion(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  return {
+    ...mergeEquivalentAuthoritativeVersion(current, incoming),
+    // 历史回填是稳定来源，采用它的 messageId，避免 runtime 临时 ID 留在权威层。
+    id: incoming.id
+  };
+}
+
 function isEquivalentToolLifecycleMessage(
   current: SessionMessageViewModel,
   incoming: SessionMessageViewModel
@@ -1612,13 +1623,64 @@ function mergeToolCall(
   }
 
   const preferred = pickHigherPriorityToolCall(current, incoming);
+  const preferredName = pickPreferredToolCallName(current, incoming, preferred);
+  const preferredInput = pickPreferredToolCallInput(current, incoming, preferredName);
 
   return {
     ...preferred,
-    input: pickLongerText(current.input, incoming.input),
+    name: preferredName,
+    input: preferredInput,
     output: pickLongerNullableText(current.output, incoming.output),
     error: pickLongerNullableText(current.error, incoming.error)
   };
+}
+
+function pickPreferredToolCallName(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>,
+  preferred: NonNullable<SessionMessageViewModel["toolCall"]>
+): string {
+  const currentName = current.name.trim().toLowerCase();
+  const incomingName = incoming.name.trim().toLowerCase();
+
+  if (currentName === "apply_patch" || incomingName === "apply_patch") {
+    return "apply_patch";
+  }
+
+  if (!currentName || currentName === "tool") {
+    return incoming.name;
+  }
+
+  if (!incomingName || incomingName === "tool") {
+    return current.name;
+  }
+
+  return preferred.name;
+}
+
+function pickPreferredToolCallInput(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>,
+  preferredName: string
+): string {
+  if (preferredName === "apply_patch") {
+    const currentIsApplyPatch = current.name.trim().toLowerCase() === "apply_patch";
+    const incomingIsApplyPatch = incoming.name.trim().toLowerCase() === "apply_patch";
+
+    if (currentIsApplyPatch && incomingIsApplyPatch) {
+      return pickLongerText(current.input, incoming.input);
+    }
+
+    if (currentIsApplyPatch && current.input) {
+      return current.input;
+    }
+
+    if (incomingIsApplyPatch && incoming.input) {
+      return incoming.input;
+    }
+  }
+
+  return pickLongerText(current.input, incoming.input);
 }
 
 function pickHigherPriorityToolCall(
