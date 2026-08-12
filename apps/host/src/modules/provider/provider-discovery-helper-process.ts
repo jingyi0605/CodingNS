@@ -4,6 +4,12 @@ import readline, { createInterface } from "node:readline";
 import {
   type ProviderSessionSummary
 } from "@codingns/session-sync-core";
+import {
+  buildCodexAppServerArgs,
+  buildCodexAppServerInitializeParams,
+  buildCodexAppServerNodeReplConfigOverrides,
+  buildCodexAppServerRuntimeEnv
+} from "@codingns/session-sync-core";
 
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 import type { ProviderSessionDiscoveryHelperConfig } from "./provider-discovery-helper-client.js";
@@ -18,6 +24,8 @@ type HelperRequest =
       type: "codex_app_server_state";
       commandPath: string;
       timeoutMs: number;
+      homeDir?: string | null;
+      runtimeEnv?: Record<string, string> | null;
     }
   | {
       id: string;
@@ -95,6 +103,8 @@ async function handleLine(line: string): Promise<void> {
         const result = await readCodexAppServerState(
           payload.commandPath,
           payload.timeoutMs,
+          payload.homeDir,
+          payload.runtimeEnv,
           controller.signal
         );
         emitResult(payload.id, result);
@@ -213,6 +223,8 @@ function clearIdleExitTimer(): void {
 async function readCodexAppServerState(
   commandPath: string,
   timeoutMs: number,
+  homeDir?: string | null,
+  runtimeEnv?: Record<string, string> | null,
   signal?: AbortSignal
 ): Promise<{
   config: {
@@ -227,9 +239,18 @@ async function readCodexAppServerState(
       return;
     }
 
-    const launch = resolveCommandLaunch(commandPath, ["app-server"]);
+    const configuredHomeDir = homeDir?.trim() ?? "";
+    const launchEnv = buildCodexAppServerRuntimeEnv({
+      baseEnv: runtimeEnv,
+      commandPath,
+      homeDir: configuredHomeDir
+    });
+    const launch = resolveCommandLaunch(
+      commandPath,
+      buildCodexAppServerArgs(buildCodexAppServerNodeReplConfigOverrides(launchEnv))
+    );
     const child = spawn(launch.command, launch.args, {
-      env: process.env,
+      env: launchEnv,
       stdio: ["pipe", "pipe", "pipe"],
       shell: launch.shell,
       windowsHide: true
@@ -371,11 +392,7 @@ async function readCodexAppServerState(
         id: "initialize",
         method: "initialize",
         params: {
-          clientInfo: {
-            name: "codingns-host",
-            version: "0.0.0"
-          },
-          capabilities: null
+          ...buildCodexAppServerInitializeParams(launchEnv)
         }
       },
       {

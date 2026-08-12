@@ -18,6 +18,7 @@ import {
   mergeClaudeConfiguredModels,
   type ClaudeModelDiscoverySnapshot
 } from "../provider/claude-model-options.js";
+import { CodexModelOptionsService } from "../provider/codex-model-options.js";
 import { HOST_TASK_TYPES } from "../tasks/task-types.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import type {
@@ -131,7 +132,8 @@ export class SessionProviderConfigService {
     private readonly ccSwitchAdapter: CcSwitchAdapter,
     private readonly workspaceSessionRuntimeContextService?: WorkspaceSessionRuntimeContextPort,
     private readonly claudeModelOptionsService: Pick<ClaudeModelOptionsService, "readSnapshot"> | null = null,
-    private readonly taskManager: TaskManager | null = null
+    private readonly taskManager: TaskManager | null = null,
+    private readonly codexModelOptionsService: Pick<CodexModelOptionsService, "readSnapshot"> | null = null
   ) {
     this.registerClaudeModelDiscoveryTask();
   }
@@ -347,7 +349,11 @@ export class SessionProviderConfigService {
           preset.settingsConfig
         );
       case "codex":
-        return buildCodexPresetCapabilities(input.baseCapabilities, preset.settingsConfig);
+        return await this.resolveCodexPresetCapabilities(
+          input.baseCapabilities,
+          preset,
+          preset.settingsConfig
+        );
       case "gemini":
         return buildGeminiPresetCapabilities(input.baseCapabilities, preset.settingsConfig);
       default:
@@ -434,6 +440,53 @@ export class SessionProviderConfigService {
           new Set([
             ...fallback.limitations,
             "当前配置无法读取 Claude Code 完整模型列表，暂时显示配置中声明的模型。"
+          ])
+        )
+      };
+    }
+  }
+
+  private async resolveCodexPresetCapabilities(
+    baseCapabilities: ProviderCapabilities,
+    preset: ModelPresetRuntimeConfigDto,
+    settingsConfig: Record<string, unknown>
+  ): Promise<ProviderCapabilities> {
+    const fallback = buildCodexPresetCapabilities(baseCapabilities, settingsConfig);
+    const modelOptionsService = this.codexModelOptionsService;
+
+    if (!modelOptionsService) {
+      return fallback;
+    }
+
+    const fingerprint = buildCodexPresetCapabilityFingerprint(preset.id, settingsConfig);
+    const runtimeHomeDir = path.join(
+      path.dirname(this.config.databasePath),
+      "provider-capability-runtime",
+      "codex",
+      fingerprint
+    );
+    const runtimeEnv = normalizeRuntimeEnv(settingsConfig);
+
+    try {
+      this.materializeRuntimeHome("codex", runtimeHomeDir, preset);
+      const snapshot = await modelOptionsService.readSnapshot({
+        homeDir: runtimeHomeDir,
+        runtimeEnv,
+        cacheKey: fingerprint
+      });
+
+      return {
+        ...baseCapabilities,
+        modelOptions: snapshot.modelOptions,
+        defaultReasoningLevel: snapshot.defaultReasoningLevel
+      };
+    } catch {
+      return {
+        ...fallback,
+        limitations: Array.from(
+          new Set([
+            ...fallback.limitations,
+            "当前配置无法读取该 Codex preset 的真实模型列表，暂时显示配置中声明的模型。"
           ])
         )
       };
@@ -1093,6 +1146,19 @@ function buildClaudePresetCapabilityCacheKey(
   return `claude-code::preset::${presetId}::${fingerprint}`;
 }
 
+function buildCodexPresetCapabilityFingerprint(
+  presetId: string,
+  settingsConfig: Record<string, unknown>
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      presetId,
+      settingsConfig
+    }))
+    .digest("hex")
+    .slice(0, 24);
+}
+
 function readTomlStringValue(content: string, key: string): string | null {
   const matcher = new RegExp(`(^|\\n)\\s*${escapeRegExp(key)}\\s*=\\s*["']([^"']+)["']`, "i");
   const match = matcher.exec(content);
@@ -1111,7 +1177,15 @@ function resolveGeminiPresetModel(settingsConfig: Record<string, unknown>): stri
 }
 
 function normalizeReasoningLevel(value: string | null): string | null {
-  if (value === "low" || value === "medium" || value === "high" || value === "xhigh") {
+  if (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max" ||
+    value === "ultra"
+  ) {
     return value;
   }
 

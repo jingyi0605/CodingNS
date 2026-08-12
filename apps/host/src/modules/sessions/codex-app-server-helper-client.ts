@@ -10,6 +10,7 @@ import type {
   ProviderRuntimeRunRequest,
   RuntimeSendOptions
 } from "@codingns/session-sync-core";
+import { buildCodexAppServerRuntimeEnv } from "@codingns/session-sync-core";
 
 type HelperToParentMessage =
   | {
@@ -119,27 +120,11 @@ export class CodexAppServerHelperClient {
 
   constructor(commandPath: string, options: CodexAppServerHelperClientOptions = {}) {
     const launch = resolveHelperLaunch(commandPath);
-    const helperEnv = {
-      ...process.env
-    };
-    const configuredHomeDir = options.homeDir?.trim();
-    const configuredRuntimeEnv = options.runtimeEnv ?? null;
-
-    if (configuredHomeDir) {
-      helperEnv.CODINGNS_CODEX_HOME = configuredHomeDir;
-      helperEnv.CODEX_HOME = configuredHomeDir;
-    }
-    if (configuredRuntimeEnv) {
-      for (const [key, value] of Object.entries(configuredRuntimeEnv)) {
-        const normalizedKey = key.trim();
-
-        if (!normalizedKey) {
-          continue;
-        }
-
-        helperEnv[normalizedKey] = String(value);
-      }
-    }
+    const helperEnv = buildCodexAppServerRuntimeEnv({
+      baseEnv: options.runtimeEnv,
+      commandPath,
+      homeDir: options.homeDir
+    });
     this.requestTimeoutMs = Math.max(1, Math.floor(options.requestTimeoutMs ?? 20_000));
 
     this.child = spawn(launch.command, launch.args, {

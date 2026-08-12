@@ -20,7 +20,8 @@ describe("workspace-office-mcp-config", () => {
       WORKSPACE_SESSION_ASSISTANT_FILE: "/tmp/WORKSPACE_SESSION_COMPOSED.md"
     });
 
-    expect(args[0]).toBe("app-server");
+    expect(args).toContain("app-server");
+    expect(args).toContain("features.code_mode_host=true");
     expect(args).toContain("-c");
     expect(args).toContain(
       "mcp_servers.codingns-workspace-office.command="
@@ -43,7 +44,10 @@ describe("workspace-office-mcp-config", () => {
       [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: "/tmp/workspace-auth.json"
     });
 
-    expect(args).toEqual(["app-server"]);
+    expect(args).toContain("app-server");
+    expect(args).toContain("features.code_mode_host=true");
+    expect(args.some((arg) => arg.startsWith("mcp_servers.node_repl.command="))).toBe(true);
+    expect(args).not.toContain("mcp_servers.codingns-workspace-office.startup_timeout_sec=90");
   });
 
   it("会生成可直接传给 `codex app-server -c` 的覆盖项", () => {

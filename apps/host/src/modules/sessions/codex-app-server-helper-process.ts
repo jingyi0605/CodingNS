@@ -2,6 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
 import type { ProviderRuntimeRunRequest, RuntimeSendOptions } from "@codingns/session-sync-core";
+import {
+  buildCodexAppServerInitializeParams,
+  buildCodexAppServerRuntimeEnv,
+  buildCodexTurnRequestMetadata
+} from "@codingns/session-sync-core";
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 import {
   buildCodexAppServerArgsWithWorkspaceOfficeMcp
@@ -160,13 +165,12 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
         await sendJsonRpcRequest(transport, {
           method: "initialize",
           params: {
-            clientInfo: {
-              name: "codingns-runtime-helper",
-              version: "0.0.0"
-            },
-            capabilities: {
-              experimentalApi: true
-            }
+            ...buildCodexAppServerInitializeParams(
+              buildCodexAppServerRuntimeEnv({
+                commandPath,
+                homeDir: process.env.CODEX_HOME
+              })
+            )
           }
         });
         writeJsonRpcMessage(transport.child, {
@@ -481,9 +485,13 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
 }
 
 function createTransportRecord(commandPath: string): TransportRecord {
-  const launch = resolveCommandLaunch(commandPath, buildCodexAppServerArgsWithWorkspaceOfficeMcp(process.env));
+  const runtimeEnv = buildCodexAppServerRuntimeEnv({
+    commandPath,
+    homeDir: process.env.CODEX_HOME
+  });
+  const launch = resolveCommandLaunch(commandPath, buildCodexAppServerArgsWithWorkspaceOfficeMcp(runtimeEnv));
   const child = spawn(launch.command, launch.args, {
-    env: process.env,
+    env: runtimeEnv,
     stdio: ["pipe", "pipe", "pipe"],
     shell: launch.shell,
     windowsHide: true
@@ -948,7 +956,8 @@ function createTurnStartParams(
     threadId: providerSessionId,
     input: createCodexAppServerInput(request),
     cwd: request.workspacePath,
-    approvalsReviewer: "user"
+    approvalsReviewer: "user",
+    ...buildCodexTurnRequestMetadata()
   };
 
   if (permissionOptions.approvalPolicy) {
@@ -980,7 +989,8 @@ function createTurnSteerParams(
   return {
     threadId: providerSessionId,
     expectedTurnId: activeTurnId,
-    input: createCodexAppServerInputFromOptions(options)
+    input: createCodexAppServerInputFromOptions(options),
+    ...buildCodexTurnRequestMetadata()
   };
 }
 
@@ -1102,7 +1112,9 @@ function normalizeCodexReasoningEffort(value: string | null): string | null {
     normalized === "low" ||
     normalized === "medium" ||
     normalized === "high" ||
-    normalized === "xhigh"
+    normalized === "xhigh" ||
+    normalized === "max" ||
+    normalized === "ultra"
   ) {
     return normalized;
   }

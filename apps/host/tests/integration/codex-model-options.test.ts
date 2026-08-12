@@ -66,8 +66,11 @@ rl.on("line", (line) => {
               { reasoningEffort: "low" },
               { reasoningEffort: "medium" },
               { reasoningEffort: "high" },
-              { reasoningEffort: "xhigh" }
-            ]
+              { reasoningEffort: "xhigh" },
+              { reasoningEffort: "max" },
+              { reasoningEffort: "ultra" }
+            ],
+            defaultReasoningEffort: "medium"
           },
           {
             model: "gpt-5.2-codex",
@@ -167,7 +170,8 @@ rl.on("line", (line) => {
           id: "provider-default",
           name: "跟随 CLI 默认模型",
           usesProviderDefault: true,
-          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+          defaultReasoningEffort: "medium"
         },
         {
           id: "gpt-5.3-codex",
@@ -177,7 +181,8 @@ rl.on("line", (line) => {
         {
           id: "gpt-5.4",
           name: "gpt-5.4",
-          supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+          supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+          defaultReasoningEffort: "medium"
         },
         {
           id: "gpt-5.2-codex",
@@ -301,6 +306,94 @@ rl.on("line", (line) => {
           supportedReasoningEfforts: ["low", "medium", "high"]
         }
       ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("按指定 runtime home 和环境变量读取 Codex preset 的模型列表", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "codingns-codex-runtime-home-"));
+    const commandPath = path.join(root, "codex-runtime-home-mock.js");
+    const firstHomeDir = path.join(root, "preset-one-home");
+    const secondHomeDir = path.join(root, "preset-two-home");
+
+    writeFileSync(
+      commandPath,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+const suffix = process.env.OPENAI_API_KEY === "preset-two-token" ? "two" : "one";
+const home = process.env.CODEX_HOME || process.env.CODINGNS_CODEX_HOME || "missing";
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
+    return;
+  }
+  if (request.method === "config/read") {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      result: {
+        config: {
+          model: home.endsWith("preset-two-home") ? "preset-two-config" : "preset-one-config",
+          model_reasoning_effort: suffix === "two" ? "max" : "high"
+        }
+      }
+    }) + "\\n");
+    return;
+  }
+  if (request.method === "model/list") {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      result: {
+        data: [
+          {
+            model: "runtime-model-" + suffix,
+            displayName: "Runtime " + suffix,
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "high" },
+              { reasoningEffort: "max" }
+            ]
+          }
+        ]
+      }
+    }) + "\\n");
+  }
+});
+`,
+      "utf8"
+    );
+
+    try {
+      const service = new CodexModelOptionsService({
+        commandPath
+      });
+      const first = await service.readSnapshot({
+        homeDir: firstHomeDir,
+        runtimeEnv: {
+          OPENAI_API_KEY: "preset-one-token"
+        }
+      });
+      const second = await service.readSnapshot({
+        homeDir: secondHomeDir,
+        runtimeEnv: {
+          OPENAI_API_KEY: "preset-two-token"
+        }
+      });
+
+      expect(first.modelOptions.map((model) => model.id)).toEqual([
+        "provider-default",
+        "preset-one-config",
+        "runtime-model-one"
+      ]);
+      expect(first.defaultReasoningLevel).toBe("high");
+      expect(second.modelOptions.map((model) => model.id)).toEqual([
+        "provider-default",
+        "preset-two-config",
+        "runtime-model-two"
+      ]);
+      expect(second.defaultReasoningLevel).toBe("max");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

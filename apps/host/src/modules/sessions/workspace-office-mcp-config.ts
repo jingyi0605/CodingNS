@@ -1,6 +1,12 @@
 import path from "node:path";
 import fs from "node:fs";
 
+import {
+  buildCodexAppServerArgs,
+  buildCodexAppServerNodeReplConfigOverrides,
+  buildCodexAppServerRuntimeEnv
+} from "@codingns/session-sync-core";
+
 export const WORKSPACE_OFFICE_MCP_NAME = "codingns-workspace-office";
 export const CODINGNS_OFFICE_MCP_AUTH_FILE_ENV = "CODINGNS_OFFICE_MCP_AUTH_FILE";
 export const CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV = "CODINGNS_CODEX_ENABLE_WORKSPACE_OFFICE_MCP";
@@ -115,27 +121,26 @@ export function shouldEnableCodexWorkspaceOfficeMcp(env: NodeJS.ProcessEnv): boo
 export function buildCodexAppServerArgsWithWorkspaceOfficeMcp(
   env: NodeJS.ProcessEnv
 ): string[] {
-  const baseArgs = ["app-server"];
-
-  if (!shouldEnableCodexWorkspaceOfficeMcp(env)) {
-    return baseArgs;
-  }
-
-  const authFilePath = (env[CODINGNS_OFFICE_MCP_AUTH_FILE_ENV] ?? "").trim();
-  const instructionFilePath = (env.WORKSPACE_SESSION_ASSISTANT_FILE ?? "").trim();
-
-  if (!authFilePath) {
-    return baseArgs;
-  }
-
-  const overrides = buildCodexWorkspaceOfficeMcpConfigOverrides({
-    authFilePath,
-    instructionFilePath: instructionFilePath || null
+  const runtimeEnv = buildCodexAppServerRuntimeEnv({
+    baseEnv: env,
+    commandPath: env.CODEX_CLI_PATH,
+    homeDir: env.CODEX_HOME
   });
+  const overrides = buildCodexAppServerNodeReplConfigOverrides(runtimeEnv);
 
-  for (const override of overrides) {
-    baseArgs.push("-c", override);
+  if (shouldEnableCodexWorkspaceOfficeMcp(runtimeEnv)) {
+    const authFilePath = (runtimeEnv[CODINGNS_OFFICE_MCP_AUTH_FILE_ENV] ?? "").trim();
+    const instructionFilePath = (runtimeEnv.WORKSPACE_SESSION_ASSISTANT_FILE ?? "").trim();
+
+    if (authFilePath) {
+      overrides.push(
+        ...buildCodexWorkspaceOfficeMcpConfigOverrides({
+          authFilePath,
+          instructionFilePath: instructionFilePath || null
+        })
+      );
+    }
   }
 
-  return baseArgs;
+  return buildCodexAppServerArgs(overrides);
 }

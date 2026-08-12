@@ -48,6 +48,8 @@ export class ProviderDiscoveryHelperClient {
   async readCodexAppServerState(input: {
     commandPath: string;
     timeoutMs: number;
+    homeDir?: string | null;
+    runtimeEnv?: Record<string, string> | null;
   }, signal?: AbortSignal): Promise<{
     config: {
       model: string | null;

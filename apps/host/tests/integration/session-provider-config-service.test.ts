@@ -778,6 +778,208 @@ describe("SessionProviderConfigService", () => {
     ]);
     expect(readSnapshot).toHaveBeenCalledTimes(3);
   });
+
+  it("Codex 多配置会基于各自 runtime home 探测真实模型列表和默认思考级别", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "codingns-codex-preset-models-"));
+    tempDirs.push(rootDir);
+
+    const codexHomeDir = path.join(rootDir, ".codex");
+    mkdirSync(codexHomeDir, { recursive: true });
+    writeFileSync(
+      path.join(codexHomeDir, "config.toml"),
+      [
+        'model = "global-model"',
+        "",
+        "[model_providers.global]",
+        'name = "global"',
+        'base_url = "https://global.example"'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
+
+    const config = resolveHostConfig({
+      databasePath: path.join(rootDir, "host.sqlite"),
+      codexHomeDir,
+      codexCliPath: path.join(rootDir, "codex")
+    });
+    const presets = new Map<string, ModelPresetRuntimeConfigDto>([
+      [
+        "preset-one",
+        {
+          id: "preset-one",
+          name: "Codex One",
+          app: "codex",
+          settingsConfig: {
+            auth: {
+              OPENAI_API_KEY: "preset-one-token"
+            },
+            config: [
+              'model = "preset-one-config-model"',
+              "",
+              "[model_providers.one]",
+              'name = "one"',
+              'base_url = "https://one.example"'
+            ].join("\n")
+          }
+        }
+      ],
+      [
+        "preset-two",
+        {
+          id: "preset-two",
+          name: "Codex Two",
+          app: "codex",
+          settingsConfig: {
+            auth: {
+              OPENAI_API_KEY: "preset-two-token"
+            },
+            config: [
+              'model = "preset-two-config-model"',
+              'model_reasoning_effort = "max"',
+              "",
+              "[model_providers.two]",
+              'name = "two"',
+              'base_url = "https://two.example"'
+            ].join("\n")
+          }
+        }
+      ],
+      [
+        "preset-failure",
+        {
+          id: "preset-failure",
+          name: "Codex Fallback",
+          app: "codex",
+          settingsConfig: {
+            auth: {
+              OPENAI_API_KEY: "preset-failure-token"
+            },
+            config: 'model = "preset-fallback-model"'
+          }
+        }
+      ]
+    ]);
+    const ccSwitchAdapter = {
+      readPresetRuntimeConfig: (_app: string, presetId: string) => presets.get(presetId) ?? null
+    };
+    const readSnapshot = vi.fn(async (input: {
+      homeDir?: string | null;
+      runtimeEnv?: Record<string, string> | null;
+      cacheKey?: string | null;
+    }) => {
+      expect(input.homeDir).toBeTruthy();
+      expect(input.cacheKey).toMatch(/^[a-f0-9]{24}$/);
+
+      const token = input.runtimeEnv?.OPENAI_API_KEY;
+
+      if (token === "preset-one-token") {
+        return {
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型",
+              usesProviderDefault: true
+            },
+            {
+              id: "preset-one-runtime-model",
+              name: "Preset One Runtime"
+            }
+          ],
+          defaultReasoningLevel: "high"
+        };
+      }
+
+      if (token === "preset-two-token") {
+        return {
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型",
+              usesProviderDefault: true
+            },
+            {
+              id: "preset-two-runtime-model",
+              name: "Preset Two Runtime",
+              supportedReasoningEfforts: ["high", "max"]
+            }
+          ],
+          defaultReasoningLevel: "max"
+        };
+      }
+
+      throw new Error(token === "preset-failure-token"
+        ? "mock Codex app-server unavailable"
+        : "unexpected Codex runtime");
+    });
+    const baseCapabilities = createCodexProviderCapabilities();
+    const service = new SessionProviderConfigService(
+      config,
+      ccSwitchAdapter as never,
+      undefined,
+      undefined,
+      undefined,
+      { readSnapshot }
+    );
+
+    const first = await service.resolveCapabilities({
+      provider: "codex",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-one"
+    });
+    const second = await service.resolveCapabilities({
+      provider: "codex",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-two"
+    });
+
+    expect(first.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "preset-one-runtime-model"
+    ]);
+    expect(first.defaultReasoningLevel).toBe("high");
+    expect(second.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "preset-two-runtime-model"
+    ]);
+    expect(second.defaultReasoningLevel).toBe("max");
+    const fallback = await service.resolveCapabilities({
+      provider: "codex",
+      baseCapabilities,
+      providerConfigMode: "cc-switch-preset",
+      providerPresetId: "preset-failure"
+    });
+
+    expect(fallback.modelOptions?.map((model) => model.id)).toEqual([
+      "provider-default",
+      "global-model",
+      "preset-fallback-model"
+    ]);
+    expect(fallback.defaultReasoningLevel).toBeNull();
+    expect(fallback.limitations).toContain(
+      "当前配置无法读取该 Codex preset 的真实模型列表，暂时显示配置中声明的模型。"
+    );
+    expect(readSnapshot).toHaveBeenCalledTimes(3);
+    expect(readSnapshot).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      runtimeEnv: {
+        OPENAI_API_KEY: "preset-one-token"
+      }
+    }));
+    expect(readSnapshot).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      runtimeEnv: {
+        OPENAI_API_KEY: "preset-two-token"
+      }
+    }));
+
+    const runtimeHomes = readSnapshot.mock.calls.map(([input]) => input.homeDir);
+    expect(runtimeHomes[0]).not.toBe(runtimeHomes[1]);
+    runtimeHomes.forEach((runtimeHomeDir) => {
+      expect(runtimeHomeDir).toContain(path.join("provider-capability-runtime", "codex"));
+      expect(existsSync(path.join(runtimeHomeDir!, "config.toml"))).toBe(true);
+    });
+  });
 });
 
 function createClaudePreset(
@@ -814,6 +1016,30 @@ function createClaudeProviderCapabilities(): ProviderCapabilities {
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
     modelOptions: [],
+    limitations: []
+  };
+}
+
+function createCodexProviderCapabilities(): ProviderCapabilities {
+  return {
+    provider: "codex",
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: "streaming_guidance",
+    supportsSubagents: true,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: true,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    modelOptions: [
+      {
+        id: "global-model",
+        name: "Global Model"
+      }
+    ],
     limitations: []
   };
 }

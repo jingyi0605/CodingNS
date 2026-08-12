@@ -22,7 +22,7 @@ const SUPPORTED_PERMISSION_MODES: UserPreferencePermissionMode[] = [
   "acceptEdits",
   "bypassPermissions"
 ];
-const SUPPORTED_REASONING_LEVELS = new Set(["low", "medium", "high", "xhigh"]);
+const SUPPORTED_REASONING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const PROVIDER_IDS: PreferenceProviderId[] = [
   "claude-code",
   "codex",
@@ -478,7 +478,7 @@ function normalizeProviderReasoningLevel(
   if (!SUPPORTED_REASONING_LEVELS.has(normalized)) {
     throw invalidField(
       `providers.${providerId}.defaultReasoningLevel`,
-      `providers.${providerId}.defaultReasoningLevel 只允许为 low、medium、high 或 xhigh`
+      `providers.${providerId}.defaultReasoningLevel 只允许为 minimal、low、medium、high、xhigh、max 或 ultra`
     );
   }
 

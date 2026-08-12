@@ -389,8 +389,7 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
       ]),
       path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
       path.resolve(process.cwd(), "packages", "codingns", "node_modules", ".bin", "codex"),
-      path.join(homeDir, ".local", "bin", "codex"),
-      process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
+      path.join(homeDir, ".local", "bin", "codex")
     ];
   const resolvedCandidates = [
     resolvedCodexScript,
@@ -402,7 +401,18 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   const globalCodexPath = resolveExecutableOnPath("codex");
   // 先使用当前 Host 依赖树里能解析到的 Codex，再退回 cwd 和 PATH。
   // npm 包安装模式下，cwd 里的旧项目依赖可能带着不支持 app-server 的旧 codex。
-  const candidates = [...resolvedCandidates, ...packageCandidates, globalCodexPath];
+  const desktopCodexCandidates = process.platform === "darwin"
+    ? [
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+      "/Applications/Codex.app/Contents/Resources/codex"
+    ]
+    : [];
+  const candidates = [
+    ...desktopCodexCandidates,
+    ...resolvedCandidates,
+    ...packageCandidates,
+    globalCodexPath
+  ];
 
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {

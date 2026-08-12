@@ -4,6 +4,7 @@ import type { ProviderId } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
 import { resolveAvailableCommandPath } from "../../shared/utils/command-availability.js";
+import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ProviderRuntimeStateRepository } from "../../storage/repositories/provider-runtime-state-repository.js";
 import type { ProviderInstallState, ProviderRuntimeStateRecord } from "../../types/domain.js";
@@ -128,12 +129,14 @@ export class ProviderRuntimeStateService {
   }
 }
 
-function resolveProviderVersion(commandPath: string): string | null {
+export function resolveProviderVersion(commandPath: string): string | null {
   for (const args of VERSION_COMMAND_ARGUMENTS) {
-    const result = spawnSync(commandPath, args, {
+    const launch = resolveCommandLaunch(commandPath, args);
+    const result = spawnSync(launch.command, launch.args, {
       encoding: "utf8",
       timeout: 1_500,
-      windowsHide: true
+      windowsHide: true,
+      shell: launch.shell
     });
     const version = parseProviderVersionOutput(result.stdout, result.stderr);
 

@@ -117,6 +117,7 @@ import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/se
 import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { ClaudeModelOptionsService } from "../modules/provider/claude-model-options.js";
+import { CodexModelOptionsService } from "../modules/provider/codex-model-options.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
 import { ProviderRuntimeStateService } from "../modules/provider/provider-runtime-state-service.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
@@ -745,12 +746,16 @@ export function createServer(config: HostConfig) {
   );
   workspaceSessionInstructionWatchService.syncAll();
   const claudeModelOptionsService = new ClaudeModelOptionsService();
+  const codexModelOptionsService = new CodexModelOptionsService({
+    commandPath: config.codexCliPath
+  });
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
     ccSwitchAdapter,
     workspaceSessionRuntimeContextService,
     claudeModelOptionsService,
-    taskManager
+    taskManager,
+    codexModelOptionsService
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
   const skillManagerService = new SkillManagerService(
