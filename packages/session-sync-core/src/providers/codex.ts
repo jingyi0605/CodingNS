@@ -3376,16 +3376,21 @@ function findLatestCodexStateDatabase(homeDir: string): string | null {
     return null;
   }
 
-  const candidates = readdirSync(homeDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^state_\d+\.sqlite$/i.test(entry.name))
-    .map((entry) => {
-      const filePath = join(homeDir, entry.name);
-
-      return {
-        filePath,
-        mtimeMs: statSync(filePath).mtimeMs
-      };
+  const candidateDirectories = [homeDir, join(homeDir, "sqlite")];
+  const candidates = candidateDirectories
+    .flatMap((directory) => {
+      try {
+        return readdirSync(directory, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && /^state_\d+\.sqlite$/i.test(entry.name))
+          .map((entry) => join(directory, entry.name));
+      } catch {
+        return [];
+      }
     })
+    .map((filePath) => ({
+      filePath,
+      mtimeMs: statSync(filePath).mtimeMs
+    }))
     .sort((left, right) => right.mtimeMs - left.mtimeMs);
 
   return candidates[0]?.filePath ?? null;

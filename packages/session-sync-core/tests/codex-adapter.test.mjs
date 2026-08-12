@@ -35,6 +35,74 @@ test("CodexAdapter 会如实声明 Codex CLI app-server steer 能力与 SDK 限�
   );
 });
 
+test("CodexAdapter 会读取 sqlite 子目录中的 Codex state 数据库", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-state-sqlite-dir-"));
+  const workspacePath = "C:\\Users\\jackson\\Code\\CodingNS";
+  const threadId = "019ea4ef-a305-7f20-8da5-0b4dcc47ea29";
+  const sessionDir = join(tempDir, "sessions", "2026", "06", "08");
+  const sessionFile = join(sessionDir, `rollout-${threadId}.jsonl`);
+  const stateDir = join(tempDir, "sqlite");
+  const stateDbPath = join(stateDir, "state_999.sqlite");
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:48.805Z",
+          type: "session_meta",
+          payload: { id: threadId, cwd: workspacePath }
+        }),
+        JSON.stringify({
+          timestamp: "2026-06-08T01:53:49.000Z",
+          type: "event_msg",
+          payload: { type: "user_message", message: "检查状态库路径" }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const stateDb = new DatabaseSync(stateDbPath);
+    stateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    stateDb.prepare(
+      `INSERT INTO threads
+       (id, title, cwd, created_at, archived, first_user_message, rollout_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      "Windows 状态库路径测试",
+      workspacePath,
+      1780883628,
+      0,
+      "检查状态库路径",
+      sessionFile
+    );
+    stateDb.close();
+
+    const sessions = await new CodexAdapter({ homeDir: tempDir }).detectSessions(workspacePath);
+    const session = sessions.find((item) => item.providerSessionId === threadId);
+
+    assert.ok(session);
+    assert.equal(session.title, "Windows 状态库路径测试");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异导致的重复消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-"));
   const sessionFile = join(tempDir, "session.jsonl");
