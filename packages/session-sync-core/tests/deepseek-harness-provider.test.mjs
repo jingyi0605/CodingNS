@@ -32,6 +32,7 @@ describe("DeepSeekHarnessAdapter", () => {
     expect(capabilities.canResumeSession).toBe(false);
     expect(capabilities.supportsSessionDelete).toBe(false);
     expect(capabilities.supportsSessionDiff).toBe(false);
+    await expect(adapter.readSessionTitle("h1")).resolves.toBe("测试");
   });
 
   it("把消息、工具调用和工具结果转换成标准消息", () => {

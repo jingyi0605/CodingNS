@@ -125,7 +125,10 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
   }
 
   async readSessionTitle(providerSessionId: string): Promise<string> {
-    const summaries = await this.detectSessions("");
+    const response = await this.options.transport.call<{ items?: unknown[] }>("session.list", {});
+    const summaries = (response.items ?? [])
+      .map((item) => normalizeSummary(item, "", this.options.harnessVersion))
+      .filter((item): item is ProviderSessionSummary => item !== null);
     return summaries.find((summary) => summary.providerSessionId === providerSessionId)?.title ?? `DeepSeek Harness ${providerSessionId.slice(0, 8)}`;
   }
 
