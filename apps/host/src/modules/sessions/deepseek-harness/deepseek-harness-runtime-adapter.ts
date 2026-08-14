@@ -8,7 +8,7 @@ import type {
   ProviderRuntimeEventSink,
   RuntimeSendOptions
 } from "@codingns/session-sync-core/runtime/types";
-import { DeepSeekHarnessEventBridge } from "./deepseek-harness-event-bridge.js";
+import { DeepSeekHarnessEventBridge, type DeepSeekHarnessBridgeEvent } from "./deepseek-harness-event-bridge.js";
 import type { DeepSeekHarnessApiClient } from "./deepseek-harness-api-client.js";
 import type { TaskManager } from "../../tasks/task-manager.js";
 
@@ -53,12 +53,25 @@ export class DeepSeekHarnessRuntimeAdapter implements ProviderRuntimeAdapter {
   private async launchPrompt(request: ProviderRuntimeRunRequest, providerSessionId: string, sink: ProviderRuntimeEventSink): Promise<ProviderRuntimeLaunchResult> {
     const { client, eventBridge } = await this.getRuntime();
     const rawStoreRef = request.rawStoreRef ?? `harness://${providerSessionId}`;
-    const closed = eventBridge.watch(providerSessionId, (event) => {
+    let closed: { close(): void } | null = null;
+    let promptStarted = false;
+    let settled = false;
+    let resolveCompleted!: () => void;
+    let rejectCompleted!: (error: unknown) => void;
+    const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      closed?.close();
+      resolveCompleted();
+    };
+
+    const onEvent = (event: DeepSeekHarnessBridgeEvent) => {
       if (event.type === "message" && event.message) {
         void sink.emit({ type: "message", message: event.message, providerSessionId, rawStoreRef, rawEventRef: event.message.rawRef });
       } else if (event.type === "status") {
         void sink.emit({ type: "status", status: event.running ? "running" : "completed", providerSessionId, rawStoreRef, detail: event.running ? "Harness 正在运行" : "Harness 已完成" });
-        if (!event.running) settle();
+        if (!event.running && promptStarted) settle();
       } else if (event.type === "error") {
         void sink.emit({ type: "error", status: "failed", errorCode: "HARNESS_RUNTIME_ERROR", detail: event.detail, providerSessionId, rawStoreRef });
         settle();
@@ -72,20 +85,18 @@ export class DeepSeekHarnessRuntimeAdapter implements ProviderRuntimeAdapter {
           respond: (result) => client.respond(event.rpcId, result)
         });
       }
-    });
-    let resolveCompleted!: () => void;
-    let rejectCompleted!: (error: unknown) => void;
-    const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
-    let settled = false;
-    const settle = () => { if (settled) return; settled = true; closed.close(); resolveCompleted(); };
+    };
 
     try {
+      // 在提交 prompt 前完成两条下行订阅，避免快速模型响应落在订阅空窗期。
+      closed = await eventBridge.watch(providerSessionId, onEvent);
       await sink.emit({ type: "status", status: "running", providerSessionId, rawStoreRef, detail: "Harness 正在运行" });
       const selection = parseModelSelection(request.options.model);
       if (selection) await client.selectModel(providerSessionId, selection.provider, selection.model, request.options.reasoningLevel ?? undefined);
+      promptStarted = true;
       await client.prompt(providerSessionId, await buildPromptContent(request.options, request.workspacePath), resolvePromptMode(request.options));
     } catch (error) {
-      closed.close();
+      closed?.close();
       rejectCompleted(error);
       throw error;
     }

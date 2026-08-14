@@ -36,6 +36,34 @@ export interface DeepSeekHarnessProviderOptions {
   harnessVersion?: string;
 }
 
+export interface DeepSeekHarnessStreamMessageMapper {
+  map(input: unknown, fallbackSequence: number): NormalizedMessage[];
+}
+
+type HarnessAssistantPartKind = "thinking" | "text";
+
+interface HarnessEntry {
+  event: Record<string, unknown>;
+  type: string;
+  sequence: number;
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
+interface HarnessAssistantTrack {
+  turn: string;
+  step: string;
+}
+
+interface HarnessStreamBlock {
+  track: HarnessAssistantTrack;
+  partIndex: number;
+  kind: HarnessAssistantPartKind;
+  content: string;
+  timestamp: string;
+  sequence: number;
+}
+
 export class DeepSeekHarnessAdapter implements ProviderAdapter {
   readonly providerId = "deepseek-harness" as const;
 
@@ -53,20 +81,24 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
       ...(beforeSeq === undefined ? {} : { beforeSeq }),
       maxMessages: Math.max(1, Math.min(limit, 100))
     });
-    const messages = (response.events ?? []).map((entry, index) => mapHarnessEntry(providerSessionId, rawStoreRef, entry, index)).filter((message): message is NormalizedMessage => message !== null);
+    const messages = (response.events ?? []).flatMap((entry, index) => mapHarnessEntries(providerSessionId, rawStoreRef, entry, index));
     return sliceHistory(messages, cursor, limit, direction);
   }
 
   subscribeSession(providerSessionId: string, rawStoreRef: string, cursor: string | null, _limit: number, onEvent: (event: ProviderRealtimeEvent) => Promise<void> | void): ProviderSubscription {
     let lastSeq = cursor ? decodeHarnessCursor(cursor) : -1;
+    const streamMapper = createDeepSeekHarnessStreamMessageMapper(providerSessionId, rawStoreRef);
     return this.options.transport.subscribe("mux", (envelope) => {
       const payload = asRecord(envelope.payload);
       if (envelope.method !== "events.push" && envelope.method !== "session/event") return;
       if (String(payload.sessionId ?? "") !== providerSessionId) return;
-      const mapped = mapHarnessEntry(providerSessionId, rawStoreRef, payload.event ?? payload, 0);
-      if (!mapped || mapped.sequence <= lastSeq) return;
-      lastSeq = mapped.sequence;
-      void onEvent({ messages: [mapped], cursor: encodeHarnessCursor(lastSeq) });
+      const sourceEvent = payload.event ?? payload;
+      const sequence = getHarnessEntrySequence(sourceEvent, lastSeq + 1);
+      if (sequence <= lastSeq) return;
+      lastSeq = sequence;
+      const messages = streamMapper.map(sourceEvent, sequence);
+      if (messages.length === 0) return;
+      void onEvent({ messages, cursor: encodeHarnessCursor(lastSeq) });
     });
   }
 
@@ -150,13 +182,77 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
   }
 }
 
+/**
+ * 兼容仍只接受单条消息的调用方。实时和历史路径应使用 mapHarnessEntries，
+ * 因为 Harness 的一条 assistant/message 可能同时包含思考和正式正文。
+ */
 export function mapHarnessEntry(providerSessionId: string, rawStoreRef: string, input: unknown, fallbackSequence: number): NormalizedMessage | null {
-  const record = asRecord(input);
-  const event = asRecord(record.event ?? record);
-  const type = typeof event.type === "string" ? event.type : "unknown";
-  const sequence = typeof event.seq === "number" ? event.seq : fallbackSequence;
-  const data = asRecord(event.data ?? event.message ?? event);
-  const timestamp = normalizeTimestamp(event.time ?? event.timestamp ?? data.timestamp);
+  return mapHarnessSingleEntry(providerSessionId, rawStoreRef, readHarnessEntry(input, fallbackSequence));
+}
+
+export function mapHarnessEntries(providerSessionId: string, rawStoreRef: string, input: unknown, fallbackSequence: number): NormalizedMessage[] {
+  const entry = readHarnessEntry(input, fallbackSequence);
+
+  if (entry.type === "assistant/chunk") return [];
+
+  if (entry.type === "assistant/message") {
+    const parts = extractHarnessAssistantMessageParts(entry.data.message ?? entry.data.content);
+
+    if (parts.length > 0) {
+      const track = resolveHarnessAssistantTrack(entry.data, entry.sequence);
+      return parts.map((part) => createHarnessAssistantPartMessage({
+        providerSessionId,
+        rawStoreRef,
+        track,
+        partIndex: part.partIndex,
+        kind: part.kind,
+        content: part.content,
+        timestamp: entry.timestamp,
+        sequence: entry.sequence
+      }));
+    }
+  }
+
+  const mapped = mapHarnessSingleEntry(providerSessionId, rawStoreRef, entry);
+  return mapped ? [mapped] : [];
+}
+
+export function createDeepSeekHarnessStreamMessageMapper(
+  providerSessionId: string,
+  rawStoreRef: string
+): DeepSeekHarnessStreamMessageMapper {
+  const blocksByKey = new Map<string, HarnessStreamBlock>();
+
+  return {
+    map(input: unknown, fallbackSequence: number): NormalizedMessage[] {
+      const entry = readHarnessEntry(input, fallbackSequence);
+
+      if (entry.type === "assistant/chunk") {
+        return mapHarnessAssistantChunk(providerSessionId, rawStoreRef, entry, blocksByKey);
+      }
+
+      if (entry.type === "assistant/message") {
+        const track = resolveHarnessAssistantTrack(entry.data, entry.sequence);
+        const messages = mapHarnessEntries(providerSessionId, rawStoreRef, input, fallbackSequence);
+        clearHarnessAssistantTrack(blocksByKey, track);
+        return messages;
+      }
+
+      return mapHarnessEntries(providerSessionId, rawStoreRef, input, fallbackSequence);
+    }
+  };
+}
+
+export function getHarnessEntrySequence(input: unknown, fallbackSequence: number): number {
+  return readHarnessEntry(input, fallbackSequence).sequence;
+}
+
+export function isHarnessAssistantChunk(input: unknown): boolean {
+  return readHarnessEntry(input, 0).type === "assistant/chunk";
+}
+
+function mapHarnessSingleEntry(providerSessionId: string, rawStoreRef: string, entry: HarnessEntry): NormalizedMessage | null {
+  const { event, type, sequence, data, timestamp } = entry;
   const stable = `${providerSessionId}:${sequence}:${type}`;
   if (["turn/start", "turn/end", "session/subscribed"].includes(type)) return null;
   if (type === "tool/call") {
@@ -171,8 +267,200 @@ export function mapHarnessEntry(providerSessionId: string, rawStoreRef: string, 
   const role = type.startsWith("user/") ? "user" : type.startsWith("assistant/") ? "assistant" : "system";
   const kind = type === "assistant/thinking" ? "thinking" : "text";
   const content = extractTextBlocks(data.text ?? data.content ?? data.message ?? event.text ?? "");
-  if (!content && role === "system") return null;
+  // Harness 会推送没有正文的 assistant 状态事件；它们不是可显示的对话消息。
+  if (!content && (role === "system" || (role === "assistant" && kind === "text"))) return null;
   return { messageId: messageIdFromStableKey(stable), provider: "deepseek-harness", providerSessionId, role, kind, content, toolCall: null, timestamp, sequence, rawRef: `${rawStoreRef}#seq=${sequence}` };
+}
+
+function mapHarnessAssistantChunk(
+  providerSessionId: string,
+  rawStoreRef: string,
+  entry: HarnessEntry,
+  blocksByKey: Map<string, HarnessStreamBlock>
+): NormalizedMessage[] {
+  const chunk = asRecord(entry.data.chunk);
+  const partIndex = readHarnessPartIndex(chunk.index);
+
+  if (partIndex === null) return [];
+
+  const track = resolveHarnessAssistantTrack(entry.data, entry.sequence);
+  const key = buildHarnessStreamBlockKey(track, partIndex);
+  const chunkType = ensureText(chunk.type).trim();
+
+  if (chunkType === "block-start") {
+    const kind = resolveHarnessAssistantPartKind(chunk.blockType);
+    if (!kind) return [];
+    blocksByKey.set(key, {
+      track,
+      partIndex,
+      kind,
+      content: "",
+      timestamp: entry.timestamp,
+      sequence: entry.sequence
+    });
+    return [];
+  }
+
+  if (chunkType === "reasoning-delta" || chunkType === "text-delta") {
+    const kind = chunkType === "reasoning-delta" ? "thinking" : "text";
+    const block = getOrCreateHarnessStreamBlock(blocksByKey, key, {
+      track,
+      partIndex,
+      kind,
+      timestamp: entry.timestamp,
+      sequence: entry.sequence
+    });
+    const delta = ensureText(chunk.text);
+    if (!delta) return [];
+    block.content += delta;
+    return [createHarnessAssistantPartMessage({
+      providerSessionId,
+      rawStoreRef,
+      track: block.track,
+      partIndex: block.partIndex,
+      kind: block.kind,
+      content: block.content,
+      timestamp: block.timestamp,
+      sequence: block.sequence
+    })];
+  }
+
+  if (chunkType === "block-end") {
+    const completedBlock = asRecord(chunk.block);
+    const kind = resolveHarnessAssistantPartKind(completedBlock.type) ?? blocksByKey.get(key)?.kind ?? null;
+    if (!kind) return [];
+    const block = getOrCreateHarnessStreamBlock(blocksByKey, key, {
+      track,
+      partIndex,
+      kind,
+      timestamp: entry.timestamp,
+      sequence: entry.sequence
+    });
+    const content = extractTextBlocks(completedBlock.text ?? completedBlock.content);
+    if (content) block.content = content;
+    if (!block.content) return [];
+    return [createHarnessAssistantPartMessage({
+      providerSessionId,
+      rawStoreRef,
+      track: block.track,
+      partIndex: block.partIndex,
+      kind: block.kind,
+      content: block.content,
+      timestamp: block.timestamp,
+      sequence: block.sequence
+    })];
+  }
+
+  return [];
+}
+
+function getOrCreateHarnessStreamBlock(
+  blocksByKey: Map<string, HarnessStreamBlock>,
+  key: string,
+  input: Omit<HarnessStreamBlock, "content">
+): HarnessStreamBlock {
+  const existing = blocksByKey.get(key);
+  if (existing) return existing;
+  const created: HarnessStreamBlock = { ...input, content: "" };
+  blocksByKey.set(key, created);
+  return created;
+}
+
+function extractHarnessAssistantMessageParts(value: unknown): Array<{ partIndex: number; kind: HarnessAssistantPartKind; content: string }> {
+  const record = asRecord(value);
+  const content = Array.isArray(value) ? value : Array.isArray(record.content) ? record.content : null;
+  if (!content) return [];
+
+  return content.flatMap((part, partIndex) => {
+    const block = asRecord(part);
+    const kind = resolveHarnessAssistantPartKind(block.type);
+    if (!kind) return [];
+    const text = extractTextBlocks(kind === "thinking" ? block.text ?? block.thinking ?? block.content : block.text ?? block.content);
+    return text ? [{ partIndex, kind, content: text }] : [];
+  });
+}
+
+function createHarnessAssistantPartMessage(input: {
+  providerSessionId: string;
+  rawStoreRef: string;
+  track: HarnessAssistantTrack;
+  partIndex: number;
+  kind: HarnessAssistantPartKind;
+  content: string;
+  timestamp: string;
+  sequence: number;
+}): NormalizedMessage {
+  const stable = `${input.providerSessionId}:assistant:${input.track.turn}:${input.track.step}:${input.kind}:${input.partIndex}`;
+  return {
+    messageId: messageIdFromStableKey(stable),
+    provider: "deepseek-harness",
+    providerSessionId: input.providerSessionId,
+    role: "assistant",
+    kind: input.kind,
+    content: input.content,
+    toolCall: null,
+    timestamp: input.timestamp,
+    sequence: input.sequence,
+    rawRef: buildHarnessAssistantPartRawRef(input.rawStoreRef, input.track, input.kind, input.partIndex)
+  };
+}
+
+function readHarnessEntry(input: unknown, fallbackSequence: number): HarnessEntry {
+  const record = asRecord(input);
+  const event = asRecord(record.event ?? record);
+  const data = asRecord(event.data ?? event.message ?? event);
+  return {
+    event,
+    type: typeof event.type === "string" ? event.type : "unknown",
+    sequence: typeof event.seq === "number" ? event.seq : fallbackSequence,
+    data,
+    timestamp: normalizeTimestamp(event.time ?? event.timestamp ?? data.timestamp)
+  };
+}
+
+function resolveHarnessAssistantTrack(data: Record<string, unknown>, sequence: number): HarnessAssistantTrack {
+  return {
+    turn: normalizeHarnessTrackPart(data.turn, `seq-${sequence}`),
+    step: normalizeHarnessTrackPart(data.step, "default")
+  };
+}
+
+function normalizeHarnessTrackPart(value: unknown, fallback: string): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim()) return value.trim().replaceAll(/[^a-zA-Z0-9_-]/g, "_");
+  return fallback;
+}
+
+function readHarnessPartIndex(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function resolveHarnessAssistantPartKind(value: unknown): HarnessAssistantPartKind | null {
+  const type = ensureText(value).trim();
+  if (type === "reasoning" || type === "thinking") return "thinking";
+  if (type === "text") return "text";
+  return null;
+}
+
+function buildHarnessStreamBlockKey(track: HarnessAssistantTrack, partIndex: number): string {
+  return `${track.turn}:${track.step}:${partIndex}`;
+}
+
+function clearHarnessAssistantTrack(blocksByKey: Map<string, HarnessStreamBlock>, track: HarnessAssistantTrack): void {
+  const prefix = `${track.turn}:${track.step}:`;
+  for (const key of blocksByKey.keys()) {
+    if (key.startsWith(prefix)) blocksByKey.delete(key);
+  }
+}
+
+function buildHarnessAssistantPartRawRef(
+  rawStoreRef: string,
+  track: HarnessAssistantTrack,
+  kind: HarnessAssistantPartKind,
+  partIndex: number
+): string {
+  const messageKey = `turn-${track.turn}-step-${track.step}`;
+  return `${rawStoreRef}/message/${messageKey}/part/${kind}-${partIndex}?part=${partIndex}`;
 }
 
 function normalizeSummary(input: unknown, workspacePath: string, version = "0.1.0-rc.5"): ProviderSessionSummary | null {

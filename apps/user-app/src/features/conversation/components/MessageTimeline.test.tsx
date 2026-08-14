@@ -417,6 +417,24 @@ describe("MessageTimeline", () => {
     expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
   });
 
+  it("不渲染没有正文或附件的助手文本消息", () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createTextMessage("对话测试"),
+          createAssistantTextMessage("", "assistant-empty"),
+          createAssistantTextMessage("正常回复", "assistant-response")
+        ]}
+        historyState="ready"
+        provider="deepseek-harness"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(document.querySelector('[data-message-id="assistant-empty"]')).toBeNull();
+    expect(document.querySelector('[data-message-id="assistant-response"]')?.textContent).toContain("正常回复");
+  });
+
   it("会把 office-artifacts 本地图片路径映射成受控预览地址", async () => {
     render(
       <MessageTimeline
@@ -2151,6 +2169,32 @@ describe("MessageTimeline", () => {
     expect(document.querySelector(".thinking-message-wrapper")).toBeNull();
     expect(document.querySelector(".thinking-message-content")).not.toBeNull();
     expect(document.querySelectorAll(".thinking-message-row")).toHaveLength(1);
+  });
+
+  it("DeepSeek Harness 的思考和正式回复会按消息类型分开渲染", () => {
+    const thinking = {
+      ...createAssistantThinkingMessage("先分析用户的请求。", "harness-thinking-1"),
+      sequence: 9,
+      rawRef: "harness://session-1/message/turn-1-step-1/part/thinking-0?part=0"
+    };
+    const reply = {
+      ...createAssistantTextMessage("这是正式回复。", "harness-reply-1"),
+      sequence: 9,
+      rawRef: "harness://session-1/message/turn-1-step-1/part/text-1?part=1"
+    };
+
+    render(
+      <MessageTimeline
+        messages={[thinking, reply]}
+        historyState="ready"
+        provider="deepseek-harness"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.thinkingLabel"))).toBeInTheDocument();
+    expect(screen.getByText("先分析用户的请求。").closest(".thinking-message-text")).not.toBeNull();
+    expect(screen.getByText("这是正式回复。").closest(".thinking-message-text")).toBeNull();
   });
 
   it("运行中的 thinking 占位只保留动态文字类名", () => {

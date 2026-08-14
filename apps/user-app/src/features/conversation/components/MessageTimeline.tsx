@@ -2984,7 +2984,8 @@ function sanitizeForkTimelineItems(
 }
 
 function buildTimelineViewModel(input: TimelineViewModelInput): TimelineViewModel {
-  const sanitized = sanitizeForkTimelineItems(input.sessionSummary, input.items);
+  const forkSanitized = sanitizeForkTimelineItems(input.sessionSummary, input.items);
+  const sanitized = removeEmptyAssistantTextMessages(forkSanitized);
   const renderItems = buildTimelineRenderItems(sanitized.visibleItems, sanitized.visibleMessages);
   const leadingSystemPromptMessageIds = collectLeadingSystemPromptMessageIds(
     sanitized.visibleMessages,
@@ -2999,6 +3000,38 @@ function buildTimelineViewModel(input: TimelineViewModelInput): TimelineViewMode
     actionStateByMessageId,
     hiddenMessageIds: sanitized.hiddenMessageIds,
     validationIssues: validateTimelineViewModel(sanitized.visibleMessages, renderItems)
+  };
+}
+
+function removeEmptyAssistantTextMessages(input: {
+  visibleItems: ConversationTimelineSourceItem[];
+  visibleMessages: SessionMessageViewModel[];
+  hiddenMessageIds: string[];
+}): {
+  visibleItems: ConversationTimelineSourceItem[];
+  visibleMessages: SessionMessageViewModel[];
+  hiddenMessageIds: string[];
+} {
+  const emptyMessageIds = new Set(
+    input.visibleMessages
+      .filter((message) => (
+        message.role === "assistant"
+        && message.kind === "text"
+        && message.content.trim().length === 0
+        && (message.attachments?.length ?? 0) === 0
+        && (message.attachmentPayloads?.length ?? 0) === 0
+      ))
+      .map((message) => message.id)
+  );
+
+  if (emptyMessageIds.size === 0) {
+    return input;
+  }
+
+  return {
+    visibleItems: input.visibleItems.filter((item) => item.type !== "message" || !emptyMessageIds.has(item.message.id)),
+    visibleMessages: input.visibleMessages.filter((message) => !emptyMessageIds.has(message.id)),
+    hiddenMessageIds: [...input.hiddenMessageIds, ...emptyMessageIds]
   };
 }
 

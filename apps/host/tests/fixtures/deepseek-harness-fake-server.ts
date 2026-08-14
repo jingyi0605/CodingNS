@@ -7,6 +7,7 @@ import type { HarnessClientRequest, HarnessServerResponse, HarnessMuxFrame, Harn
 export interface DeepSeekHarnessFakeServer {
   baseUrl: string;
   sessions: Map<string, { cwd: string; events: Array<Record<string, unknown>> }>;
+  setPromptHandler(handler: ((sessionId: string) => void) | null): void;
   emitMux(frame: HarnessMuxFrame, rpcId?: string): void;
   emitHost(frame: HarnessHostFrame, rpcId?: string): void;
   closeMuxClients(): void;
@@ -19,8 +20,9 @@ export async function createDeepSeekHarnessFakeServer(options: { port?: number; 
   const sessions = new Map<string, { cwd: string; events: Array<Record<string, unknown>> }>();
   const muxClients = new Set<WebSocket>();
   const hostClients = new Set<WebSocket>();
+  let promptHandler: ((sessionId: string) => void) | null = null;
   const httpServer = createServer((request, response) => {
-    void handleRequest(request, response, sessions, options.version ?? "0.1.0-rc.5");
+    void handleRequest(request, response, sessions, options.version ?? "0.1.0-rc.5", (sessionId) => promptHandler?.(sessionId));
   });
   const muxServer = new WebSocketServer({ noServer: true });
   const hostServer = new WebSocketServer({ noServer: true });
@@ -51,6 +53,7 @@ export async function createDeepSeekHarnessFakeServer(options: { port?: number; 
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     sessions,
+    setPromptHandler: (handler) => { promptHandler = handler; },
     emitMux: (frame, rpcId) => send(muxClients, frame, rpcId),
     emitHost: (frame, rpcId) => send(hostClients, frame, rpcId),
     closeMuxClients: () => { for (const client of muxClients) client.close(); },
@@ -64,7 +67,7 @@ export async function createDeepSeekHarnessFakeServer(options: { port?: number; 
   };
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse, sessions: Map<string, { cwd: string; events: Array<Record<string, unknown>> }>, version: string): Promise<void> {
+async function handleRequest(request: IncomingMessage, response: ServerResponse, sessions: Map<string, { cwd: string; events: Array<Record<string, unknown>> }>, version: string, onPrompt: (sessionId: string) => void): Promise<void> {
   if (request.method !== "POST") { response.writeHead(405).end(); return; }
   const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
   const body = await readBody(request);
@@ -72,12 +75,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   if (pathname === "/api/respond") { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ accepted: true })); return; }
   if (!parsed || parsed.type !== "client-request") { response.writeHead(400).end(); return; }
   const requestBody = parsed;
-  const result = dispatch(requestBody.method, requestBody.payload, sessions, version);
+  const result = dispatch(requestBody.method, requestBody.payload, sessions, version, onPrompt);
   const envelope: HarnessServerResponse = { type: "server-response", rpcId: requestBody.rpcId === "bad-rpc" ? "wrong-rpc" : requestBody.rpcId, result };
   response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(envelope));
 }
 
-function dispatch(method: string, payload: unknown, sessions: Map<string, { cwd: string; events: Array<Record<string, unknown>> }>, version: string): { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } } {
+function dispatch(method: string, payload: unknown, sessions: Map<string, { cwd: string; events: Array<Record<string, unknown>> }>, version: string, onPrompt: (sessionId: string) => void): { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } } {
   const input = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   if (method === "host.describe") return { ok: true, value: { version } };
   if (method === "session.create") {
@@ -93,7 +96,10 @@ function dispatch(method: string, payload: unknown, sessions: Map<string, { cwd:
     if (!session) return { ok: false, error: { code: "session-not-found", message: "session not found" } };
     return { ok: true, value: { events: session.events.map((event) => ({ event })), hasMore: false } };
   }
-  if (method === "session.prompt") return { ok: true, value: { accepted: true } };
+  if (method === "session.prompt") {
+    onPrompt(String(input.sessionId));
+    return { ok: true, value: { accepted: true } };
+  }
   if (method === "session.cancel" || method === "session.updateQueue") return { ok: true, value: { accepted: true } };
   if (method === "session.fork") return { ok: true, value: { sessionId: `harness-${sessions.size + 1}` } };
   if (method === "session.models") return { ok: true, value: { groups: [] } };
