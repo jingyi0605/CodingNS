@@ -367,6 +367,9 @@ import { PluginFileGatewayService } from "../modules/plugins/plugin-file-gateway
 import { PluginProcessRunner } from "../modules/plugins/plugin-process-runner.js";
 import { PluginRuntimeService } from "../modules/plugins/plugin-runtime-service.js";
 import { PluginSchedulerService } from "../modules/plugins/plugin-scheduler-service.js";
+import { DeepSeekHarnessProviderAdapter } from "../modules/sessions/deepseek-harness/deepseek-harness-provider-adapter.js";
+import { DeepSeekHarnessSidecarManager } from "../modules/sessions/deepseek-harness/deepseek-harness-sidecar-manager.js";
+import { DeepSeekHarnessRuntimeAdapter } from "../modules/sessions/deepseek-harness/deepseek-harness-runtime-adapter.js";
 
 export function createServer(config: HostConfig) {
   const affairsLibraryDebugLogPath = getAffairsLibraryDebugLogPath();
@@ -543,6 +546,14 @@ export function createServer(config: HostConfig) {
   let runtimeObservabilityService!: RuntimeObservabilityService;
   const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
   const taskManager = createTaskManager(taskActivityLog, createHostTaskLaneExecutors());
+  const deepSeekHarnessSidecarManager = new DeepSeekHarnessSidecarManager({
+    taskManager,
+    commandPath: process.env.CODINGNS_DEEPSEEK_HARNESS_COMMAND?.trim() || undefined
+  });
+  const deepSeekHarnessRuntimeAdapter = new DeepSeekHarnessRuntimeAdapter(
+    () => deepSeekHarnessSidecarManager.createClient(),
+    taskManager
+  );
   const npmGlobalPackageService = new NpmGlobalPackageService(config);
   const serviceUpdateTaskService = new ServiceUpdateTaskService(
     taskManager,
@@ -885,7 +896,9 @@ export function createServer(config: HostConfig) {
     sessionActivityAuthorityService,
     repositories.sessionMessageOriginRepository,
     repositories.sessionForkRepository,
-    {},
+    {
+      additionalAdapters: [new DeepSeekHarnessProviderAdapter(deepSeekHarnessSidecarManager)]
+    },
     taskManager,
     repositories.parallelSessionGroupRepository,
     repositories.parallelSessionMemberRepository,
@@ -897,7 +910,8 @@ export function createServer(config: HostConfig) {
   const providerCatalogService = new ProviderCatalogService(
     config,
     repositories.providerControlRepository,
-    providerRuntimeStateService
+    providerRuntimeStateService,
+    [new DeepSeekHarnessProviderAdapter(deepSeekHarnessSidecarManager)]
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),
@@ -923,7 +937,8 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService,
     openCliSessionPromptService,
-    workspaceSessionRuntimeContextService
+    workspaceSessionRuntimeContextService,
+    deepSeekHarnessRuntimeAdapter
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     sessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -2002,6 +2017,7 @@ export function createServer(config: HostConfig) {
     await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
+    await deepSeekHarnessSidecarManager.shutdown();
     workspaceSessionInstructionWatchService.dispose();
     affairsLibraryDirtyWatchService.dispose();
     affairsLibraryService.dispose();

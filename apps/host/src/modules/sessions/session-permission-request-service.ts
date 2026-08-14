@@ -120,6 +120,11 @@ interface SessionPermissionRequestInternalRecord extends SessionPermissionReques
         kind: "codex-app-server";
         method: string;
         resolve?: (response: unknown) => void;
+      }
+    | {
+        kind: "deepseek-harness";
+        requestType: "approval" | "question";
+        respond: (result: { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }) => Promise<void>;
       };
 }
 
@@ -327,6 +332,15 @@ export class SessionPermissionRequestService {
       );
     }
 
+    if (request.source.kind === "deepseek-harness") {
+      const action = normalizeText(input.action);
+      const accepted = action !== "deny" && action !== "reject" && action !== "cancel";
+      await request.source.respond(accepted
+        ? { ok: true, value: request.source.requestType === "question" ? { answers: input.answers ?? {} } : { outcome: "allow" } }
+        : { ok: false, error: { code: "cancelled", message: "用户拒绝了请求" } });
+      return await this.markResolved(request, accepted ? "approved" : "declined");
+    }
+
     const responsePayload = buildCodexServerRequestResponsePayload(request, input);
 
     if (!request.source.resolve) {
@@ -343,6 +357,55 @@ export class SessionPermissionRequestService {
       request,
       resolveCodexReplyStatus(request.kind, input.action)
     );
+  }
+
+  async handleDeepSeekHarnessServerRequest(input: {
+    sessionId: string;
+    providerSessionId: string;
+    rpcId: string;
+    type: "approval" | "question";
+    payload: unknown;
+    respond: (result: { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }) => Promise<void>;
+  }): Promise<void> {
+    const payload = toRecord(input.payload) ?? {};
+    const requestId = `harness-${input.rpcId}`;
+    const questions = input.type === "question" ? normalizeHarnessQuestions(payload.questions) : [];
+    const now = nowIso();
+    const request: SessionPermissionRequestInternalRecord = {
+      id: requestId,
+      sessionId: input.sessionId,
+      provider: "deepseek-harness",
+      providerSessionId: input.providerSessionId,
+      requestKey: input.rpcId,
+      kind: input.type === "question" ? "user_input" : "permissions",
+      status: "pending",
+      title: input.type === "question" ? "Harness 请求补充信息" : "Harness 请求执行确认",
+      summary: input.type === "question"
+        ? questions[0]?.question ?? "Agent 需要用户回答问题"
+        : normalizeText(payload.reason) ?? normalizeText(payload.toolName) ?? "Agent 需要执行确认",
+      detail: stringifyPayload(payload),
+      reason: normalizeText(payload.reason),
+      toolName: normalizeText(payload.toolName),
+      command: null,
+      cwd: null,
+      paths: [],
+      permissionProfile: null,
+      questions,
+      actions: input.type === "question"
+        ? [createAction("answer", "提交回答", "primary", "将回答发送给 Agent"), createAction("cancel", "取消", "danger", "取消本次问题")]
+        : [createAction("allow", "允许", "primary", "允许本次操作"), createAction("deny", "拒绝", "danger", "拒绝本次操作")],
+      rawPayload: stringifyPayload(payload),
+      createdAt: now,
+      updatedAt: now,
+      resolvedAt: null,
+      source: {
+        kind: "deepseek-harness",
+        requestType: input.type,
+        respond: input.respond
+      }
+    };
+    this.upsertRequest(request);
+    await this.emitEnvelope({ type: "session.permission_request", sessionId: input.sessionId, request: this.toRequestView(request) });
   }
 
   async handleClaudePreToolUse(
@@ -2661,6 +2724,30 @@ function stringifyPayload(value: unknown): string | null {
   } catch {
     return String(value);
   }
+}
+
+function normalizeHarnessQuestions(value: unknown): SessionPermissionRequestQuestionView[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const record = toRecord(item) ?? {};
+    const options = Array.isArray(record.options)
+      ? record.options.map((option) => {
+        const optionRecord = toRecord(option);
+        return {
+          label: normalizeText(optionRecord?.label ?? option) ?? "选项",
+          description: normalizeText(optionRecord?.description)
+        };
+      })
+      : [];
+    return {
+      id: normalizeText(record.id) ?? `question-${index + 1}`,
+      header: normalizeText(record.header) ?? "需要确认",
+      question: normalizeText(record.question ?? record.text) ?? "请提供所需信息",
+      allowOther: record.allowOther !== false,
+      secret: record.secret === true,
+      options
+    };
+  });
 }
 
 function normalizeText(value: unknown): string | null {
