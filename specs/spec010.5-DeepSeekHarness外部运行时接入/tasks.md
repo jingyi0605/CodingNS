@@ -219,6 +219,10 @@
   - 对应设计：`design.md` §2.3.3、§3.3.2、§4.2.2、§5.3、§6.2
   - 任务结果：
     - 验证结论：通过，详见文末“统一验证记录”。
+    - 2026-08-14 真实凭据回归发现首轮订阅竞态：模型已完成但 mux/host 订阅尚未连接，导致输出漏进 CodingNS。现已改为订阅就绪后才发送 `session.prompt`，并补充快速完成回归测试。
+    - 2026-08-14 流式消息回归：Harness 的 `assistant/chunk` 会按 `turn + step + block index` 归并为稳定消息 ID，`reasoning-delta` 映射为思考消息，`text-delta` 映射为正式消息；最终 `assistant/message` 使用相同 ID 覆盖增量内容。桥接层每 32ms 合并增量，避免单 token 触发一次 Host 持久化。
+    - 2026-08-14 真实 sidecar 结构核对：已从本机 `dsh web` 读取历史，确认上游实际发送 `block-start.blockType`、`reasoning-delta`、`text-delta`、`block-end.block` 和含 `reasoning`、`text` 内容块的最终 `assistant/message`，与适配器字段一致。
+    - 2026-08-14 真实 sidecar 回放：当前构建产物把一条已有的最终 Harness 消息拆成 2 条 CodingNS 消息，分别为 `thinking`（134 字，`part=0`）和 `text`（101 字，`part=1`）；验证过程未发送模型提示词，也未输出原始对话内容。
     - 实现提交 ID：92ff90da80f1282ea12b71d335e8aaf8cf5cb53c
     - 实现提交信息：功能：spec010.5-接入DeepSeek Harness本机运行时；
 
@@ -353,6 +357,7 @@
     - 验证结论：通过，详见文末“统一验证记录”。
     - 实现提交 ID：92ff90da80f1282ea12b71d335e8aaf8cf5cb53c
     - 实现提交信息：功能：spec010.5-接入DeepSeek Harness本机运行时；
+    - 2026-08-14 回归修复：Provider runtime state 统一从 `deepseekHarnessCliPath` 探测 Harness。catalog 返回解析后的可执行文件路径；会话入口把 `deepseek-harness` 纳入可选 Provider。未安装时明确显示“未检测到”，不再显示“状态未知”。
 
 ### 阶段检查
 
@@ -450,6 +455,12 @@
 
 ## 统一验证记录
 
+- 2026-08-14 真实运行时验证：固定提交 `47f943859bef60e4160492346772ded9b24f765a` 已完整构建，`dsh --version` 返回 `0.1.0-rc.5`。通过 `DeepSeekHarnessSidecarManager` 实际启动 `dsh web`，完成 `host.describe` 和 `session.create`，关闭后 sidecar 状态为 `stopped`。`host.describe.version` 返回上游占位值 `0.0.1`，版本校验以 CLI 输出为准。未发送模型 prompt，真实模型回答仍依赖 Harness 自身凭据。
+- 2026-08-14 真实凭据回归：用户配置凭据并发送消息后，Harness `session.history` 记录了第二轮的连续 `assistant/chunk`、最终 `assistant/message` 和 `turn/end`，证明模型实际成功返回。问题是 CodingNS 在下行订阅完成前发出了 `session.prompt`，导致快速完成的事件没有转发。现已等待两条订阅就绪后再发 prompt；`pnpm --dir apps/host test -- tests/integration/deepseek-harness-provider.test.ts tests/integration/deepseek-harness-sidecar-manager.test.ts` 通过，9 项测试全部通过；其中新增快速完成不丢消息回归。
+- 2026-08-14 Provider 可见性回归：`pnpm --dir apps/host test -- provider-catalog-routes.test.ts provider-cli-availability.test.ts` 通过，7 项测试全部通过；覆盖 Harness 的版本号和可执行文件路径。
+- 2026-08-14 前端入口和能力表：`pnpm --dir apps/user-app test -- ProviderManagementPanel.test.tsx SessionProviderPicker.test.tsx provider-ui.test.ts` 通过，24 项测试全部通过；`pnpm --dir apps/user-app build` 通过。
+- 2026-08-14 流式与思考消息修复（当前工作区，尚未单独提交）：`pnpm --dir apps/host exec vitest run --root ../../packages/session-sync-core tests/deepseek-harness-provider.test.mjs` 通过，3/3；`pnpm exec vitest run tests/integration/deepseek-harness-provider.test.ts`（在 `apps/host`）通过，8/8，覆盖思考/正文 token 累积、稳定消息 ID、最终消息覆盖和快速完成不丢输出；`env NODE_ENV=test pnpm exec vitest run src/features/conversation/components/MessageTimeline.test.tsx -t "DeepSeek Harness 的思考和正式回复会按消息类型分开渲染"`（在 `apps/user-app`）通过，1/1。当前终端的全局 `NODE_ENV=production` 会使 React 测试加载生产构建，因此前端测试必须只为测试进程覆盖为 `test`。
+- 2026-08-14 构建与真实回放：`pnpm build`（在 `apps/host`，包含核心包构建）通过。通过本机已运行的 `dsh web` 只读读取 6 个会话的历史，确认上游事件字段；当前构建产物将一条实际 `assistant/message` 映射为 `thinking`（134 字，`part=0`）和 `text`（101 字，`part=1`）两条消息，未打印对话正文。
 - 核心包构建：`pnpm -C packages/session-sync-core build` 通过。
 - Host 类型检查：`pnpm exec tsc -p tsconfig.json --noEmit`（在 `apps/host`）通过。
 - Host 专项集成测试：`pnpm test:all -- tests/integration/deepseek-harness-provider.test.ts tests/integration/deepseek-harness-sidecar-manager.test.ts`（在 `apps/host`）通过，7 项测试全部通过。
