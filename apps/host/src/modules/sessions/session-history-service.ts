@@ -22,6 +22,7 @@ import {
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
+  type ProviderAdapter,
   type ProviderSessionActivityObservation,
   type ProviderSessionDiscovery,
   type ProviderSubscription,
@@ -311,6 +312,7 @@ interface SessionStateRecordRow {
 interface SessionHistoryAdapterOverrides {
   codexForkTransportFactory?: () => CodexForkTransport;
   providerSessionDeleteCli?: ProviderSessionDeleteCli;
+  additionalAdapters?: ProviderAdapter[];
 }
 
 type LiveActivityObservationResolver = (sessionId: string) => SessionActivityObservation | null;
@@ -503,7 +505,8 @@ export class SessionHistoryService {
         baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
         dataDir: config.opencodeDataDir,
         dbPath: config.opencodeDbPath
-      })
+      }),
+      ...(adapterOverrides.additionalAdapters ?? [])
     ]);
     this.sessionSyncService = new SessionSyncService(this.providerRegistry);
     this.capabilityService = new CapabilityService(this.providerRegistry);

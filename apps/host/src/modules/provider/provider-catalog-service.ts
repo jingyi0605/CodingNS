@@ -8,7 +8,8 @@ import {
   OpenCodeAdapter,
   ProviderRegistry,
   type ProviderCapabilities,
-  type ProviderId
+  type ProviderId,
+  type ProviderAdapter
 } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
@@ -25,7 +26,8 @@ const STREAMING_OUTPUT_PROVIDER_IDS = new Set<ProviderId>([
   "codex",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "deepseek-harness"
 ]);
 const ASSISTANT_SERVICE_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code"]);
 const SKILL_TARGET_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code", "gemini", "opencode"]);
@@ -67,7 +69,8 @@ export class ProviderCatalogService {
     private readonly providerRuntimeStateService: Pick<
       ProviderRuntimeStateService,
       "getState" | "refreshAll"
-    >
+    >,
+    additionalAdapters: ProviderAdapter[] = []
   ) {
     const providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
@@ -89,7 +92,8 @@ export class ProviderCatalogService {
         baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
         dataDir: config.opencodeDataDir,
         dbPath: config.opencodeDbPath
-      })
+      }),
+      ...additionalAdapters
     ]);
 
     this.capabilityService = new CapabilityService(providerRegistry);
@@ -254,6 +258,8 @@ function resolveProviderDisplayName(provider: ProviderId): string {
       return "Gemini";
     case "kimi":
       return "Kimi";
+    case "deepseek-harness":
+      return "DeepSeek Harness";
     default:
       return provider;
   }
@@ -273,6 +279,8 @@ function buildProviderMissingMessage(provider: ProviderId): string {
       return "未检测到 Gemini CLI";
     case "kimi":
       return "未检测到 Kimi CLI";
+    case "deepseek-harness":
+      return "未检测到 DeepSeek Harness sidecar";
     default:
       return "未检测到对应 provider 运行环境";
   }

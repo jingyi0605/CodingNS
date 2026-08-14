@@ -434,7 +434,8 @@ export class SessionLiveRuntimeService {
     private readonly workspaceSessionRuntimeContextService: Pick<
       WorkspaceSessionRuntimeContextService,
       "prepareWorkspaceInstructionBundle"
-    > | null = null
+    > | null = null,
+    private readonly deepSeekHarnessRuntimeAdapter: ProviderRuntimeAdapter | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionPermissionRequestService = new SessionPermissionRequestService(
@@ -450,13 +451,27 @@ export class SessionLiveRuntimeService {
         return this.resolveActiveClaudePermissionSession(input);
       }
     );
+    const harnessPermissionAdapter = this.deepSeekHarnessRuntimeAdapter as (ProviderRuntimeAdapter & {
+      setPermissionRequestHandler?: (handler: (input: {
+        sessionId: string;
+        providerSessionId: string;
+        rpcId: string;
+        type: "approval" | "question";
+        payload: unknown;
+        respond: (result: { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }) => Promise<void>;
+      }) => Promise<void>) => void;
+    }) | null;
+    harnessPermissionAdapter?.setPermissionRequestHandler?.((input) =>
+      this.sessionPermissionRequestService.handleDeepSeekHarnessServerRequest(input)
+    );
     const runtimeAdapters = createProviderRuntimeAdapters(config, {
       handleCodexServerRequest: async (input) =>
         this.sessionPermissionRequestService.handleCodexServerRequest(
           input.sessionId,
           input.providerSessionId,
           input.request
-        )
+        ),
+      deepSeekHarnessRuntimeAdapter: this.deepSeekHarnessRuntimeAdapter
     });
     this.runtimeAdapterDisposables = runtimeAdapters.disposables;
     this.providerRuntimeService = new ProviderRuntimeService(runtimeAdapters.adapters);
@@ -4752,6 +4767,7 @@ function createProviderRuntimeAdapters(
       providerSessionId: string;
       request: Record<string, unknown>;
     }) => Promise<unknown>;
+    deepSeekHarnessRuntimeAdapter?: ProviderRuntimeAdapter | null;
   } = {}
 ): {
   adapters: ProviderRuntimeAdapter[];
@@ -4833,7 +4849,8 @@ function createProviderRuntimeAdapters(
           config.opencodeBaseUrlResolver?.acquireManagedServerLease.bind(config.opencodeBaseUrlResolver),
         releaseManagedServerLease:
           config.opencodeBaseUrlResolver?.releaseManagedServerLease.bind(config.opencodeBaseUrlResolver)
-      })
+      }),
+      ...(options.deepSeekHarnessRuntimeAdapter ? [options.deepSeekHarnessRuntimeAdapter] : [])
     ],
     disposables
   };

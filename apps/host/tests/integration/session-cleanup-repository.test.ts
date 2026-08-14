@@ -109,4 +109,3 @@ function seedUser(db: ReturnType<typeof createDatabaseClient>["db"]): void {
     );
   `);
 }
-

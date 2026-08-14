@@ -26,7 +26,8 @@ export class ProviderRuntimeStateService {
     "codex",
     "gemini",
     "kimi",
-    "opencode"
+    "opencode",
+    "deepseek-harness"
   ];
   private readonly providerInstallCommands: Readonly<Partial<Record<ProviderId, string>>>;
   private readonly stateByProvider = new Map<ProviderId, ProviderRuntimeStateSnapshot>();

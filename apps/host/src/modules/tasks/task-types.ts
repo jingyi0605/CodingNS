@@ -6,6 +6,8 @@ export const HOST_TASK_TYPES = {
   workspaceDiscoveryScan: "workspace.discovery_scan",
   providerCapabilityRefresh: "provider.capability_refresh",
   providerClaudeModelDiscovery: "provider.claude_model_discovery",
+  harnessSidecarHealth: "harness.sidecar.health",
+  harnessSessionReconcile: "harness.session.reconcile",
   sessionCodexTitleGenerate: "session.codex_title_generate",
   sessionCleanupScan: "session_cleanup.scan",
   sessionCleanupBackup: "session_cleanup.backup",

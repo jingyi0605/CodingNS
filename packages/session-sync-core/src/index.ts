@@ -13,6 +13,7 @@ export * from "./runtime/gemini-runtime.js";
 export * from "./runtime/kimi-runtime.js";
 export * from "./runtime/opencode-runtime.js";
 export * from "./providers/claude-code.js";
+export * from "./providers/deepseek-harness.js";
 export * from "./providers/legna-code.js";
 export * from "./providers/codex.js";
 export * from "./providers/opencode.js";
