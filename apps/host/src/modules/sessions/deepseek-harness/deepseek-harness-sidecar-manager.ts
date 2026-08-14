@@ -5,6 +5,8 @@ import net from "node:net";
 
 import { TaskManager } from "../../tasks/task-manager.js";
 import { HOST_TASK_TYPES } from "../../tasks/task-types.js";
+import { resolveCommandLaunch } from "../../../shared/utils/command-launch.js";
+import { resolveCommandVersion } from "../../../shared/utils/command-version.js";
 import { DeepSeekHarnessApiClient } from "./deepseek-harness-api-client.js";
 
 export type DeepSeekHarnessSidecarStatus = "stopped" | "starting" | "ready" | "degraded" | "stopping" | "failed";
@@ -23,6 +25,7 @@ export interface DeepSeekHarnessSidecarManagerOptions {
   taskManager: TaskManager;
   commandPath?: string;
   commandArgs?: string[];
+  bindHost?: "127.0.0.1" | "0.0.0.0";
   requestTimeoutMs?: number;
   startupTimeoutMs?: number;
   expectedVersion?: string;
@@ -32,7 +35,7 @@ export interface DeepSeekHarnessSidecarManagerOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** 只管理 CodingNS 自己启动的 loopback sidecar，外部进程不会被接管。 */
+/** 只管理 CodingNS 自己启动的 sidecar，外部进程不会被接管。 */
 export class DeepSeekHarnessSidecarManager {
   private readonly options: Required<Pick<DeepSeekHarnessSidecarManagerOptions, "requestTimeoutMs" | "startupTimeoutMs" | "expectedVersion">> & DeepSeekHarnessSidecarManagerOptions;
   private child: ChildProcess | null = null;
@@ -111,16 +114,27 @@ export class DeepSeekHarnessSidecarManager {
     this.state = { ...this.state, status: "starting", lastError: null };
     const port = await (this.options.portAllocator ?? allocateLoopbackPort)();
     const baseUrl = `http://127.0.0.1:${port}`;
-    const commandPath = this.options.commandPath ?? "deepseek-harness";
-    const commandArgs = this.options.commandArgs ?? ["serve", "--host", "127.0.0.1", "--port", String(port)];
+    const bindHost = this.options.bindHost ?? "127.0.0.1";
+    const commandPath = this.options.commandPath ?? "dsh";
+    const usesDefaultCommandArgs = this.options.commandArgs === undefined;
+    const commandArgs = this.options.commandArgs ?? ["web", "--host", bindHost, "--port", String(port)];
 
-    if (!hasOnlyLoopbackHost(commandArgs)) {
-      throw new Error("HARNESS_LOOPBACK_ONLY");
+    if (!hasSupportedBindHost(commandArgs)) {
+      throw new Error("HARNESS_BIND_HOST_UNSUPPORTED");
     }
 
-    const child = (this.options.spawnImpl ?? spawn)(commandPath, commandArgs, {
-      env: { ...process.env, ...this.options.env, HOST: "127.0.0.1", PORT: String(port) },
-      stdio: ["ignore", "pipe", "pipe"]
+    // rc.5 的 host.describe.version 固定是上游占位值 0.0.1，必须读取 CLI 本身的版本。
+    const commandVersion = usesDefaultCommandArgs ? resolveCommandVersion(commandPath) : null;
+    if (usesDefaultCommandArgs && commandVersion !== this.options.expectedVersion) {
+      this.state = { ...this.state, status: "failed", baseUrl: null, lastError: "HARNESS_VERSION_UNSUPPORTED" };
+      throw new Error("HARNESS_VERSION_UNSUPPORTED");
+    }
+
+    const launch = resolveCommandLaunch(commandPath, commandArgs);
+    const child = (this.options.spawnImpl ?? spawn)(launch.command, launch.args, {
+      env: { ...process.env, ...this.options.env, HOST: bindHost, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: launch.shell
     });
     this.child = child;
     this.state = { ...this.state, pid: child.pid ?? null, baseUrl, startedAt: new Date().toISOString() };
@@ -135,7 +149,7 @@ export class DeepSeekHarnessSidecarManager {
     try {
       const client = new DeepSeekHarnessApiClient({ baseUrl, requestTimeoutMs: this.options.requestTimeoutMs, fetchImpl: this.options.fetchImpl });
       const description = await waitForReady(client, this.options.startupTimeoutMs, exitPromise);
-      const harnessVersion = readVersion(description);
+      const harnessVersion = commandVersion ?? readVersion(description);
       if (harnessVersion !== this.options.expectedVersion) throw new Error("HARNESS_VERSION_UNSUPPORTED");
       this.state = { ...this.state, status: "ready", harnessVersion };
       return { baseUrl, instanceId: this.state.instanceId, harnessVersion: this.state.harnessVersion };
@@ -153,7 +167,8 @@ async function waitForReady(client: DeepSeekHarnessApiClient, timeoutMs: number,
     try {
       return await client.describe();
     } catch {
-      await Promise.race([delay(150), exitPromise]);
+      const exited = await Promise.race([delay(150).then(() => false), exitPromise.then(() => true)]);
+      if (exited) throw new Error("HARNESS_SIDECAR_EXITED");
     }
   }
   throw new Error("HARNESS_SIDECAR_START_FAILED");
@@ -183,16 +198,16 @@ function sanitizeError(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 200) : "HARNESS_SIDECAR_START_FAILED";
 }
 
-function hasOnlyLoopbackHost(args: string[]): boolean {
+function hasSupportedBindHost(args: string[]): boolean {
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index] ?? "";
     if (value === "--host") {
       const host = args[index + 1] ?? "";
-      if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return false;
+      if (host !== "127.0.0.1" && host !== "0.0.0.0") return false;
     }
     if (value.startsWith("--host=")) {
       const host = value.slice("--host=".length);
-      if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return false;
+      if (host !== "127.0.0.1" && host !== "0.0.0.0") return false;
     }
   }
   return true;

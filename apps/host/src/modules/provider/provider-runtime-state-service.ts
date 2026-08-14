@@ -1,10 +1,8 @@
-import { spawnSync } from "node:child_process";
-
 import type { ProviderId } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
 import { resolveAvailableCommandPath } from "../../shared/utils/command-availability.js";
-import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
+import { resolveCommandVersion } from "../../shared/utils/command-version.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ProviderRuntimeStateRepository } from "../../storage/repositories/provider-runtime-state-repository.js";
 import type { ProviderInstallState, ProviderRuntimeStateRecord } from "../../types/domain.js";
@@ -13,11 +11,9 @@ export interface ProviderRuntimeStateSnapshot {
   provider: ProviderId;
   installState: ProviderInstallState;
   version: string | null;
+  commandPath: string | null;
   updatedAt: string;
 }
-
-const VERSION_COMMAND_ARGUMENTS: string[][] = [["--version"], ["-V"], ["version"]];
-const VERSION_PATTERN = /\bv?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?\b/;
 
 export class ProviderRuntimeStateService {
   private readonly providerIds: ProviderId[] = [
@@ -42,7 +38,8 @@ export class ProviderRuntimeStateService {
       codex: config.codexCliPath,
       gemini: config.geminiCliPath,
       kimi: config.kimiCliPath,
-      opencode: config.opencodeCliPath
+      opencode: config.opencodeCliPath,
+      "deepseek-harness": config.deepseekHarnessCliPath
     };
 
     this.hydrateFromRepository();
@@ -106,6 +103,7 @@ export class ProviderRuntimeStateService {
         provider,
         installState: "unknown",
         version: null,
+        commandPath: null,
         updatedAt
       };
     }
@@ -117,6 +115,7 @@ export class ProviderRuntimeStateService {
         provider,
         installState: "missing",
         version: null,
+        commandPath: null,
         updatedAt
       };
     }
@@ -125,46 +124,20 @@ export class ProviderRuntimeStateService {
       provider,
       installState: "ready",
       version: resolveProviderVersion(resolvedCommandPath),
+      commandPath: resolvedCommandPath,
       updatedAt
     };
   }
 }
 
-export function resolveProviderVersion(commandPath: string): string | null {
-  for (const args of VERSION_COMMAND_ARGUMENTS) {
-    const launch = resolveCommandLaunch(commandPath, args);
-    const result = spawnSync(launch.command, launch.args, {
-      encoding: "utf8",
-      timeout: 1_500,
-      windowsHide: true,
-      shell: launch.shell
-    });
-    const version = parseProviderVersionOutput(result.stdout, result.stderr);
-
-    if (version) {
-      return version;
-    }
-  }
-
-  return null;
-}
-
-function parseProviderVersionOutput(stdout: string, stderr: string): string | null {
-  const output = `${stdout}\n${stderr}`.trim();
-
-  if (!output) {
-    return null;
-  }
-
-  const match = output.match(VERSION_PATTERN);
-  return match?.[0] ?? null;
-}
+export const resolveProviderVersion = resolveCommandVersion;
 
 function createUnknownSnapshot(provider: ProviderId): ProviderRuntimeStateSnapshot {
   return {
     provider,
     installState: "unknown",
     version: null,
+    commandPath: null,
     updatedAt: ""
   };
 }
@@ -174,6 +147,7 @@ function mapRecordToSnapshot(record: ProviderRuntimeStateRecord): ProviderRuntim
     provider: record.providerId as ProviderId,
     installState: record.installState,
     version: record.version,
+    commandPath: null,
     updatedAt: record.updatedAt
   };
 }

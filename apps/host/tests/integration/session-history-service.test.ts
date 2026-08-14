@@ -420,6 +420,8 @@ function createService(overrides?: {
     ccSwitchDbPath: "/tmp/cc-switch.db",
     codexCliPath: "codex",
     legnaCodeCliPath: "legna",
+    deepseekHarnessCliPath: "deepseek-harness",
+    deepseekHarnessBindHost: "127.0.0.1",
     chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     edgeExecutablePath: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     doctCliPath: "doct",

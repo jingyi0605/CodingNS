@@ -517,7 +517,8 @@ export function createServer(config: HostConfig) {
   const taskManager = createTaskManager(taskActivityLog, createHostTaskLaneExecutors());
   const deepSeekHarnessSidecarManager = new DeepSeekHarnessSidecarManager({
     taskManager,
-    commandPath: process.env.CODINGNS_DEEPSEEK_HARNESS_COMMAND?.trim() || undefined
+    commandPath: config.deepseekHarnessCliPath,
+    bindHost: config.deepseekHarnessBindHost
   });
   const deepSeekHarnessRuntimeAdapter = new DeepSeekHarnessRuntimeAdapter(
     () => deepSeekHarnessSidecarManager.createClient(),

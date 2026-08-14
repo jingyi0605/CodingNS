@@ -39,6 +39,7 @@ export interface ProviderCatalogEntryDto {
   enabled: boolean;
   installState: ProviderInstallState;
   version: string | null;
+  commandPath: string | null;
   disableImpact: {
     hidesSessions: boolean;
     blocksSessionStart: boolean;
@@ -159,6 +160,7 @@ export class ProviderCatalogService {
       enabled,
       installState: runtimeState.installState,
       version: runtimeState.version,
+      commandPath: runtimeState.commandPath,
       disableImpact: {
         hidesSessions: true,
         blocksSessionStart: true,

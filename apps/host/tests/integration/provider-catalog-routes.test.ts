@@ -38,19 +38,27 @@ describe("provider catalog routes", () => {
     activeFixtures.push(fixture);
 
     const fakeCodexPath = path.join(fixture.rootDir, "codex-version");
+    const fakeDeepSeekHarnessPath = path.join(fixture.rootDir, "deepseek-harness-version");
     writeFileSync(
       fakeCodexPath,
       "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"codex 1.8.0\"\n  exit 0\nfi\nexit 1\n",
       "utf8"
     );
     chmodSync(fakeCodexPath, 0o755);
+    writeFileSync(
+      fakeDeepSeekHarnessPath,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"deepseek-harness 0.1.0-rc.5\"\n  exit 0\nfi\nexit 1\n",
+      "utf8"
+    );
+    chmodSync(fakeDeepSeekHarnessPath, 0o755);
 
     const hosted = createTestApp(fixture, {
       codexCliPath: fakeCodexPath,
       geminiCliPath: path.join(fixture.rootDir, "missing-gemini"),
       kimiCliPath: path.join(fixture.rootDir, "missing-kimi"),
       legnaCodeCliPath: path.join(fixture.rootDir, "missing-legna"),
-      opencodeCliPath: path.join(fixture.rootDir, "missing-opencode")
+      opencodeCliPath: path.join(fixture.rootDir, "missing-opencode"),
+      deepseekHarnessCliPath: fakeDeepSeekHarnessPath
     });
     activeServers.push(hosted);
     await hosted.app.ready();
@@ -73,6 +81,7 @@ describe("provider catalog routes", () => {
         enabled: boolean;
         installState: string;
         version: string | null;
+        commandPath: string | null;
         capabilities: {
           canStartSession: boolean;
           supportsStructuredToolCalls: boolean;
@@ -93,7 +102,8 @@ describe("provider catalog routes", () => {
       "codex",
       "gemini",
       "kimi",
-      "opencode"
+      "opencode",
+      "deepseek-harness"
     ]);
 
     const codexEntry = initialCatalog.items.find((item) => item.provider === "codex");
@@ -103,6 +113,7 @@ describe("provider catalog routes", () => {
       enabled: true,
       installState: "ready",
       version: "1.8.0",
+      commandPath: fakeCodexPath,
       capabilities: {
         canStartSession: true,
         supportsStructuredToolCalls: true
@@ -114,6 +125,16 @@ describe("provider catalog routes", () => {
         sessionFork: true,
         skillUsage: true
       }
+    });
+
+    const deepSeekHarnessEntry = initialCatalog.items.find(
+      (item) => item.provider === "deepseek-harness"
+    );
+    expect(deepSeekHarnessEntry).toMatchObject({
+      provider: "deepseek-harness",
+      installState: "ready",
+      version: "0.1.0-rc.5",
+      commandPath: fakeDeepSeekHarnessPath
     });
 
     const disableResponse = await hosted.app.inject({

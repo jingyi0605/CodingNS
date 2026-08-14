@@ -94,7 +94,10 @@ function sameOwner(left: DeepSeekHarnessSessionBinding, right: { userId: string;
 }
 
 function normalizePath(value: string): string {
-  return path.resolve(value).replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
+  const normalized = path.win32.isAbsolute(value)
+    ? path.win32.normalize(value)
+    : path.resolve(value);
+  return normalized.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
 }
 
 function isWithinWorkspace(candidate: string, workspacePath: string): boolean {

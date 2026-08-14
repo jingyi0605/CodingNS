@@ -20,10 +20,25 @@ afterEach(() => {
 
   delete process.env.CODINGNS_WEB_UI_PORT;
   delete process.env.CODINGNS_CODEX_HOME;
+  delete process.env.CODINGNS_DEEPSEEK_HARNESS_HOST;
   process.env.PATH = originalPath;
 });
 
 describe("HostConfig 的 Tailscale 前端暴露端口规则", () => {
+  it("DeepSeek Harness 默认只绑定回环地址，并允许显式开启全接口模式", () => {
+    expect(resolveHostConfig().deepseekHarnessBindHost).toBe("127.0.0.1");
+
+    process.env.CODINGNS_DEEPSEEK_HARNESS_HOST = "0.0.0.0";
+
+    expect(resolveHostConfig().deepseekHarnessBindHost).toBe("0.0.0.0");
+  });
+
+  it("拒绝 DeepSeek Harness 不支持的绑定地址", () => {
+    process.env.CODINGNS_DEEPSEEK_HARNESS_HOST = "192.0.2.10";
+
+    expect(() => resolveHostConfig()).toThrow("CODINGNS_DEEPSEEK_HARNESS_HOST 只能是 127.0.0.1 或 0.0.0.0");
+  });
+
   it("调试模式默认暴露前端开发服务器端口", () => {
     const config = resolveHostConfig({
       port: 3002,

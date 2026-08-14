@@ -42,6 +42,8 @@ export interface HostConfig {
   ccSwitchDbPath: string;
   codexCliPath: string;
   legnaCodeCliPath: string;
+  deepseekHarnessCliPath: string;
+  deepseekHarnessBindHost: "127.0.0.1" | "0.0.0.0";
   chromeExecutablePath: string;
   edgeExecutablePath: string;
   doctCliPath: string;
@@ -118,6 +120,13 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   const ccSwitchCliPath = resolveCcSwitchCliPath(
     overrides.ccSwitchCliPath ?? process.env.CODINGNS_CC_SWITCH_COMMAND,
     homeDir
+  );
+  const deepseekHarnessCliPath =
+    normalizeOptionalText(
+      overrides.deepseekHarnessCliPath ?? process.env.CODINGNS_DEEPSEEK_HARNESS_COMMAND
+    ) ?? "dsh";
+  const deepseekHarnessBindHost = resolveDeepSeekHarnessBindHost(
+    overrides.deepseekHarnessBindHost ?? process.env.CODINGNS_DEEPSEEK_HARNESS_HOST
   );
   const configuredOpenCodeBaseUrl = normalizeOptionalText(
     overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? null
@@ -203,6 +212,8 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     ccSwitchDbPath,
     codexCliPath,
     legnaCodeCliPath,
+    deepseekHarnessCliPath,
+    deepseekHarnessBindHost,
     chromeExecutablePath:
       overrides.chromeExecutablePath ??
       process.env.CODINGNS_CHROME_EXECUTABLE_PATH ??
@@ -238,6 +249,16 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     demoMode:
       overrides.demoMode ?? process.env.DEMO_MODE === "true"
   };
+}
+
+function resolveDeepSeekHarnessBindHost(value: string | null | undefined): "127.0.0.1" | "0.0.0.0" {
+  const host = normalizeOptionalText(value) ?? "127.0.0.1";
+
+  if (host === "127.0.0.1" || host === "0.0.0.0") {
+    return host;
+  }
+
+  throw new Error(`CODINGNS_DEEPSEEK_HARNESS_HOST 只能是 127.0.0.1 或 0.0.0.0，当前值为 ${JSON.stringify(host)}`);
 }
 
 function resolveHostCodexHomeDirFromEnv(homeDir: string): string | null {
