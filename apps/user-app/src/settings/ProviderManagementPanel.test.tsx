@@ -80,6 +80,7 @@ describe("ProviderManagementPanel", () => {
     expect(within(dialog).getByText("1.8.0")).toBeInTheDocument();
     expect(within(dialog).getByText("1.7.5")).toBeInTheDocument();
     expect(within(dialog).getByText("1.4.2")).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/版本位置[:：]/)).toHaveLength(3);
     expect(
       within(dialog).getByRole("columnheader", {
         name: t("settings.providerManagementCapabilityStreaming")
@@ -268,6 +269,7 @@ function createProviderCatalogEntry(
       sessionFork: true,
       skillUsage: true
     },
+    commandPath: `/usr/local/bin/${provider}`,
     version: provider === "claude-code" ? "1.7.5" : provider === "opencode" ? "1.4.2" : "1.8.0"
   };
 }

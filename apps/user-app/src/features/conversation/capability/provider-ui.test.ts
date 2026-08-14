@@ -18,6 +18,11 @@ describe("provider-ui", () => {
     expect(SESSION_PROVIDER_PICKER_IDS.includes("kimi")).toBe(true);
   });
 
+  it("会把 DeepSeek Harness 暴露为会话创建入口", () => {
+    expect(SESSION_PROVIDER_PICKER_IDS.includes("deepseek-harness")).toBe(true);
+    expect(getDraftTitle("deepseek-harness")).toContain("DeepSeek Harness");
+  });
+
   it("会把 legna-code 排在 kimi 之后", () => {
     expect(SESSION_PROVIDER_PICKER_IDS.indexOf("legna-code")).toBeGreaterThan(
       SESSION_PROVIDER_PICKER_IDS.indexOf("kimi")

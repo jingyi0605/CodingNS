@@ -233,6 +233,14 @@ export function ProviderManagementPanel() {
                             {resolveProviderVersionLabel(entry)}
                           </ModalTag>
                         </div>
+                        {entry.commandPath ? (
+                          <span
+                            className="settings-provider-matrix-provider-path"
+                            title={entry.commandPath}
+                          >
+                            {t("settings.providerManagementVersionLocation")}: {entry.commandPath}
+                          </span>
+                        ) : null}
                       </div>
                     </th>
                     {capabilityColumns.map((column) => (

@@ -12,6 +12,7 @@ import codexIcon from "../../../assets/provider-icons/codex.png";
 import geminiIcon from "../../../assets/provider-icons/gemini.png";
 import kimiIcon from "../../../assets/provider-icons/kimi.png";
 import openCodeIcon from "../../../assets/provider-icons/opencode.png";
+import deepSeekHarnessIcon from "../../../assets/provider-icons/deepseek-harness.svg";
 
 const REASONING_LEVEL_SET = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
@@ -40,7 +41,8 @@ export const REGISTERED_PROVIDER_IDS: BuiltinProviderId[] = [
   "opencode",
   "gemini",
   "kimi",
-  "legna-code"
+  "legna-code",
+  "deepseek-harness"
 ];
 
 export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
@@ -49,7 +51,8 @@ export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "opencode",
   "gemini",
   "kimi",
-  "legna-code"
+  "legna-code",
+  "deepseek-harness"
 ];
 
 export function orderProviderIds(providerIds: readonly ProviderId[]): ProviderId[] {
@@ -166,6 +169,22 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     supportsSlashMenuByDefault: false,
     supportsSessionDeleteByDefault: true,
     foldRulesMessagesByDefault: true
+  },
+  "deepseek-harness": {
+    displayNameKey: "conversation.providerDeepSeekHarness",
+    fullDisplayNameKey: "shell.providerDeepSeekHarness",
+    draftTitleKey: "conversation.draftTitleDeepSeekHarness",
+    defaultModelLabelKey: "conversation.modelUseCliDefault",
+    icon: deepSeekHarnessIcon,
+    defaultRunInputMode: "queued_guidance",
+    reasoningLevelPersists: false,
+    defaultReasoningLevel: null,
+    supportsInterrupt: true,
+    supportsAttachments: true,
+    supportsPermissionPrompt: true,
+    supportsSlashMenuByDefault: false,
+    supportsSessionDeleteByDefault: false,
+    foldRulesMessagesByDefault: false
   }
 };
 

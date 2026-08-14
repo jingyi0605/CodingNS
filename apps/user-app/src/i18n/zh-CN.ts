@@ -463,6 +463,7 @@ export const zhCN = {
     providerManagementInstallReady: "已安装",
     providerManagementInstallMissing: "未检测到",
     providerManagementInstallUnknown: "状态未知",
+    providerManagementVersionLocation: "版本位置",
     providerManagementStateEnabled: "当前会出现在新的会话、Fork、助手和 Skill 相关入口里。",
     providerManagementStateDisabled: "当前已经从新的会话入口里隐藏，旧会话也会从正常列表里收起。",
     providerManagementStateMissing: "已经允许显示，但本地 CLI 还没准备好，等安装完成后才会真正可用。",

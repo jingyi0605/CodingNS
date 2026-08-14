@@ -20980,6 +20980,11 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   --session-provider-surface: #e5eefc;
 }
 
+.session-provider-card[data-provider="deepseek-harness"] {
+  --session-provider-accent: #2563eb;
+  --session-provider-surface: #dbeafe;
+}
+
 .session-provider-card-icon {
   flex: 0 0 auto;
   display: inline-flex;
@@ -24716,6 +24721,17 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   font-size: 14px;
   font-weight: 700;
   line-height: 1.4;
+}
+
+.settings-provider-matrix-provider-path {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-provider-matrix-capability-cell,

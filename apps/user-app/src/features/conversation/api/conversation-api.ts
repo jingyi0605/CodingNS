@@ -9,7 +9,8 @@ export type BuiltinProviderId =
   | "codex"
   | "opencode"
   | "gemini"
-  | "kimi";
+  | "kimi"
+  | "deepseek-harness";
 export type ProviderId = BuiltinProviderId | (string & {});
 export type SyncStatus = "idle" | "syncing" | "error";
 export type DeliveryState = "sending" | "sent" | "failed";
@@ -1215,6 +1216,7 @@ export interface ProviderCatalogEntryDto {
   enabled: boolean;
   installState: "ready" | "missing" | "unknown";
   version: string | null;
+  commandPath?: string | null;
   disableImpact: {
     hidesSessions: boolean;
     blocksSessionStart: boolean;

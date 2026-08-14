@@ -381,6 +381,32 @@ describe("SessionProviderPicker", () => {
     expect(screen.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
   });
 
+  it("会显示 catalog 中启用的 DeepSeek Harness，并请求对应能力", async () => {
+    mockListProviderCatalog.mockResolvedValueOnce([
+      { provider: "deepseek-harness", enabled: true }
+    ]);
+    mockGetProviderCapabilities.mockResolvedValue(
+      createUnavailableCapabilities("deepseek-harness", "未检测到 DeepSeek Harness sidecar")
+    );
+
+    render(
+      <SessionProviderPicker
+        workspaceId="workspace-picker-deepseek"
+        onSelect={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "DeepSeek Harness" })).toBeInTheDocument();
+    });
+    expect(mockGetProviderCapabilities).toHaveBeenCalledWith(
+      "deepseek-harness",
+      "workspace-picker-deepseek",
+      undefined,
+      { targetHostId: null }
+    );
+  });
+
   it("catalog 还没返回前不会先把全部 provider 渲染出来", () => {
     let resolveCatalog: ((value: Array<{ provider: string; enabled: boolean }>) => void) | null = null;
     mockListProviderCatalog.mockReturnValue(
