@@ -8,6 +8,7 @@ export async function registerWorkbenchRoutes(
   workbenchController: WorkbenchController
 ): Promise<void> {
   app.get("/api/workbench", workbenchController.getSnapshot);
+  app.get("/api/workbench/peer-workspace-summaries", workbenchController.getPeerWorkspaceSummary);
   app.get("/api/affairs/assistant-sessions", async (request, reply) => {
     request.params = {
       ...((request.params ?? {}) as Record<string, string>),

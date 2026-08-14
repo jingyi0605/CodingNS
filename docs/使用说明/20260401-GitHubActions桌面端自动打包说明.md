@@ -4,6 +4,14 @@
 
 这份说明只说一件事：让 GitHub Actions 自动打出可分发的桌面端安装包。
 
+如果你的目标是正式发布，不要只单独触发桌面工作流。发布前默认入口已经改成：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
+
+这个脚本会一起完成本地 npm 打包测试、桌面端验包和 Windows 安装回放。
+
 当前已经固化到工作流：
 
 [`desktop-release.yml`](/Users/jackson/Documents/Code/CodingNS/.github/workflows/desktop-release.yml)
@@ -40,6 +48,12 @@
 ### 手动触发
 
 GitHub Actions 页面里手动运行：
+
+如果只是排查单条桌面 workflow，可以手工触发；如果是发版前验收，优先直接运行：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
 
 ```text
 desktop-build-and-release

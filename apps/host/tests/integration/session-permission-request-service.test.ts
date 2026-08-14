@@ -1,13 +1,70 @@
 import { describe, expect, it } from "vitest";
+import {
+  resolveClaudePreToolUseHookMatchers
+} from "@codingns/session-sync-core/runtime/claude-runtime";
 
 import {
+  buildClaudeAskUserQuestionAnswers,
+  normalizeClaudeElicitationRequest,
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
   normalizeOpenCodePermissionRequest,
+  resolveClaudeBlockingRequestTimeoutMs,
   resolveClaudeSafeShellAutoApprovalReason
 } from "../../src/modules/sessions/session-permission-request-service.js";
 
 describe("session-permission-request-service normalizers", () => {
+  it("Claude 完整权限模式下仍然注入 AskUserQuestion hook", () => {
+    expect(resolveClaudePreToolUseHookMatchers("bypassPermissions")).toEqual([
+      "AskUserQuestion",
+      "ExitPlanMode"
+    ]);
+  });
+
+  it("Claude 非完整权限模式下继续注入权限申请和问题 hook", () => {
+    expect(resolveClaudePreToolUseHookMatchers("default")).toEqual([
+      "Bash",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "AskUserQuestion",
+      "ExitPlanMode"
+    ]);
+  });
+
+  it("会把 Claude ExitPlanMode 映射成独立的计划审批请求", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
+      sessionId: "session-plan-1",
+      providerSessionId: "claude-session-plan-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "claude-session-plan-1",
+        cwd: "/tmp/workspace",
+        tool_name: "ExitPlanMode",
+        tool_input: {
+          allowedPrompts: [
+            {
+              tool: "Bash",
+              prompt: "run tests"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(request.kind).toBe("plan_approval");
+    expect(request.toolName).toBe("ExitPlanMode");
+    expect(request.title).toBe("Claude 请求确认执行计划");
+    expect(request.summary).toContain("run tests");
+    expect(request.actions.map((action) => action.value)).toEqual([
+      "allow",
+      "deny"
+    ]);
+  });
+
   it("会把 Claude PreToolUse 的 Bash 请求映射成统一命令审批", () => {
     const request = normalizeClaudePreToolUseRequest({
       provider: "claude-code",
@@ -60,6 +117,144 @@ describe("session-permission-request-service normalizers", () => {
       "allow_session",
       "deny"
     ]);
+  });
+
+  it("会把 Claude AskUserQuestion 映射成可提交选项的问题请求", () => {
+    const request = normalizeClaudePreToolUseRequest({
+      provider: "claude-code",
+      sessionId: "session-ask-1",
+      providerSessionId: "claude-session-ask-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "PreToolUse",
+        session_id: "claude-session-ask-1",
+        cwd: "/tmp/workspace",
+        tool_name: "AskUserQuestion",
+        tool_input: {
+          questions: [
+            {
+              id: "intent",
+              header: "意图",
+              question: "你想做哪类工作？",
+              multiSelect: false,
+              options: [
+                {
+                  label: "开发任务",
+                  description: "有具体功能要实现"
+                },
+                {
+                  label: "演示",
+                  description: "只看功能演示"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    });
+
+    expect(request.kind).toBe("user_input");
+    expect(request.toolName).toBe("AskUserQuestion");
+    expect(request.title).toBe("Claude 需要你回答问题");
+    expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
+    expect(request.questions).toEqual([
+      {
+        id: "intent",
+        header: "意图",
+        question: "你想做哪类工作？",
+        allowOther: true,
+        secret: false,
+        multiSelect: false,
+        options: [
+          {
+            label: "开发任务",
+            description: "有具体功能要实现"
+          },
+          {
+            label: "演示",
+            description: "只看功能演示"
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("会把 Claude Elicitation 映射成可提交答案的问题请求", () => {
+    const request = normalizeClaudeElicitationRequest({
+      provider: "claude-code",
+      sessionId: "session-elicitation-1",
+      providerSessionId: "claude-session-elicitation-1",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      payload: {
+        hook_event_name: "Elicitation",
+        session_id: "claude-session-elicitation-1",
+        cwd: "/tmp/workspace",
+        title: "需要确认环境",
+        prompt: "请选择本轮要使用的环境",
+        options: [
+          {
+            label: "开发环境",
+            description: "继续本地调试"
+          },
+          {
+            label: "测试环境",
+            description: "改成联调验证"
+          }
+        ]
+      }
+    });
+
+    expect(request.kind).toBe("user_input");
+    expect(request.toolName).toBe("Elicitation");
+    expect(request.title).toBe("需要确认环境");
+    expect(request.summary).toBe("请选择本轮要使用的环境");
+    expect(request.questions[0]).toMatchObject({
+      id: "elicitation",
+      header: "需要确认环境",
+      question: "请选择本轮要使用的环境"
+    });
+    expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
+  });
+
+  it("Claude 问题回答和计划审批的超时时间至少保留 600 秒", () => {
+    expect(resolveClaudeBlockingRequestTimeoutMs("user_input")).toBe(600_000);
+    expect(resolveClaudeBlockingRequestTimeoutMs("plan_approval")).toBe(600_000);
+    expect(resolveClaudeBlockingRequestTimeoutMs("command")).toBe(90_000);
+  });
+
+  it("会按 Claude AskUserQuestion 协议把答案转成问题文本键", () => {
+    const answers = buildClaudeAskUserQuestionAnswers(
+      {
+        language: ["Python"],
+        features: ["测试", "重构"],
+        ignored: ["不会透传"]
+      },
+      [
+        {
+          id: "language",
+          header: "语言",
+          question: "选语言",
+          allowOther: true,
+          secret: false,
+          multiSelect: false,
+          options: []
+        },
+        {
+          id: "features",
+          header: "功能",
+          question: "选功能",
+          allowOther: true,
+          secret: false,
+          multiSelect: true,
+          options: []
+        }
+      ]
+    );
+
+    expect(answers).toEqual({
+      "选语言": "Python",
+      "选功能": "测试, 重构"
+    });
   });
 
   it("会保留 Claude 兼容 provider 的原始 providerId", () => {

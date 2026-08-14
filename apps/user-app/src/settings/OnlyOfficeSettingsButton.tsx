@@ -363,7 +363,7 @@ export function OnlyOfficeSettingsButton({
             void handleCheck();
           }}
         >
-          {pendingAction === "check" ? t("settings.opencliLoading") : t("settings.skillOnlyOfficeCheckAction")}
+          {pendingAction === "check" ? t("common.loading") : t("settings.skillOnlyOfficeCheckAction")}
         </button>
         <button
           className="primary-button"

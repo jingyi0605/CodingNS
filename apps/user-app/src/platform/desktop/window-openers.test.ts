@@ -81,6 +81,7 @@ describe("window-openers", () => {
         workspaceId: "workspace-1",
         workspaceName: "项目一",
         sessionId: "session-1",
+        targetHostId: "peer-host-1",
         filePath: "docs/readme.md",
         bounds: {
           width: 980,
@@ -94,7 +95,7 @@ describe("window-openers", () => {
     expect(result.ok).toBe(true);
     expect(createWindow).toHaveBeenCalledWith(
       expect.objectContaining({
-        windowId: "file-preview-workspace-1-docs_2Freadme_md",
+        windowId: "file-preview-workspace-1-docs_2Freadme_md-peer-host-1",
         kind: "file-preview",
         workspaceId: "workspace-1",
         workspaceName: "项目一",
@@ -106,11 +107,12 @@ describe("window-openers", () => {
         }),
         payload: {
           filePath: "docs/readme.md",
+          targetHostId: "peer-host-1",
           routePath: null
         }
       })
     );
-    expect(windows.getDescriptor("file-preview-workspace-1-docs_2Freadme_md")).toMatchObject({
+    expect(windows.getDescriptor("file-preview-workspace-1-docs_2Freadme_md-peer-host-1")).toMatchObject({
       kind: "file-preview",
       mode: "external",
       bounds: {
@@ -123,6 +125,7 @@ describe("window-openers", () => {
       },
       payload: {
         filePath: "docs/readme.md",
+        targetHostId: "peer-host-1",
         routePath: null
       }
     });

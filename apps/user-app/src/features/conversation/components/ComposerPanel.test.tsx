@@ -1675,13 +1675,97 @@ describe("ComposerPanel", () => {
       expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1", {
         providerConfigMode: "global-default",
         providerPresetId: null
-      }, { targetHostId: null });
+      }, expect.objectContaining({ targetHostId: null }));
     });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));
 
     expect(screen.getByRole("option", { name: "默认" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "opencode/gpt-5-nano" })).toBeInTheDocument();
+  });
+
+  it("快速切换 fork 目标 provider 时会忽略旧能力请求回写的模型列表", async () => {
+    const opencodeDeferred = createDeferred();
+    mockGetProviderCapabilities.mockImplementation(async (provider) => {
+      if (provider === "opencode") {
+        await opencodeDeferred.promise;
+        return createCapabilities({
+          provider: "opencode",
+          modelOptions: [
+            {
+              id: "opencode/gpt-5-nano",
+              name: "opencode/gpt-5-nano"
+            }
+          ]
+        });
+      }
+
+      return createCapabilities({
+        provider: "claude-code",
+        modelOptions: [
+          {
+            id: "sonnet",
+            name: "Sonnet"
+          }
+        ]
+      });
+    });
+
+    function Wrapper() {
+      const [forkDraft, setForkDraft] = useState(createForkDraft());
+
+      return (
+        <ComposerPanel
+          capabilities={createCapabilities()}
+          forkDraft={forkDraft}
+          onForkDraftChange={(nextDraft) => {
+            if (nextDraft) {
+              setForkDraft(nextDraft as ReturnType<typeof createForkDraft>);
+            }
+          }}
+          isSubmitting={false}
+          onSend={vi.fn().mockResolvedValue(undefined)}
+        />
+      );
+    }
+
+    render(<Wrapper />);
+
+    fireEvent.click(screen.getByLabelText(t("conversation.forkTargetProviderLabel")));
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("option", { name: "OpenCode" }));
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkSwitchConfirmAction") }));
+
+    await waitFor(() => {
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1", {
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      }, { targetHostId: null });
+    });
+
+    fireEvent.click(screen.getByLabelText(t("conversation.forkTargetProviderLabel")));
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Claude Code" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("option", { name: "Claude Code" }));
+
+    await waitFor(() => {
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("claude-code", "workspace-1", {
+        providerConfigMode: "global-default",
+        providerPresetId: null
+      }, expect.objectContaining({ targetHostId: null }));
+    });
+
+    opencodeDeferred.resolve();
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Sonnet" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("option", { name: "opencode/gpt-5-nano" })).toBeNull();
   });
 
   it("没有输入时显示快捷短语按钮，选择短语后会直接填充输入框", async () => {

@@ -117,18 +117,25 @@ const {
 function setTerminalManagerSnapshot(
   workspaceId: string,
   terminals: TerminalDto[],
-  shellOptions: TerminalShellOptionDto[] = []
+  shellOptions: TerminalShellOptionDto[] = [],
+  options: {
+    targetHostId?: string | null;
+  } = {}
 ) {
   const snapshot = {
     workspaceId,
     terminals,
     templates: [],
     templateStatuses: [],
-    shellOptions
+    shellOptions,
+    targetHostId: options.targetHostId ?? null
   };
 
   terminalManagerSnapshotByWorkspace.set(workspaceId, snapshot);
-  writeViewSnapshot(`terminal-manager.snapshot.${workspaceId}`, snapshot);
+  const hostPart = options.targetHostId?.trim()
+    ? `host.${encodeURIComponent(options.targetHostId.trim())}.`
+    : "";
+  writeViewSnapshot(`terminal-manager.snapshot.${hostPart}${workspaceId}`, snapshot);
 }
 
 function emitTerminalManagerSnapshot(workspaceId: string) {
@@ -150,8 +157,11 @@ const workbenchShell = {
   currentWorkspaceId: "workspace-1",
   selectWorkspace: vi.fn(),
   subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
-  requestTerminalManagerRefresh: (workspaceId: string) => {
-    mockRequestTerminalManagerRefresh(workspaceId);
+  requestTerminalManagerRefresh: (
+    workspaceId: string,
+    options?: { knownRevision?: string | null; skipKnownRevision?: boolean; targetHostId?: string | null }
+  ) => {
+    mockRequestTerminalManagerRefresh(workspaceId, options);
     queueMicrotask(() => {
       emitTerminalManagerSnapshot(workspaceId);
     });
@@ -519,6 +529,7 @@ function renderPage(
       onChangeOrientation: (orientation: "vertical" | "horizontal") => void;
       onClose: () => void;
     };
+    workbenchShellOverrides?: Record<string, unknown>;
   }
 ) {
   return render(
@@ -762,7 +773,12 @@ describe("TerminalPage", () => {
       }
     ];
 
-    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions);
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions, {
+      targetHostId: "peer-host-windows"
+    });
+    mockListTerminalShellOptions.mockResolvedValueOnce({
+      items: windowsShellOptions
+    });
     mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
     mockListWorkspaceTerminals.mockResolvedValueOnce({
       items: [createdTerminal]
@@ -786,7 +802,292 @@ describe("TerminalPage", () => {
       expect(mockCreateTerminal).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: "workspace-1",
-          shell: "C:\\Program Files\\Git\\bin\\bash.exe"
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          runtimeType: "tmux"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("PeerHost 指向 Windows 时，即使当前前端不在 Windows 也会先弹 shell 选择并默认走持久会话", async () => {
+    const createdTerminal = buildTerminal({
+      id: "terminal-peer-windows-created",
+      name: "Peer Windows 终端",
+      shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    });
+    const windowsShellOptions: TerminalShellOptionDto[] = [
+      {
+        id: "cmd",
+        label: "命令提示符 (CMD)",
+        shell: "C:\\Windows\\System32\\cmd.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "powershell",
+        label: "PowerShell",
+        shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "git-bash",
+        label: "Git Bash",
+        shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+        available: true,
+        unavailableReason: null
+      }
+    ];
+
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions, {
+      targetHostId: "peer-host-windows"
+    });
+    mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
+
+    renderPage(undefined, {
+      workbenchShellOverrides: {
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-windows",
+          workspaceId: "workspace-1"
+        },
+        currentTargetHostId: "peer-host-windows"
+      }
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "新建终端" }));
+
+    expect(mockCreateTerminal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。 已启用$/
+      })
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /PowerShell/ }));
+    await userEvent.click(screen.getByRole("button", { name: "创建终端" }));
+
+    await waitFor(() => {
+      expect(mockCreateTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          runtimeType: "tmux"
+        }),
+        expect.objectContaining({
+          targetHostId: "peer-host-windows"
+        })
+      );
+    });
+  });
+
+  it("命中缓存后进入终端页也会立刻请求刷新，而不是等延迟定时器", async () => {
+    const cachedTerminal = buildTerminal({
+      id: "terminal-cached",
+      name: "缓存终端"
+    });
+    setTerminalManagerSnapshot("workspace-1", [cachedTerminal]);
+
+    renderPage();
+
+    await screen.findByRole("tab", { name: /缓存终端/ });
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("点击标题栏刷新按钮会强制拉取最新终端列表", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("button", { name: "新建终端" });
+    mockRequestTerminalManagerRefresh.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("targetHostId 变更后会按新的 host 重新订阅并刷新终端快照", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    const { rerender } = renderPage("/workspaces/workspace-1/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentTargetHostId: null,
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: null,
+          targetHostId: undefined
+        })
+      );
+    });
+
+    subscribeTerminalManagerSnapshot.mockClear();
+    requestTerminalManagerRefresh.mockClear();
+
+    rerender(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/terminals"]}>
+          <Routes>
+            <Route
+              path="/workspaces/:workspaceId/terminals"
+              element={(
+                <TerminalPage
+                  workbenchShellOverrides={{
+                    navigationGroups,
+                    currentWorkspaceId: "workspace-1",
+                    currentWorkspaceRef: {
+                      hostId: "peer-host-1",
+                      workspaceId: "workspace-1"
+                    },
+                    currentTargetHostId: "peer-host-1",
+                    selectWorkspace: vi.fn(),
+                    subscribeTerminalManagerSnapshot,
+                    requestTerminalManagerRefresh,
+                    addTerminalManagerSnapshotListener
+                  } as never}
+                />
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({ targetHostId: "peer-host-1" })
+      );
+    });
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({ targetHostId: "peer-host-1" })
+      );
+    });
+  });
+
+  it("PeerHost 下如果当前 workspaceRef 仍指向旧工作区，不会把旧远端 workspaceId 复用到新工作区请求", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    renderPage("/workspaces/workspace-2/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        },
+        currentTargetHostId: "peer-host-1",
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    expect(subscribeTerminalManagerSnapshot).not.toHaveBeenCalled();
+    expect(requestTerminalManagerRefresh).not.toHaveBeenCalled();
+    expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
+  });
+
+  it("PeerHost 工作区在普通路由下仍会沿用当前远端 workspaceRef，而不是退回主 HOST", async () => {
+    const subscribeTerminalManagerSnapshot = vi.fn();
+    const requestTerminalManagerRefresh = vi.fn();
+    const addTerminalManagerSnapshotListener = vi.fn(() => () => undefined);
+
+    renderPage("/workspaces/workspace-1/terminals", {
+      workbenchShellOverrides: {
+        navigationGroups,
+        currentWorkspaceId: "workspace-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        },
+        currentTargetHostId: "peer-host-1",
+        selectWorkspace: vi.fn(),
+        subscribeTerminalManagerSnapshot,
+        requestTerminalManagerRefresh,
+        addTerminalManagerSnapshotListener
+      } as never
+    });
+
+    await screen.findByRole("button", { name: "新建终端" });
+
+    await waitFor(() => {
+      expect(subscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(requestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
         })
       );
     });
@@ -872,6 +1173,9 @@ describe("TerminalPage", () => {
       expect(mockCreateTerminal).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: "workspace-isolated-1"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
         })
       );
     });
@@ -938,7 +1242,7 @@ describe("TerminalPage", () => {
     await waitFor(() => {
       expect(desktopShell).toHaveAttribute("data-top-tabstrip", "false");
     });
-    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).not.toBeVisible();
+    expect(desktopShell?.querySelector(".terminal-desktop-tabstrip")).toBeNull();
     expect(desktopShell?.querySelector(".terminal-desktop-rail")).not.toBeNull();
   });
 
@@ -1377,7 +1681,10 @@ describe("TerminalPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "关闭终端" }));
 
-    expect(mockCloseTerminal).toHaveBeenCalledWith("terminal-running");
+    expect(mockCloseTerminal).toHaveBeenCalledWith(
+      "terminal-running",
+      expect.objectContaining({ targetHostId: undefined })
+    );
     expect(await screen.findByText("关闭中")).toBeInTheDocument();
 
     closeDeferred.resolve({
@@ -1388,7 +1695,10 @@ describe("TerminalPage", () => {
       expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-running");
+      expect(mockDeleteTerminalRecord).toHaveBeenCalledWith(
+        "terminal-running",
+        expect.objectContaining({ targetHostId: undefined })
+      );
     });
     expect(await screen.findByText("删除中")).toBeInTheDocument();
 
@@ -1429,7 +1739,10 @@ describe("TerminalPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
 
-    expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-error");
+    expect(mockDeleteTerminalRecord).toHaveBeenCalledWith(
+      "terminal-error",
+      expect.objectContaining({ targetHostId: undefined })
+    );
     expect(await screen.findByText("删除中")).toBeInTheDocument();
 
     deleteDeferred.resolve({
@@ -1571,7 +1884,7 @@ describe("TerminalPage", () => {
     expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。$/
+        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。 已启用$/
       })
     ).toBeInTheDocument();
 
@@ -1584,6 +1897,9 @@ describe("TerminalPage", () => {
           workspaceId: "workspace-1",
           shell: "/bin/zsh",
           runtimeType: "embedded-pty"
+        }),
+        expect.objectContaining({
+          targetHostId: undefined
         })
       );
     });

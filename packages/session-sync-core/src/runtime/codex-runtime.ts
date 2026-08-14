@@ -1283,8 +1283,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const callId = pickFirstNonEmpty(
-      ensureText(readProp(item, "id")).trim(),
       ensureText(readProp(item, "call_id")).trim(),
+      ensureText(readProp(item, "id")).trim(),
       `${itemType}-${randomUUID()}`
     );
     const name = pickFirstNonEmpty(
@@ -2019,26 +2019,41 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
     },
     async startTurn(request, providerSessionId) {
       const startedAtMs = performance.now();
-      const result = await sendJsonRpcRequest(
+      sendJsonRpcRequestDetached(
         child,
         pendingResponses,
         () => nextJsonRpcId("turn-start", () => ++requestSequence),
         {
           method: "turn/start",
           params: createTurnStartParams(request, providerSessionId)
-        }
+        },
+        (result) => {
+          const turn = toRecord(result.turn);
+          activeTurnId = ensureText(readProp(turn, "id")).trim() || activeTurnId;
+
+          const completionNotification = buildCodexTurnCompletionNotification(turn, providerSessionId);
+
+          if (completionNotification) {
+            void notificationHandler(completionNotification);
+          }
+        },
+        (error) => {
+          void notificationHandler({
+            method: "error",
+            params: {
+              error: {
+                message: error.message
+              }
+            }
+          });
+        },
+        { timeoutMs: null }
       );
-      const turn = toRecord(result.turn);
-      activeTurnId = ensureText(readProp(turn, "id")).trim() || activeTurnId;
       logCodexRuntimeStep("transport.turn_start", startedAtMs, {
         sessionId: request.sessionId,
         providerSessionId,
         turnId: activeTurnId
       });
-
-      return {
-        notification: buildCodexTurnCompletionNotification(turn, providerSessionId)
-      };
     },
     async steerTurn(options) {
       if (!activeThreadId || !activeTurnId) {
@@ -2337,11 +2352,13 @@ function createCodexAppServerNotificationTranslator(): (
   const agentMessageTextById = new Map<string, string>();
   const reasoningSummaryPartsById = new Map<string, string[]>();
   const reasoningContentPartsById = new Map<string, string[]>();
+  let sawAgentMessageInCurrentTurn = false;
 
   const resetStreamState = (): void => {
     agentMessageTextById.clear();
     reasoningSummaryPartsById.clear();
     reasoningContentPartsById.clear();
+    sawAgentMessageInCurrentTurn = false;
   };
 
   const ensureIndexedTextPart = (
@@ -2511,7 +2528,9 @@ function createCodexAppServerNotificationTranslator(): (
     if (method === "turn/completed") {
       const turn = toRecord(params.turn);
       const status = ensureText(turn?.status).trim();
-      const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed");
+      const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed", {
+        skipAgentMessageFallback: sawAgentMessageInCurrentTurn
+      });
 
       resetStreamState();
 
@@ -2618,6 +2637,7 @@ function createCodexAppServerNotificationTranslator(): (
         if (itemId) {
           if (itemText.length > 0) {
             agentMessageTextById.set(itemId, itemText);
+            sawAgentMessageInCurrentTurn = true;
           } else if (method === "item/completed") {
             agentMessageTextById.delete(itemId);
           }
@@ -2683,7 +2703,10 @@ function createCodexAppServerNotificationTranslator(): (
 
 function translateCodexAppServerTurnItems(
   turn: Record<string, unknown> | null,
-  eventType: "item.completed"
+  eventType: "item.completed",
+  options?: {
+    skipAgentMessageFallback?: boolean;
+  }
 ): Record<string, unknown>[] {
   const rawItems = Array.isArray(turn?.items) ? turn.items : [];
   const translatedItems = rawItems
@@ -2697,6 +2720,10 @@ function translateCodexAppServerTurnItems(
 
   if (translatedItems.length > 0) {
     return translatedItems;
+  }
+
+  if (options?.skipAgentMessageFallback) {
+    return [];
   }
 
   const lastAgentMessage = normalizeCodexTurnLastAgentMessage(turn);
@@ -2928,6 +2955,10 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
+  }
+
 
   if (request.options.model) {
     params.model = request.options.model;
@@ -2949,6 +2980,10 @@ function createThreadResumeParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
   }
 
 
@@ -2996,6 +3031,10 @@ function createTurnStartParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxPolicy) {
+    params.sandboxPolicy = permissionOptions.sandboxPolicy;
   }
 
   if (request.options.model) {
@@ -3350,23 +3389,34 @@ function sendJsonRpcRequest(
   input: {
     method: string;
     params: Record<string, unknown>;
-  }
+  },
+  options: { timeoutMs?: number | null } = {}
 ): Promise<Record<string, unknown>> {
   const id = createRequestId();
 
   return new Promise<Record<string, unknown>>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingResponses.delete(id);
-      reject(new Error("SERVER_TIMEOUT"));
-    }, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
+    const timeoutMs = options.timeoutMs === undefined
+      ? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS
+      : options.timeoutMs;
+    const timeout =
+      typeof timeoutMs === "number" && timeoutMs > 0
+        ? setTimeout(() => {
+            pendingResponses.delete(id);
+            reject(new Error("SERVER_TIMEOUT"));
+          }, timeoutMs)
+        : null;
 
     pendingResponses.set(id, {
       resolve: (value) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         resolve(value);
       },
       reject: (error) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         reject(error);
       }
     });
@@ -3379,11 +3429,38 @@ function sendJsonRpcRequest(
         params: input.params
       });
     } catch (error) {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       pendingResponses.delete(id);
       reject(error instanceof Error ? error : new Error("CODEX_APP_SERVER_REQUEST_WRITE_FAILED"));
     }
   });
+}
+
+function sendJsonRpcRequestDetached(
+  child: ReturnType<typeof spawn>,
+  pendingResponses: Map<
+    string,
+    {
+      resolve: (value: Record<string, unknown>) => void;
+      reject: (error: Error) => void;
+    }
+  >,
+  createRequestId: () => string,
+  input: {
+    method: string;
+    params: Record<string, unknown>;
+  },
+  onResolved: (value: Record<string, unknown>) => void,
+  onRejected: (error: Error) => void,
+  options: { timeoutMs?: number | null } = {}
+): void {
+  void sendJsonRpcRequest(child, pendingResponses, createRequestId, input, options)
+    .then(onResolved)
+    .catch((error) => {
+      onRejected(error instanceof Error ? error : new Error(String(error)));
+    });
 }
 
 function readJsonRpcParams(parsed: Record<string, unknown>): Record<string, unknown> {

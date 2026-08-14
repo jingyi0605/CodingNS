@@ -13,6 +13,7 @@ export class TerminalCommandTemplateRepository {
           workspace_id,
           name,
           cwd,
+          shell,
           command,
           args_json,
           env_json,
@@ -31,13 +32,14 @@ export class TerminalCommandTemplateRepository {
           managed_by_system,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
         record.workspaceId,
         record.name,
         record.cwd,
+        record.shell ?? null,
         record.command,
         JSON.stringify(record.args),
         JSON.stringify(record.env),
@@ -69,6 +71,7 @@ export class TerminalCommandTemplateRepository {
           workspace_id,
           name,
           cwd,
+          shell,
           command,
           args_json,
           env_json,
@@ -103,6 +106,7 @@ export class TerminalCommandTemplateRepository {
           workspace_id,
           name,
           cwd,
+          shell,
           command,
           args_json,
           env_json,
@@ -137,6 +141,7 @@ export class TerminalCommandTemplateRepository {
           workspace_id,
           name,
           cwd,
+          shell,
           command,
           args_json,
           env_json,
@@ -169,6 +174,7 @@ export class TerminalCommandTemplateRepository {
         `UPDATE terminal_command_templates
          SET name = ?,
              cwd = ?,
+             shell = ?,
              command = ?,
              args_json = ?,
              env_json = ?,
@@ -191,6 +197,7 @@ export class TerminalCommandTemplateRepository {
       .run(
         record.name,
         record.cwd,
+        record.shell ?? null,
         record.command,
         JSON.stringify(record.args),
         JSON.stringify(record.env),
@@ -228,6 +235,7 @@ interface TerminalCommandTemplateRow {
   workspace_id: string;
   name: string;
   cwd: string;
+  shell: string | null;
   command: string;
   args_json: string;
   env_json: string;
@@ -254,6 +262,7 @@ function mapTemplateRow(row: TerminalCommandTemplateRow): TerminalCommandTemplat
     workspaceId: row.workspace_id,
     name: row.name,
     cwd: row.cwd,
+    shell: row.shell,
     command: row.command,
     args: JSON.parse(row.args_json) as string[],
     env: JSON.parse(row.env_json) as Record<string, string>,

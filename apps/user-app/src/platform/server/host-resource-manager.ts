@@ -1,4 +1,5 @@
 import { httpClient } from "../../network/http-client";
+import { normalizeTargetHostId } from "../../shared/network/target-host";
 
 export interface HostResourceSnapshotView {
   observedAt: string;
@@ -19,7 +20,7 @@ export interface HostResourceSnapshotView {
 }
 
 export async function fetchHostResourceSnapshot(targetHostId?: string | null): Promise<HostResourceSnapshotView> {
-  const normalizedTargetHostId = targetHostId?.trim();
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
 
   if (normalizedTargetHostId) {
     return await httpClient.request<HostResourceSnapshotView>("/api/system/host/resources", {

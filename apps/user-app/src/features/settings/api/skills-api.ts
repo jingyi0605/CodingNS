@@ -126,7 +126,7 @@ export interface WorkspaceSessionMcpStatusDto {
     codexDetail: string;
     globalCodingnsState: "ready" | "partial" | "missing";
     globalCodingnsDetail: string;
-    recommendedPath: string;
+    recommendedPath: string | null;
   };
   runtime: WorkspaceSessionMcpRuntimeStatusDto;
   commands: WorkspaceSessionMcpCommandStatusDto;

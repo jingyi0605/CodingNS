@@ -223,6 +223,99 @@ describe("FileViewerModal", () => {
     expect(fileApiMock.getFilePreview).toHaveBeenCalledTimes(1);
   });
 
+  it("同文件被动重载时，会保留编辑模式和未保存草稿", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const firstPreviewLoader = vi.fn().mockResolvedValue(
+      createPreviewResponse({
+        path: "notes.txt",
+        content: "server version 1",
+        version: "preview-version-1"
+      })
+    );
+    const secondPreviewLoader = vi.fn().mockResolvedValue(
+      createPreviewResponse({
+        path: "notes.txt",
+        content: "server version 2",
+        version: "preview-version-2"
+      })
+    );
+
+    const view = render(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="notes.txt"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+          previewLoader={firstPreviewLoader}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(firstPreviewLoader).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "local draft");
+
+    view.rerender(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="notes.txt"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+          previewLoader={secondPreviewLoader}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(secondPreviewLoader).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("file-viewer-editor")).toHaveValue("local draft");
+  });
+
+  it("配置文件值里带 @ 和 ! 时，代码视图会完整显示后续文本", async () => {
+    const envContent = [
+      "MAIL_FROM=bot@example.com",
+      "PASSWORD=abc!123"
+    ].join("\n");
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: ".env",
+        content: envContent
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath=".env"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("bot@example.com")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("abc!123")).toBeInTheDocument();
+  });
+
   it("传入自定义 saveHandler 时，会优先走自定义保存逻辑", async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
@@ -260,6 +353,64 @@ describe("FileViewerModal", () => {
     await waitFor(() => {
       expect(onSaved).toHaveBeenCalledWith("notes.txt");
     });
+  });
+
+  it("PEERHOST 预览会把 targetHostId 传给加载和保存请求", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/readme.md",
+        content: "first",
+        version: "preview-version-1"
+      })
+    );
+    fileApiMock.saveFileContent.mockResolvedValue({
+      version: "preview-version-2",
+      updatedAt: "2026-04-18T00:00:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerPanel
+          workspaceId="workspace-1"
+          filePath="docs/readme.md"
+          targetHostId="peer-host-1"
+          open
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByText("first");
+    expect(fileApiMock.getFilePreview).toHaveBeenCalledWith(
+      "workspace-1",
+      "docs/readme.md",
+      expect.objectContaining({
+        targetHostId: "peer-host-1"
+      })
+    );
+
+    await user.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
+    const editor = await screen.findByTestId("file-viewer-editor");
+    await user.clear(editor);
+    await user.type(editor, "changed");
+    await user.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.saveFileContent).toHaveBeenCalledWith(
+        "workspace-1",
+        "docs/readme.md",
+        "changed",
+        "preview-version-1",
+        {
+          targetHostId: "peer-host-1"
+        }
+      );
+    });
+    expect(onSaved).toHaveBeenCalledWith("docs/readme.md");
   });
 
   it("有 diff 数据时依然保持代码预览，并显示新增和修改标尺", async () => {
@@ -498,6 +649,42 @@ describe("FileViewerModal", () => {
     });
   });
 
+  it("Markdown 预览会保留编辑态里的单行换行，不再把同段文本挤成一行", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "docs/readme.md",
+        kind: "markdown",
+        content: [
+          "第一行",
+          "第二行",
+          "",
+          "第三行 `https://example.com/api`",
+          "第四行"
+        ].join("\n"),
+        version: "md-line-break-v1"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="docs/readme.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      const paragraphNodes = document.querySelectorAll(".file-viewer-markdown p");
+      expect(paragraphNodes).toHaveLength(2);
+      expect(paragraphNodes[0]?.querySelectorAll("br")).toHaveLength(1);
+      expect(paragraphNodes[1]?.querySelectorAll("br")).toHaveLength(1);
+    });
+  });
+
   it("Markdown 预览里的纯文本块和无语言代码块都提供复制按钮", async () => {
     const user = userEvent.setup();
 
@@ -732,6 +919,32 @@ describe("FileViewerModal", () => {
     expect(platformMock.openExternal).toHaveBeenCalledWith(
       "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
     );
+  });
+
+  it("Markdown 文件标题区不显示代码视图按钮", async () => {
+    fileApiMock.getFilePreview.mockResolvedValue(
+      createPreviewResponse({
+        path: "AGENTS.md",
+        kind: "markdown",
+        content: "# AGENTS\n\n- rule"
+      })
+    );
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="AGENTS.md"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    await screen.findByRole("tab", { name: t("conversation.fileViewerPreview") });
+    expect(screen.queryByRole("tab", { name: t("conversation.fileViewerCode") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") })).toBeInTheDocument();
   });
 
   it("Office 文件预览模态框默认铺满，并隐藏默认模式按钮", async () => {

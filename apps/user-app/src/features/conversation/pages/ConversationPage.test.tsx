@@ -254,23 +254,27 @@ vi.mock("../components/SessionBranchTreePanel", () => ({
 vi.mock("../components/FileContextPanel", () => ({
   FileContextPanel: ({
     sessionId,
-    workspaceId
+    workspaceId,
+    workbenchShellOverrides
   }: {
     sessionId: string;
     workspaceId: string;
+    workbenchShellOverrides?: { currentTargetHostId?: string | null };
   }) => (
     <div data-testid="file-context-panel">
-      files:{workspaceId}:{sessionId}
+      files:{workspaceId}:{sessionId}:{workbenchShellOverrides?.currentTargetHostId ?? "null"}
     </div>
   )
 }));
 
 vi.mock("../components/GitSidebar", () => ({
   GitSidebar: ({
-    workspaceId
+    workspaceId,
+    workbenchShellOverrides
   }: {
     workspaceId: string;
-  }) => <div data-testid="git-sidebar">git:{workspaceId}</div>
+    workbenchShellOverrides?: { currentTargetHostId?: string | null };
+  }) => <div data-testid="git-sidebar">git:{workspaceId}:{workbenchShellOverrides?.currentTargetHostId ?? "null"}</div>
 }));
 
 vi.mock("../../workbench/components/TerminalManagerPanel", () => ({
@@ -337,6 +341,8 @@ describe("ConversationPage", () => {
         rawRef: "store://session-live-1#1"
       }
     });
+    mockLiveRuntimeState.errorCode = null;
+    mockLiveRuntimeState.errorDetail = null;
     mockLiveRuntimeState.session = {
       ...createBaseLiveSession(),
       provider: "codex",
@@ -527,7 +533,180 @@ describe("ConversationPage", () => {
     });
 
     expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
-    expect(mockRuntimeStoreSessionIds).toContain("session-fallback-1");
+  });
+
+  it("PeerHOST live 会话缺失时，自动跳转仍保留 targetHostId", async () => {
+    mockLiveRuntimeState.session = null;
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-fallback-1",
+              workspaceId: "remote-workspace-1",
+              title: "可用远端会话"
+            }
+          ],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-missing-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-fallback-1?targetHostId=peer-host-1"
+      );
+    });
+
+    expect(mockRuntimeStoreSessionIds).not.toContain("session-missing-1");
+  });
+
+  it("PeerHOST live 会话收到 SESSION_NOT_FOUND 时，会跳到带 targetHostId 的会话列表", async () => {
+    mockLiveRuntimeState.errorCode = "SESSION_NOT_FOUND";
+    mockLiveRuntimeState.errorDetail = "session 不存在";
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-2",
+            name: "工作区二",
+            path: "/Users/jackson/workspace-2"
+          },
+          sessions: [],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-1/sessions/session-live-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-2/sessions?targetHostId=peer-host-1"
+      );
+    });
+
+    expect(mockRuntimeStoreSessionIds).toContain("session-live-1");
+  });
+
+  it("当前停在 PeerHOST 远端工作区时，缺失会话回退到主 HOST 工作区不会继续复用旧 targetHostId", async () => {
+    mockLiveRuntimeState.errorCode = null;
+    mockLiveRuntimeState.errorDetail = null;
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-gcac"
+      },
+      resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+        preferredTargetHostId?: string | null;
+        fallbackToCurrent?: boolean;
+      }) => {
+        if (workspaceId === "workspace-host-1") {
+          return { hostId: "current", workspaceId };
+        }
+
+        if (options?.preferredTargetHostId === "peer-host-1") {
+          return { hostId: "peer-host-1", workspaceId: `remote-${workspaceId}` };
+        }
+
+        return { hostId: "current", workspaceId };
+      },
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-host-1",
+            name: "主 HOST 工作区",
+            path: "/Users/jackson/workspace-host-1"
+          },
+          sessions: [
+            {
+              ...createBaseLiveSession(),
+              sessionId: "session-host-fallback-1",
+              workspaceId: "workspace-host-1",
+              title: "主 HOST 回退会话"
+            }
+          ],
+          childWorktrees: []
+        }
+      ]
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-gcac/sessions/session-missing-2?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-host-1/sessions/session-host-fallback-1"
+      );
+      expect(screen.getByTestId("route-probe")).not.toHaveTextContent("targetHostId=peer-host-1");
+    });
+  });
+
+  it("PeerHOST 投影会话只要能被 scope 查到，就不会在打开后瞬间回退到上一个会话", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-gcac"
+      },
+      findVisibleSessionEntryByScope: (sessionId: string | null | undefined) => {
+        if (sessionId !== "session-peer-open-1") {
+          return null;
+        }
+
+        return {
+          workspace: {
+            id: "workspace-gcac",
+            name: "GCAC",
+            path: "/Users/jackson/workspace-gcac"
+          },
+          session: {
+            ...createBaseLiveSession(),
+            sessionId: "session-peer-open-1",
+            workspaceId: "remote-workspace-gcac",
+            title: "PEER 会话"
+          }
+        };
+      }
+    }));
+
+    renderLiveConversationPage({
+      initialEntry: "/workspaces/workspace-gcac/sessions/session-peer-open-1?targetHostId=peer-host-1",
+      withRouteProbe: true
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-gcac/sessions/session-peer-open-1?targetHostId=peer-host-1"
+      );
+    });
   });
 
   it("桌面端并行会话会切到并行分屏视图", () => {
@@ -892,6 +1071,7 @@ describe("ConversationPage", () => {
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"role\":\"user\"");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"content\":\"请分析这张图片\"");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"attachmentCount\":1");
+      expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"attachmentPayloadCount\":1");
       expect(screen.getByTestId("route-probe-state")).toHaveTextContent("\"rawRef\":\"synthetic://codex/session-live-1/");
       expect(screen.getByTestId("route-probe-state")).not.toHaveTextContent("已创建会话");
     });
@@ -950,9 +1130,68 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
-        "/workspaces/remote-workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
+        "/workspaces/workspace-1/sessions/session-peer-1?targetHostId=peer-host-1"
       );
     });
+  });
+
+  it("PeerHOST 草稿会话切到新建 live 会话时，不会立刻把新会话绑定清空并跳回旧会话", async () => {
+    const setSessionWorkspace = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue({
+      currentTargetHostId: "peer-host-1",
+      currentWorkspaceRef: {
+        hostId: "peer-host-1",
+        workspaceId: "remote-workspace-1"
+      },
+      setSessionWorkspace
+    }));
+    mockStartLiveSession.mockResolvedValueOnce({
+      sessionId: "session-peer-1",
+      provider: "claude-code",
+      session: {
+        ...createBaseLiveSession(),
+        sessionId: "session-peer-1",
+        provider: "claude-code",
+        workspaceId: "remote-workspace-1"
+      },
+      message: {
+        messageId: "message-peer-1",
+        provider: "claude-code",
+        providerSessionId: "provider-session-peer-1",
+        role: "assistant",
+        content: "已创建 Claude Code 会话",
+        timestamp: "2026-04-25T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "store://session-peer-1#1"
+      }
+    });
+    mockLiveRuntimeState.session = null;
+
+    renderDraftConversationPage({
+      initialEntry:
+        "/workspaces/workspace-1/sessions/draft-codex-1?targetHostId=peer-host-1&provider=claude-code&workspaceId=remote-workspace-1",
+      withRouteProbe: true
+    });
+
+    fireEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "remote-workspace-1",
+          provider: "claude-code"
+        }),
+        { targetHostId: "peer-host-1" }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("session-peer-1");
+    });
+
+    expect(setSessionWorkspace).toHaveBeenCalledWith("session-peer-1", "remote-workspace-1");
+    expect(setSessionWorkspace).not.toHaveBeenCalledWith("session-peer-1", null);
   });
 
   it("移动端在草稿对话页左滑会打开文件页", async () => {
@@ -1666,6 +1905,72 @@ function renderLiveConversationPage(options?: {
 }
 
 function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}) {
+  const collectGroupSessions = (group: {
+    sessions?: Array<Record<string, unknown>>;
+    childWorktrees?: Array<{
+      sessions?: Array<Record<string, unknown>>;
+      children?: Array<unknown>;
+    }>;
+  }) => {
+    const collected = [...(group.sessions ?? [])];
+    const queue = [...(group.childWorktrees ?? [])];
+
+    while (queue.length > 0) {
+      const node = queue.shift() as {
+        sessions?: Array<Record<string, unknown>>;
+        children?: Array<{
+          sessions?: Array<Record<string, unknown>>;
+          children?: Array<unknown>;
+        }>;
+      };
+
+      collected.push(...(node.sessions ?? []));
+      queue.push(...(node.children ?? []));
+    }
+
+    return collected;
+  };
+  const defaultFindCanonicalSessionEntryByScope = (sessionId: string | null | undefined) => {
+    if (!sessionId) {
+      return null;
+    }
+
+    const groups = overrides.navigationGroups as Array<{
+      workspace: { id: string; name: string; path: string };
+      sessions: Array<Record<string, unknown>>;
+    }> | undefined;
+    const sourceGroups = groups ?? [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "工作区一",
+          path: "/Users/jackson/workspace-1"
+        },
+        sessions: [
+          {
+            sessionId: "session-live-1",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            title: "父会话"
+          }
+        ]
+      }
+    ];
+
+    for (const group of sourceGroups) {
+      const matchedSession = collectGroupSessions(group).find((item) => item.sessionId === sessionId);
+
+      if (matchedSession) {
+        return {
+          workspace: group.workspace,
+          session: matchedSession
+        };
+      }
+    }
+
+    return null;
+  };
+
   return {
     shellMode: "mobile",
     navigationGroups: [
@@ -1715,6 +2020,30 @@ function createMobileWorkbenchShellValue(overrides: Record<string, unknown> = {}
     requestNavigationRefresh: vi.fn(),
     selectWorkspace: vi.fn(),
     setSessionWorkspace: vi.fn(),
+    findCanonicalSessionEntryByScope: defaultFindCanonicalSessionEntryByScope,
+    findVisibleSessionEntryByScope: (sessionId: string | null | undefined, options) => {
+      return overrides.findVisibleSessionEntryByScope
+        ? overrides.findVisibleSessionEntryByScope(sessionId, options)
+        : overrides.findCanonicalSessionEntryByScope
+          ? overrides.findCanonicalSessionEntryByScope(sessionId, options)
+          : defaultFindCanonicalSessionEntryByScope(sessionId);
+    },
+    resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+      preferredTargetHostId?: string | null;
+      fallbackToCurrent?: boolean;
+    }) => {
+      if (options?.preferredTargetHostId) {
+        return {
+          hostId: options.preferredTargetHostId,
+          workspaceId
+        };
+      }
+
+      return {
+        hostId: "current",
+        workspaceId
+      };
+    },
     upsertNavigationSession: vi.fn(),
     markNavigationSessionSeen: vi.fn(),
     favoriteSessions: [],
@@ -1750,6 +2079,7 @@ function summarizeRouteState(state: unknown) {
         content?: unknown;
         rawRef?: unknown;
         attachments?: unknown;
+        attachmentPayloads?: unknown;
       }>;
     };
   };
@@ -1766,7 +2096,10 @@ function summarizeRouteState(state: unknown) {
           role: typeof message?.role === "string" ? message.role : null,
           content: typeof message?.content === "string" ? message.content : null,
           rawRef: typeof message?.rawRef === "string" ? message.rawRef : null,
-          attachmentCount: Array.isArray(message?.attachments) ? message.attachments.length : 0
+          attachmentCount: Array.isArray(message?.attachments) ? message.attachments.length : 0,
+          attachmentPayloadCount: Array.isArray(message?.attachmentPayloads)
+            ? message.attachmentPayloads.length
+            : 0
         }))
       : []
   };

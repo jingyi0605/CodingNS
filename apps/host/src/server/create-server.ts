@@ -29,7 +29,6 @@ import { ButlerNotificationService } from "../modules/butler/butler-notification
 import { ButlerProfileService } from "../modules/butler/butler-profile-service.js";
 import { ButlerProjectService } from "../modules/butler/butler-project-service.js";
 import { ButlerSessionService } from "../modules/butler/butler-session-service.js";
-import { ButlerSessionSummaryService } from "../modules/butler/butler-session-summary-service.js";
 import { InstructionAdapter } from "../modules/butler/instruction-adapter.js";
 import { PatrolPlanService } from "../modules/butler/patrol-plan-service.js";
 import { PatrolExecutionService } from "../modules/butler/patrol-execution-service.js";
@@ -40,11 +39,11 @@ import {
 import { PatrolRunService } from "../modules/butler/patrol-run-service.js";
 import { PatrolScheduler } from "../modules/butler/patrol-scheduler.js";
 import { ProjectMemoryService } from "../modules/butler/project-memory-service.js";
-import { SessionSummaryInstructionAdapter } from "../modules/butler/session-summary-instruction-adapter.js";
-import { SessionSummaryScheduler } from "../modules/butler/session-summary-scheduler.js";
 import { VerificationRunService } from "../modules/butler/verification-run-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
+import { SessionCleanupService } from "../modules/session-cleanup/session-cleanup-service.js";
+import { SessionCleanupController } from "../modules/session-cleanup/session-cleanup-controller.js";
 import { HostHandshakeService } from "../modules/peer-host/host-handshake.js";
 import { HostHandshakeController } from "../modules/peer-host/host-handshake-controller.js";
 import { HostApiProxyService } from "../modules/peer-host/host-api-proxy-service.js";
@@ -64,18 +63,9 @@ import { createDefaultChannelPlatformAdapterRegistry } from "../modules/channels
 import { ChannelService } from "../modules/channels/channel-service.js";
 import { WechatClawRuntimeClient } from "../modules/channels/wechat-claw-runtime-client.js";
 import { WechatClawRuntimeManager } from "../modules/channels/wechat-claw-runtime-manager.js";
-import { BrowserProfileService } from "../modules/browser-runtime/browser-profile-service.js";
-import { BrowserRuntimeController } from "../modules/browser-runtime/browser-runtime-controller.js";
-import { BrowserRuntimeService } from "../modules/browser-runtime/browser-runtime-service.js";
-import { OpenCliBridgeBrowserExecutor } from "../modules/browser-runtime/opencli-bridge-browser-executor.js";
-import { OpenCliBrowserBridgeService } from "../modules/browser-runtime/opencli-browser-bridge-service.js";
-import { PlaywrightBrowserExecutor } from "../modules/browser-runtime/playwright-browser-executor.js";
 import { DocumentRuntimeController } from "../modules/document-runtime/document-runtime-controller.js";
 import { DocumentExportExecutor } from "../modules/document-runtime/document-export-executor.js";
 import { DocumentRuntimeService } from "../modules/document-runtime/document-runtime-service.js";
-import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
-import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
-import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
 import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
@@ -104,9 +94,6 @@ import { OfficeController } from "../modules/office/office-controller.js";
 import { OnlyOfficeIntegrationService } from "../modules/office/onlyoffice-integration-service.js";
 import { OfficePreviewLinkService } from "../modules/office/office-preview-link-service.js";
 import { OfficeService } from "../modules/office/office-service.js";
-import { OpsRuntimeController } from "../modules/ops-runtime/ops-runtime-controller.js";
-import { OpsRuntimeService } from "../modules/ops-runtime/ops-runtime-service.js";
-import { SshOpsExecutor } from "../modules/ops-runtime/ssh-ops-executor.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
 import { ProfileController } from "../modules/preferences/profile-controller.js";
 import { PreferenceProfileService } from "../modules/preferences/profile-service.js";
@@ -127,15 +114,6 @@ import { HostResourceService } from "../modules/system/host-resource-service.js"
 import { ParallelSessionController } from "../modules/parallel-sessions/parallel-session-controller.js";
 import { ParallelSessionGroupService } from "../modules/parallel-sessions/parallel-session-group-service.js";
 import { SessionIsolatedWorkspaceService } from "../modules/parallel-sessions/session-isolated-workspace-service.js";
-import { OpenCliCatalogService } from "../modules/opencli/opencli-catalog-service.js";
-import { OpenCliController } from "../modules/opencli/opencli-controller.js";
-import { OpenCliHealthService } from "../modules/opencli/opencli-health-service.js";
-import { OpenCliManagementService } from "../modules/opencli/opencli-management-service.js";
-import { OpenCliBridgeSkillService } from "../modules/opencli/opencli-bridge-skill-service.js";
-import { OpenCliRuntimeBuilder } from "../modules/opencli/opencli-runtime-builder.js";
-import { OpenCliRuntimeProfileService } from "../modules/opencli/opencli-runtime-profile-service.js";
-import { OpenCliRuntimeResolver } from "../modules/opencli/opencli-runtime-resolver.js";
-import { OpenCliSessionPromptService } from "../modules/opencli/opencli-session-prompt-service.js";
 import { ProviderCatalogService } from "../modules/provider/provider-catalog-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
@@ -212,15 +190,12 @@ import { registerAuthRoutes } from "../routes/auth.js";
 import { registerAffairsRoutes } from "../routes/affairs.js";
 import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
-import { registerBrowserRuntimeRoutes } from "../routes/browser-runtime.js";
 import { registerChannelRoutes } from "../routes/channels.js";
 import { registerClientRoutes } from "../routes/client.js";
-import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerDocumentRuntimeRoutes } from "../routes/document-runtime.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
 import { registerOfficeRoutes } from "../routes/office.js";
-import { registerOpenCliRoutes } from "../routes/opencli.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerParallelGroupRoutes } from "../routes/parallel-groups.js";
 import { registerPeerHostRoutes } from "../routes/peer-hosts.js";
@@ -232,6 +207,7 @@ import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
 import { registerProxyRoutes } from "../routes/proxy.js";
 import { registerSessionContextRoutes } from "../routes/session-contexts.js";
+import { registerSessionCleanupRoutes } from "../routes/session-cleanup.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerSkillRoutes } from "../routes/skills.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
@@ -239,7 +215,6 @@ import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorktreeRoutes } from "../routes/worktrees.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { registerSystemRoutes } from "../routes/system.js";
-import { registerOpsRuntimeRoutes } from "../routes/ops-runtime.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
@@ -263,8 +238,6 @@ import { ButlerNotificationArchiveRepository } from "../storage/repositories/but
 import { ButlerProfileRepository } from "../storage/repositories/butler-profile-repository.js";
 import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
-import { ButlerSessionSummaryStateRepository } from "../storage/repositories/butler-session-summary-state-repository.js";
-import { BrowserProfileRepository } from "../storage/repositories/browser-profile-repository.js";
 import {
   PeerHostRepository,
   PeerHostSessionRepository,
@@ -295,14 +268,10 @@ import { OfficeReceiptRepository } from "../storage/repositories/office-receipt-
 import { OfficeRollbackRecordRepository } from "../storage/repositories/office-rollback-record-repository.js";
 import { OfficeTaskRepository } from "../storage/repositories/office-task-repository.js";
 import { OfficeTaskStepRepository } from "../storage/repositories/office-task-step-repository.js";
-import { OpsTargetRepository } from "../storage/repositories/ops-target-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
-import { OpenCliCatalogEntryRepository } from "../storage/repositories/opencli-catalog-entry-repository.js";
-import { OpenCliProviderRepository } from "../storage/repositories/opencli-provider-repository.js";
-import { OpenCliRuntimeProfileRepository } from "../storage/repositories/opencli-runtime-profile-repository.js";
 import { OfficeOnlyOfficeSettingRepository } from "../storage/repositories/office-onlyoffice-setting-repository.js";
 import { PluginDefinitionRepository } from "../storage/repositories/plugin-definition-repository.js";
 import { PluginEnablementRepository } from "../storage/repositories/plugin-enablement-repository.js";
@@ -318,12 +287,14 @@ import { RecentFileRepository } from "../storage/repositories/recent-file-reposi
 import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
+import { SessionCleanupRepository } from "../storage/repositories/session-cleanup-repository.js";
 import { SessionForkRepository } from "../storage/repositories/session-fork-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
 import { SessionMessageOriginRepository } from "../storage/repositories/session-message-origin-repository.js";
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
+import { SessionSourceIndexRepository } from "../storage/repositories/session-source-index-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { SessionIsolatedWorkspaceRepository } from "../storage/repositories/session-isolated-workspace-repository.js";
@@ -435,7 +406,6 @@ export function createServer(config: HostConfig) {
     officeAuditEventRepository: new OfficeAuditEventRepository(database.db),
     officeRollbackRecordRepository: new OfficeRollbackRecordRepository(database.db),
     officeOnlyOfficeSettingRepository: new OfficeOnlyOfficeSettingRepository(database.db),
-    browserProfileRepository: new BrowserProfileRepository(database.db),
     pluginDefinitionRepository: new PluginDefinitionRepository(database.db),
     pluginEnablementRepository: new PluginEnablementRepository(database.db),
     pluginAuditEventRepository: new PluginAuditEventRepository(database.db),
@@ -446,7 +416,6 @@ export function createServer(config: HostConfig) {
     documentRepository: new DocumentRepository(database.db),
     documentRevisionRepository: new DocumentRevisionRepository(database.db),
     documentCommentRepository: new DocumentCommentRepository(database.db),
-    opsTargetRepository: new OpsTargetRepository(database.db),
     portLeaseRepository: new PortLeaseRepository(database.db),
     runtimeBindingRepository: new RuntimeBindingRepository(database.db),
     aiFallbackEditRepository: new AiFallbackEditRepository(database.db),
@@ -459,7 +428,6 @@ export function createServer(config: HostConfig) {
     butlerProfileRepository: new ButlerProfileRepository(database.db),
     butlerProjectRepository: new ButlerProjectRepository(database.db),
     butlerSessionRepository: new ButlerSessionRepository(database.db),
-    butlerSessionSummaryStateRepository: new ButlerSessionSummaryStateRepository(database.db),
     channelAccountRepository: new ChannelAccountRepository(database.db),
     channelThreadRepository: new ChannelThreadRepository(database.db),
     channelInboundEventRepository: new ChannelInboundEventRepository(database.db),
@@ -471,18 +439,17 @@ export function createServer(config: HostConfig) {
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
     managedSkillRepository: new ManagedSkillRepository(database.db),
-    openCliProviderRepository: new OpenCliProviderRepository(database.db),
-    openCliCatalogEntryRepository: new OpenCliCatalogEntryRepository(database.db),
-    openCliRuntimeProfileRepository: new OpenCliRuntimeProfileRepository(database.db),
     providerControlRepository: new ProviderControlRepository(database.db),
     providerRuntimeStateRepository: new ProviderRuntimeStateRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
     sessionChangedFileRepository: new SessionChangedFileRepository(database.db),
+    sessionCleanupRepository: new SessionCleanupRepository(database.db),
     sessionForkRepository: new SessionForkRepository(database.db),
     sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
+    sessionSourceIndexRepository: new SessionSourceIndexRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
     sessionMessageOriginRepository: new SessionMessageOriginRepository(database.db),
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
@@ -558,6 +525,14 @@ export function createServer(config: HostConfig) {
   const serviceUpdateTaskService = new ServiceUpdateTaskService(
     taskManager,
     npmGlobalPackageService
+  );
+  const sessionCleanupService = new SessionCleanupService(
+    repositories.sessionCleanupRepository,
+    repositories.sessionBindingRepository,
+    repositories.sessionIndexRepository,
+    repositories.sessionSourceIndexRepository,
+    repositories.workspaceRepository,
+    taskManager
   );
   const workspaceService = new WorkspaceService(
     repositories.workspaceRepository,
@@ -747,45 +722,6 @@ export function createServer(config: HostConfig) {
     dbPath: config.ccSwitchDbPath
   });
   const modelSwitchService = new ModelSwitchService(ccSwitchAdapter);
-  const openCliRuntimeProfileService = new OpenCliRuntimeProfileService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository,
-    repositories.openCliRuntimeProfileRepository,
-    {
-      runtimeStorageRootPath: path.dirname(config.databasePath)
-    }
-  );
-  const openCliCatalogService = new OpenCliCatalogService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliRuntimeBuilder = new OpenCliRuntimeBuilder(
-    repositories.openCliRuntimeProfileRepository
-  );
-  const openCliHealthService = new OpenCliHealthService();
-  const openCliRuntimeResolver = new OpenCliRuntimeResolver(
-    repositories.openCliProviderRepository,
-    repositories.openCliRuntimeProfileRepository,
-    openCliRuntimeProfileService,
-    openCliRuntimeBuilder
-  );
-  const openCliManagementService = new OpenCliManagementService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository,
-    repositories.openCliRuntimeProfileRepository,
-    openCliCatalogService,
-    openCliHealthService,
-    openCliRuntimeResolver
-  );
-  const openCliSessionPromptService = new OpenCliSessionPromptService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliBridgeSkillService = new OpenCliBridgeSkillService(
-    repositories.openCliProviderRepository,
-    repositories.openCliCatalogEntryRepository
-  );
-  const openCliController = new OpenCliController(openCliManagementService);
   const workspaceSessionAuthService = new WorkspaceSessionAuthService(authService, config);
   const workspaceSessionRuntimeContextService = new WorkspaceSessionRuntimeContextService(
     workspaceSessionAuthService,
@@ -821,8 +757,6 @@ export function createServer(config: HostConfig) {
   const sessionProviderConfigService = new SessionProviderConfigService(
     config,
     ccSwitchAdapter,
-    openCliRuntimeResolver,
-    openCliBridgeSkillService,
     workspaceSessionRuntimeContextService
   );
   const skillTargetAdapters = createDefaultSkillTargetAdapters(config);
@@ -907,6 +841,158 @@ export function createServer(config: HostConfig) {
     repositories.providerControlRepository,
     providerRuntimeStateService
   );
+  sessionCleanupService.configureDeleteExecutor((sessionId, userId) =>
+    sessionHistoryService.deleteSession(sessionId, userId)
+  );
+  sessionCleanupService.configureDeleteVerificationExecutor(async (input) => {
+    const sourceKeys = [];
+
+    if (input.providerSessionId || input.rawStoreRef) {
+      sourceKeys.push([input.provider, input.providerSessionId ?? "", input.rawStoreRef ?? ""].join("::"));
+    }
+
+    await sessionHistoryService.repairSessionSourceIndex({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      provider: input.provider,
+      rawStoreRefs: input.rawStoreRef ? [input.rawStoreRef] : [],
+      awaitDiscovery: true
+    });
+
+    const remainingBindings = repositories.sessionBindingRepository.listByUserId(input.userId).filter((binding) =>
+      binding.workspaceId === input.workspaceId
+      && binding.provider === input.provider
+      && (
+        (input.providerSessionId && binding.providerSessionId === input.providerSessionId)
+        || (input.rawStoreRef && binding.rawStoreRef === input.rawStoreRef)
+      )
+    );
+
+    if (remainingBindings.length > 0) {
+      throw new Error("session_reappeared_after_delete_verification");
+    }
+  });
+  sessionCleanupService.configureButlerResiduePurgeExecutor(async () => {
+    const targetSessionIds = repositories.sessionBindingRepository
+      .listByUserId(config.authAdminUserId ?? "a0c91011-a0a3-45f1-b67a-0641d369bd93")
+      .filter((binding) =>
+        binding.rawStoreRef.includes("butler-runtime")
+        || binding.rawStoreRef.includes("pending://codex/")
+        || binding.providerSessionId.includes("pending://codex/")
+        || (binding.runtimeHomeDir ?? "").includes("butler")
+      )
+      .map((binding) => binding.sessionId);
+
+    if (targetSessionIds.length === 0) {
+      return {
+        bindingCount: 0,
+        indexCount: 0,
+        sourceIndexCount: 0
+      };
+    }
+
+    const placeholders = targetSessionIds.map(() => "?").join(", ");
+    const now = new Date().toISOString();
+    const deleteBySessionIds = (sql: string) => database.db.prepare(sql).run(now, ...targetSessionIds).changes;
+
+    database.db.exec("BEGIN IMMEDIATE");
+    try {
+      database.db
+        .prepare(`DELETE FROM butler_control_timers WHERE session_id IN (${placeholders}) OR target_session_id IN (${placeholders})`)
+        .run(...targetSessionIds, ...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM butler_follow_up_tasks WHERE session_id IN (${placeholders}) OR assistant_session_id IN (${placeholders})`)
+        .run(...targetSessionIds, ...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM butler_control_sessions WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM butler_sessions WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_checkpoints WHERE butler_session_id NOT NULL AND butler_session_id IN (SELECT id FROM butler_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM project_memories WHERE source_butler_session_id NOT NULL AND source_butler_session_id IN (SELECT id FROM butler_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM patrol_runs WHERE butler_session_id IN (SELECT id FROM butler_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM verification_runs WHERE butler_session_id IN (SELECT id FROM butler_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM butler_control_events WHERE control_session_id IN (SELECT id FROM butler_control_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM assistant_automation_tasks WHERE control_session_id IN (SELECT id FROM butler_control_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM assistant_sandboxes WHERE control_session_id IN (SELECT id FROM butler_control_sessions)`)
+        .run();
+      database.db
+        .prepare(`DELETE FROM channel_deliveries WHERE control_session_id IN (SELECT id FROM butler_control_sessions) OR session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM channel_inbound_events WHERE control_session_id IN (SELECT id FROM butler_control_sessions) OR session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM channel_threads WHERE control_session_id IN (SELECT id FROM butler_control_sessions) OR session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_message_origins WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_changed_files WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_changed_file_states WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_file_context_bindings WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_send_queue WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_message_attachments WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_forks WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_status_snapshots WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      database.db
+        .prepare(`DELETE FROM session_states WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds);
+      const indexCount = database.db
+        .prepare(`DELETE FROM session_indices WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds).changes;
+      const bindingCount = database.db
+        .prepare(`DELETE FROM session_bindings WHERE session_id IN (${placeholders})`)
+        .run(...targetSessionIds).changes;
+      const sourceIndexCount = database.db
+        .prepare(
+          `DELETE FROM session_source_index
+           WHERE raw_store_ref LIKE '%butler-runtime%'
+              OR workspace_path LIKE '%butler-workspace%'
+              OR provider_session_id LIKE 'pending://codex/%'
+              OR raw_store_ref LIKE '%pending://codex/%'`
+        )
+        .run().changes;
+      database.db.exec("COMMIT");
+
+      return {
+        bindingCount,
+        indexCount,
+        sourceIndexCount
+      };
+    } catch (error) {
+      database.db.exec("ROLLBACK");
+      throw error;
+    }
+  });
   const providerCatalogService = new ProviderCatalogService(
     config,
     repositories.providerControlRepository,
@@ -936,7 +1022,6 @@ export function createServer(config: HostConfig) {
     sessionProviderConfigService,
     config,
     sessionActivityAuthorityService,
-    openCliSessionPromptService,
     workspaceSessionRuntimeContextService,
     deepSeekHarnessRuntimeAdapter
   );
@@ -948,11 +1033,6 @@ export function createServer(config: HostConfig) {
     ...config,
     codexHomeDir: path.join(butlerRuntimeRootDir, "codex-home"),
     claudeCodeHomeDir: path.join(butlerRuntimeRootDir, "claude-home")
-  };
-  const butlerSummaryRuntimeConfig: HostConfig = {
-    ...config,
-    codexHomeDir: path.join(butlerRuntimeRootDir, "summary-codex-home"),
-    claudeCodeHomeDir: path.join(butlerRuntimeRootDir, "summary-claude-home")
   };
   const butlerFollowUpRuntimeConfig: HostConfig = {
     ...config,
@@ -972,30 +1052,10 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
+    sessionActivityAuthorityService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
-  );
-  const butlerSummarySessionLiveRuntimeService = new SessionLiveRuntimeService(
-    sessionHistoryService,
-    sessionMessageAttachmentService,
-    workspaceService,
-    sessionChangedFileService,
-    repositories.sessionBindingRepository,
-    repositories.authUserRepository,
-    repositories.sessionSendQueueRepository,
-    repositories.sessionIndexRepository,
-    repositories.sessionStateRepository,
-    repositories.sessionStatusSnapshotRepository,
-    sessionProviderConfigService,
-    butlerSummaryRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
-  );
-  sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
-    butlerSummarySessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
   );
   const butlerFollowUpSessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
@@ -1010,8 +1070,7 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerFollowUpRuntimeConfig,
-    sessionActivityAuthorityService,
-    openCliSessionPromptService
+    sessionActivityAuthorityService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1020,7 +1079,6 @@ export function createServer(config: HostConfig) {
     sessionLiveRuntimeService,
     [
       butlerSessionLiveRuntimeService,
-      butlerSummarySessionLiveRuntimeService,
       butlerFollowUpSessionLiveRuntimeService
     ]
   );
@@ -1072,10 +1130,6 @@ export function createServer(config: HostConfig) {
     new RuntimePatrolProviderAdapter("codex", sessionLiveRuntimeService, sessionHistoryService),
     new RuntimePatrolProviderAdapter("claude-code", sessionLiveRuntimeService, sessionHistoryService)
   ]);
-  const summaryProviderAdapterRegistry = new ProviderAdapterRegistry([
-    new RuntimePatrolProviderAdapter("codex", butlerSummarySessionLiveRuntimeService, sessionHistoryService),
-    new RuntimePatrolProviderAdapter("claude-code", butlerSummarySessionLiveRuntimeService, sessionHistoryService)
-  ]);
   const followUpProviderAdapterRegistry = new ProviderAdapterRegistry([
     new RuntimePatrolProviderAdapter("codex", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService),
     new RuntimePatrolProviderAdapter("claude-code", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService)
@@ -1104,7 +1158,6 @@ export function createServer(config: HostConfig) {
       schedulerMetrics
     }
   );
-  const sessionSummaryInstructionAdapter = new SessionSummaryInstructionAdapter();
   const butlerFollowUpEvaluationInstructionAdapter = new ButlerFollowUpEvaluationInstructionAdapter();
   const verificationRunService = new VerificationRunService(
     repositories.butlerProjectRepository,
@@ -1140,24 +1193,6 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.claudeCodeHomeDir,
     config.claudeCodeHomeDir
   );
-  const butlerSessionSummaryService = new ButlerSessionSummaryService(
-    butlerProfileService,
-    butlerProjectService,
-    butlerSessionService,
-    repositories.butlerSessionRepository,
-    repositories.butlerSessionSummaryStateRepository,
-    repositories.sessionCheckpointRepository,
-    repositories.sessionIndexRepository,
-    repositories.authUserRepository,
-    workspaceService,
-    sessionHistoryService,
-    summaryProviderAdapterRegistry,
-    sessionSummaryInstructionAdapter,
-    {
-      summaryCodexHomeDir: butlerSummaryRuntimeConfig.codexHomeDir,
-      sourceCodexHomeDir: config.codexHomeDir
-    }
-  );
   const butlerFollowUpService = new ButlerFollowUpService(
     butlerProfileService,
     butlerProjectService,
@@ -1179,12 +1214,6 @@ export function createServer(config: HostConfig) {
     butlerSessionService,
     butlerFollowUpService,
     verificationRunService
-  );
-  const sessionSummaryScheduler = new SessionSummaryScheduler(
-    butlerSessionSummaryService,
-    {
-      schedulerMetrics
-    }
   );
   const butlerFollowUpScheduler = new ButlerFollowUpScheduler(
     butlerFollowUpService,
@@ -1318,29 +1347,6 @@ export function createServer(config: HostConfig) {
       terminalLogRootDir: path.join(path.dirname(config.databasePath), "terminal-logs"),
       terminalLogFileRepository: repositories.terminalLogFileRepository,
       terminalLogSegmentRepository: repositories.terminalLogSegmentRepository
-    }
-  );
-  const debugTargetService = new DebugTargetService(
-    database.db,
-    workspaceService,
-    repositories.workspaceWorktreeRepository,
-    repositories.debugTargetRepository,
-    repositories.debugServiceRepository,
-    repositories.frameworkAnalysisResultRepository,
-    repositories.debugRuntimeSessionRepository,
-    repositories.portLeaseRepository,
-    repositories.runtimeBindingRepository,
-    repositories.aiFallbackEditRepository,
-    repositories.terminalCommandTemplateRepository,
-    preferenceProfileService,
-    terminalService,
-    repositories.terminalInstanceRepository,
-    taskManager
-  );
-  const debugRuntimeReconciliationScheduler = new DebugRuntimeReconciliationScheduler(
-    debugTargetService,
-    {
-      schedulerMetrics
     }
   );
   const commandTemplateService = new CommandTemplateService(
@@ -1511,14 +1517,6 @@ export function createServer(config: HostConfig) {
   const clientController = new ClientController(clientService);
   const channelController = new ChannelController(channelsService);
   const channelGatewayController = new ChannelGatewayController(channelGatewayService);
-  const debugTargetController = new DebugTargetController(debugTargetService);
-  const handleDebugTargetTerminalExit = (event: {
-    terminal: TerminalInstance;
-    requestedClose: boolean;
-  }) => {
-    void debugTargetService.handleTerminalExit(event);
-  };
-  terminalService.on("exit", handleDebugTargetTerminalExit);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(
     workspaceService,
@@ -1639,6 +1637,7 @@ export function createServer(config: HostConfig) {
     routedSessionLiveRuntimeService,
     repositories.butlerControlSessionRepository
   );
+  const sessionCleanupController = new SessionCleanupController(sessionCleanupService);
   const parallelSessionController = new ParallelSessionController(
     parallelSessionGroupService,
     sessionIsolatedWorkspaceService
@@ -1687,40 +1686,6 @@ export function createServer(config: HostConfig) {
     pluginFileGatewayService,
     pluginPermissionService
   );
-  const browserProfileService = new BrowserProfileService(
-    repositories.browserProfileRepository,
-    config.databasePath
-  );
-  const playwrightBrowserExecutor = new PlaywrightBrowserExecutor(
-    config,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository
-  );
-  const openCliBrowserBridgeService = new OpenCliBrowserBridgeService(openCliHealthService);
-  const openCliBridgeBrowserExecutor = new OpenCliBridgeBrowserExecutor(
-    config.databasePath,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository,
-    openCliHealthService
-  );
-  const browserRuntimeService = new BrowserRuntimeService(
-    browserProfileService,
-    officeService,
-    repositories.officeTaskRepository,
-    [
-      playwrightBrowserExecutor,
-      openCliBridgeBrowserExecutor
-    ],
-    openCliBrowserBridgeService,
-    taskManager
-  );
-  const browserRuntimeController = new BrowserRuntimeController(browserRuntimeService);
   const documentRuntimeService = new DocumentRuntimeService(
     repositories.documentTemplateRepository,
     repositories.documentRepository,
@@ -1739,23 +1704,6 @@ export function createServer(config: HostConfig) {
     path.join(path.dirname(config.databasePath), "document-templates")
   );
   const documentRuntimeController = new DocumentRuntimeController(documentRuntimeService);
-  const sshOpsExecutor = new SshOpsExecutor(
-    config,
-    repositories.officeTaskRepository,
-    repositories.officeTaskStepRepository,
-    repositories.officeArtifactRepository,
-    repositories.officeReceiptRepository,
-    repositories.officeAuditEventRepository
-  );
-  const opsRuntimeService = new OpsRuntimeService(
-    repositories.opsTargetRepository,
-    browserProfileService,
-    officeService,
-    repositories.officeTaskRepository,
-    sshOpsExecutor,
-    taskManager
-  );
-  const opsRuntimeController = new OpsRuntimeController(opsRuntimeService);
   const assistantCapabilityController = new AssistantCapabilityController(
     new AssistantCapabilityService(
       butlerProjectService,
@@ -1766,7 +1714,6 @@ export function createServer(config: HostConfig) {
       sessionHistoryService,
       sessionLiveRuntimeService,
       terminalService,
-      debugTargetService,
       workspaceService,
       repositories.workspaceWorktreeRepository,
       worktreeManager,
@@ -1778,9 +1725,7 @@ export function createServer(config: HostConfig) {
       repositories.providerControlRepository,
       documentRuntimeService,
       officeService,
-      officePreviewLinkService,
-      browserRuntimeService,
-      opsRuntimeService
+      officePreviewLinkService
     )
   );
   const hostHandshakeController = new HostHandshakeController(hostHandshakeService);
@@ -1851,7 +1796,6 @@ export function createServer(config: HostConfig) {
     runtimeServices: [
       sessionLiveRuntimeService,
       butlerSessionLiveRuntimeService,
-      butlerSummarySessionLiveRuntimeService,
       butlerFollowUpSessionLiveRuntimeService
     ]
   });
@@ -1892,18 +1836,6 @@ export function createServer(config: HostConfig) {
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
   app.addHook("onReady", () => {
-    // 启动恢复属于后台补偿流程，不能把 Host ready 绑死在外部命令或慢任务上。
-    void debugTargetService.runBackgroundRuntimeReconciliation(
-      "debug_target.startup_runtime_recovery"
-    ).catch((error) => {
-      if (shuttingDown) {
-        return;
-      }
-
-      console.error("[startup-recovery] 调试运行时恢复失败", {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
     void tailscaleService.restoreOnStartup().catch((error) => {
       if (shuttingDown) {
         return;
@@ -1940,12 +1872,9 @@ export function createServer(config: HostConfig) {
   void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
   void registerChannelRoutes(app, channelController);
   void registerClientRoutes(app, clientController);
-  void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
   void registerOfficeRoutes(app, officeController);
-  void registerBrowserRuntimeRoutes(app, browserRuntimeController);
   void registerDocumentRuntimeRoutes(app, documentRuntimeController);
-  void registerOpsRuntimeRoutes(app, opsRuntimeController);
   void registerAffairsRoutes(
     app,
     affairsLibraryController,
@@ -1969,12 +1898,12 @@ export function createServer(config: HostConfig) {
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
+  void registerSessionCleanupRoutes(app, sessionCleanupController);
   void registerParallelGroupRoutes(app, parallelSessionController);
   void registerPresentationRoutes(app, presentationController);
   void registerPluginRoutes(app, pluginController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
-  void registerOpenCliRoutes(app, openCliController);
   void registerSystemRoutes(
     app,
     tailscaleController,
@@ -1988,11 +1917,9 @@ export function createServer(config: HostConfig) {
   void registerProviderRoutes(app, providerController);
   void registerGitRoutes(app, gitController);
   patrolScheduler.start();
-  sessionSummaryScheduler.start();
   butlerFollowUpScheduler.start();
   butlerControlTimerScheduler.start();
   channelPollingScheduler.start();
-  debugRuntimeReconciliationScheduler.start();
   pluginSchedulerService.start();
 
   if (config.webUiDir) {
@@ -2005,16 +1932,12 @@ export function createServer(config: HostConfig) {
     eventLoopMonitor.dispose();
     butlerFollowUpTerminalSubscription.close();
     await patrolScheduler.dispose();
-    await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
     await butlerControlTimerScheduler.dispose();
     await channelPollingScheduler.dispose();
-    await debugRuntimeReconciliationScheduler.dispose();
     await pluginSchedulerService.dispose();
-    terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
     await butlerFollowUpSessionLiveRuntimeService.dispose();
-    await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
     await deepSeekHarnessSidecarManager.shutdown();
@@ -2055,8 +1978,6 @@ export function createServer(config: HostConfig) {
         channelGatewayService,
         channelPollingService,
         channelPollingScheduler,
-        debugTargetService,
-        debugRuntimeReconciliationScheduler,
         authService,
         workspaceService,
         worktreeManager,
@@ -2077,8 +1998,6 @@ export function createServer(config: HostConfig) {
         patrolRunService,
         verificationRunService,
         patrolScheduler,
-        butlerSessionSummaryService,
-        sessionSummaryScheduler,
         butlerFollowUpScheduler,
         workspacePanelSnapshotService,
         fileTreeService,
@@ -2098,15 +2017,15 @@ export function createServer(config: HostConfig) {
         tailscaleService,
         modelSwitchService,
         officeService,
-        browserProfileService,
         pluginRegistryService,
         pluginRuntimeSessionService,
         pluginRuntimeService,
         pluginSchedulerService,
         documentRuntimeService,
-        opsRuntimeService,
         runtimeObservabilityService,
         sessionHistoryService,
+        sessionCleanupService,
+        sessionCleanupController,
         sessionChangedFileService,
         sessionMessageAttachmentService,
         sessionLiveRuntimeService,
@@ -2124,30 +2043,6 @@ function ensureDefaultOfficeConnectors(
 ): void {
   const timestamp = new Date().toISOString();
   const defaults: Array<Omit<OfficeConnector, "id" | "createdAt" | "updatedAt">> = [
-    {
-      connectorKey: "browser.playwright",
-      kind: "browser",
-      displayName: "Playwright Browser",
-      capabilityJson: JSON.stringify({
-        supportedTaskTypes: ["browser", "ops"],
-        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
-        supportedArtifacts: ["screenshot", "ocr_result", "downloaded_file", "dom_snapshot"],
-        supportsSubscription: false
-      }),
-      status: "active"
-    },
-    {
-      connectorKey: "browser.opencli_bridge",
-      kind: "browser",
-      displayName: "OpenCLI Bridge Browser",
-      capabilityJson: JSON.stringify({
-        supportedTaskTypes: ["browser"],
-        supportedActions: ["goto", "click", "fill", "upload", "download", "read_dom", "screenshot"],
-        supportedArtifacts: ["screenshot", "downloaded_file", "dom_snapshot"],
-        supportsSubscription: false
-      }),
-      status: "active"
-    },
     {
       connectorKey: "document.doct",
       kind: "document",

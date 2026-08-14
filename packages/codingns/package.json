@@ -1,6 +1,6 @@
 {
   "name": "@jingyi0605/codingns",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "type": "module",
   "bin": {
     "codingns": "./bin/codingns.mjs",
@@ -10,6 +10,7 @@
     "bin",
     "dist",
     "README.md",
+    "scripts/claude-hook-bridge.cjs",
     "scripts/node22-runtime.mjs",
     "scripts/postinstall.mjs",
     "node_modules/@codingns/session-sync-core",

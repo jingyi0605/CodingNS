@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../../shared/toast";
+import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { authStore } from "../../auth/store/auth-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type {
@@ -24,6 +25,8 @@ interface MockTerminalManagerSnapshot {
 }
 
 let terminalManagerSnapshotListener: ((snapshot: MockTerminalManagerSnapshot) => void) | null = null;
+const mockSubscribeTerminalManagerSnapshot = vi.fn();
+const mockRequestTerminalManagerRefresh = vi.fn();
 const initialPreferenceState = userPreferenceStore.getState();
 
 function createPreferenceState(language: "zh-CN" | "en-US") {
@@ -112,8 +115,9 @@ vi.mock("../../conversation/components/WorkbenchLayout", async () => {
       subscribeGitSnapshot: () => undefined,
       requestGitRefresh: () => undefined,
       addGitSnapshotListener: () => () => undefined,
-      subscribeTerminalManagerSnapshot: () => undefined,
-      requestTerminalManagerRefresh: () => {
+      subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
+      requestTerminalManagerRefresh: (...args: unknown[]) => {
+        mockRequestTerminalManagerRefresh(...args);
         terminalManagerSnapshotListener?.(buildMockSnapshot());
       },
       addTerminalManagerSnapshotListener: (listener: (snapshot: MockTerminalManagerSnapshot) => void) => {
@@ -150,6 +154,8 @@ function renderPanel(
   currentWorkspaceId: string | null = "workspace-1",
   options?: {
     externalWindowMode?: boolean;
+    requestWorkspaceId?: string | null;
+    workbenchShellOverrides?: Record<string, unknown>;
   }
 ) {
   function LocationProbe() {
@@ -163,8 +169,10 @@ function renderPanel(
       <ToastProvider>
         <TerminalManagerPanel
           currentWorkspaceId={currentWorkspaceId}
+          requestWorkspaceId={options?.requestWorkspaceId}
           navigationGroups={navigationGroups}
           externalWindowMode={options?.externalWindowMode}
+          workbenchShellOverrides={options?.workbenchShellOverrides as never}
         />
         <LocationProbe />
       </ToastProvider>
@@ -179,6 +187,8 @@ describe("TerminalManagerPanel", () => {
     authStore.clear();
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     terminalManagerSnapshotListener = null;
+    mockSubscribeTerminalManagerSnapshot.mockReset();
+    mockRequestTerminalManagerRefresh.mockReset();
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
       terminals: [],
@@ -287,6 +297,7 @@ describe("TerminalManagerPanel", () => {
           workspaceId: "workspace-1",
           name: savedTemplateBody.name,
           cwd: savedTemplateBody.cwd ?? "C:/Code/demo",
+          shell: (savedTemplateBody.shell as string | null | undefined) ?? null,
           command: savedTemplateBody.command,
           args: savedTemplateBody.args ?? [],
           env: {},
@@ -365,6 +376,7 @@ describe("TerminalManagerPanel", () => {
         workspaceId: "workspace-1",
         name: "scripts/dev.ps1 -Port 5173",
         cwd: "apps/user-app",
+        shell: "powershell.exe",
         command: "scripts/dev.ps1",
         args: ["-Port", "5173"],
         port: 5173,
@@ -378,6 +390,59 @@ describe("TerminalManagerPanel", () => {
     });
   });
 
+  it("命中缓存后打开终端面板也会强制刷新最新快照", async () => {
+    writeViewSnapshot("terminal-manager.snapshot.workspace-1", {
+      revision: "revision-cached",
+      workspaceId: "workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: [],
+      shellOptions: []
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-cached",
+          targetHostId: undefined
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-cached",
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
+  it("点击刷新按钮会强制拉取最新终端快照", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    const refreshButton = await screen.findByRole("button", { name: "刷新列表" });
+    mockRequestTerminalManagerRefresh.mockClear();
+
+    await user.click(refreshButton);
+
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "workspace-1",
+        expect.objectContaining({
+          skipKnownRevision: true,
+          targetHostId: undefined
+        })
+      );
+    });
+  });
+
   it("没有当前会话工作区时显示空状态", async () => {
     renderPanel(null);
 
@@ -386,7 +451,7 @@ describe("TerminalManagerPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("可以从启动项管理头部跳到当前工作区的调试页", async () => {
+  it("启动项管理头部不再显示调试服务跳转", async () => {
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
       terminals: [],
@@ -405,9 +470,48 @@ describe("TerminalManagerPanel", () => {
 
     renderPanel();
 
-    await userEvent.click(await screen.findByRole("button", { name: "调试服务" }));
+    expect(screen.queryByRole("button", { name: "调试服务" })).toBeNull();
+  });
 
-    expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/debug");
+  it("PeerHost 场景即使外层路由没带 targetHostId，也优先使用显式传入的远端请求工作区", async () => {
+    writeViewSnapshot("terminal-manager.snapshot.host.peer-host-1.remote-workspace-1", {
+      revision: "revision-peer",
+      workspaceId: "remote-workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: [],
+      shellOptions: []
+    });
+
+    renderPanel("workspace-1", {
+      requestWorkspaceId: "remote-workspace-1",
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-1",
+        currentWorkspaceRef: {
+          hostId: "peer-host-1",
+          workspaceId: "remote-workspace-1"
+        }
+      }
+    });
+
+    await waitFor(() => {
+      expect(mockSubscribeTerminalManagerSnapshot).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          knownRevision: "revision-peer",
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockRequestTerminalManagerRefresh).toHaveBeenCalledWith(
+        "remote-workspace-1",
+        expect.objectContaining({
+          targetHostId: "peer-host-1"
+        })
+      );
+    });
   });
 
   it("详情层支持编辑和移除快捷启动项", async () => {
@@ -418,6 +522,7 @@ describe("TerminalManagerPanel", () => {
       workspaceId: "workspace-1",
       name: "启动前端",
       cwd: "C:/Code/demo",
+      shell: "powershell.exe",
       command: "pnpm",
       args: ["dev"],
       env: {},
@@ -472,6 +577,7 @@ describe("TerminalManagerPanel", () => {
           workspaceId: "workspace-1",
           name: String(updatedTemplateBody.name),
           cwd: String(updatedTemplateBody.cwd),
+          shell: (updatedTemplateBody.shell as string | null | undefined) ?? null,
           command: String(updatedTemplateBody.command),
           args: (updatedTemplateBody.args as string[]) ?? [],
           env: {},
@@ -521,6 +627,7 @@ describe("TerminalManagerPanel", () => {
         workspaceId: "workspace-1",
         name: "前端开发",
         cwd: "apps/user-app",
+        shell: "powershell.exe",
         command: "npm",
         args: ["run", "dev:frontend"],
         port: 4174,
@@ -553,6 +660,113 @@ describe("TerminalManagerPanel", () => {
     renderPanel("workspace-1", { externalWindowMode: true });
 
     expect(screen.queryByRole("button", { name: "在新窗口打开" })).not.toBeInTheDocument();
+  });
+
+  it("Windows Peer Host 会显示并回填正确的持久化方案名称", async () => {
+    buildMockSnapshot = () => ({
+      workspaceId: "remote-workspace-1",
+      terminals: [],
+      shellOptions: [
+        {
+          id: "cmd",
+          label: "命令提示符 (CMD)",
+          shell: "C:\\Windows\\System32\\cmd.exe",
+          available: true,
+          unavailableReason: null
+        },
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          available: true,
+          unavailableReason: null
+        },
+        {
+          id: "git-bash",
+          label: "Git Bash",
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ],
+      templates: [
+        {
+          id: "template-win-1",
+          workspaceId: "remote-workspace-1",
+          name: "Web",
+          cwd: "C:/Code/GCAC",
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+          command: "./scripts/dev-web.sh",
+          args: [],
+          env: {},
+          port: 5172,
+          proxyEnabled: false,
+          proxySlug: null,
+          runtimeType: "conpty-git-bash",
+          createdAt: "2026-03-24T00:00:00.000Z",
+          updatedAt: "2026-03-24T00:10:00.000Z"
+        }
+      ],
+      templateStatuses: [
+        {
+          templateId: "template-win-1",
+          port: 5172,
+          occupied: false,
+          processId: null,
+          parentProcessId: null,
+          processGroupId: null,
+          processName: null,
+          processCommandLine: null,
+          parentProcessName: null,
+          parentProcessCommandLine: null,
+          terminationScope: null
+        }
+      ]
+    });
+
+    writeViewSnapshot("terminal-manager.snapshot.host.peer-host-windows.remote-workspace-1", {
+      revision: "revision-peer-windows",
+      workspaceId: "remote-workspace-1",
+      targetHostId: "peer-host-windows",
+      terminals: [],
+      templates: buildMockSnapshot().templates,
+      templateStatuses: buildMockSnapshot().templateStatuses,
+      shellOptions: buildMockSnapshot().shellOptions
+    });
+
+    renderPanel("workspace-1", {
+      requestWorkspaceId: "remote-workspace-1",
+      workbenchShellOverrides: {
+        currentTargetHostId: "peer-host-windows",
+        currentWorkspaceRef: {
+          hostId: "peer-host-windows",
+          workspaceId: "remote-workspace-1"
+        }
+      }
+    });
+
+    await waitFor(() => {
+      expect(terminalManagerSnapshotListener).not.toBeNull();
+    });
+    terminalManagerSnapshotListener?.({
+      ...buildMockSnapshot(),
+      workspaceId: "remote-workspace-1",
+      targetHostId: "peer-host-windows"
+    } as never);
+
+    expect(await screen.findByText("Git Bash 持久会话")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "显示详细信息" }));
+    await userEvent.click(screen.getByRole("button", { name: "编辑启动项" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑快捷启动项" });
+    const comboboxes = within(dialog).getAllByRole("combobox");
+    expect(comboboxes).toHaveLength(2);
+    expect(comboboxes[0]).toHaveValue("git-bash");
+    expect(comboboxes[1]).toHaveValue("tmux");
+    expect(
+      within(dialog).getByText("使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。")
+    ).toBeInTheDocument();
   });
 });
 

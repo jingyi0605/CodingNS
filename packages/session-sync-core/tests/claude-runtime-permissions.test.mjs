@@ -180,7 +180,7 @@ rl.once("line", () => {
     assert.ok(settings.hooks?.PreToolUse);
     assert.deepEqual(
       settings.hooks.PreToolUse.map((entry) => entry.matcher),
-      ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"]
+      ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "AskUserQuestion", "ExitPlanMode"]
     );
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks?.[0]?.command ?? "";
     assert.match(hookCommand, /bridge\.cjs/);
@@ -283,10 +283,11 @@ rl.once("line", () => {
   }
 });
 
-test("ClaudeRuntimeAdapter 在 bypassPermissions 下不会注入二次审批 hook", async () => {
+test("ClaudeRuntimeAdapter 在 bypassPermissions 下只保留问题和计划审批 hook", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-hooks-bypass-"));
   const scriptPath = join(rootDir, "fake-claude-hooks-bypass.mjs");
   const argvPath = join(rootDir, "argv.json");
+  const settingsPathCapture = join(rootDir, "settings.json.capture");
   const homeDir = join(rootDir, ".claude");
   const bridgeScriptPath = join(rootDir, "bridge.cjs");
 
@@ -298,6 +299,11 @@ import readline from "node:readline";
 
 const argv = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(argv), "utf8");
+const settingsFlagIndex = argv.indexOf("--settings");
+if (settingsFlagIndex !== -1 && argv[settingsFlagIndex + 1]) {
+  const settingsPath = argv[settingsFlagIndex + 1];
+  fs.writeFileSync(${JSON.stringify(settingsPathCapture)}, fs.readFileSync(settingsPath, "utf8"), "utf8");
+}
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.once("line", () => {
@@ -345,7 +351,16 @@ rl.once("line", () => {
     await launch.completed;
 
     const argv = JSON.parse(readFileSync(argvPath, "utf8"));
-    assert.equal(argv.includes("--settings"), false);
+    assert.equal(argv.includes("--settings"), true);
+    const settings = JSON.parse(readFileSync(settingsPathCapture, "utf8"));
+    assert.deepEqual(
+      settings.hooks.PreToolUse.map((entry) => entry.matcher),
+      ["AskUserQuestion", "ExitPlanMode"]
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(settings.hooks, "PermissionRequest"),
+      false
+    );
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }

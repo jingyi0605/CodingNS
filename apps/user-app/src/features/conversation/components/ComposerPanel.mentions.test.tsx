@@ -361,7 +361,7 @@ describe("ComposerPanel mentions", () => {
       skills: [
         {
           id: "skill-1",
-          name: "office-browser-opencli-bridge",
+          name: "workspace-helper-skill",
           source: "managed",
           targetCli: ["codex", "claude-code"],
           description: "适用于 codex、claude-code"
@@ -397,16 +397,16 @@ describe("ComposerPanel mentions", () => {
       expect(screen.getByRole("listbox", { name: t("conversation.mentionMenuTitle") })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("office-browser-opencli-bridge")).toBeInTheDocument();
+    expect(screen.getByText("workspace-helper-skill")).toBeInTheDocument();
     expect(screen.getByText("apps/user-app/src/features/conversation/components/ComposerPanel.tsx")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("office-browser-opencli-bridge"));
+    fireEvent.click(screen.getByText("workspace-helper-skill"));
 
     await waitFor(() => {
       expect(textarea.value).toBe("");
     });
     expect(screen.getByLabelText(t("conversation.mentionSelectedListLabel"))).toBeInTheDocument();
-    expect(screen.getByText("office-browser-opencli-bridge").closest(".composer-selected-mention-chip")).not.toBeNull();
+    expect(screen.getByText("workspace-helper-skill").closest(".composer-selected-mention-chip")).not.toBeNull();
   });
 
   it("输入 @ 后会立刻打开面板并显示加载中", async () => {

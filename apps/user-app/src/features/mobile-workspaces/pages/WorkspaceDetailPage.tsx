@@ -10,10 +10,6 @@ import {
 } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
-import { DebugAnalysisView } from "../../debug-target/components/DebugAnalysisView";
-import { RegisteredDebugTemplatesMobileSection } from "../../debug-target/components/RegisteredDebugTemplatesMobileSection";
-import { useDebugAnalysis } from "../../debug-target/hooks/useDebugAnalysis";
-import { useRegisteredDebugTemplates } from "../../debug-target/hooks/useRegisteredDebugTemplates";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
@@ -197,13 +193,6 @@ export function WorkspaceDetailPage() {
     () => archivedSessions.slice(0, visibleArchivedCount),
     [archivedSessions, visibleArchivedCount]
   );
-  const debugAnalysisState = useDebugAnalysis(
-    workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null
-  );
-  const registeredDebugTemplatesState = useRegisteredDebugTemplates(
-    workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null
-  );
-
   async function handleRemoveWorkspace() {
     if (!workspace) {
       return;
@@ -386,24 +375,6 @@ export function WorkspaceDetailPage() {
             </button>
           </div>
         </section>
-
-        <DebugAnalysisView
-          workspace={workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null}
-          state={debugAnalysisState}
-          variant="mobile"
-        />
-
-        {workspace ? (
-          <RegisteredDebugTemplatesMobileSection
-            workspaceId={workspace.id}
-            workspacePath={workspace.path}
-            state={registeredDebugTemplatesState}
-            onOpenProcessManager={(targetWorkspaceId) => {
-              selectWorkspace(targetWorkspaceId);
-              navigate(buildWorkspaceToolProcessesPath(targetWorkspaceId));
-            }}
-          />
-        ) : null}
 
         <section className="mobile-feature-panel surface-card mobile-workspace-composition-panel">
           <div className="mobile-feature-section-header">

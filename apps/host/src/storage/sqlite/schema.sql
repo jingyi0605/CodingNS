@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS peer_hosts (
   owner_user_id TEXT NOT NULL,
   name TEXT NOT NULL,
   alias TEXT,
+  tag_color TEXT,
   base_url TEXT NOT NULL,
   normalized_base_url TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('unknown', 'reachable', 'unreachable', 'version_mismatch', 'unauthorized')),
@@ -321,27 +322,6 @@ CREATE TABLE IF NOT EXISTS office_receipts (
 
 CREATE INDEX IF NOT EXISTS idx_office_receipts_task_id ON office_receipts(task_id);
 CREATE INDEX IF NOT EXISTS idx_office_receipts_step_id ON office_receipts(step_id);
-
-CREATE TABLE IF NOT EXISTS browser_profiles (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT,
-  engine TEXT NOT NULL CHECK (engine IN ('chrome', 'edge')),
-  mode TEXT NOT NULL CHECK (mode IN ('persistent', 'cdp_attached')),
-  display_name TEXT NOT NULL,
-  user_data_dir TEXT,
-  cdp_endpoint TEXT,
-  ownership_scope TEXT NOT NULL CHECK (ownership_scope IN ('user', 'workspace', 'target')),
-  status TEXT NOT NULL CHECK (status IN ('active', 'locked', 'archived', 'error')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES auth_users(id),
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_browser_profiles_user_id ON browser_profiles(user_id);
-CREATE INDEX IF NOT EXISTS idx_browser_profiles_workspace_id ON browser_profiles(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_browser_profiles_status ON browser_profiles(status);
 
 CREATE TABLE IF NOT EXISTS plugin_definitions (
   id TEXT PRIMARY KEY,
@@ -567,26 +547,6 @@ CREATE INDEX IF NOT EXISTS idx_document_comments_document_id
 CREATE INDEX IF NOT EXISTS idx_document_comments_status
   ON document_comments(status);
 
-CREATE TABLE IF NOT EXISTS ops_targets (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT,
-  kind TEXT NOT NULL CHECK (kind IN ('ssh_host', 'web_console')),
-  display_name TEXT NOT NULL,
-  environment TEXT,
-  config_json TEXT NOT NULL,
-  credential_ref TEXT,
-  status TEXT NOT NULL CHECK (status IN ('active', 'disabled', 'error')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES auth_users(id),
-  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_ops_targets_user_id ON ops_targets(user_id);
-CREATE INDEX IF NOT EXISTS idx_ops_targets_workspace_id ON ops_targets(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_ops_targets_kind ON ops_targets(kind);
-CREATE INDEX IF NOT EXISTS idx_ops_targets_status ON ops_targets(status);
 
 CREATE TABLE IF NOT EXISTS office_connectors (
   id TEXT PRIMARY KEY,
@@ -935,6 +895,62 @@ CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_workspace_id
   ON session_discovery_diagnostics(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_session_discovery_diagnostics_provider
   ON session_discovery_diagnostics(provider, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_cleanup_scans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider_filter_json TEXT NOT NULL,
+  time_range_start TEXT,
+  time_range_end TEXT,
+  candidate_count INTEGER NOT NULL,
+  summary_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_scans_user_id
+  ON session_cleanup_scans(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_cleanup_archives (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  archive_path TEXT NOT NULL,
+  manifest_version TEXT NOT NULL,
+  session_count INTEGER NOT NULL,
+  summary_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_archives_user_id
+  ON session_cleanup_archives(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_cleanup_operation_items (
+  id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL,
+  task_kind TEXT NOT NULL CHECK (task_kind IN ('scan', 'backup', 'restore', 'delete')),
+  candidate_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  session_id TEXT,
+  provider_session_id TEXT,
+  raw_store_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed', 'skipped', 'conflict')),
+  backup_status TEXT,
+  provider_delete_status TEXT,
+  local_delete_status TEXT,
+  restore_status TEXT,
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_operation_items_operation_id
+  ON session_cleanup_operation_items(operation_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_session_cleanup_operation_items_provider
+  ON session_cleanup_operation_items(provider, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS affairs_assistant_session_snapshots (
   workspace_id TEXT NOT NULL,
@@ -1417,6 +1433,7 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
   workspace_id TEXT NOT NULL,
   name TEXT NOT NULL,
   cwd TEXT NOT NULL,
+  shell TEXT,
   command TEXT NOT NULL,
   args_json TEXT NOT NULL,
   env_json TEXT NOT NULL,
@@ -1867,22 +1884,6 @@ CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_status
 CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_session
   ON butler_follow_up_tasks(butler_session_id, status, updated_at DESC);
 
-CREATE TABLE IF NOT EXISTS butler_session_summary_states (
-  butler_session_id TEXT PRIMARY KEY,
-  source_message_count INTEGER NOT NULL DEFAULT 0,
-  source_last_message_at TEXT,
-  last_summarized_at TEXT,
-  last_summarized_sequence INTEGER,
-  debounce_until TEXT,
-  status TEXT NOT NULL CHECK (status IN ('idle', 'scheduled', 'running', 'failed')),
-  error_detail TEXT,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_butler_session_summary_states_status
-  ON butler_session_summary_states(status, debounce_until ASC, updated_at ASC);
-
 CREATE TABLE IF NOT EXISTS session_checkpoints (
   id TEXT PRIMARY KEY,
   butler_session_id TEXT NOT NULL,
@@ -2239,63 +2240,6 @@ CREATE TABLE IF NOT EXISTS skill_target_bindings (
 
 CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
   ON skill_target_bindings(target_cli, sync_status, enabled);
-
-CREATE TABLE IF NOT EXISTS opencli_providers (
-  provider_id TEXT PRIMARY KEY CHECK (provider_id = 'opencli'),
-  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
-  install_state TEXT NOT NULL CHECK (install_state IN ('not_installed', 'installed', 'broken')),
-  health_state TEXT NOT NULL CHECK (
-    health_state IN ('unknown', 'binary_ready', 'bridge_missing', 'ready', 'runtime_build_failed')
-  ),
-  version TEXT,
-  install_path TEXT,
-  last_checked_at TEXT,
-  active_runtime_id TEXT,
-  last_error_code TEXT,
-  last_error_detail TEXT,
-  catalog_refreshed_at TEXT,
-  catalog_source TEXT CHECK (
-    catalog_source IS NULL OR catalog_source IN ('manifest', 'cli_list', 'local_manifest', 'cache')
-  )
-);
-
-CREATE TABLE IF NOT EXISTS opencli_catalog_entries (
-  provider_id TEXT NOT NULL CHECK (provider_id = 'opencli'),
-  command_id TEXT NOT NULL,
-  site TEXT NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL,
-  strategy TEXT NOT NULL,
-  browser INTEGER NOT NULL DEFAULT 0 CHECK (browser IN (0, 1)),
-  module_path TEXT,
-  source_file TEXT,
-  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-  sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
-  PRIMARY KEY (provider_id, command_id),
-  FOREIGN KEY (provider_id) REFERENCES opencli_providers(provider_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_site_sort
-  ON opencli_catalog_entries(provider_id, site, sort_order, command_id);
-CREATE INDEX IF NOT EXISTS idx_opencli_catalog_entries_enabled
-  ON opencli_catalog_entries(provider_id, enabled, site);
-
-CREATE TABLE IF NOT EXISTS opencli_runtime_profiles (
-  id TEXT PRIMARY KEY,
-  version TEXT NOT NULL,
-  source_install_path TEXT NOT NULL,
-  enabled_command_ids_json TEXT NOT NULL,
-  runtime_root_path TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed', 'stale')),
-  content_hash TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_error_code TEXT,
-  last_error_detail TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_opencli_runtime_profiles_status
-  ON opencli_runtime_profiles(status, updated_at DESC);
 
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)

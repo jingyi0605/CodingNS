@@ -129,6 +129,55 @@ describe("WorkbenchRealtimeClient", () => {
     client.close();
   });
 
+  it("终端强制刷新可以跳过本地 revision，确保服务端回完整快照", () => {
+    const client = new WorkbenchRealtimeClient({
+      onConnectionChange: () => undefined,
+      onTerminalManagerSnapshot: () => undefined,
+      onSnapshot: () => undefined,
+      onUnauthorized: () => undefined
+    });
+
+    client.start();
+
+    const socket = MockWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "terminalManager.snapshot",
+          revision: "terminal-rev-1",
+          unchanged: false,
+          snapshot: {
+            revision: "terminal-rev-1",
+            workspaceId: "workspace-1",
+            terminals: [],
+            templates: [],
+            templateStatuses: [],
+            shellOptions: []
+          }
+        })
+      })
+    );
+    socket!.sentPayloads = [];
+
+    client.subscribeTerminalManager("workspace-1", { skipKnownRevision: true });
+    client.requestTerminalManagerRefresh("workspace-1", { skipKnownRevision: true });
+
+    expect(socket?.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      {
+        type: "terminalManager.subscribe",
+        workspaceId: "workspace-1"
+      },
+      {
+        type: "terminalManager.refresh",
+        workspaceId: "workspace-1"
+      }
+    ]);
+
+    client.close();
+  });
+
   it("收到 workbench.delta 时会在本地合并快照", () => {
     const onSnapshot = vi.fn();
     const client = new WorkbenchRealtimeClient({

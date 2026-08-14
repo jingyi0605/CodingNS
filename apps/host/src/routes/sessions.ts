@@ -1,10 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import type { SessionController } from "../modules/sessions/session-controller.js";
-
-// 会话附件当前通过 JSON + base64 直接提交，Fastify 默认 1MB bodyLimit
-// 对首条/追加/排队消息都过小，合法图片会在进入 controller 前就被 413 拦掉。
-export const SESSION_MESSAGE_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
+import { SESSION_MESSAGE_BODY_LIMIT_BYTES } from "./body-limits.js";
 
 export async function registerSessionRoutes(
   app: FastifyInstance,

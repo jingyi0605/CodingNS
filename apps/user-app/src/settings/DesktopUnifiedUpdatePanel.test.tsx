@@ -10,16 +10,19 @@ import { DesktopUnifiedUpdatePanel } from "./DesktopUnifiedUpdatePanel";
 
 const {
   checkForServiceUpdate,
+  fetchCurrentHostVersion,
   installServiceUpdate,
   getServiceUpdateTask
 } = vi.hoisted(() => ({
   checkForServiceUpdate: vi.fn(),
+  fetchCurrentHostVersion: vi.fn(),
   installServiceUpdate: vi.fn(),
   getServiceUpdateTask: vi.fn()
 }));
 
 vi.mock("../platform/server/service-update-manager", () => ({
   checkForServiceUpdate,
+  fetchCurrentHostVersion,
   installServiceUpdate,
   getServiceUpdateTask
 }));
@@ -28,6 +31,7 @@ describe("DesktopUnifiedUpdatePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDesktopUpdateState();
+    fetchCurrentHostVersion.mockResolvedValue("0.1.0");
     window.__TAURI_INTERNALS__ = {
       invoke: vi.fn()
     };
@@ -128,10 +132,15 @@ describe("DesktopUnifiedUpdatePanel", () => {
     expect(await screen.findByText(t("settings.updateBothReady"))).toBeInTheDocument();
     expect(screen.getAllByText("0.2.0").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: t("settings.updateInstallAll") }));
+    await user.click(screen.getByRole("button", { name: t("settings.serverInstallNow") }));
 
     await waitFor(() => {
       expect(callOrder).toContain("install_service_update");
+    });
+
+    await user.click(screen.getByRole("button", { name: t("settings.releaseInstallNow") }));
+
+    await waitFor(() => {
       expect(callOrder).toContain("install_update");
       expect(callOrder.indexOf("install_service_update")).toBeLessThan(callOrder.indexOf("install_update"));
     });
@@ -237,6 +246,79 @@ describe("DesktopUnifiedUpdatePanel", () => {
         channel: "stable"
       });
       expect(installServiceUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  it("只有服务端有更新时，只触发服务端安装", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "check_for_update") {
+        return {
+          checkedAt: "2026-04-15T10:00:00.000Z",
+          currentVersion: "0.2.0",
+          hasUpdate: false,
+          runtimeInfo: {
+            version: "0.2.0",
+            appDataDir: null
+          },
+          manifest: null
+        };
+      }
+
+      if (command === "install_update") {
+        return { ok: true };
+      }
+
+      return null;
+    }) as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"];
+    window.__TAURI_INTERNALS__ = { invoke };
+    checkForServiceUpdate.mockResolvedValue({
+      channel: "stable",
+      checkedAt: "2026-04-15T10:00:00.000Z",
+      packages: [
+        {
+          channel: "stable",
+          packageName: "placeholder-server-package",
+          registryUrl: "https://registry.npmjs.org/placeholder-server-package",
+          packagePageUrl: "https://www.npmjs.com/package/placeholder-server-package",
+          currentVersion: "0.1.0",
+          latestVersion: "0.2.0",
+          hasUpdate: true,
+          checkStatus: "ready",
+          checkError: null,
+          restartRequired: false,
+          installTask: null
+        }
+      ]
+    });
+    installServiceUpdate.mockResolvedValue({
+      taskId: "task-1",
+      packageName: "placeholder-server-package",
+      channel: "stable",
+      targetVersion: "0.2.0",
+      status: "succeeded",
+      startedAt: "2026-04-15T10:01:00.000Z",
+      finishedAt: "2026-04-15T10:01:05.000Z",
+      errorMessage: null,
+      restartRequired: false,
+      restartScheduled: false,
+      restartDelayMs: null
+    });
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider language="zh-CN">
+        <ThemeProvider>
+          <DesktopUnifiedUpdatePanel />
+        </ThemeProvider>
+      </I18nProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: t("settings.updateCheckAll") }));
+    await user.click(screen.getByRole("button", { name: t("settings.serverInstallNow") }));
+
+    await waitFor(() => {
+      expect(installServiceUpdate).toHaveBeenCalledWith("placeholder-server-package");
+      expect(invoke).not.toHaveBeenCalledWith("install_update", expect.anything());
     });
   });
 

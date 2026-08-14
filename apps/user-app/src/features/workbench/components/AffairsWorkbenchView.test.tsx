@@ -22,6 +22,7 @@ import { useButlerRuntimeStore } from "../../butler/runtime/butler-runtime-store
 import type { AffairsViewState } from "../types/workbench-mode";
 import { resolveAffairsDocumentVisual } from "../utils/affairs-document-visual";
 import { createAffairsDashboardWidgetState, createAffairsShortcutAppState, createDefaultAffairsDashboardState } from "../utils/affairs-dashboard-state";
+import { resetAffairsLibraryCapabilityStoreForTests } from "../affairs-library-capability-store";
 
 const desktopBridgeMock = vi.hoisted(() => ({
   fs: {
@@ -211,6 +212,7 @@ const conversationApiMock = vi.hoisted(() => ({
   getAffairsAssistantSessionsSnapshot: vi.fn(),
   getAffairsLightweightSession: vi.fn(),
   getAffairsLightweightSessionMessages: vi.fn(),
+  getGlobalAffairsLibraryCapability: vi.fn(),
   getGlobalAffairsLibraryBinding: vi.fn(),
   getGlobalAffairsDashboardState: vi.fn(),
   getAffairsDocumentTagDetails: vi.fn(),
@@ -307,6 +309,7 @@ vi.mock("../../conversation/api/conversation-api", async () => {
     getAffairsAssistantSessionsSnapshot: conversationApiMock.getAffairsAssistantSessionsSnapshot,
     getAffairsLightweightSession: conversationApiMock.getAffairsLightweightSession,
     getAffairsLightweightSessionMessages: conversationApiMock.getAffairsLightweightSessionMessages,
+    getGlobalAffairsLibraryCapability: conversationApiMock.getGlobalAffairsLibraryCapability,
     getGlobalAffairsLibraryBinding: conversationApiMock.getGlobalAffairsLibraryBinding,
     getGlobalAffairsDashboardState: conversationApiMock.getGlobalAffairsDashboardState,
     getAffairsDocumentTagDetails: conversationApiMock.getAffairsDocumentTagDetails,
@@ -1082,6 +1085,43 @@ function renderWorkbenchWithCustomNavigationGroups(initialState: AffairsViewStat
   return render(<TestHarness />);
 }
 
+function renderWorkbenchProvider(input: {
+  workspaceId: string;
+  workspaceName?: string;
+  state: AffairsViewState;
+  groups?: WorkspaceSessionGroup[];
+  onStateChange?: (next: AffairsViewState) => void;
+}) {
+  return render(
+    <AffairsWorkbenchProvider
+      workspaceId={input.workspaceId}
+      workspaceName={input.workspaceName ?? "事务工作区"}
+      navigationGroups={input.groups ?? navigationGroupsWithBoundLibraryWorkspace}
+      state={input.state}
+      onStateChange={input.onStateChange ?? (() => undefined)}
+    >
+      <div style={{ display: "flex", gap: 12 }}>
+        <AffairsSectionMenu />
+        <AffairsSidebarPanel />
+        <AffairsWorkbenchView workspaceId={input.workspaceId} />
+        <AffairsAuxiliaryPanel workspaceId={input.workspaceId} />
+      </div>
+    </AffairsWorkbenchProvider>
+  );
+}
+
+function createDeferred() {
+  let resolve: (() => void) | null = null;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+
+  return {
+    promise,
+    resolve: resolve!
+  };
+}
+
 async function findAffairsGridViewport(): Promise<HTMLElement> {
   return waitFor(() => {
     const element = document.querySelector(".affairs-doc-grid-viewport");
@@ -1321,6 +1361,7 @@ describe("AffairsWorkbenchView", () => {
     window.sessionStorage.clear();
     clearProviderCatalogStore();
     clearSessionProviderPickerCapabilityCache();
+    resetAffairsLibraryCapabilityStoreForTests();
 
     fileContextApiMock.getFilePreview.mockReset();
     fileContextApiMock.saveFileContent.mockReset();
@@ -1421,6 +1462,11 @@ describe("AffairsWorkbenchView", () => {
     conversationApiMock.getAffairsLightweightSessionMessages.mockReset();
     conversationApiMock.getGlobalAffairsDashboardState.mockReset();
     conversationApiMock.getGlobalAffairsDashboardState.mockResolvedValue({ dashboardState: {} });
+    conversationApiMock.getGlobalAffairsLibraryCapability.mockReset();
+    conversationApiMock.getGlobalAffairsLibraryCapability.mockResolvedValue({
+      enabled: true,
+      binding: baseLibrarySnapshot().binding
+    });
     conversationApiMock.getSessionMessages.mockResolvedValue({ messages: [], nextCursor: null });
     conversationApiMock.getAffairsLibrarySnapshot.mockReset();
     conversationApiMock.getGlobalAffairsLibraryBinding.mockReset();
@@ -2676,7 +2722,7 @@ describe("AffairsWorkbenchView", () => {
 
     await user.click(conversationTab);
 
-    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationHeading = await screen.findByRole("heading", { level: 1, name: "纯对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
     expect(conversationShell).not.toBeNull();
     const conversationScope = within(conversationShell as HTMLElement);
@@ -2703,12 +2749,12 @@ describe("AffairsWorkbenchView", () => {
       primarySection: "conversation",
       selectedNodeId: null
     }, navigationGroupsWithBoundLibraryWorkspace);
-    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationHeading = await screen.findByRole("heading", { name: "纯对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
     expect(conversationShell).not.toBeNull();
     await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
     const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
-    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    const lightweightSection = within(dialog).getByText("纯对话模式").closest("section");
     expect(lightweightSection).not.toBeNull();
     await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
 
@@ -2725,12 +2771,12 @@ describe("AffairsWorkbenchView", () => {
       primarySection: "conversation",
       selectedNodeId: null
     }, navigationGroupsWithBoundLibraryWorkspace);
-    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationHeading = await screen.findByRole("heading", { name: "纯对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
     expect(conversationShell).not.toBeNull();
     await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
     const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
-    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    const lightweightSection = within(dialog).getByText("纯对话模式").closest("section");
     expect(lightweightSection).not.toBeNull();
     await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
 
@@ -2813,12 +2859,12 @@ describe("AffairsWorkbenchView", () => {
       primarySection: "conversation",
       selectedNodeId: null
     }, navigationGroupsWithBoundLibraryWorkspace);
-    const conversationHeading = await screen.findByRole("heading", { name: "事务对话" });
+    const conversationHeading = await screen.findByRole("heading", { name: "纯对话" });
     const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
     expect(conversationShell).not.toBeNull();
     await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
     const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
-    const lightweightSection = within(dialog).getByText("轻量模式").closest("section");
+    const lightweightSection = within(dialog).getByText("纯对话模式").closest("section");
     expect(lightweightSection).not.toBeNull();
     await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
 
@@ -2833,6 +2879,197 @@ describe("AffairsWorkbenchView", () => {
       expect.any(String)
     );
     expect(screen.queryByText("重发")).not.toBeInTheDocument();
+  });
+
+  it("事务轻量新建流进行中切到其他分区后，不会被旧流强行切回新会话", async () => {
+    const user = userEvent.setup();
+    let finishStream: (() => void) | null = null;
+    conversationApiMock.startAffairsLightweightSessionStream.mockImplementation(async (_workspaceId, _payload, onEvent) => {
+      await onEvent({
+        type: "started",
+        session: createAgentSnapshotSession({
+          sessionId: "session-light-switch-guard",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switch-guard",
+          rawStoreRef: "session-light-switch-guard.json",
+          title: "切换保护会话",
+          runningState: "running",
+          activityState: "running",
+          completedAt: null
+        }),
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-switch-guard",
+        userMessage: {
+          messageId: "message-user-switch-guard",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switch-guard",
+          role: "user",
+          kind: "text",
+          content: "先发一条再切走",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-switch-guard.json#client-request-switch-guard"
+        }
+      });
+
+      await new Promise<void>((resolve) => {
+        finishStream = resolve;
+      });
+
+      return {
+        acceptedAt: "2026-06-02T10:00:00.000Z",
+        clientRequestId: "client-request-switch-guard",
+        userMessage: {
+          messageId: "message-user-switch-guard",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switch-guard",
+          role: "user",
+          kind: "text",
+          content: "先发一条再切走",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "session-light-switch-guard.json#client-request-switch-guard"
+        },
+        assistantMessage: {
+          messageId: "message-assistant-switch-guard",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switch-guard",
+          role: "assistant",
+          kind: "text",
+          content: "已经完成",
+          attachments: [],
+          timestamp: "2026-06-02T10:00:02.000Z",
+          sequence: 2,
+          rawRef: "session-light-switch-guard.json#assistant-2"
+        },
+        session: createAgentSnapshotSession({
+          sessionId: "session-light-switch-guard",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "affairs-lightweight:codex:session-light-switch-guard",
+          rawStoreRef: "session-light-switch-guard.json",
+          title: "切换保护会话",
+          runningState: "completed",
+          activityState: "completed_unread"
+        }),
+        messages: []
+      };
+    });
+
+    renderWorkbenchWithCustomNavigationGroups({
+      ...createState(),
+      primarySection: "conversation",
+      selectedNodeId: null
+    }, navigationGroupsWithBoundLibraryWorkspace);
+
+    const conversationHeading = await screen.findByRole("heading", { level: 1, name: "纯对话" });
+    const conversationShell = conversationHeading.closest(".affairs-conversation-empty-state");
+    expect(conversationShell).not.toBeNull();
+    await user.click(within(conversationShell as HTMLElement).getByRole("button", { name: "新建对话" }));
+    const dialog = await screen.findByRole("dialog", { name: t("shell.createSessionModalTitle") });
+    const lightweightSection = within(dialog).getByText("纯对话模式").closest("section");
+    expect(lightweightSection).not.toBeNull();
+    await user.click(within(lightweightSection as HTMLElement).getByRole("button", { name: "Codex" }));
+    await user.click(await screen.findByTestId("affairs-composer-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("affairs-timeline")).toHaveTextContent("session-light-switch-guard:");
+    });
+
+    await user.click(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") }));
+    expect(await screen.findByRole("tab", { name: t("shell.affairsAssistantTitle") })).toBeInTheDocument();
+
+    await act(async () => {
+      finishStream?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: t("shell.affairsWorkbenchNav") })).toHaveAttribute("aria-selected", "true");
+    });
+    expect(screen.getByTestId("affairs-timeline")).not.toHaveTextContent("session-light-switch-guard:");
+  });
+
+  it("工作区切换后会忽略旧工作区慢返回的轻量会话列表", async () => {
+    const workspace1Deferred = createDeferred();
+    conversationApiMock.listAffairsLightweightSessions.mockImplementation(async (workspaceId: string) => {
+      if (workspaceId === "workspace-1") {
+        await workspace1Deferred.promise;
+        return {
+          items: [
+            createAgentSnapshotSession({
+              sessionId: "workspace-1-session",
+              workspaceId: "workspace-1",
+              title: "旧工作区会话"
+            })
+          ]
+        };
+      }
+
+      return {
+        items: [
+          createAgentSnapshotSession({
+            sessionId: "workspace-2-session",
+            workspaceId: "workspace-2",
+            title: "新工作区会话"
+          })
+        ]
+      };
+    });
+
+    const view = renderWorkbenchProvider({
+      workspaceId: "workspace-1",
+      state: {
+        ...createState(),
+        workspaceId: "workspace-1",
+        primarySection: "conversation",
+        selectedNodeId: null
+      }
+    });
+
+    view.rerender(
+      <AffairsWorkbenchProvider
+        workspaceId="workspace-2"
+        workspaceName="事务文档库"
+        navigationGroups={navigationGroupsWithBoundLibraryWorkspace}
+        state={{
+          ...createState(),
+          workspaceId: "workspace-2",
+          primarySection: "conversation",
+          selectedNodeId: null
+        }}
+        onStateChange={() => undefined}
+      >
+        <div style={{ display: "flex", gap: 12 }}>
+          <AffairsSectionMenu />
+          <AffairsSidebarPanel />
+          <AffairsWorkbenchView workspaceId="workspace-2" />
+          <AffairsAuxiliaryPanel workspaceId="workspace-2" />
+        </div>
+      </AffairsWorkbenchProvider>
+    );
+
+    await act(async () => {
+      workspace1Deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(conversationApiMock.listAffairsLightweightSessions).toHaveBeenCalledWith("workspace-1", {
+        signal: expect.any(AbortSignal)
+      });
+      expect(conversationApiMock.listAffairsLightweightSessions).toHaveBeenCalledWith("workspace-2", {
+        signal: expect.any(AbortSignal)
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("新工作区会话")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("旧工作区会话")).toBeNull();
   });
 
   it("事务轻量会话联网搜索时会把工具调用和结果写进时间线", async () => {

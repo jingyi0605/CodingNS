@@ -421,58 +421,6 @@ describe("WorkspaceDetailPage", () => {
     expect(Boolean(compositionHeading.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
-  it("会展示只读仓库分析和已注册启动项", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: t("shell.workspaceDetailRegisteredDebugAnalysisTitle") })
-      ).toBeInTheDocument();
-      expect(screen.getByText("web")).toBeInTheDocument();
-      expect(screen.getByText("host")).toBeInTheDocument();
-      expect(screen.getByText("desktop")).toBeInTheDocument();
-      expect(screen.getAllByText("apps/web").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("apps/api").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("apps/desktop").length).toBeGreaterThan(0);
-      expect(
-        screen.getByRole("heading", { name: t("shell.workspaceDetailRegisteredDebugTemplatesTitle") })
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: t("shell.workspaceDetailRegisteredDebugOpenProcessManagerAction") })
-      ).toBeInTheDocument();
-      expect(
-        screen.getAllByText(t("shell.workspaceDetailRegisteredDebugTemplateStatusOccupied")).length
-      ).toBeGreaterThan(0);
-      expect(screen.getByText(t("shell.workspaceDetailRegisteredDebugPlanReasonPortMissing"))).toBeInTheDocument();
-      expect(screen.getAllByText(t("shell.workspaceDetailDebugSummaryServiceCountLabel")).length).toBeGreaterThan(0);
-      expect(screen.queryByText(t("shell.workspaceDetailDebugDetectedServicesTitle"))).not.toBeInTheDocument();
-      expect(document.querySelectorAll(".mobile-debug-service-card")).toHaveLength(0);
-    });
-
-    expect(mockAnalyzeDebugTarget).toHaveBeenCalledWith({
-      workspaceId: "workspace-1",
-      rootPath: "/repo/project-one"
-    });
-    expect(mockGetFrameworkCompatibilityMatrix).toHaveBeenCalled();
-    expect(mockListWorkspaceTemplates).toHaveBeenCalledWith("workspace-1");
-    expect(mockListWorkspaceTemplateRuntimeStatuses).toHaveBeenCalledWith("workspace-1");
-  });
-
-  it("没有已注册启动项时会提示先去进程管理登记", async () => {
-    mockListWorkspaceTemplates.mockResolvedValueOnce({
-      items: []
-    });
-    mockListWorkspaceTemplateRuntimeStatuses.mockResolvedValueOnce({
-      items: []
-    });
-
-    renderPage();
-
-    await waitFor(() => {
-      expect(screen.getByText(t("shell.workspaceDetailRegisteredDebugTemplatesEmpty"))).toBeInTheDocument();
-    });
-  });
-
   it("命中新鲜缓存时不会主动刷新 Git 和工作区摘要", async () => {
     const shell = createWorkbenchShell({
       workspaceManagementStateById: {}

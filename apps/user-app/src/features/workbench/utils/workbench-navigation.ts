@@ -34,10 +34,6 @@ export function buildWorkspaceDetailPath(workspaceId: string, workspaceRef?: Wor
   return appendTargetHostId(buildWorkspaceBasePath(workspaceId), workspaceRef);
 }
 
-export function buildWorkspaceDebugPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
-  return appendTargetHostId(`${buildWorkspaceBasePath(workspaceId)}/debug`, workspaceRef);
-}
-
 export function buildWorkspaceSessionIndexPath(workspaceId: string, workspaceRef?: WorkspaceRef | null): string {
   return appendTargetHostId(`/workspaces/${encodeURIComponent(workspaceId)}/sessions`, workspaceRef);
 }

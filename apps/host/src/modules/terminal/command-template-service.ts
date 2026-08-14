@@ -10,7 +10,12 @@ import type { TerminalCommandTemplate, TerminalRuntimeType } from "../../types/d
 import type { TerminalCommandTemplateRepository } from "../../storage/repositories/terminal-command-template-repository.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
-import { buildTemplateCommandLine, getShellEnterSequence } from "./terminal-shell.js";
+import {
+  buildTemplateCommandLine,
+  getDefaultShell,
+  getShellEnterSequence,
+  resolveRequestedShell
+} from "./terminal-shell.js";
 import type { TerminalService } from "./terminal-service.js";
 import {
   discoverTemplateRuntimeStatuses,
@@ -21,6 +26,7 @@ interface UpsertCommandTemplateInput {
   workspaceId?: string;
   name?: string;
   cwd?: string | null;
+  shell?: string | null;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -83,6 +89,7 @@ export class CommandTemplateService {
         workspaceId: input.targetWorkspaceId,
         name: template.name,
         cwd: resolveInheritedTemplateCwd(template.cwd, input.sourceWorkspacePath, input.targetWorkspacePath),
+        shell: template.shell,
         command: template.command,
         args: [...template.args],
         env: { ...template.env },
@@ -219,6 +226,7 @@ export class CommandTemplateService {
       workspaceId: workspace.id,
       name: input.name,
       cwd: resolveTemplateCwd(workspace.path, input.cwd),
+      shell: normalizeTemplateShell(input.shell),
       command: input.command,
       args: input.args ?? [],
       env: input.env ?? {},
@@ -259,6 +267,10 @@ export class CommandTemplateService {
       ...current,
       name: input.name ?? current.name,
       cwd: resolveTemplateCwd(workspace.path, input.cwd ?? current.cwd),
+      shell:
+        input.shell === undefined
+          ? current.shell
+          : normalizeTemplateShell(input.shell),
       command: input.command ?? current.command,
       args: input.args ?? current.args,
       env: input.env ?? current.env,
@@ -321,7 +333,7 @@ export class CommandTemplateService {
         workspaceId: template.workspaceId,
         name: `${template.name} 运行`,
         cwd: effectiveTemplate.cwd,
-        shell: input.shell,
+        shell: input.shell ?? effectiveTemplate.shell ?? undefined,
         runtimeType: input.runtimeType ?? effectiveTemplate.runtimeType ?? undefined,
         createdByUserId: input.userId,
         env: effectiveTemplate.env
@@ -468,6 +480,20 @@ function normalizeTemplateRuntimeType(
   input?: TerminalRuntimeType | null
 ): TerminalRuntimeType | null {
   return input ?? null;
+}
+
+function normalizeTemplateShell(input?: string | null): string | null {
+  if (input === undefined || input === null) {
+    return null;
+  }
+
+  const value = input.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  return resolveRequestedShell(value || getDefaultShell());
 }
 
 function normalizeProxyEnabled(input?: boolean): boolean {

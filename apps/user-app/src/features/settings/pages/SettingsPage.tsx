@@ -7,7 +7,8 @@ import { getActiveHostBaseUrl } from "../../../config/client-config-types";
 import type {
   AppLanguage,
   ClientRuntimeConfig,
-  ClientPermissionMode
+  ClientPermissionMode,
+  ReleaseChannel
 } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -29,7 +30,9 @@ import { ProviderManagementPanel } from "../../../settings/ProviderManagementPan
 import { ChannelsManagementPanel } from "../../../settings/ChannelsManagementPanel";
 import { AuthDeviceManagementPanel } from "../../../settings/AuthDeviceManagementPanel";
 import { UserManagementPanel } from "../../../settings/UserManagementPanel";
+import { SessionCleanupPanel } from "../../../settings/SessionCleanupPanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
+import { BetaChannelConsentModal } from "../../../settings/BetaChannelConsentModal";
 import { RemoteAccessManagerModal } from "../../../settings/RemoteAccessManagerModal";
 import { PluginManagementModal } from "../../../settings/PluginManagementModal";
 import { TeableSettingsModal } from "../../../settings/TeableSettingsModal";
@@ -95,6 +98,7 @@ interface SettingsPageModel {
   readonly updateAutoReconnect: (enabled: boolean) => void;
   readonly updateAutoCheckUpdate: (enabled: boolean) => void;
   readonly updateAutoDownloadUpdate: (enabled: boolean) => void;
+  readonly updateReleaseChannel: (channel: ReleaseChannel) => void;
   readonly updateDefaultPermissionMode: (value: string) => void;
   readonly updateSessionDisplaySortMode: (value: string) => void;
   readonly updateShowSystemFiles: (enabled: boolean) => void;
@@ -289,6 +293,14 @@ function useSettingsPageModel(): SettingsPageModel {
     });
   }
 
+  function updateReleaseChannel(channel: ReleaseChannel): void {
+    void clientConfigStore.update({
+      releaseChannel: channel,
+      betaChannelConsentAcceptedAt:
+        channel === "beta" ? new Date().toISOString() : null
+    });
+  }
+
   function updateDefaultPermissionMode(value: string): void {
     const normalized =
       value === "acceptEdits" || value === "bypassPermissions" ? value : "default";
@@ -355,6 +367,7 @@ function useSettingsPageModel(): SettingsPageModel {
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateAutoDownloadUpdate,
+    updateReleaseChannel,
     updateDefaultPermissionMode,
     updateSessionDisplaySortMode,
     updateShowSystemFiles,
@@ -380,6 +393,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
   const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
   const [remoteAccessModalOpen, setRemoteAccessModalOpen] = useState(false);
   const [pluginManagementModalOpen, setPluginManagementModalOpen] = useState(false);
+  const [betaConsentModalOpen, setBetaConsentModalOpen] = useState(false);
   const [teableSettingsModalOpen, setTeableSettingsModalOpen] = useState(false);
   const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
   const {
@@ -407,6 +421,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateAutoDownloadUpdate,
+    updateReleaseChannel,
     updateDefaultPermissionMode,
     updateSessionDisplaySortMode,
     updateShowSystemFiles,
@@ -635,6 +650,18 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
               </div>
             </div>
 
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.sessionCleanupTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.sessionCleanupDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <SessionCleanupPanel />
+              </div>
+            </div>
+
             <div className="settings-row settings-row-stacked">
               <div className="settings-row-label settings-row-label-single-line">
                 <span className="settings-row-title settings-row-title-strong">
@@ -801,6 +828,33 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.softwareUpdate")}</h2>
           <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.releaseChannel")}</span>
+                <span className="settings-row-description">
+                  {t("settings.releaseChannelDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <select
+                  aria-label={t("settings.releaseChannel")}
+                  className="settings-select"
+                  value={runtimeConfig.releaseChannel}
+                  onChange={(event) => {
+                    const target = event.target.value as ReleaseChannel;
+                    if (target === "beta") {
+                      setBetaConsentModalOpen(true);
+                    } else {
+                      updateReleaseChannel(target);
+                    }
+                  }}
+                >
+                  <option value="stable">{t("settings.releaseChannelStable")}</option>
+                  <option value="beta">{t("settings.releaseChannelBeta")}</option>
+                </select>
+              </div>
+            </div>
+
             {platform.isDesktop ? (
               <div className="settings-row">
                 <div className="settings-row-label">
@@ -926,6 +980,15 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         mobile={false}
         workspaceOptions={teableWorkspaceOptions}
         onClose={() => setTeableSettingsModalOpen(false)}
+      />
+      <BetaChannelConsentModal
+        open={betaConsentModalOpen}
+        mobile={false}
+        onClose={() => setBetaConsentModalOpen(false)}
+        onConfirm={() => {
+          updateReleaseChannel("beta");
+          setBetaConsentModalOpen(false);
+        }}
       />
     </div>
   );
@@ -1609,6 +1672,15 @@ function MobileAbilityManagementSection() {
             </div>
             <ProviderManagementPanel />
           </div>
+          <div className="settings-mobile-panel-shell settings-mobile-session-cleanup-shell">
+            <div className="settings-mobile-row-copy settings-mobile-ability-copy">
+              <span className="settings-mobile-row-title">{t("settings.sessionCleanupTitle")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.sessionCleanupDescription")}
+              </span>
+            </div>
+            <SessionCleanupPanel compact mobile />
+          </div>
           <div className="settings-mobile-panel-shell settings-mobile-model-shell">
             <div className="settings-mobile-row-copy settings-mobile-ability-copy settings-mobile-row-copy-single-line">
               <span className="settings-mobile-row-title settings-mobile-row-title-strong">
@@ -1655,11 +1727,39 @@ function MobileChannelsManagementSection() {
 }
 
 function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
+  const [betaConsentMobileOpen, setBetaConsentMobileOpen] = useState(false);
+
   return (
     <>
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.softwareUpdate")}</h2>
         <p className="settings-mobile-group-note">{t("settings.softwareUpdateSectionSummary")}</p>
+        <div className="settings-mobile-list">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.releaseChannel")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.releaseChannelDescription")}
+              </span>
+            </div>
+            <select
+              aria-label={t("settings.releaseChannel")}
+              className="settings-select settings-mobile-select"
+              value={model.runtimeConfig.releaseChannel}
+              onChange={(event) => {
+                const target = event.target.value as ReleaseChannel;
+                if (target === "beta") {
+                  setBetaConsentMobileOpen(true);
+                } else {
+                  model.updateReleaseChannel(target);
+                }
+              }}
+            >
+              <option value="stable">{t("settings.releaseChannelStable")}</option>
+              <option value="beta">{t("settings.releaseChannelBeta")}</option>
+            </select>
+          </div>
+        </div>
       </section>
 
       {model.platform.isDesktop ? (
@@ -1718,6 +1818,16 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
           ) : null}
         </section>
       ) : null}
+
+      <BetaChannelConsentModal
+        open={betaConsentMobileOpen}
+        mobile
+        onClose={() => setBetaConsentMobileOpen(false)}
+        onConfirm={() => {
+          model.updateReleaseChannel("beta");
+          setBetaConsentMobileOpen(false);
+        }}
+      />
     </>
   );
 }

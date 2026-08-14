@@ -5,6 +5,33 @@ import type { SessionSendQueueItemRecord } from "../../types/domain.js";
 export class SessionSendQueueRepository {
   constructor(private readonly db: Database.Database) {}
 
+  listBySessionId(sessionId: string): SessionSendQueueItemRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           session_id,
+           user_id,
+           content,
+           client_request_id,
+           model,
+           reasoning_level,
+           permission_mode,
+           status,
+           order_index,
+           error_detail,
+           created_at,
+           updated_at,
+           dispatched_at
+         FROM session_send_queue
+         WHERE session_id = ?
+         ORDER BY order_index ASC, created_at ASC`
+      )
+      .all(sessionId) as SessionSendQueueRow[];
+
+    return rows.map(mapSessionSendQueueRow);
+  }
+
   listBySessionAndUser(
     sessionId: string,
     userId: string

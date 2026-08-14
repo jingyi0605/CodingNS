@@ -1153,8 +1153,17 @@ build_windows() {
     if [[ "$current_os" == "windows" ]]; then
         cd "$REPO_DIR"
         local bundle_dir
+        local version_text
+        local bundle_targets=""
         bundle_dir="$(resolve_bundle_output_dir "x86_64-pc-windows-msvc")"
-        run_desktop_tauri_build "x86_64-pc-windows-msvc"
+        version_text="$(tr -d '[:space:]' < "$REPO_DIR/VERSION")"
+
+        if [[ "$version_text" == *-* ]]; then
+            bundle_targets="nsis"
+            log_info "检测到预发布版本 ${version_text}，Windows 仅构建 NSIS 安装包，跳过 MSI。"
+        fi
+
+        run_desktop_tauri_build "x86_64-pc-windows-msvc" "$bundle_targets"
 
         log_success "Windows 构建完成！"
         echo ""

@@ -84,8 +84,7 @@ describe("butler profile routes", () => {
         focus: {
           projectIds: [],
           riskPreference: "conservative",
-          reportPriority: ["risk", "blocker", "verification"],
-          summaryDebounceSeconds: 300
+          reportPriority: ["risk", "blocker", "verification"]
         }
       }
     });

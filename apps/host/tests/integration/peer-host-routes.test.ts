@@ -29,6 +29,7 @@ import type {
   PeerHostRecord,
   PeerHostSessionRecord,
 } from "../../src/types/domain.js";
+import { SESSION_MESSAGE_BODY_LIMIT_BYTES } from "../../src/routes/body-limits.js";
 
 const USER_ID = "user-1";
 const SECRET = "peer-host-test-secret";
@@ -167,6 +168,47 @@ describe("Peer HOST 后端路由", () => {
         },
       });
     }
+  });
+
+  it("代理入口路由配置应该显式放宽 bodyLimit", async () => {
+    const route = vi.fn();
+    const app = {
+      get: vi.fn(),
+      post: vi.fn(),
+      put: vi.fn(),
+      delete: vi.fn(),
+      route,
+    };
+    const peerHostController = {
+      list: vi.fn(),
+      create: vi.fn(),
+      listWorkspaceBindings: vi.fn(),
+      saveWorkspaceBinding: vi.fn(),
+      get: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      check: vi.fn(),
+      reconnect: vi.fn(),
+      login: vi.fn(),
+      deleteSession: vi.fn(),
+    };
+    const hostApiProxyController = {
+      proxy: vi.fn(),
+    };
+
+    await registerPeerHostRoutes(
+      app as never,
+      peerHostController as never,
+      hostApiProxyController as never,
+    );
+
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "/api/host-proxy/hosts/:peerHostId/*",
+        bodyLimit: SESSION_MESSAGE_BODY_LIMIT_BYTES,
+        handler: hostApiProxyController.proxy,
+      }),
+    );
   });
 
   it("代理入口允许普通业务 API 自动转发，不再按路径维护白名单", async () => {
@@ -373,6 +415,43 @@ describe("Peer HOST 后端路由", () => {
         }),
       }),
     );
+  });
+
+  it("代理入口对大消息请求显式放宽 bodyLimit", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL, init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, size: String(init?.body).length }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    ) as unknown as typeof fetch;
+    const { app, peerHostRepository, peerHostSessionRepository } =
+      await createPeerHostApp({
+        fetchImpl: fetchMock,
+      });
+    const peerHost = createReachablePeerHost(peerHostRepository);
+    createPeerHostSession(peerHostSessionRepository, peerHost.id, "target-token");
+    const oversizedButAllowed = "x".repeat(2 * 1024 * 1024);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/host-proxy/hosts/${peerHost.id}/api/sessions/session-1/messages/live`,
+      payload: {
+        content: oversizedButAllowed,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://peer.example:3002/api/sessions/session-1/messages/live",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          content: oversizedButAllowed,
+        }),
+      }),
+    );
+    expect(SESSION_MESSAGE_BODY_LIMIT_BYTES).toBeGreaterThan(oversizedButAllowed.length);
   });
 
   it("代理访问前发现目标 token 快过期时会刷新并使用新 token", async () => {

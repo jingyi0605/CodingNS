@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import { type AppError, isAppError } from "../errors/app-error.js";
+import { AppError, type AppError as AppErrorType, isAppError } from "../errors/app-error.js";
+import { SESSION_MESSAGE_BODY_LIMIT_BYTES } from "../../routes/body-limits.js";
 
 export interface ErrorPayload {
   error_code: string;
@@ -49,6 +50,26 @@ export function setErrorHandler(
   }
 
   const requestContext = buildHostLogContext(error, request);
+  const mappedFastifyError = mapKnownFastifyError(error, request);
+
+  if (mappedFastifyError) {
+    const payload = {
+      ...requestContext,
+      statusCode: mappedFastifyError.statusCode,
+      errorCode: mappedFastifyError.errorCode
+    };
+
+    console.warn("[host-warning]", payload);
+    request.log.warn(payload);
+    return sendError(
+      reply,
+      mappedFastifyError.statusCode,
+      mappedFastifyError.errorCode,
+      mappedFastifyError.message,
+      mappedFastifyError.field,
+      mappedFastifyError.data
+    );
+  }
 
   if (isAppError(error)) {
     if (shouldSilenceExpectedRequestError(error, request)) {
@@ -70,6 +91,31 @@ export function setErrorHandler(
   console.error("[host-error]", requestContext, error);
   request.log.error(error);
   return sendError(reply, 500, "INTERNAL_ERROR", "服务内部错误");
+}
+
+function mapKnownFastifyError(
+  error: Error,
+  request: FastifyRequest
+): AppErrorType | null {
+  const candidate = error as Error & { code?: unknown };
+
+  if (candidate.code !== "FST_ERR_CTP_BODY_TOO_LARGE") {
+    return null;
+  }
+
+  const routeUrl = readRouteUrl(request);
+  const bodyLimitBytes = resolveBodyLimitBytes(routeUrl);
+
+  return new AppError({
+    statusCode: 413,
+    errorCode: "REQUEST_BODY_TOO_LARGE",
+    detail: `请求体超过大小限制，当前上限为 ${formatBytes(bodyLimitBytes)}（${bodyLimitBytes.toLocaleString("en-US")} 字节）。请压缩图片、减少附件，或拆分后再发送。`,
+    field: "body",
+    data: {
+      routeUrl,
+      bodyLimitBytes
+    }
+  });
 }
 
 function buildHostLogContext(
@@ -221,4 +267,27 @@ function readAttachmentRequestParams(
     sessionId,
     attachmentId
   };
+}
+
+function readRouteUrl(request: FastifyRequest): string | null {
+  const routeOptions = request.routeOptions as { url?: unknown } | undefined;
+  return typeof routeOptions?.url === "string" ? routeOptions.url : null;
+}
+
+function resolveBodyLimitBytes(routeUrl: string | null): number {
+  if (
+    routeUrl === "/api/sessions/start-live"
+    || routeUrl === "/api/sessions/:sessionId/messages/live"
+    || routeUrl === "/api/sessions/:sessionId/queue"
+    || routeUrl === "/api/host-proxy/hosts/:peerHostId/*"
+  ) {
+    return SESSION_MESSAGE_BODY_LIMIT_BYTES;
+  }
+
+  return SESSION_MESSAGE_BODY_LIMIT_BYTES;
+}
+
+function formatBytes(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  return Number.isInteger(mib) ? `${mib} MiB` : `${mib.toFixed(2)} MiB`;
 }

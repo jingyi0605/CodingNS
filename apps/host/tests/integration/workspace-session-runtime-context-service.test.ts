@@ -33,6 +33,11 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       "utf8"
     );
     mkdirSync(path.join(codexHomeDir, "skills", "demo"), { recursive: true });
+    writeFileSync(
+      path.join(codexHomeDir, ".codex-global-state.json"),
+      "{\n  \"electron-persisted-atom-state\": {\n    \"agent-mode-by-host-id\": { \"local\": \"full-access\" }\n  }\n}\n",
+      "utf8"
+    );
     writeFileSync(path.join(codexHomeDir, "auth.json"), "{\n  \"openai\": true\n}\n", "utf8");
     writeFileSync(path.join(codexHomeDir, "config.toml"), "model = \"gpt-5-codex\"\n", "utf8");
     writeFileSync(path.join(codexHomeDir, "skills", "demo", "SKILL.md"), "# Demo\n", "utf8");
@@ -77,9 +82,10 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       CODINGNS_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_AUTH_FILE: result.authFilePath,
       WORKSPACE_SESSION_ASSISTANT_FILE: result.instructionFilePath,
-      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath,
-      [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+      CODINGNS_OFFICE_MCP_AUTH_FILE: result.authFilePath
     });
+    expect(result.runtimeEnv).not.toHaveProperty(CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV);
+    expect(result.runtimeEnv).not.toHaveProperty("CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS");
     expect(existsSync(result.authFilePath)).toBe(true);
     expect(existsSync(result.instructionFilePath)).toBe(true);
     expect(
@@ -89,19 +95,17 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     const instructionContent = readFileSync(result.instructionFilePath, "utf8");
     expect(instructionContent).toContain("始终使用中文");
     expect(instructionContent).toContain("工作区会话附加规则");
-    expect(instructionContent).toContain("assistant office.browser.*");
-    expect(instructionContent).toContain("codingns assistant office browser-profile-list");
-    expect(instructionContent).toContain('{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}');
-    expect(instructionContent).toContain("goto");
-    expect(instructionContent).toContain("screenshot");
+    expect(instructionContent).toContain("助手正式能力优先走 `codingns assistant ...`");
     expect(instructionContent).toContain("不要退回去翻源码");
-    expect(instructionContent).toContain("不要回答“当前环境没有浏览器能力”");
     expect(instructionContent).toContain("localhost");
-    expect(instructionContent).toContain("不要被它里面的站点命令带偏");
-    expect(instructionContent).toContain("taobao/*");
-    expect(instructionContent).toContain("必须走 `office.browser.*`");
+    expect(instructionContent).not.toContain("codingns-opencli");
+    expect(instructionContent).not.toContain("assistant office.browser.*");
+    expect(instructionContent).not.toContain("executionBackend=opencli_bridge");
     const codexConfigPath = path.join(result.runtimeHomeDir, "config.toml");
     const codexConfig = readFileSync(codexConfigPath, "utf8");
+    expect(
+      readFileSync(path.join(result.runtimeHomeDir, ".codex-global-state.json"), "utf8")
+    ).toContain("\"full-access\"");
     expect(readFileSync(path.join(result.runtimeHomeDir, "auth.json"), "utf8")).toContain("\"openai\": true");
     expect(codexConfig).toContain("model_instructions_file");
     expect(codexConfig).toContain("model = \"gpt-5-codex\"");
@@ -121,6 +125,56 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       workspaceId: "workspace-1",
       sessionId: "session-1"
     });
+  });
+
+  it("Codex 只有显式开启时才会注入 workspace-office MCP 启动开关", () => {
+    const previous = process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT;
+    const workspacePath = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-runtime-"));
+    const runtimeStorageRootDir = mkdtempSync(path.join(tmpdir(), "codingns-workspace-session-global-runtime-"));
+    tempDirs.push(workspacePath);
+    tempDirs.push(runtimeStorageRootDir);
+
+    try {
+      process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT = "1";
+      const service = new WorkspaceSessionRuntimeContextService({
+        ensureWorkspaceCredential: vi.fn(() => ({
+          apiBaseUrl: "http://127.0.0.1:3002",
+          accessToken: "workspace-token",
+          issuedAt: "2026-05-16T10:00:00.000Z",
+          expiresAt: "2026-05-23T10:00:00.000Z",
+          userId: "user-1",
+          workspaceId: "workspace-1",
+          projectId: null,
+          sessionId: "session-codex-mcp",
+          callerKind: "workspace_session" as const,
+          capabilityProfile: "workspace-scoped" as const
+        })),
+        getCredentialFilePath: vi.fn((runtimeHomeDir: string) =>
+          path.join(runtimeHomeDir, "WORKSPACE_SESSION_AUTH.json")
+        )
+      }, {
+        runtimeStorageRootDir
+      });
+
+      const result = service.prepareWorkspaceInstructionBundle({
+        sessionId: "session-codex-mcp",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspacePath,
+        provider: "codex",
+        projectId: null
+      });
+
+      expect(result.runtimeEnv).toMatchObject({
+        [CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV]: "1"
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT;
+      } else {
+        process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT = previous;
+      }
+    }
   });
 
   it("provider=opencode 时会写出可供托管 server 直接读取的 MCP 配置", () => {
@@ -208,13 +262,13 @@ describe("WorkspaceSessionRuntimeContextService", () => {
       workspacePath,
       provider: "codex",
       projectId: null,
-      instructionOverlay: "## 浏览器任务临时规则（本轮生效）\n\n- 必须使用 `executionBackend=opencli_bridge`。"
+      instructionOverlay: "## 浏览器任务临时规则（本轮生效）\n\n- 执行前必须二次确认目标与影响范围。"
     });
 
     const instructionContent = readFileSync(result.instructionFilePath, "utf8");
     expect(instructionContent).toContain("工作区会话临时规则");
     expect(instructionContent).toContain("浏览器任务临时规则（本轮生效）");
-    expect(instructionContent).toContain("必须使用 `executionBackend=opencli_bridge`");
+    expect(instructionContent).toContain("执行前必须二次确认目标与影响范围。");
   });
 
   it("AGENTS.md 更新后会重写已有的组合说明文件，并保留附加规则和临时 overlay", () => {
@@ -266,7 +320,7 @@ describe("WorkspaceSessionRuntimeContextService", () => {
     expect(instructionContent).toContain("第二版规则");
     expect(instructionContent).not.toContain("第一版规则");
     expect(instructionContent).toContain("工作区会话附加规则");
-    expect(instructionContent).toContain("assistant office.browser.*");
+    expect(instructionContent).not.toContain("assistant office.browser.*");
     expect(instructionContent).toContain("工作区会话临时规则");
     expect(instructionContent).toContain("只在当前消息生效");
   });

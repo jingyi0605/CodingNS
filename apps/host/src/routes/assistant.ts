@@ -69,19 +69,7 @@ export async function registerAssistantCapabilityRoutes(
   app.patch("/api/assistant/office/documents/:documentId", assistantCapabilityController.updateOfficeDocument);
   app.post("/api/assistant/office/documents/:documentId/export", assistantCapabilityController.exportOfficeDocument);
   app.get("/api/assistant/office/document-tasks/:taskId", assistantCapabilityController.getOfficeDocumentTask);
-  app.get("/api/assistant/office/browser/profiles", assistantCapabilityController.listOfficeBrowserProfiles);
-  app.post("/api/assistant/office/browser/profiles", assistantCapabilityController.createOfficeBrowserProfile);
-  app.get("/api/assistant/office/browser/profiles/:profileId", assistantCapabilityController.getOfficeBrowserProfile);
-  app.post("/api/assistant/office/browser/tasks", assistantCapabilityController.createOfficeBrowserTask);
-  app.get("/api/assistant/office/browser/tasks/:taskId", assistantCapabilityController.getOfficeBrowserTask);
-  app.get("/api/assistant/office/ops/targets", assistantCapabilityController.listOfficeOpsTargets);
-  app.post("/api/assistant/office/ops/targets", assistantCapabilityController.createOfficeOpsTarget);
-  app.get("/api/assistant/office/ops/targets/:targetId", assistantCapabilityController.getOfficeOpsTarget);
-  app.post("/api/assistant/office/ops/ssh-tasks", assistantCapabilityController.createOfficeOpsSshTask);
-  app.post("/api/assistant/office/ops/tasks/:taskId/execute", assistantCapabilityController.executeOfficeOpsTask);
   app.post("/api/assistant/office/task-approvals/:approvalId/reply", assistantCapabilityController.replyOfficeTaskApproval);
-  app.post("/api/assistant/office/ops/browser-tasks", assistantCapabilityController.createOfficeOpsBrowserTask);
-  app.get("/api/assistant/office/ops/tasks/:taskId", assistantCapabilityController.getOfficeOpsTask);
   app.get("/api/assistant/workspaces", assistantCapabilityController.listWorkspaces);
   app.get("/api/assistant/workspaces/browse", assistantCapabilityController.browseWorkspaces);
   app.post("/api/assistant/workspaces/directories", assistantCapabilityController.createWorkspaceDirectory);
@@ -96,18 +84,6 @@ export async function registerAssistantCapabilityRoutes(
   app.post("/api/assistant/worktrees/:workspaceId/merge-preview", assistantCapabilityController.getWorktreeMergePreview);
   app.post("/api/assistant/worktrees/:workspaceId/merge-into-parent", assistantCapabilityController.mergeWorktreeIntoParent);
   app.post("/api/assistant/worktrees/:workspaceId/cleanup", assistantCapabilityController.cleanupWorktree);
-  app.get("/api/assistant/debug-targets/compatibility-matrix", assistantCapabilityController.getDebugCompatibilityMatrix);
-  app.post("/api/assistant/debug-targets/analyze", assistantCapabilityController.analyzeDebugTarget);
-  app.get("/api/assistant/debug-targets/:targetId/framework-analysis", assistantCapabilityController.getDebugFrameworkAnalysis);
-  app.post(
-    "/api/assistant/debug-targets/:targetId/framework-analysis/refresh",
-    assistantCapabilityController.refreshDebugFrameworkAnalysis
-  );
-  app.post("/api/assistant/debug-targets/:targetId/launch-plan", assistantCapabilityController.createDebugLaunchPlan);
-  app.post("/api/assistant/debug-targets/:targetId/run", assistantCapabilityController.runDebugTarget);
-  app.get("/api/assistant/debug-targets/:targetId/runtime-latest", assistantCapabilityController.getLatestDebugRuntime);
-  app.get("/api/assistant/debug-targets/:targetId/runtimes", assistantCapabilityController.listDebugRuntimes);
-  app.get("/api/assistant/debug-runtimes/:runtimeId", assistantCapabilityController.getDebugRuntime);
 }
 
 function isAssistantCapabilityReceipt(payload: unknown): payload is AssistantCapabilityReceipt<unknown> {

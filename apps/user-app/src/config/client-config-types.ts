@@ -17,6 +17,7 @@ export interface HostProfileBase {
   id: string;
   name: string;
   alias: string | null;
+  tagColor: string | null;
   baseUrl: string;
   kind: HostProfileKind;
   createdAt: string;
@@ -88,6 +89,7 @@ export interface ClientRuntimeConfig {
   activeDiscoveredHostId: string | null;
   localHostDiscovery: LocalHostDiscoveryState;
   releaseChannel: ReleaseChannel;
+  betaChannelConsentAcceptedAt: string | null;
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
   autoDownloadUpdate: boolean;
@@ -101,6 +103,7 @@ export interface LegacyClientRuntimeConfigSnapshot {
   platform?: RuntimePlatform;
   hostBaseUrl?: string;
   releaseChannel?: ReleaseChannel;
+  betaChannelConsentAcceptedAt?: string | null;
   autoReconnect?: boolean;
   autoCheckUpdate?: boolean;
   autoDownloadUpdate?: boolean;
@@ -170,11 +173,24 @@ export interface ManagedServicePackageInfo {
   packagePageUrl: string;
   currentVersion: string;
   latestVersion: string | null;
+  latestTitle: string | null;
+  latestNotes: string | null;
+  latestPublishedAt: string | null;
   hasUpdate: boolean;
   checkStatus: ServiceUpdateCheckStatus;
   checkError: string | null;
   restartRequired: boolean;
   installTask: ServiceUpdateTaskInfo | null;
+}
+
+/** 统一更新说明展示模型，供桌面端 / Android / 服务端更新面板共用 */
+export interface UpdateNotesSummary {
+  version: string;
+  title?: string;
+  publishedAt?: string;
+  content?: string;
+  channel: ReleaseChannel;
+  source: "desktop" | "android" | "service";
 }
 
 export interface ServiceUpdateSnapshot {

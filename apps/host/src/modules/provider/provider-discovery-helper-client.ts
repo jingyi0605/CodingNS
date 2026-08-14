@@ -87,6 +87,7 @@ export class ProviderDiscoveryHelperClient {
     workspacePath: string;
     knownSessions: ProviderSessionSummary[];
     enabledProviders: string[];
+    claudeExtraProjectRoots?: string[];
   }, signal?: AbortSignal): Promise<ProviderSessionDiscovery> {
     const result = await this.sendRequest({
       type: "workspace_session_discovery",
@@ -422,6 +423,7 @@ export function disposeSharedProviderDiscoveryHelperClient(): void {
 
 export interface ProviderSessionDiscoveryHelperConfig {
   claudeCodeHomeDir: string;
+  claudeExtraProjectRoots?: string[];
   legnaCodeHomeDir: string;
   codexCliPath: string;
   codexHomeDir: string;

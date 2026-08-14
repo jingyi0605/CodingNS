@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -663,14 +663,18 @@ export class SessionHistoryService {
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
         enabledProviders: string[];
+        claudeExtraProjectRoots: string[];
       }, ProviderSessionDiscovery>({
         taskType: HOST_TASK_TYPES.workspaceDiscoveryScan,
         executionLane: "helper_process",
         concurrency: WORKSPACE_DISCOVERY_SCAN_CONCURRENCY,
         helperProcessHandler: "session.workspace_discovery",
-        run: async ({ config, workspacePath, knownSessions, enabledProviders }, context) =>
+        run: async ({ config, workspacePath, knownSessions, enabledProviders, claudeExtraProjectRoots }, context) =>
           await discoverWorkspaceSessionsInRuntime(
-            config,
+            {
+              ...config,
+              claudeExtraProjectRoots
+            },
             workspacePath,
             knownSessions,
             enabledProviders,
@@ -2318,6 +2322,37 @@ export class SessionHistoryService {
       });
     }
 
+    // 先查出子Agent会话列表，用于级联删除文件和数据库记录
+    const subagentRows = this.db
+      .prepare(
+        `SELECT sb.session_id, sb.provider, sb.provider_session_id, sb.raw_store_ref
+         FROM session_indices si
+         JOIN session_bindings sb ON si.session_id = sb.session_id
+         WHERE si.parent_session_id = ?
+           AND si.is_subagent = 1`
+      )
+      .all(sessionId) as Array<{
+      session_id: string;
+      provider: string;
+      provider_session_id: string;
+      raw_store_ref: string;
+    }>;
+
+    // 删除子Agent的 JSONL 文件
+    for (const subagent of subagentRows) {
+      try {
+        await this.providerSessionDeleteCli.deleteSession({
+          provider: subagent.provider,
+          providerSessionId: subagent.provider_session_id,
+          rawStoreRef: subagent.raw_store_ref
+        });
+      } catch (error) {
+        if (!isProviderSessionMissing(error)) {
+          // 子Agent文件删除失败不阻断父会话删除
+        }
+      }
+    }
+
     try {
       await this.providerSessionDeleteCli.deleteSession({
         provider: binding.provider,
@@ -2329,6 +2364,9 @@ export class SessionHistoryService {
         throw mapSessionProviderError(error);
       }
     }
+
+    // 保险清理：如果父会话 rawStoreRef 对应目录下有 subagents/ 子目录，直接清掉整个目录
+    this.cleanupSubagentFilesOnDisk(binding.rawStoreRef);
 
     for (const observer of this.sessionDeletedObservers) {
       await observer({
@@ -2342,7 +2380,16 @@ export class SessionHistoryService {
       });
     }
 
+    const subagentSessionIds = subagentRows.map((row) => row.session_id);
+
     const deleteTransaction = this.db.transaction((targetSessionId: string) => {
+      // 级联删除子Agent会话的数据库记录
+      for (const subagentId of subagentSessionIds) {
+        this.detachSessionRelationsBeforeDelete(subagentId);
+        this.deleteSessionById(subagentId);
+        this.removeWorkspaceSessionRelation(subagentId);
+      }
+
       this.detachSessionRelationsBeforeDelete(targetSessionId);
       this.deleteSessionById(targetSessionId);
     });
@@ -2531,11 +2578,16 @@ export class SessionHistoryService {
         workspace.path,
         activeRepairScope
       );
+      const claudeExtraProjectRoots = this.collectClaudeDiscoveryProjectRoots(
+        workspaceId,
+        existingWorkspaceSessions
+      );
       const discoveryHandle = this.taskManager.enqueue<{
         config: ProviderSessionDiscoveryHelperConfig;
         workspacePath: string;
         knownSessions: import("@codingns/session-sync-core").ProviderSessionSummary[];
         enabledProviders: string[];
+        claudeExtraProjectRoots: string[];
       }, ProviderSessionDiscovery>(HOST_TASK_TYPES.workspaceDiscoveryScan, {
         key: workspaceId,
         source: "session_history.workspace_discovery.scan",
@@ -2543,7 +2595,8 @@ export class SessionHistoryService {
           config: this.providerSessionDiscoveryConfig,
           workspacePath: workspace.path,
           knownSessions,
-          enabledProviders
+          enabledProviders,
+          claudeExtraProjectRoots
         }
       });
       const discovery = await awaitTaskHandleWithSignal(discoveryHandle, signal).catch((error) => {
@@ -3015,15 +3068,19 @@ export class SessionHistoryService {
           cursor,
           direction
         );
+        const orderedPage = this.offsetClaudeNativeForkRuntimePage(
+          sessionId,
+          sanitizedPage
+        );
         const messagesWithAttachments = this.sessionMessageAttachmentService.enrichMessages(
           sessionId,
-          sanitizedPage.messages
+          orderedPage.messages
         );
         const messages = this.enrichMessagesWithOrigin(sessionId, messagesWithAttachments);
         this.persistSessionChangedFiles(sessionId, messages);
 
         return {
-          ...sanitizedPage,
+          ...orderedPage,
           messages
         };
       })
@@ -3156,6 +3213,68 @@ export class SessionHistoryService {
         ...page.messages.slice(expectedInheritedCount + leakedInheritedCount)
       ],
       total: Math.max(0, page.total - leakedInheritedCount)
+    };
+  }
+
+  private offsetClaudeNativeForkRuntimePage(
+    sessionId: string,
+    page: HistoryPage
+  ): HistoryPage {
+    if (page.messages.length === 0) {
+      return page;
+    }
+
+    const forkRecord = this.sessionForkRepository.findBySessionId(sessionId);
+
+    if (
+      !forkRecord
+      || forkRecord.provider !== "claude-code"
+      || (
+        forkRecord.forkMethod !== "native_message_fork"
+        && forkRecord.forkMethod !== "native_session_fork"
+      )
+      || typeof forkRecord.inheritedPrefixMessageCount !== "number"
+    ) {
+      return page;
+    }
+
+    const inheritedPrefixMessageCount = Math.max(0, forkRecord.inheritedPrefixMessageCount);
+
+    if (inheritedPrefixMessageCount <= 0) {
+      return page;
+    }
+
+    const childSession = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const childCreatedAt = childSession?.createdAt?.trim() || null;
+
+    if (!childCreatedAt) {
+      return page;
+    }
+
+    const containsInheritedMessages = page.messages.some(
+      (message) =>
+        message.sequence <= inheritedPrefixMessageCount
+        && message.timestamp < childCreatedAt
+    );
+
+    if (containsInheritedMessages) {
+      return page;
+    }
+
+    const containsOnlyChildRuntimeMessages = page.messages.every(
+      (message) => message.timestamp >= childCreatedAt
+    );
+
+    if (!containsOnlyChildRuntimeMessages) {
+      return page;
+    }
+
+    return {
+      ...page,
+      messages: page.messages.map((message) => ({
+        ...message,
+        sequence: message.sequence + inheritedPrefixMessageCount
+      }))
     };
   }
 
@@ -5044,6 +5163,32 @@ export class SessionHistoryService {
     return Number(row?.count ?? 0);
   }
 
+  /**
+   * 清理父会话 rawStoreRef 对应目录下的 subagents/ 子目录。
+   * 这是保险措施：即使子Agent会话没有被数据库记录（如尚未被 provider 发现），
+   * 磁盘上的子Agent JSONL 文件也会被清理掉，避免下次扫描时重新出现为孤儿会话。
+   */
+  private cleanupSubagentFilesOnDisk(rawStoreRef: string): void {
+    try {
+      const rawDir = rawStoreRef.replace(/\.jsonl$/i, "");
+      if (!existsSync(rawDir)) {
+        return;
+      }
+      const subagentsDir = join(rawDir, "subagents");
+      if (!existsSync(subagentsDir)) {
+        return;
+      }
+      rmSync(subagentsDir, { recursive: true, force: true });
+      // 如果父目录也空了（只有 subagents 子目录），一并清理
+      const remaining = readdirSync(rawDir);
+      if (remaining.length === 0) {
+        rmSync(rawDir, { recursive: true, force: true });
+      }
+    } catch {
+      // 磁盘清理失败不阻断删除流程
+    }
+  }
+
   private detachSessionRelationsBeforeDelete(sessionId: string): void {
     const controlSessionIds = this.db
       .prepare(
@@ -5282,6 +5427,31 @@ export class SessionHistoryService {
     }
 
     return [...merged.values()];
+  }
+
+  private collectClaudeDiscoveryProjectRoots(
+    workspaceId: string,
+    sessions: SessionListItem[]
+  ): string[] {
+    const roots = new Set<string>();
+
+    for (const session of sessions) {
+      if (session.provider !== "claude-code") {
+        continue;
+      }
+
+      const binding = this.sessionBindingRepository.findBySessionId(session.sessionId);
+
+      if (!binding || binding.workspaceId !== workspaceId) {
+        continue;
+      }
+
+      for (const root of collectClaudeProjectsRootsNearBinding(binding)) {
+        roots.add(root);
+      }
+    }
+
+    return Array.from(roots);
   }
 
   private persistSessionSourceIndexRecords(

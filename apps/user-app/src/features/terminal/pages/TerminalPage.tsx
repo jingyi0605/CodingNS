@@ -32,6 +32,11 @@ import {
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 import type { WorkspaceRef } from "../../conversation/api/conversation-api";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -73,6 +78,7 @@ import {
   getTerminalRuntimeLabel,
   getTerminalRuntimeShortLabel,
   listTerminalRuntimeOptions,
+  resolveTargetTerminalOsFamily,
   type SelectableTerminalRuntimeType
 } from "../runtime/terminal-runtime-meta";
 import { isTmuxDependencyMissingError } from "../runtime/terminal-runtime-errors";
@@ -88,6 +94,7 @@ interface TerminalViewportRuntime {
   restoredFromSnapshot: boolean;
   focus: () => void;
   reflow: () => void;
+  scheduleReflowRecovery: () => void;
   revealLatest: () => void;
   shouldAutoRevealLatest: () => boolean;
   prependHistory: (
@@ -203,8 +210,6 @@ const PERSISTED_TERMINAL_SCROLLBACK = 160;
 const MAX_PERSISTED_TERMINAL_VIEW_CHARS = 120_000;
 const MIN_TERMINAL_COLS = 20;
 const MIN_TERMINAL_ROWS = 5;
-const MIN_TERMINAL_PIXEL_WIDTH = 320;
-const MIN_TERMINAL_PIXEL_HEIGHT = 120;
 const MIN_TERMINAL_ZOOM_SCALE = 0.8;
 const MAX_TERMINAL_ZOOM_SCALE = 1.6;
 const TERMINAL_ZOOM_STEP = 0.1;
@@ -451,14 +456,20 @@ export function TerminalPage({
       return resolvedWorkspaceId;
     }
 
-    // Peer HOST 下，路由和左侧列表仍使用主 HOST 的本地 workspaceId；
-    // 真正发给 Peer 的终端接口必须使用远端 workspaceId。
-    if (shellCurrentWorkspaceRef?.hostId === currentTargetHostId) {
-      return shellCurrentWorkspaceRef.workspaceId?.trim() || resolvedWorkspaceId;
+    const normalizedSelectedWorkspaceId = resolvedWorkspaceId.trim();
+    const normalizedShellWorkspaceId = shellCurrentWorkspaceId?.trim() || null;
+
+    // Peer HOST 下，显示工作区和请求工作区不是一个概念。
+    // 如果当前 shell 里的 workspaceRef 还属于旧工作区，就必须停住，不能把旧远端 id 发给新工作区。
+    if (
+      shellCurrentWorkspaceRef?.hostId === currentTargetHostId
+      && normalizedShellWorkspaceId === normalizedSelectedWorkspaceId
+    ) {
+      return shellCurrentWorkspaceRef.workspaceId?.trim() || null;
     }
 
-    return resolvedWorkspaceId;
-  }, [currentTargetHostId, resolvedWorkspaceId, shellCurrentWorkspaceRef]);
+    return null;
+  }, [currentTargetHostId, resolvedWorkspaceId, shellCurrentWorkspaceId, shellCurrentWorkspaceRef]);
 
   const mobileHeaderWorkspace = useMemo(
     () =>
@@ -545,9 +556,13 @@ export function TerminalPage({
     () => sortTerminals(terminals, pinnedTerminalIdSet),
     [pinnedTerminalIdSet, terminals]
   );
+  const targetTerminalOsFamily = useMemo(
+    () => resolveTargetTerminalOsFamily(shellOptions, currentTargetHostId, platform.ui.osFamily),
+    [currentTargetHostId, platform.ui.osFamily, shellOptions]
+  );
   const runtimeOptions = useMemo(
-    () => listTerminalRuntimeOptions(platform.ui.osFamily),
-    [platform.ui.osFamily]
+    () => listTerminalRuntimeOptions(targetTerminalOsFamily),
+    [targetTerminalOsFamily]
   );
   // 终端页要和工作台壳保持同一套判定，避免 iPad 横屏还挂着手机单栏逻辑。
   const isMobileTerminalPage = !platform.isDesktop && platform.isMobile;
@@ -597,8 +612,8 @@ export function TerminalPage({
       ? (["primary"] as PaneId[])
       : (["primary", "secondary"] as PaneId[]);
   const mobileShellChoices = useMemo(
-    () => buildMobileTerminalShellChoices(shellOptions, platform.ui.osFamily),
-    [platform.ui.osFamily, shellOptions]
+    () => buildMobileTerminalShellChoices(shellOptions, targetTerminalOsFamily),
+    [shellOptions, targetTerminalOsFamily]
   );
   const selectedMobileShellChoice = useMemo(
     () => mobileShellChoices.find((option) => option.value === mobileSelectedShell) ?? mobileShellChoices[0] ?? null,
@@ -722,11 +737,17 @@ export function TerminalPage({
         preferredPaneId?: PaneId;
       } = {}
     ): Promise<void> => {
+      if (!requestWorkspaceId) {
+        return;
+      }
+
       const requestId = terminalReloadRequestIdRef.current + 1;
       terminalReloadRequestIdRef.current = requestId;
 
       try {
-        const terminalResponse = await listWorkspaceTerminals(requestWorkspaceId, { targetHostId: currentTargetHostId });
+        const terminalResponse = await listWorkspaceTerminals(requestWorkspaceId, {
+          targetHostId: currentTargetHostId
+        });
 
         if (
           requestId !== terminalReloadRequestIdRef.current ||
@@ -748,7 +769,7 @@ export function TerminalPage({
         notifyTerminal(detail, "error");
       }
     },
-    [applyWorkspaceTerminalCollection, notifyTerminal]
+    [applyWorkspaceTerminalCollection, currentTargetHostId, notifyTerminal, requestWorkspaceId]
   );
   const requestReload = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -757,6 +778,45 @@ export function TerminalPage({
 
     return reloadWorkspaceResources(selectedWorkspaceId);
   }, [reloadWorkspaceResources, selectedWorkspaceId]);
+  const requestTerminalSnapshotRefresh = useCallback(
+    (workspaceId: string, options: { force?: boolean } = {}) => {
+      if (!requestWorkspaceId) {
+        return;
+      }
+
+      const cacheKey = buildTerminalManagerSnapshotKey(workspaceId, currentTargetHostId);
+      const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(
+        cacheKey,
+        TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+      );
+      const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
+
+      subscribeTerminalManagerSnapshot(requestWorkspaceId, {
+        knownRevision,
+        skipKnownRevision: options.force === true,
+        targetHostId: currentTargetHostId
+      });
+      requestTerminalManagerRefresh(requestWorkspaceId, {
+        knownRevision,
+        skipKnownRevision: options.force === true,
+        targetHostId: currentTargetHostId
+      });
+    },
+    [
+      currentTargetHostId,
+      requestTerminalManagerRefresh,
+      requestWorkspaceId,
+      subscribeTerminalManagerSnapshot
+    ]
+  );
+  const handleForceRefreshTerminalWorkspace = useCallback(async () => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    requestTerminalSnapshotRefresh(selectedWorkspaceId, { force: true });
+    await reloadWorkspaceResources(selectedWorkspaceId);
+  }, [reloadWorkspaceResources, requestTerminalSnapshotRefresh, selectedWorkspaceId]);
 
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspaceId;
@@ -882,8 +942,15 @@ export function TerminalPage({
       return;
     }
 
+    if (!requestWorkspaceId) {
+      return;
+    }
+
     return addTerminalManagerSnapshotListener((snapshot) => {
-      if (snapshot.workspaceId !== requestWorkspaceId) {
+      if (
+        snapshot.workspaceId !== requestWorkspaceId ||
+        !isSameTargetHostId(readSnapshotTargetHostId(snapshot), currentTargetHostId)
+      ) {
         return;
       }
 
@@ -892,7 +959,8 @@ export function TerminalPage({
         terminals: snapshot.terminals,
         templates: snapshot.templates,
         templateStatuses: snapshot.templateStatuses,
-        shellOptions: snapshot.shellOptions
+        shellOptions: snapshot.shellOptions,
+        targetHostId: currentTargetHostId ?? null
       });
       setShellOptions(snapshot.shellOptions ?? []);
       applyWorkspaceTerminalCollection(selectedWorkspaceId, snapshot.terminals);
@@ -983,6 +1051,22 @@ export function TerminalPage({
       return;
     }
 
+    if (!requestWorkspaceId) {
+      setActiveTerminalPersistenceWorkspaceId(null);
+      setShellOptions([]);
+      setSelectedShell("");
+      setMobileQuickDrawerOpen(false);
+      setMobileCreateSheetOpen(false);
+      terminalsRef.current = [];
+      setTerminals([]);
+      setManuallyDisconnectedTerminalIds([]);
+      updatePaneBindings(() => INITIAL_PANE_BINDINGS);
+      updateActivePane("primary");
+      setPaneConnectionStates(INITIAL_CONNECTION_STATES);
+      setPendingTerminalCreationPaneId(null);
+      return;
+    }
+
     setActiveTerminalPersistenceWorkspaceId(null);
     updateActivePane("primary");
     setPaneConnectionStates(INITIAL_CONNECTION_STATES);
@@ -998,7 +1082,6 @@ export function TerminalPage({
       buildTerminalManagerSnapshotKey(selectedWorkspaceId, currentTargetHostId),
       TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
     );
-
     if (cachedSnapshot) {
       setShellOptions(parseTerminalShellOptions(cachedSnapshot.shellOptions));
       applyWorkspaceTerminalCollection(selectedWorkspaceId, cachedSnapshot.terminals);
@@ -1012,49 +1095,40 @@ export function TerminalPage({
       setPendingTerminalCreationPaneId(null);
     }
 
-    subscribeTerminalManagerSnapshot(requestWorkspaceId, {
-      knownRevision: cachedSnapshot?.revision ?? null,
-      targetHostId: currentTargetHostId
+    requestTerminalSnapshotRefresh(selectedWorkspaceId, {
+      force: true
     });
-
-    if (cachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestTerminalManagerRefresh(requestWorkspaceId, {
-          knownRevision: cachedSnapshot.revision ?? null,
-          targetHostId: currentTargetHostId
-        });
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
-    }
-
-    requestTerminalManagerRefresh(requestWorkspaceId, {
-      knownRevision: null,
-      targetHostId: currentTargetHostId
-    });
-
-    if (externalWindowMode) {
-      void reloadWorkspaceResources(selectedWorkspaceId);
-
-      if (shellOptions.length === 0) {
-        void listTerminalShellOptions({ targetHostId: currentTargetHostId })
-          .then((response) => {
-            setShellOptions(response.items ?? []);
-          })
-          .catch(() => undefined);
-      }
-    }
   }, [
     applyWorkspaceTerminalCollection,
-    externalWindowMode,
-    requestTerminalManagerRefresh,
-    reloadWorkspaceResources,
+    currentTargetHostId,
+    requestTerminalSnapshotRefresh,
     requestWorkspaceId,
     selectedWorkspaceId,
-    shellOptions.length,
     subscribeTerminalManagerSnapshot
+  ]);
+
+  useEffect(() => {
+    if (!externalWindowMode || !selectedWorkspaceId) {
+      return;
+    }
+
+    void reloadWorkspaceResources(selectedWorkspaceId);
+
+    if (shellOptions.length > 0) {
+      return;
+    }
+
+    void listTerminalShellOptions({ targetHostId: currentTargetHostId })
+      .then((response) => {
+        setShellOptions(response.items ?? []);
+      })
+      .catch(() => undefined);
+  }, [
+    currentTargetHostId,
+    externalWindowMode,
+    reloadWorkspaceResources,
+    selectedWorkspaceId,
+    shellOptions.length
   ]);
 
   useEffect(() => {
@@ -1373,13 +1447,18 @@ export function TerminalPage({
 
     const availableShellOptions = await ensureShellOptionsLoaded();
     const effectiveShellOptions = availableShellOptions.length > 0 ? availableShellOptions : shellOptions;
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      effectiveShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
     const nextShell = resolvePreferredTerminalShell(effectiveShellOptions, selectedShell);
 
     if (
       shouldPromptForTerminalShellSelection(
         effectiveShellOptions,
         isMobileTerminalPage,
-        platform.ui.osFamily
+        effectiveTargetTerminalOsFamily
       )
     ) {
       setSelectedShell(nextShell ?? "");
@@ -1398,6 +1477,11 @@ export function TerminalPage({
     }
 
     const availableShellOptions = shellOptions.length > 0 ? shellOptions : await ensureShellOptionsLoaded();
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      availableShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
     const nextShell = resolvePreferredTerminalShell(
       availableShellOptions.length > 0 ? availableShellOptions : shellOptions,
       selectedShell
@@ -1407,7 +1491,10 @@ export function TerminalPage({
       {
         workspaceId,
         shell: nextShell ?? undefined,
-        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+        runtimeType: resolveDefaultTerminalCreationRuntime(
+          selectedRuntimeType,
+          effectiveTargetTerminalOsFamily
+        )
       },
       activePaneIdRef.current,
       {
@@ -1431,11 +1518,21 @@ export function TerminalPage({
       return;
     }
 
+    const availableShellOptions = shellOptions.length > 0 ? shellOptions : await ensureShellOptionsLoaded();
+    const effectiveTargetTerminalOsFamily = resolveTargetTerminalOsFamily(
+      availableShellOptions,
+      currentTargetHostId,
+      platform.ui.osFamily
+    );
+
     await executeTerminalCreation(
       {
         workspaceId,
         shell: shellChoice.value,
-        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+        runtimeType: resolveDefaultTerminalCreationRuntime(
+          selectedRuntimeType,
+          effectiveTargetTerminalOsFamily
+        )
       },
       "primary",
       {
@@ -1583,7 +1680,7 @@ export function TerminalPage({
   }
 
   async function handleDuplicateTerminal(terminal: TerminalDto): Promise<void> {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !requestWorkspaceId) {
       return;
     }
 
@@ -2002,9 +2099,9 @@ export function TerminalPage({
               loading={loadingShellOptions}
               creating={creatingTerminal}
               shellChoices={mobileShellChoices}
-              osFamily={platform.ui.osFamily}
+              osFamily={targetTerminalOsFamily}
               selectedShell={mobileSelectedShell}
-              runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+              runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, targetTerminalOsFamily)}
               title={t("terminal.mobileCreateSheetTitle")}
               shellLabel={t("terminal.mobileCreateShellLabel")}
               shellDescription={t("terminal.mobileCreateShellDescription")}
@@ -2187,114 +2284,30 @@ export function TerminalPage({
                         </div>
                       </div>
 
-                      <button
-                        ref={toolbarToggleRef}
-                        type="button"
-                        className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
-                        data-open={toolbarOpen}
-                        aria-label={t("terminal.toolbarToggleAction")}
-                        aria-expanded={toolbarOpen}
-                        onClick={() => {
-                          setActionMenu(null);
-                          setToolbarOpen((current) => !current);
-                        }}
-                      >
-                        <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
-                          <svg viewBox="0 0 20 20" fill="none" focusable="false">
-                            <path
-                              d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
-                              stroke="currentColor"
-                              strokeWidth="1.35"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path
-                              d="m5.85 11.92 2.22 2.22"
-                              stroke="currentColor"
-                              strokeWidth="1.35"
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                        </span>
-                      </button>
-                    </div>
-                    {embeddedMode && embeddedDockControls ? (
-                      <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
-                        <div
-                          className="code-workbench-terminal-layout-switcher"
-                        >
-                          <button
-                            type="button"
-                            className="code-workbench-terminal-layout-button"
-                            aria-label={
-                              embeddedDockToggleTargetOrientation === "horizontal"
-                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
-                                : t("shell.codeTerminalDockSwitchToVerticalAction")
-                            }
-                            title={
-                              embeddedDockToggleTargetOrientation === "horizontal"
-                                ? t("shell.codeTerminalDockSwitchToHorizontalAction")
-                                : t("shell.codeTerminalDockSwitchToVerticalAction")
-                            }
-                            onClick={() => {
-                              embeddedDockControls.onChangeOrientation(
-                                embeddedDockToggleTargetOrientation
-                              );
-                            }}
-                          >
-                            <span className="code-workbench-terminal-button-icon" aria-hidden="true">
-                              {embeddedDockToggleTargetOrientation === "horizontal" ? (
-                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
-                                  <path
-                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                  <path
-                                    d="M8 4.25v7.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              ) : (
-                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
-                                  <path
-                                    d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                  <path
-                                    d="M3.75 8h9.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.35"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              )}
-                            </span>
-                          </button>
-                        </div>
+                      <div className="terminal-tabbar-inline-icon-actions" data-window-drag="ignore">
                         <button
+                          ref={toolbarToggleRef}
                           type="button"
-                          className="code-workbench-terminal-close-button"
-                          aria-label={t("shell.codeTerminalDockCloseAction")}
-                          onClick={embeddedDockControls.onClose}
+                          className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                          data-open={toolbarOpen}
+                          aria-label={t("terminal.toolbarToggleAction")}
+                          aria-expanded={toolbarOpen}
+                          onClick={() => {
+                            setActionMenu(null);
+                            setToolbarOpen((current) => !current);
+                          }}
                         >
-                          <span className="code-workbench-terminal-button-icon" aria-hidden="true">
-                            <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                          <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                            <svg viewBox="0 0 20 20" fill="none" focusable="false">
                               <path
-                                d="m5.25 5.25 5.5 5.5"
+                                d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
                                 stroke="currentColor"
                                 strokeWidth="1.35"
                                 strokeLinecap="round"
+                                strokeLinejoin="round"
                               />
                               <path
-                                d="m10.75 5.25-5.5 5.5"
+                                d="m5.85 11.92 2.22 2.22"
                                 stroke="currentColor"
                                 strokeWidth="1.35"
                                 strokeLinecap="round"
@@ -2302,8 +2315,122 @@ export function TerminalPage({
                             </svg>
                           </span>
                         </button>
+
+                        <button
+                          type="button"
+                          className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                          aria-label={t("git.refreshNow")}
+                          title={t("git.refreshNow")}
+                          onClick={() => {
+                            void handleForceRefreshTerminalWorkspace();
+                          }}
+                        >
+                          <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                            <svg viewBox="0 0 20 20" fill="none" focusable="false">
+                              <path
+                                d="M16.2 10a6.2 6.2 0 1 1-1.82-4.38"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                              <path
+                                d="M16.2 4.6v3.3h-3.3"
+                                stroke="currentColor"
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </span>
+                        </button>
+
+                        {embeddedMode && embeddedDockControls ? (
+                          <div className="terminal-tabbar-embedded-controls" data-window-drag="ignore">
+                            <div className="code-workbench-terminal-layout-switcher">
+                              <button
+                                type="button"
+                                className="code-workbench-terminal-layout-button"
+                                aria-label={
+                                  embeddedDockToggleTargetOrientation === "horizontal"
+                                    ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                    : t("shell.codeTerminalDockSwitchToVerticalAction")
+                                }
+                                title={
+                                  embeddedDockToggleTargetOrientation === "horizontal"
+                                    ? t("shell.codeTerminalDockSwitchToHorizontalAction")
+                                    : t("shell.codeTerminalDockSwitchToVerticalAction")
+                                }
+                                onClick={() => {
+                                  embeddedDockControls.onChangeOrientation(
+                                    embeddedDockToggleTargetOrientation
+                                  );
+                                }}
+                              >
+                                <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                                  {embeddedDockToggleTargetOrientation === "horizontal" ? (
+                                    <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                      <path
+                                        d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      <path
+                                        d="M8 4.25v7.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                      <path
+                                        d="M3.75 4.25h8.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      <path
+                                        d="M3.75 8h9.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.35"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </span>
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              className="code-workbench-terminal-close-button"
+                              aria-label={t("shell.codeTerminalDockCloseAction")}
+                              onClick={embeddedDockControls.onClose}
+                            >
+                              <span className="code-workbench-terminal-button-icon" aria-hidden="true">
+                                <svg viewBox="0 0 16 16" fill="none" focusable="false">
+                                  <path
+                                    d="m5.25 5.25 5.5 5.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                  <path
+                                    d="m10.75 5.25-5.5 5.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </span>
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                 </div>
               </header>
@@ -2720,9 +2847,9 @@ export function TerminalPage({
         loading={loadingShellOptions}
         creating={creatingTerminal}
         shellChoices={mobileShellChoices}
-        osFamily={platform.ui.osFamily}
+        osFamily={targetTerminalOsFamily}
         selectedShell={selectedShell}
-        runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+        runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, targetTerminalOsFamily)}
         title={t("terminal.createDialogTitle")}
         shellLabel={t("terminal.mobileCreateShellLabel")}
         shellDescription={t("terminal.createDialogShellDescription")}
@@ -3828,9 +3955,17 @@ function TerminalWorkspacePane({
   }, [active]);
 
   useEffect(() => {
-    if (active) {
-      viewportRuntimeRef.current?.focus();
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return;
     }
+
+    if (active) {
+      runtime.focus();
+    }
+
+    runtime.scheduleReflowRecovery();
   }, [active, terminal?.id]);
 
   useEffect(() => {
@@ -3868,8 +4003,14 @@ function TerminalWorkspacePane({
   }, [closeSelectionContextMenu, selectionContextMenu]);
 
   useEffect(() => {
-    viewportRuntimeRef.current?.setFontSize(buildTerminalFontSize(zoomScale));
-    viewportRuntimeRef.current?.reflow();
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return;
+    }
+
+    runtime.setFontSize(buildTerminalFontSize(zoomScale));
+    runtime.scheduleReflowRecovery();
   }, [zoomScale]);
 
   useEffect(() => {
@@ -3879,7 +4020,7 @@ function TerminalWorkspacePane({
       return;
     }
 
-    runtime.reflow();
+    runtime.scheduleReflowRecovery();
 
     if (ownsTerminalSize) {
       realtimeClientRef.current?.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
@@ -4026,7 +4167,7 @@ function TerminalWorkspacePane({
 
         if (runtime) {
           runtime.suspendInputForwarding();
-          runtime.reflow();
+          runtime.scheduleReflowRecovery();
           if (ownsTerminalSize) {
             client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
           }
@@ -4067,6 +4208,7 @@ function TerminalWorkspacePane({
             oldestLoadedSeqRef.current = null;
           }
 
+          runtime.scheduleReflowRecovery();
         }
 
         initialBackfillAppliedRef.current = true;
@@ -4133,12 +4275,14 @@ function TerminalWorkspacePane({
               renderMs: terminalDebugNowMs() - renderStartedAtMs
             });
 
+            runtime.scheduleReflowRecovery();
             if (shouldRevealLatest) {
               runtime.revealLatest();
             }
           });
         } else {
           runtime?.terminal.write(event.chunk.content, () => {
+            runtime?.scheduleReflowRecovery();
             if (shouldRevealLatest) {
               runtime?.revealLatest();
             }
@@ -4212,6 +4356,7 @@ function TerminalWorkspacePane({
     onTerminalStatus,
     onUnauthorized,
     paneId,
+    targetHostId,
     terminal?.id,
     terminal?.runtimeType,
     ownsTerminalSize,
@@ -4489,6 +4634,7 @@ function createTerminalViewportRuntime(input: {
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
   let deferredReflowTimer: number | null = null;
+  let reflowRecoveryTimer: number | null = null;
   let viewportBottomAlignFrameId: number | null = null;
   const scheduledReflowFrameIds = new Set<number>();
   let touchPoint: { x: number; y: number } | null = null;
@@ -5023,6 +5169,19 @@ function createTerminalViewportRuntime(input: {
     }, TERMINAL_POST_ATTACH_REFLOW_DELAY_MS);
   }
 
+  function scheduleReflowRecovery(): void {
+    schedulePostAttachReflow();
+
+    if (reflowRecoveryTimer !== null) {
+      window.clearTimeout(reflowRecoveryTimer);
+    }
+
+    reflowRecoveryTimer = window.setTimeout(() => {
+      reflowRecoveryTimer = null;
+      schedulePostAttachReflow();
+    }, 240);
+  }
+
   function syncViewportBottomGap(): void {
     const bottomGapPx = resolveTerminalViewportBottomGapPx(input.container.clientHeight);
     input.container.style.setProperty("--terminal-bottom-gap", `${bottomGapPx}px`);
@@ -5082,6 +5241,7 @@ function createTerminalViewportRuntime(input: {
     reflow: () => {
       fitToContainer();
     },
+    scheduleReflowRecovery,
     revealLatest,
     shouldAutoRevealLatest,
     prependHistory: async (
@@ -5140,6 +5300,10 @@ function createTerminalViewportRuntime(input: {
       if (deferredReflowTimer !== null) {
         window.clearTimeout(deferredReflowTimer);
         deferredReflowTimer = null;
+      }
+      if (reflowRecoveryTimer !== null) {
+        window.clearTimeout(reflowRecoveryTimer);
+        reflowRecoveryTimer = null;
       }
       if (viewportBottomAlignFrameId !== null) {
         window.cancelAnimationFrame(viewportBottomAlignFrameId);
@@ -5319,10 +5483,7 @@ function scrollTerminalViewportToBottom(container: HTMLDivElement, terminal: Ter
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
-  return (
-    container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
-    container.clientHeight >= MIN_TERMINAL_PIXEL_HEIGHT
-  );
+  return container.clientWidth > 0 && container.clientHeight > 0;
 }
 
 function resolveTerminalViewportDimensions(
@@ -5585,7 +5746,7 @@ function resolveDefaultTerminalCreationRuntime(
     return runtimeType;
   }
 
-  return osFamily === "windows" ? "embedded-pty" : "tmux";
+  return "tmux";
 }
 
 function shouldPromptForTerminalShellSelection(
@@ -6067,8 +6228,10 @@ function buildTerminalMutationToastId(terminalId: string): string {
 }
 
 function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("terminal-manager.snapshot", {
+    workspaceId,
+    targetHostId
+  });
 }
 
 function waitForNextMutationPoll(): Promise<void> {

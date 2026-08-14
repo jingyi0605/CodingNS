@@ -20,7 +20,7 @@ import type {
   AffairsAssistantSessionSnapshotService
 } from "./affairs-assistant-session-snapshot-service.js";
 
-const WORKBENCH_DISCOVERY_REFRESH_BUDGET = 6;
+const WORKBENCH_DISCOVERY_REFRESH_BUDGET = 3;
 const WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS = 15_000;
 const WORKBENCH_DISCOVERY_HOT_MAX_AGE_MS = 60_000;
 const WORKBENCH_DISCOVERY_WARM_MAX_AGE_MS = 120_000;
@@ -45,6 +45,17 @@ export interface WorkbenchSnapshotItem {
 export interface WorkbenchSnapshot {
   revision: string;
   items: WorkbenchSnapshotItem[];
+}
+
+export interface PeerWorkspaceSummary {
+  workspaceId: string;
+  runningSessionCount: number;
+  unreadSessionCount: number;
+  totalSessionCount: number;
+  archivedSessionCount: number;
+  latestSessionTitle: string | null;
+  lastActivityAt: string | null;
+  updatedAt: string;
 }
 
 interface WorkbenchDiscoveryCandidate {
@@ -126,6 +137,43 @@ export class WorkbenchService {
           collapsed: collapsedWorkspaceIdSet.has(workspace.id)
         };
       })
+    });
+  }
+
+  getPeerWorkspaceSummary(
+    workspaceId: string,
+    userId: string
+  ): PeerWorkspaceSummary {
+    const sessions = this.filterButlerControlSessions(
+      this.sessionHistoryService.listWorkspaceSessions(workspaceId, userId)
+    );
+    const latestSession = sessions[0] ?? null;
+    const lastActivityAt = resolveRecentActivityIso(sessions);
+
+    return {
+      workspaceId,
+      runningSessionCount: sessions.filter(isActiveWorkbenchSession).length,
+      unreadSessionCount: sessions.filter((session) => session.activityState === "completed_unread").length,
+      totalSessionCount: sessions.filter((session) => !isArchivedSessionRecord(session)).length,
+      archivedSessionCount: sessions.filter(isArchivedSessionRecord).length,
+      latestSessionTitle: latestSession?.title?.trim() || null,
+      lastActivityAt,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  schedulePeerWorkspaceSummaryRefresh(
+    workspaceId: string,
+    userId: string
+  ): void {
+    if (typeof this.sessionHistoryService.requestWorkspaceDiscovery !== "function") {
+      return;
+    }
+
+    this.sessionHistoryService.requestWorkspaceDiscovery(workspaceId, userId, {
+      maxAgeMs: WORKBENCH_DISCOVERY_VISIBLE_MAX_AGE_MS,
+      force: false,
+      refreshStateMode: "deferred"
     });
   }
 
@@ -354,6 +402,10 @@ export class WorkbenchService {
     const selected: WorkbenchDiscoveryCandidate[] = [];
 
     for (const candidate of this.buildDiscoveryCandidates(userId)) {
+      if (!candidate.hasRunningSession && !candidate.hasRecentActivity) {
+        continue;
+      }
+
       if (
         !force
         && !this.sessionHistoryService.needsWorkspaceDiscovery(candidate.workspace.id, candidate.maxAgeMs)
@@ -561,6 +613,37 @@ function resolveRecentActivityAtMs(sessions: SessionListItem[]): number {
   return recentActivityAtMs;
 }
 
+function resolveRecentActivityIso(sessions: SessionListItem[]): string | null {
+  let latestValue: string | null = null;
+  let latestMs = 0;
+
+  for (const session of sessions) {
+    const candidates = [session.lastEventAt, session.lastMessageAt, session.updatedAt];
+
+    for (const candidate of candidates) {
+      const candidateMs = parseIsoTimeMs(candidate);
+      if (candidateMs > latestMs && candidate) {
+        latestMs = candidateMs;
+        latestValue = candidate;
+      }
+    }
+  }
+
+  return latestValue;
+}
+
+function isArchivedSessionRecord(session: SessionListItem): boolean {
+  return session.isArchived === true;
+}
+
+function isActiveWorkbenchSession(session: SessionListItem): boolean {
+  return (
+    session.activityState === "running"
+    || session.runningState === "running"
+    || session.runningState === "starting"
+  ) && session.isArchived !== true;
+}
+
 function parseIsoTimeMs(value: string | null | undefined): number {
   if (!value) {
     return 0;
@@ -586,15 +669,15 @@ function resolveDiscoveryPriorityBand(input: {
   isDirty: boolean;
   favorite: boolean;
 }): 0 | 1 | 2 | 3 {
-  if (input.isDirty || input.isVisibleRoot) {
+  if (input.hasRunningSession) {
     return 0;
   }
 
-  if (input.hasRunningSession || input.hasRecentActivity) {
+  if (input.hasRecentActivity) {
     return 1;
   }
 
-  if (input.favorite || input.isChildWorkspace) {
+  if (input.isDirty || input.isVisibleRoot || input.favorite || input.isChildWorkspace) {
     return 2;
   }
 

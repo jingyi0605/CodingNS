@@ -38,7 +38,11 @@ import {
   type HostResourceSnapshotView
 } from "../../../platform/server/host-resource-manager";
 import { ApiError } from "../../../shared/network/api-error";
-import { normalizeHostAliasLabel, resolveHostAliasTag } from "../utils/host-alias";
+import {
+  HOST_TAG_COLOR_PRESETS,
+  normalizeHostAliasLabel,
+  resolveHostAliasTag
+} from "../utils/host-alias";
 import {
   checkPeerHost,
   createPeerHost,
@@ -140,6 +144,8 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
   const [aliasDraftByHostId, setAliasDraftByHostId] = useState<Record<string, string>>({});
   const [peerLoginDraftByHostId, setPeerLoginDraftByHostId] = useState<Record<string, PeerLoginDraft>>({});
   const [peerBusyHostId, setPeerBusyHostId] = useState<string | null>(null);
+  const [tagPaletteHostId, setTagPaletteHostId] = useState<string | null>(null);
+  const [savingTagColorHostId, setSavingTagColorHostId] = useState<string | null>(null);
   const [peerHostById, setPeerHostById] = useState<Record<string, PeerHostDto>>({});
   const [hostVersionById, setHostVersionById] = useState<Record<string, string | null>>({});
   const [addingHost, setAddingHost] = useState(false);
@@ -222,6 +228,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     if (!open) {
       setMenuStyle(null);
       setDetailHostId(null);
+      setTagPaletteHostId(null);
       setRelayLatency(INITIAL_RELAY_LATENCY_STATE);
       setHostResourceStateById({});
       setHostVersionById({});
@@ -243,6 +250,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         setFormOpen(false);
         setFormMode("direct");
         setDetailHostId(null);
+        setTagPaletteHostId(null);
         setConfirmDeleteHostId(null);
       }
     }
@@ -252,6 +260,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
         setOpen(false);
         setFormOpen(false);
         setDetailHostId(null);
+        setTagPaletteHostId(null);
         setConfirmDeleteHostId(null);
       }
     }
@@ -454,6 +463,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
       setOpen(false);
       setFormOpen(false);
       setDetailHostId(null);
+      setTagPaletteHostId(null);
       setConfirmDeleteHostId(null);
     } catch (error) {
       showToast({
@@ -613,6 +623,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           baseUrl: normalizedBaseUrl,
           kind: classifyHostKind(normalizedBaseUrl),
           alias,
+          tagColor: null,
           peerEnabled: false,
           peerHostId: null,
           createdAt: now,
@@ -738,6 +749,47 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     showToast({ title: t("shell.hostSwitcherAliasSaveSuccess") });
   }
 
+  async function handleSaveHostTagColor(host: HostProfile, tagColor: string | null): Promise<void> {
+    if (savingTagColorHostId) {
+      return;
+    }
+
+    const normalizedTagColor = normalizeHostTagColor(tagColor);
+    setSavingTagColorHostId(host.id);
+
+    try {
+      let nextTagColor = normalizedTagColor;
+
+      if (host.peerHostId) {
+        const updatedPeerHost = await updatePeerHost(host.peerHostId, {
+          name: host.name,
+          alias: normalizeHostAlias(host.alias),
+          tagColor: normalizedTagColor,
+          baseUrl: host.baseUrl
+        });
+        setPeerHostById((current) => ({
+          ...current,
+          [updatedPeerHost.id]: updatedPeerHost
+        }));
+        nextTagColor = normalizeHostTagColor(updatedPeerHost.tagColor);
+      }
+
+      await updateHostRecord(host.id, (item) => ({
+        ...item,
+        tagColor: nextTagColor,
+        updatedAt: new Date().toISOString()
+      }));
+      showToast({ title: t("shell.hostSwitcherTagColorSaveSuccess") });
+    } catch {
+      showToast({
+        title: t("shell.hostSwitcherTagColorSaveFailed"),
+        tone: "error"
+      });
+    } finally {
+      setSavingTagColorHostId(null);
+    }
+  }
+
   async function handleEnablePeerHost(host: HostProfile): Promise<void> {
     if (peerBusyHostId || host.id === activeHostId) {
       return;
@@ -842,6 +894,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const payload = {
       name: host.name,
       alias: normalizeHostAlias(host.alias),
+      tagColor: normalizeHostTagColor(host.tagColor),
       baseUrl: host.baseUrl
     };
 
@@ -916,6 +969,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
     const isActive = host.id === activeHostId;
     const savedHost = isDiscoveredHostProfile(host) ? null : host;
     const detailExpanded = detailHostId === host.id;
+    const tagPaletteExpanded = tagPaletteHostId === host.id;
     const aliasTag = savedHost ? resolveHostAliasTag(savedHost) : null;
     const resourceState = savedHost
       ? hostResourceStateById[savedHost.id] ?? INITIAL_HOST_RESOURCE_STATE
@@ -935,6 +989,27 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
             <span
               className="workbench-host-switcher-alias-badge host-alias-badge"
               style={{ "--host-alias-color": aliasTag.color } as CSSProperties}
+              role={savedHost ? "button" : undefined}
+              tabIndex={savedHost ? 0 : undefined}
+              aria-label={savedHost ? t("shell.hostSwitcherTagColorButton", { name: host.name }) : undefined}
+              aria-expanded={savedHost ? tagPaletteExpanded : undefined}
+              onClick={savedHost ? (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setTagPaletteHostId((current) => current === host.id ? null : host.id);
+                setDetailHostId(null);
+                setConfirmDeleteHostId(null);
+              } : undefined}
+              onKeyDown={savedHost ? (event) => {
+                if (event.key !== "Enter" && event.key !== " ") {
+                  return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                setTagPaletteHostId((current) => current === host.id ? null : host.id);
+                setDetailHostId(null);
+                setConfirmDeleteHostId(null);
+              } : undefined}
             >
               {aliasTag.label}
             </span>
@@ -1012,6 +1087,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
                   ...current,
                   [host.id]: current[host.id] ?? normalizeEditableHostAlias(savedHost.alias)
                 }));
+                setTagPaletteHostId(null);
                 setConfirmDeleteHostId(null);
               }}
             >
@@ -1042,7 +1118,49 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
             </button>
           ) : null}
         </div>
+        {tagPaletteExpanded && savedHost ? renderTagColorPalette(savedHost) : null}
         {detailExpanded && savedHost ? renderHostInspector(savedHost, isActive) : null}
+      </div>
+    );
+  }
+
+  function renderTagColorPalette(host: HostProfile) {
+    const disabled = savingTagColorHostId === host.id;
+
+    return (
+      <div className="workbench-host-switcher-tag-palette-panel" role="group" aria-label={t("shell.hostSwitcherTagColorLabel")}>
+        <div className="workbench-host-switcher-tag-palette-header">
+          <span className="workbench-host-switcher-detail-section-title">
+            {t("shell.hostSwitcherTagColorLabel")}
+          </span>
+          <button
+            type="button"
+            className="ghost-button workbench-host-switcher-tag-palette-clear"
+            disabled={disabled || !host.tagColor}
+            onClick={() => {
+              void handleSaveHostTagColor(host, null);
+            }}
+          >
+            {t("shell.manageWorkspaceColorClearAction")}
+          </button>
+        </div>
+        <div className="workbench-manage-color-palette workbench-host-switcher-tag-palette" aria-label={t("shell.hostSwitcherTagColorLabel")}>
+          {HOST_TAG_COLOR_PRESETS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className="workbench-manage-color-swatch"
+              aria-label={t("shell.manageWorkspaceColorSelectSwatch", { color })}
+              aria-pressed={host.tagColor === color}
+              data-selected={host.tagColor === color}
+              disabled={disabled}
+              style={{ backgroundColor: color }}
+              onClick={() => {
+                void handleSaveHostTagColor(host, color);
+              }}
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -1277,6 +1395,7 @@ export function WorkbenchHostSwitcher({ collapsed = false }: WorkbenchHostSwitch
           setFormOpen(false);
           setFormMode("direct");
           setDetailHostId(null);
+          setTagPaletteHostId(null);
         }}
       >
         <ServerIcon />
@@ -1578,6 +1697,15 @@ function normalizeHostAlias(value: string | null | undefined): string | null {
 
 function normalizeEditableHostAlias(value: string | null | undefined): string {
   return normalizeHostAlias(value) ?? "";
+}
+
+function normalizeHostTagColor(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedColor = value.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalizedColor) ? normalizedColor : null;
 }
 
 function classifyHostKind(baseUrl: string): HostProfile["kind"] {

@@ -758,6 +758,7 @@ function ParallelConversationMemberPane({
   const {
     navigationGroups,
     requestNavigationRefresh,
+    currentTargetHostId,
     setSessionWorkspace,
     upsertNavigationSession,
     markNavigationSessionSeen,
@@ -1237,12 +1238,22 @@ function ParallelConversationMemberPane({
                   hideHeading
                   sessionId={sessionId}
                   workspaceId={toolWorkspaceId}
+                  requestWorkspaceId={activePaneSession.workspaceId}
+                  workbenchShellOverrides={{
+                    currentTargetHostId,
+                    currentRequestWorkspaceId: activePaneSession.workspaceId
+                  }}
                 />
               ) : activeToolPanel === "git" ? (
                 <GitSidebar
                   className="parallel-pane-tools-surface"
                   panelActive
                   workspaceId={toolWorkspaceId}
+                  requestWorkspaceId={activePaneSession.workspaceId}
+                  workbenchShellOverrides={{
+                    currentTargetHostId,
+                    currentRequestWorkspaceId: activePaneSession.workspaceId
+                  }}
                 />
               ) : (
                 <TerminalManagerPanel
@@ -1483,6 +1494,9 @@ function ParallelConversationMemberPane({
             onLoadOlderMessages={loadOlderMessages}
             onRetryMessage={retryMessage}
             onSubmitStructuredQuestion={handleSubmitStructuredQuestion}
+            permissionRequests={permissionRequests}
+            replyingPermissionRequestId={replyingPermissionRequestId}
+            onReplyPermissionRequest={replyPermissionRequest}
             onForkMessage={(message) => {
               const currentSession = session ?? entry.session;
 

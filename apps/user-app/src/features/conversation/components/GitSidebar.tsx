@@ -31,6 +31,7 @@ import { useToast } from "../../../shared/toast";
 import {
   commitDraft,
   createCommitDraft,
+  addGitIgnoreTargets,
   discardGitTargets,
   getGitBranches,
   getGitCommitDetail,
@@ -69,10 +70,16 @@ import { SessionProviderPicker } from "./SessionProviderPicker";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
 import { buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 
 interface GitSidebarProps {
   className?: string;
   workspaceId: string | null | undefined;
+  requestWorkspaceId?: string | null | undefined;
   panelActive?: boolean;
   externalWindowMode?: boolean;
   workbenchShellOverrides?: GitSidebarWorkbenchShellOverrides;
@@ -80,6 +87,7 @@ interface GitSidebarProps {
 
 export interface GitSidebarWorkbenchShellOverrides {
   currentTargetHostId?: string | null;
+  currentRequestWorkspaceId?: string | null;
   subscribeGitSnapshot?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
   requestGitRefresh?: (workspaceId: string, options?: { knownRevision?: string | null; targetHostId?: string | null }) => void;
   addGitSnapshotListener?: (
@@ -175,6 +183,7 @@ const INITIAL_REMOTE_AUTH_FORM: RemoteAuthFormState = {
 export function GitSidebar({
   className,
   workspaceId,
+  requestWorkspaceId,
   panelActive = true,
   externalWindowMode = false,
   workbenchShellOverrides
@@ -190,6 +199,7 @@ export function GitSidebar({
     selectWorkspace,
     upsertNavigationSession,
     currentTargetHostId,
+    currentRequestWorkspaceId,
     currentWorkspaceRef
   } = {
     ...workbenchShell,
@@ -249,6 +259,11 @@ export function GitSidebar({
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
+  const activeRequestWorkspaceId =
+    requestWorkspaceId?.trim()
+    || currentRequestWorkspaceId?.trim()
+    || workspaceId?.trim()
+    || null;
   const recentFileActivationRef = useRef<{ filePath: string; timestamp: number } | null>(null);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
@@ -267,9 +282,11 @@ export function GitSidebar({
   useEffect(() => {
     logPerfDebug("git_sidebar.props", {
       workspaceId,
+      requestWorkspaceId: activeRequestWorkspaceId,
+      currentTargetHostId: currentTargetHostId ?? null,
       externalWindowMode
     });
-  }, [externalWindowMode, workspaceId]);
+  }, [activeRequestWorkspaceId, currentTargetHostId, externalWindowMode, workspaceId]);
 
   useEffect(() => {
     panelActiveRef.current = panelActive;
@@ -317,7 +334,7 @@ export function GitSidebar({
     setViewerDiffContent(null);
     commitDetailCacheRef.current.clear();
     historyMenuTriggerRefs.current.clear();
-  }, [workspaceId]);
+  }, [currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     function handleResize() {
@@ -425,7 +442,7 @@ export function GitSidebar({
       applyGitSnapshot(snapshot, snapshot.workspaceId);
       setLoading(false);
     });
-  }, [addGitSnapshotListener, workspaceId]);
+  }, [addGitSnapshotListener, currentTargetHostId, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId?.trim()) {
@@ -494,7 +511,7 @@ export function GitSidebar({
     }
 
     writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(currentWorkspaceId, currentTargetHostId), snapshotToCache);
-  }, [branches, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
+  }, [branches, currentTargetHostId, history, historyNextCursor, historyTotalCount, revision, status, workspaceId]);
 
   useEffect(() => {
     if (!status || !selectedPath) {
@@ -559,16 +576,16 @@ export function GitSidebar({
   }
 
   function requestGitSnapshotRefresh(options?: { resetTreeScroll?: boolean }) {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setLoading(true);
     logPerfDebug("git_sidebar.refresh_requested", {
-      workspaceId: workspaceId.trim(),
+      workspaceId: activeRequestWorkspaceId,
       resetTreeScroll: options?.resetTreeScroll ?? false
     });
-    requestGitRefresh(workspaceId.trim(), {
+    requestGitRefresh(activeRequestWorkspaceId, {
       knownRevision: revision,
       targetHostId: currentTargetHostId
     });
@@ -581,11 +598,11 @@ export function GitSidebar({
   }
 
   async function handleManualRefresh(options?: { resetTreeScroll?: boolean }) {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
-    const currentWorkspaceId = workspaceId.trim();
+    const currentWorkspaceId = activeRequestWorkspaceId;
     setLoading(true);
 
     try {
@@ -620,14 +637,14 @@ export function GitSidebar({
   }
 
   async function loadMoreHistory() {
-    if (!workspaceId || !historyNextCursor || historyLoadingMore) {
+    if (!activeRequestWorkspaceId || !historyNextCursor || historyLoadingMore) {
       return;
     }
 
     setHistoryLoadingMore(true);
 
     try {
-      const nextHistory = await getGitHistory(workspaceId, GIT_HISTORY_PAGE_SIZE, historyNextCursor, {
+      const nextHistory = await getGitHistory(activeRequestWorkspaceId, GIT_HISTORY_PAGE_SIZE, historyNextCursor, {
         targetHostId: currentTargetHostId
       });
 
@@ -663,14 +680,14 @@ export function GitSidebar({
   }
 
   async function handleDraft() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const response = await createCommitDraft(workspaceId, "ai", { targetHostId: currentTargetHostId });
+      const response = await createCommitDraft(activeRequestWorkspaceId, "ai", { targetHostId: currentTargetHostId });
       setCommitSubject(response.validation.normalizedDraft.subject || response.draft.subject);
     } catch (error) {
       showToast({
@@ -683,7 +700,7 @@ export function GitSidebar({
   }
 
   async function handleStageToggle(targets: string[], staged: boolean) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -695,8 +712,8 @@ export function GitSidebar({
 
     try {
       const nextStatus = staged
-        ? await unstageGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId })
-        : await stageGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+        ? await unstageGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId })
+        : await stageGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
 
       setStatus(nextStatus);
       setSelectedPath(targets[targets.length - 1] ?? null);
@@ -715,7 +732,7 @@ export function GitSidebar({
   }
 
   async function handleDiscard(targets: string[]) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -726,7 +743,7 @@ export function GitSidebar({
     setActioning(true);
 
     try {
-      const nextStatus = await discardGitTargets(workspaceId, targets, { targetHostId: currentTargetHostId });
+      const nextStatus = await discardGitTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
       setStatus(nextStatus);
 
       if (targets.includes(selectedPath ?? "")) {
@@ -747,15 +764,40 @@ export function GitSidebar({
     }
   }
 
-  async function handleCommit() {
-    if (!workspaceId || !commitSubject.trim()) {
+  async function handleAddToGitIgnore(targets: string[]) {
+    if (!activeRequestWorkspaceId || targets.length === 0) {
       return;
     }
 
     setActioning(true);
 
     try {
-      await commitDraft(workspaceId, buildCommitDraft(commitSubject), { targetHostId: currentTargetHostId });
+      const nextStatus = await addGitIgnoreTargets(activeRequestWorkspaceId, targets, { targetHostId: currentTargetHostId });
+      setStatus(nextStatus);
+      requestGitSnapshotRefresh();
+      showToast({
+        title: targets.length === 1 ? t("git.addToIgnoreSuccess") : t("git.addSelectionToIgnoreSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.addToIgnoreFailed")),
+        tone: "error"
+      });
+    } finally {
+      setActioning(false);
+    }
+  }
+
+  async function handleCommit() {
+    if (!activeRequestWorkspaceId || !commitSubject.trim()) {
+      return;
+    }
+
+    setActioning(true);
+
+    try {
+      await commitDraft(activeRequestWorkspaceId, buildCommitDraft(commitSubject), { targetHostId: currentTargetHostId });
       showToast({
         title: t("git.commitSuccess"),
         tone: "success"
@@ -774,7 +816,7 @@ export function GitSidebar({
   }
 
   async function handleInitializeRepository() {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -782,7 +824,7 @@ export function GitSidebar({
     setLoading(true);
 
     try {
-      const nextStatus = await initializeGitRepository(workspaceId.trim(), { targetHostId: currentTargetHostId });
+      const nextStatus = await initializeGitRepository(activeRequestWorkspaceId, { targetHostId: currentTargetHostId });
       setStatus(nextStatus);
       setHistory([]);
       setHistoryTotalCount(0);
@@ -805,7 +847,7 @@ export function GitSidebar({
   }
 
   async function ensurePushRemotesLoaded() {
-    const currentWorkspaceId = workspaceId?.trim();
+    const currentWorkspaceId = activeRequestWorkspaceId;
 
     if (!currentWorkspaceId) {
       return [] as GitRemoteItemDto[];
@@ -813,7 +855,7 @@ export function GitSidebar({
 
     const remotes = await getGitRemotes(currentWorkspaceId, { targetHostId: currentTargetHostId });
 
-    if (workspaceId?.trim() !== currentWorkspaceId) {
+    if (activeRequestWorkspaceId !== currentWorkspaceId) {
       return [] as GitRemoteItemDto[];
     }
 
@@ -841,7 +883,7 @@ export function GitSidebar({
   }
 
   async function openRemoteAuthManager() {
-    if (!workspaceId?.trim()) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -927,7 +969,7 @@ export function GitSidebar({
   }
 
   async function handlePush() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -954,7 +996,7 @@ export function GitSidebar({
   }
 
   async function handlePushToRemotes(remoteNames: string[]) {
-    if (!workspaceId || remoteNames.length === 0) {
+    if (!activeRequestWorkspaceId || remoteNames.length === 0) {
       return;
     }
 
@@ -971,7 +1013,7 @@ export function GitSidebar({
 
         try {
           const result = await syncGitRemote(
-            workspaceId,
+            activeRequestWorkspaceId,
             "push",
             remoteName,
             remoteAuthState?.auth,
@@ -1017,7 +1059,7 @@ export function GitSidebar({
   }
 
   async function handleRemoteAction(action: "fetch" | "pull" | "push") {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
@@ -1036,7 +1078,7 @@ export function GitSidebar({
         ? remoteSessionAuthStates[preferredRemoteName] ?? null
         : null;
       const result = await syncGitRemote(
-        workspaceId,
+        activeRequestWorkspaceId,
         action,
         undefined,
         remoteAuthState?.auth,
@@ -1072,14 +1114,14 @@ export function GitSidebar({
   }
 
   async function handleUndoLastCommit() {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const result = await undoLastCommit(workspaceId, { targetHostId: currentTargetHostId });
+      const result = await undoLastCommit(activeRequestWorkspaceId, { targetHostId: currentTargetHostId });
       setCommitSubject(result.commitSubject ?? "");
       showToast({
         title: result.summary || t("git.undoLastCommitSuccess"),
@@ -1098,14 +1140,14 @@ export function GitSidebar({
   }
 
   async function handleSwitchBranch(branchName: string) {
-    if (!workspaceId) {
+    if (!activeRequestWorkspaceId) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const nextBranches = await switchGitBranch(workspaceId, branchName, false, {
+      const nextBranches = await switchGitBranch(activeRequestWorkspaceId, branchName, false, {
         targetHostId: currentTargetHostId
       });
       setBranches(nextBranches);
@@ -1122,7 +1164,7 @@ export function GitSidebar({
   }
 
   async function ensureCommitDetail(commitHash: string): Promise<GitCommitDetailDto> {
-    const normalizedWorkspaceId = workspaceId?.trim();
+    const normalizedWorkspaceId = activeRequestWorkspaceId;
 
     if (!normalizedWorkspaceId) {
       throw new Error(t("git.panelLoadFailed"));
@@ -1255,6 +1297,68 @@ export function GitSidebar({
     await showDesktopContextMenu(buildHistoryContextMenuItems(item));
   }
 
+  function buildTreeContextMenuItems(input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }): DesktopContextMenuItem[] {
+    const { path: itemPath, targets, variant, isDirectory } = input;
+    const canDiscard = variant === "unstaged";
+
+    return [
+      {
+        id: `git-ignore:${itemPath}`,
+        label: t("git.addToIgnore"),
+        disabled: actioning || targets.length === 0,
+        onSelect: () => void handleAddToGitIgnore(targets)
+      },
+      {
+        id: `stage-toggle:${itemPath}`,
+        label: variant === "staged" ? t("git.unstage") : t("git.stage"),
+        disabled: actioning || targets.length === 0,
+        onSelect: () => void handleStageToggle(targets, variant === "staged")
+      },
+      ...(canDiscard
+        ? [
+            {
+              id: `discard:${itemPath}`,
+              label: t("git.discard"),
+              disabled: actioning || targets.length === 0,
+              onSelect: () => void handleDiscard(targets)
+            } satisfies DesktopContextMenuItem
+          ]
+        : []),
+      ...(!isDirectory && targets.length === 1
+        ? [
+            {
+              id: `preview:${itemPath}`,
+              label: t("git.preview"),
+              onSelect: () => {
+                const change = status?.changes.find((item) => item.path === targets[0]);
+
+                if (!change) {
+                  return;
+                }
+
+                setSelectedPath(targets[0] ?? null);
+                void handleFilePreview(targets[0], change);
+              }
+            } satisfies DesktopContextMenuItem
+          ]
+        : [])
+    ];
+  }
+
+  async function openDesktopTreeContextMenu(input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) {
+    await showDesktopContextMenu(buildTreeContextMenuItems(input));
+  }
+
   async function handleExplainCommit() {
     if (!workspaceId || !explainCommitHash || !explainProvider || explainingChange) {
       return;
@@ -1332,9 +1436,9 @@ export function GitSidebar({
     if (change.status === "A" || change.status === "?") {
       setViewerDiffContent(null);
       setViewerFilePath(filePath);
-    } else if (workspaceId) {
+    } else if (activeRequestWorkspaceId) {
       try {
-        const diffResult = await getGitDiff(workspaceId, filePath, change.staged, {
+        const diffResult = await getGitDiff(activeRequestWorkspaceId, filePath, change.staged, {
           targetHostId: currentTargetHostId
         });
         setViewerDiffContent(diffResult.content);
@@ -1399,6 +1503,9 @@ export function GitSidebar({
   const canPush = allChanges.length === 0 && (status?.snapshot.ahead ?? 0) > 0;
   const canCommit = stagedChanges.length > 0 && commitSubject.trim().length > 0;
   const currentBranch = branches?.currentBranch ?? status?.snapshot.branch ?? t("common.unknown");
+  const previewWorkspaceId = currentTargetHostId
+    ? currentWorkspaceRef?.workspaceId?.trim() || workspaceId?.trim() || null
+    : workspaceId?.trim() || null;
   const remoteAuthTargetRemote = resolvePreferredRemote(pushRemotes, remoteAuthTargetRemoteName);
   const githubRemoteDetected = remoteAuthProvider === "github";
   const remoteAuthDescription = githubRemoteDetected
@@ -2035,6 +2142,7 @@ export function GitSidebar({
                   onToggleMobileSelection={toggleMobileSelection}
                   onStageToggle={handleStageToggle}
                   onDiscard={handleDiscard}
+                  onOpenDesktopContextMenu={openDesktopTreeContextMenu}
                   actioning={actioning}
                   variant="staged"
                   isMobileViewport={isMobileViewport}
@@ -2068,6 +2176,7 @@ export function GitSidebar({
                 onToggleMobileSelection={toggleMobileSelection}
                 onStageToggle={handleStageToggle}
                 onDiscard={handleDiscard}
+                onOpenDesktopContextMenu={openDesktopTreeContextMenu}
                 actioning={actioning}
                 variant="unstaged"
                 isMobileViewport={isMobileViewport}
@@ -2592,7 +2701,8 @@ export function GitSidebar({
       </WorkbenchModal>
 
       <FileViewerModal
-        workspaceId={workspaceId}
+        workspaceId={previewWorkspaceId}
+        targetHostId={currentTargetHostId}
         filePath={viewerFilePath}
         open={viewerFilePath !== null}
         onClose={() => {
@@ -2621,6 +2731,7 @@ function GitChangeGroup({
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
+  onOpenDesktopContextMenu,
   actioning,
   variant,
   isMobileViewport,
@@ -2641,6 +2752,12 @@ function GitChangeGroup({
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
+  onOpenDesktopContextMenu?: (input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
   isMobileViewport: boolean;
@@ -2761,6 +2878,7 @@ function GitChangeGroup({
             onToggleMobileSelection,
             onStageToggle,
             onDiscard,
+            onOpenDesktopContextMenu,
             actioning,
             variant,
             isMobileViewport,
@@ -3512,6 +3630,7 @@ function renderTreeNodes({
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
+  onOpenDesktopContextMenu,
   actioning,
   variant,
   isMobileViewport,
@@ -3527,6 +3646,12 @@ function renderTreeNodes({
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
+  onOpenDesktopContextMenu?: (input: {
+    path: string;
+    targets: string[];
+    variant: "staged" | "unstaged";
+    isDirectory: boolean;
+  }) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
   isMobileViewport: boolean;
@@ -3547,6 +3672,20 @@ function renderTreeNodes({
               type="button"
               style={{ paddingInlineStart: `${6 + depth * 8}px` }}
               onClick={() => onToggleTreePath(node.path)}
+              onContextMenu={(event) => {
+                if (isMobileViewport || !onOpenDesktopContextMenu) {
+                  return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                void onOpenDesktopContextMenu({
+                  path: node.path,
+                  targets: directoryTargets,
+                  variant,
+                  isDirectory: true
+                });
+              }}
             >
               <span className="git-tree-chevron" data-expanded={expanded}>
                 <TreeChevron expanded={expanded} />
@@ -3595,6 +3734,7 @@ function renderTreeNodes({
                 onToggleMobileSelection,
                 onStageToggle,
                 onDiscard,
+                onOpenDesktopContextMenu,
                 actioning,
                 variant,
                 isMobileViewport,
@@ -3671,6 +3811,21 @@ function renderTreeNodes({
             if (onPreviewFile) {
               onPreviewFile(node.change.path, node.change);
             }
+          }}
+          onContextMenu={(event) => {
+            if (isMobileViewport || !onOpenDesktopContextMenu) {
+              return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            onSelectFile(node.change.path);
+            void onOpenDesktopContextMenu({
+              path: node.path,
+              targets: [node.change.path],
+              variant,
+              isDirectory: false
+            });
           }}
         >
           <span
@@ -3997,7 +4152,19 @@ function formatCommitDateTime(value: string) {
 
 function readError(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    return mapGitError(error) ?? error.message;
+    const mappedError = mapGitError(error);
+
+    if (mappedError) {
+      return mappedError;
+    }
+
+    const gitDetail = typeof error.data?.gitDetail === "string" ? error.data.gitDetail.trim() : "";
+
+    if (gitDetail) {
+      return `${error.message}：${gitDetail}`;
+    }
+
+    return error.message;
   }
 
   if (typeof error === "object" && error && "message" in error) {
@@ -4007,18 +4174,8 @@ function readError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  const value = (snapshot as { targetHostId?: unknown })?.targetHostId;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left?.trim() || null) === (right?.trim() || null);
-}
-
 function buildGitSidebarSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `git-sidebar.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("git-sidebar.snapshot", { workspaceId, targetHostId });
 }
 
 function hasGitSidebarSnapshotData(snapshot: GitSidebarSnapshot | null | undefined): boolean {
@@ -4045,6 +4202,9 @@ function isGitRepositoryEnabled(status: GitStatusDto | null | undefined): boolea
 }
 
 function mapGitError(error: ApiError): string | null {
+  const gitDetail = typeof error.data?.gitDetail === "string" ? error.data.gitDetail.trim() : "";
+  const withGitDetail = (message: string) => (gitDetail ? `${message} ${gitDetail}` : message);
+
   switch (error.errorCode) {
     case "UNAUTHORIZED":
       return t("git.errors.unauthorized");
@@ -4071,13 +4231,13 @@ function mapGitError(error: ApiError): string | null {
     case "REMOTE_NOT_FOUND":
       return t("git.errors.remoteNotFound");
     case "GIT_REMOTE_AUTH_FAILED":
-      return t("git.errors.remoteAuthFailed");
+      return withGitDetail(t("git.errors.remoteAuthFailed"));
     case "GIT_PUSH_FAILED":
-      return t("git.errors.pushFailed");
+      return withGitDetail(t("git.errors.pushFailed"));
     case "GIT_PULL_FAILED":
-      return t("git.errors.pullFailed");
+      return withGitDetail(t("git.errors.pullFailed"));
     case "GIT_REMOTE_FAILED":
-      return t("git.errors.remoteFailed");
+      return withGitDetail(t("git.errors.remoteFailed"));
     case "GIT_COMMAND_TIMEOUT":
       return t("git.errors.commandTimeout");
     case "GIT_INIT_FAILED":

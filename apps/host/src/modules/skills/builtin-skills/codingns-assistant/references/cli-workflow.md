@@ -21,8 +21,6 @@
 
 ```bash
 codingns assistant --help
-codingns assistant help debug-targets
-codingns assistant help debug-runtimes
 codingns assistant help workspaces
 codingns assistant help worktrees
 codingns assistant help sessions
@@ -33,8 +31,6 @@ codingns assistant help sessions send
 
 ```bash
 codingns assistant capabilities --help
-codingns assistant debug-targets --help
-codingns assistant debug-runtimes --help
 codingns assistant workspaces --help
 codingns assistant worktrees --help
 codingns assistant projects --help
@@ -46,8 +42,6 @@ codingns assistant terminals --help
 
 ```bash
 codingns assistant workspaces list --help
-codingns assistant debug-targets launch-plan --help
-codingns assistant debug-targets run --help
 codingns assistant worktrees create --help
 codingns assistant projects list --help
 codingns assistant sessions get --help
@@ -64,16 +58,6 @@ codingns assistant workspaces list [--token <token>]
 codingns assistant workspaces management <workspaceId> [--token <token>]
 codingns assistant worktrees tree --root-workspace-id <workspaceId> [--token <token>]
 codingns assistant worktrees merge-preview <workspaceId> [--token <token>]
-```
-
-### 分析调试目标并显式请求端口
-
-```bash
-codingns assistant debug-targets analyze --workspace-id <workspaceId> --root-path <path> [--token <token>]
-codingns assistant debug-targets launch-plan <targetId> --port-request role=frontend,cwd=apps/web,port=43001 --port-request role=backend,cwd=apps/api,port=44001 [--token <token>]
-codingns assistant debug-targets run <targetId> --port-request role=backend,cwd=apps/api,port=44001 [--token <token>]
-codingns assistant debug-targets runtime-latest <targetId> [--token <token>]
-codingns assistant debug-runtimes get <runtimeId> [--token <token>]
 ```
 
 ### 看项目和会话
@@ -123,8 +107,6 @@ codingns assistant terminals close <terminalId> --token <token>
 - 需要看有哪些工作区或导入目标：优先 `workspaces list`、`workspaces browse`
 - 需要看子工作树结构或回收状态：优先 `worktrees tree`
 - 需要看子工作树能不能合并：优先 `worktrees merge-preview`
-- 需要为并行工作区分析调试目标或固定端口：优先 `debug-targets analyze`、`debug-targets launch-plan`
-- 需要看显式端口请求有没有落到实际运行时：优先 `debug-targets runtime-latest`、`debug-runtimes get`
 - 没有明确续写目标、要把任务发进真实项目：优先 `sessions start`
 - 需要继续已有开发上下文：优先 `sessions send`
 - 需要等待真实会话回复或未来某个时间继续：优先 `timers create`

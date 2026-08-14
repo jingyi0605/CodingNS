@@ -207,12 +207,42 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
       case "startTurn": {
         const request = requireRequest(message.request);
         const providerSessionId = ensureText(message.providerSessionId).trim();
-        const result = await sendJsonRpcRequest(transport, {
-          method: "turn/start",
-          params: createTurnStartParams(request, providerSessionId)
-        });
-        transport.activeTurnId =
-          ensureText(readProp(readProp(result, "turn"), "id")).trim() || transport.activeTurnId;
+        void sendJsonRpcRequest(
+          transport,
+          {
+            method: "turn/start",
+            params: createTurnStartParams(request, providerSessionId)
+          },
+          { timeoutMs: null }
+        )
+          .then((result) => {
+            const turn = toRecord(readProp(result, "turn"));
+            transport.activeTurnId =
+              ensureText(readProp(turn, "id")).trim() || transport.activeTurnId;
+            const notification = buildCodexTurnCompletionNotification(turn, providerSessionId);
+
+            if (notification) {
+              emit({
+                type: "notification",
+                transportId: message.transportId,
+                notification
+              });
+            }
+          })
+          .catch((error) => {
+            emit({
+              type: "notification",
+              transportId: message.transportId,
+              notification: {
+                method: "error",
+                params: {
+                  error: {
+                    message: error instanceof Error ? error.message : String(error)
+                  }
+                }
+              }
+            });
+          });
         emitResponse(message.transportId, message.requestId, {});
         return;
       }
@@ -590,32 +620,43 @@ function sendJsonRpcRequest(
   message: {
     method: string;
     params: Record<string, unknown>;
-  }
+  },
+  options: { timeoutMs?: number | null } = {}
 ): Promise<Record<string, unknown>> {
   const id = `${message.method}:${++transport.requestSequence}`;
 
   return new Promise<Record<string, unknown>>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      transport.pendingResponses.delete(id);
-      const timeoutError = new Error("SERVER_TIMEOUT");
-      const transportId = findTransportId(transport);
+    const timeoutMs = options.timeoutMs === undefined
+      ? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS
+      : options.timeoutMs;
+    const timeout =
+      typeof timeoutMs === "number" && timeoutMs > 0
+        ? setTimeout(() => {
+            transport.pendingResponses.delete(id);
+            const timeoutError = new Error("SERVER_TIMEOUT");
+            const transportId = findTransportId(transport);
 
-      if (transportId) {
-        closeTransport(transportId, transport, timeoutError);
-      } else {
-        closeTransportForRecord(transport, timeoutError);
-      }
+            if (transportId) {
+              closeTransport(transportId, transport, timeoutError);
+            } else {
+              closeTransportForRecord(transport, timeoutError);
+            }
 
-      reject(timeoutError);
-    }, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
+            reject(timeoutError);
+          }, timeoutMs)
+        : null;
 
     transport.pendingResponses.set(id, {
       resolve: (value) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         resolve(value);
       },
       reject: (reason) => {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         reject(reason);
       }
     });
@@ -626,6 +667,25 @@ function sendJsonRpcRequest(
       params: message.params
     });
   });
+}
+
+function buildCodexTurnCompletionNotification(
+  turn: Record<string, unknown> | null,
+  threadId: string
+): Record<string, unknown> | null {
+  const status = ensureText(readProp(turn, "status")).trim();
+
+  if (status !== "completed" && status !== "failed" && status !== "interrupted") {
+    return null;
+  }
+
+  return {
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn
+    }
+  };
 }
 
 async function listCodexThreads(
@@ -779,6 +839,10 @@ function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<str
     params.approvalPolicy = permissionOptions.approvalPolicy;
   }
 
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
+  }
+
   if (request.options.model) {
     params.model = request.options.model;
   }
@@ -801,6 +865,10 @@ function createThreadResumeParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandbox) {
+    params.sandbox = permissionOptions.sandbox;
   }
 
   if (request.options.model) {
@@ -849,6 +917,10 @@ function createTurnStartParams(
 
   if (permissionOptions.approvalPolicy) {
     params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxPolicy) {
+    params.sandboxPolicy = permissionOptions.sandboxPolicy;
   }
 
   if (request.options.model) {
@@ -938,16 +1010,40 @@ function createCodexThreadPermissionOptions(
   permissionMode: string | null
 ): {
   approvalPolicy?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  sandboxPolicy?:
+    | {
+        type: "readOnly";
+        networkAccess?: boolean;
+      }
+    | {
+        type: "workspaceWrite";
+        networkAccess?: boolean;
+        writableRoots?: string[];
+        excludeTmpdirEnvVar?: boolean;
+        excludeSlashTmp?: boolean;
+      }
+    | {
+        type: "dangerFullAccess";
+      };
 } {
   if (permissionMode === "bypassPermissions") {
     return {
-      approvalPolicy: "never"
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      sandboxPolicy: {
+        type: "dangerFullAccess"
+      }
     };
   }
 
   if (permissionMode === "acceptEdits") {
     return {
-      approvalPolicy: "never"
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      sandboxPolicy: {
+        type: "workspaceWrite"
+      }
     };
   }
 

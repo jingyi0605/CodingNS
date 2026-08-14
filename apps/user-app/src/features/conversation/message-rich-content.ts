@@ -22,6 +22,7 @@ export interface StructuredQuestionPromptItem {
   question: string;
   allowOther: boolean;
   secret: boolean;
+  multiSelect: boolean;
   options: StructuredQuestionPromptOption[];
 }
 
@@ -35,6 +36,8 @@ const HTML_DATA_IMAGE_PATTERN = /<img\b[^>]*src=["'](data:image\/[a-zA-Z0-9.+-]+
 const CUSTOM_IMAGE_BLOCK_PATTERN = /<image\b([^>]*)>([\s\S]*?)<\/image>/gi;
 const INTERNAL_ATTACHMENT_BLOCK_PATTERN =
   /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*?\[\[\/CODINGNS_IMAGE_ATTACHMENTS\]\]/g;
+const INTERNAL_ATTACHMENT_TAIL_PATTERN =
+  /\[\[CODINGNS_IMAGE_ATTACHMENTS\]\][\s\S]*$/g;
 const QUESTION_CODE_BLOCK_PATTERN = /```question\s*([\s\S]*?)```/i;
 
 export function parseMessageRichContent(content: string): ParsedMessageRichContent {
@@ -93,7 +96,9 @@ function parseQuestionCodeBlockContent(content: string): ParsedMessageRichConten
 }
 
 function stripInternalAttachmentDebugContent(content: string): string {
-  return content.replace(INTERNAL_ATTACHMENT_BLOCK_PATTERN, "");
+  return content
+    .replace(INTERNAL_ATTACHMENT_BLOCK_PATTERN, "")
+    .replace(INTERNAL_ATTACHMENT_TAIL_PATTERN, "");
 }
 
 function parseStructuredRichContent(content: string): ParsedMessageRichContent | null {
@@ -211,6 +216,7 @@ function normalizeStructuredQuestionItem(
     question,
     allowOther: Boolean(record.allowOther ?? record.isOther),
     secret: Boolean(record.secret ?? record.isSecret),
+    multiSelect: Boolean(record.multiSelect ?? record.multi_select),
     options
   };
 }

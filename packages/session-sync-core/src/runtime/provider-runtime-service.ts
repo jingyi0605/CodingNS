@@ -213,11 +213,43 @@ export class ProviderRuntimeService {
   private createSink(handle: ActiveRunHandle) {
     return {
       emit: async (event: Parameters<ActiveRunHandle["emit"]>[0]) => {
-        await handle.emit(event);
+        if (!this.isHandleActive(handle)) {
+          return;
+        }
+
+        try {
+          await handle.emit(event);
+        } catch (error) {
+          if (isActiveRunNotFoundError(error) || !this.isHandleActive(handle)) {
+            return;
+          }
+
+          throw error;
+        }
       },
       updateSessionBinding: (binding: Parameters<ActiveRunHandle["updateSessionBinding"]>[0]) => {
-        handle.updateSessionBinding(binding);
+        if (!this.isHandleActive(handle)) {
+          return;
+        }
+
+        try {
+          handle.updateSessionBinding(binding);
+        } catch (error) {
+          if (isActiveRunNotFoundError(error) || !this.isHandleActive(handle)) {
+            return;
+          }
+
+          throw error;
+        }
       }
     };
   }
+
+  private isHandleActive(handle: ActiveRunHandle): boolean {
+    return this.handles.get(handle.sessionId) === handle && this.registry.getSnapshot(handle.sessionId) !== null;
+  }
+}
+
+function isActiveRunNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message === "ACTIVE_RUN_NOT_FOUND";
 }

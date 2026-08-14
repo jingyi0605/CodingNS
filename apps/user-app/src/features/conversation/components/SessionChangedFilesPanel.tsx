@@ -4,6 +4,7 @@ import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
+import { buildScopedSnapshotKey } from "../../workbench/utils/resource-scope";
 import { stageGitTargets, type GitChangeItemDto } from "../api/git-api";
 import {
   buildSessionChangeSubtitle,
@@ -62,10 +63,28 @@ export function SessionChangedFilesPanel({
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const fileTreeRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const { showToast } = useToast();
+  const getScopedRequestOptions = () =>
+    targetHostId
+      ? {
+          targetHostId
+        }
+      : undefined;
+  const loadScopedSessionChanges = () => {
+    const options = getScopedRequestOptions();
+    return options
+      ? loadSessionChangedGitFiles(sessionId, workspaceId, options)
+      : loadSessionChangedGitFiles(sessionId, workspaceId);
+  };
+  const stageScopedGitTargets = (paths: string[]) => {
+    const options = getScopedRequestOptions();
+    return options
+      ? stageGitTargets(workspaceId, paths, options)
+      : stageGitTargets(workspaceId, paths);
+  };
 
   useEffect(() => {
     const cachedChanges = readViewSnapshot<GitChangeItemDto[]>(
-      buildSessionChangedFilesSnapshotKey(workspaceId, sessionId),
+      buildSessionChangedFilesSnapshotKey(workspaceId, sessionId, targetHostId),
       SESSION_CHANGED_FILES_CACHE_MAX_AGE_MS
     );
 
@@ -75,7 +94,7 @@ export function SessionChangedFilesPanel({
     setStaging(false);
     setCollapsedPaths([]);
     recentFileActivationRef.current = null;
-  }, [sessionId, workspaceId]);
+  }, [sessionId, targetHostId, workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,11 +103,11 @@ export function SessionChangedFilesPanel({
       setLoading(true);
 
       try {
-        const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
+        const nextChanges = await loadScopedSessionChanges();
 
         if (!cancelled) {
           setChanges(nextChanges);
-          writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
+          writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId, targetHostId), nextChanges);
         }
       } catch (error) {
         if (!cancelled) {
@@ -115,9 +134,9 @@ export function SessionChangedFilesPanel({
     setLoading(true);
 
     try {
-      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
+      const nextChanges = await loadScopedSessionChanges();
       setChanges(nextChanges);
-      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
+      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId, targetHostId), nextChanges);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelSessionLoadFailed")),
@@ -136,14 +155,10 @@ export function SessionChangedFilesPanel({
     setStaging(true);
 
     try {
-      await stageGitTargets(
-        workspaceId,
-        unstagedChanges.map((item) => item.path),
-        { targetHostId }
-      );
-      const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId, { targetHostId });
+      await stageScopedGitTargets(unstagedChanges.map((item) => item.path));
+      const nextChanges = await loadScopedSessionChanges();
       setChanges(nextChanges);
-      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
+      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId, targetHostId), nextChanges);
       showToast({
         title: t("conversation.filePanelSessionStageSuccess"),
         tone: "success"
@@ -426,8 +441,15 @@ function renderList({
   ));
 }
 
-function buildSessionChangedFilesSnapshotKey(workspaceId: string, sessionId: string) {
-  return `file-panel.session-changes.${workspaceId}.${sessionId}`;
+function buildSessionChangedFilesSnapshotKey(
+  workspaceId: string,
+  sessionId: string,
+  targetHostId?: string | null
+) {
+  return buildScopedSnapshotKey("file-panel.session-changes", {
+    workspaceId: `${workspaceId}.${sessionId}`,
+    targetHostId
+  });
 }
 
 function readError(error: unknown, fallback: string): string {

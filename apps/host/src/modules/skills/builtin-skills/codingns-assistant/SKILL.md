@@ -25,15 +25,13 @@ description: Use when working inside CodingNS and needing to inspect托管项目
 3. 只有这些固定认证入口都不可用时，才回头核对 `BUTLER_API.md` 里的凭证文件路径，或向用户要 token。
 4. 认证入口可用后，再跑 `codingns assistant capabilities list`，确认当前环境开放了哪些能力。
 5. 要看工作区或工作树时，先跑 `codingns assistant workspaces --help`、`codingns assistant worktrees --help`。
-6. 要分析调试目标、显式请求端口或启动调试进程时，先跑 `codingns assistant debug-targets --help`。
-7. 要查单次调试运行态时，先跑 `codingns assistant debug-runtimes --help`。
-8. 要找项目时，先跑 `codingns assistant projects --help`，再决定用 `list` 还是 `get`。
-9. 要找会话时，先跑 `codingns assistant sessions --help`，再决定用 `list / start / get / messages / runtime / send / fork`。
-10. 如果用户没指定工作区，先补齐真实工作区或项目目标；不要再走独立沙箱。
-11. 要推进正式工作区开发时，如果明确是在续写已有真实会话，才用 `codingns assistant sessions send`；如果没有明确续写目标，优先用 `codingns assistant sessions start` 按当前助手配置新建真实会话。
-12. 如果要等待真实会话回复，或者未来某个具体时间后再继续，必须用 `codingns assistant timers create` 创建计时器，不能只在回答里说“稍后继续”。
-13. 只有明确需要终端链路时，才用 `codingns assistant terminals send` 或 `codingns assistant terminals close`。
-14. 要从现有上下文开新分支时，才用 `codingns assistant sessions fork`。
+6. 要找项目时，先跑 `codingns assistant projects --help`，再决定用 `list` 还是 `get`。
+7. 要找会话时，先跑 `codingns assistant sessions --help`，再决定用 `list / start / get / messages / runtime / send / fork`。
+8. 如果用户没指定工作区，先补齐真实工作区或项目目标；不要再走独立沙箱。
+9. 要推进正式工作区开发时，如果明确是在续写已有真实会话，才用 `codingns assistant sessions send`；如果没有明确续写目标，优先用 `codingns assistant sessions start` 按当前助手配置新建真实会话。
+10. 如果要等待真实会话回复，或者未来某个具体时间后再继续，必须用 `codingns assistant timers create` 创建计时器，不能只在回答里说“稍后继续”。
+11. 只有明确需要终端链路时，才用 `codingns assistant terminals send` 或 `codingns assistant terminals close`。
+12. 要从现有上下文开新分支时，才用 `codingns assistant sessions fork`。
 
 ## Butler 认证补充
 
@@ -65,8 +63,6 @@ description: Use when working inside CodingNS and needing to inspect托管项目
   先 `codingns assistant worktrees tree --help`，再执行真正命令。
 - “看看现在有哪些项目”：
   先 `codingns assistant projects list --help`，再执行真正命令。
-- “给某个工作区分析调试目标并固定端口”：
-  先 `codingns assistant debug-targets launch-plan --help`，确认 `--port-request` 语法后再执行。
 - “给这个会话继续发任务”：
   先 `codingns assistant sessions send --help`，确认参数后再发送。
 - “没有明确续写目标，要把任务发到真实项目里”：

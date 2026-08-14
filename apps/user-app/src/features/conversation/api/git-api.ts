@@ -246,6 +246,17 @@ export function discardGitTargets(workspaceId: string, targets: string[], option
   });
 }
 
+export function addGitIgnoreTargets(workspaceId: string, targets: string[], options?: GitRequestOptions) {
+  return httpClient.request<GitStatusDto>("/api/git/ignore", {
+    method: "POST",
+    targetHostId: options?.targetHostId ?? undefined,
+    body: JSON.stringify({
+      workspaceId,
+      targets
+    })
+  });
+}
+
 export function getCommitRules(workspaceId: string) {
   return httpClient.request<CommitRuleProfileDto>(
     `/api/git/rules?workspaceId=${encodeURIComponent(workspaceId)}`

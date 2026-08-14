@@ -1,8 +1,39 @@
 const PERF_DEBUG_STORAGE_KEY = "codingns.debug.perf";
+const PERF_DEBUG_SCOPE_FILTER_STORAGE_KEY = "codingns.debug.perfScopeFilter";
 const SESSION_MESSAGE_DEDUP_DEBUG_STORAGE_KEY = "codingns.debug.sessionMessageDedup";
+const SESSION_MESSAGE_DEDUP_SCOPE_FILTER_STORAGE_KEY = "codingns.debug.sessionMessageDedupScopeFilter";
 const OPENCODE_ORDER_DEBUG_STORAGE_KEY = "codingns.debug.opencodeOrder";
 const TIMELINE_SCROLL_DEBUG_STORAGE_KEY = "codingns.debug.timelineScroll";
+const TIMELINE_SCROLL_SCOPE_FILTER_STORAGE_KEY = "codingns.debug.timelineScrollScopeFilter";
 const CONVERSATION_TIMELINE_DEBUG_STORAGE_KEY = "codingns.debug.conversationTimeline";
+const PERF_DEBUG_BUCKET_LIMIT = 1200;
+
+function readDebugScopeFilters(storageKey: string): string[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(storageKey) ?? "";
+
+    return rawValue
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function matchesDebugScopeFilter(scope: string, storageKey: string): boolean {
+  const filters = readDebugScopeFilters(storageKey);
+
+  if (filters.length === 0) {
+    return true;
+  }
+
+  return filters.some((filter) => scope.includes(filter));
+}
 
 export function isPerfDebugEnabled(): boolean {
   if (typeof window === "undefined") {
@@ -17,11 +48,34 @@ export function isPerfDebugEnabled(): boolean {
 }
 
 export function logPerfDebug(scope: string, detail?: Record<string, unknown>): void {
-  if (!isPerfDebugEnabled() || typeof performance === "undefined") {
+  if (
+    !isPerfDebugEnabled()
+    || typeof performance === "undefined"
+    || !matchesDebugScopeFilter(scope, PERF_DEBUG_SCOPE_FILTER_STORAGE_KEY)
+  ) {
     return;
   }
 
   const timestamp = Math.round(performance.now());
+  const payload = {
+    scope,
+    timestampMs: timestamp,
+    ...(detail ?? {})
+  };
+
+  try {
+    const debugWindow = window as typeof window & {
+      __CODINGNS_PERF_DEBUG__?: Array<Record<string, unknown>>;
+    };
+    const bucket = debugWindow.__CODINGNS_PERF_DEBUG__ ?? [];
+    bucket.push(payload);
+    if (bucket.length > PERF_DEBUG_BUCKET_LIMIT) {
+      bucket.splice(0, bucket.length - PERF_DEBUG_BUCKET_LIMIT);
+    }
+    debugWindow.__CODINGNS_PERF_DEBUG__ = bucket;
+  } catch {
+    // 调试日志不能影响主流程。
+  }
 
   if (detail && Object.keys(detail).length > 0) {
     console.info(`[perf-ui] ${scope} ${timestamp}ms`, detail);
@@ -29,6 +83,40 @@ export function logPerfDebug(scope: string, detail?: Record<string, unknown>): v
   }
 
   console.info(`[perf-ui] ${scope} ${timestamp}ms`);
+}
+
+export function emitPerfDebugProbe(scope: string, detail?: Record<string, unknown>): void {
+  if (!isPerfDebugEnabled() || typeof performance === "undefined") {
+    return;
+  }
+
+  const timestamp = Math.round(performance.now());
+  const payload = {
+    scope,
+    timestampMs: timestamp,
+    ...(detail ?? {})
+  };
+
+  try {
+    const debugWindow = window as typeof window & {
+      __CODINGNS_PERF_DEBUG__?: Array<Record<string, unknown>>;
+    };
+    const bucket = debugWindow.__CODINGNS_PERF_DEBUG__ ?? [];
+    bucket.push(payload);
+    if (bucket.length > PERF_DEBUG_BUCKET_LIMIT) {
+      bucket.splice(0, bucket.length - PERF_DEBUG_BUCKET_LIMIT);
+    }
+    debugWindow.__CODINGNS_PERF_DEBUG__ = bucket;
+  } catch {
+    // 调试日志不能影响主流程。
+  }
+
+  if (detail && Object.keys(detail).length > 0) {
+    console.warn(`[perf-ui-probe] ${scope} ${timestamp}ms`, detail);
+    return;
+  }
+
+  console.warn(`[perf-ui-probe] ${scope} ${timestamp}ms`);
 }
 
 export function isSessionMessageDedupDebugEnabled(): boolean {
@@ -47,7 +135,11 @@ export function logSessionMessageDedupDebug(
   scope: string,
   detail?: Record<string, unknown>
 ): void {
-  if (!isSessionMessageDedupDebugEnabled() || typeof performance === "undefined") {
+  if (
+    !isSessionMessageDedupDebugEnabled()
+    || typeof performance === "undefined"
+    || !matchesDebugScopeFilter(scope, SESSION_MESSAGE_DEDUP_SCOPE_FILTER_STORAGE_KEY)
+  ) {
     return;
   }
 
@@ -207,7 +299,11 @@ export function logTimelineScrollDebug(
   scope: string,
   detail?: Record<string, unknown>
 ): void {
-  if (!isTimelineScrollDebugEnabled() || typeof performance === "undefined") {
+  if (
+    !isTimelineScrollDebugEnabled()
+    || typeof performance === "undefined"
+    || !matchesDebugScopeFilter(scope, TIMELINE_SCROLL_SCOPE_FILTER_STORAGE_KEY)
+  ) {
     return;
   }
 

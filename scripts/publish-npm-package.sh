@@ -46,6 +46,13 @@ npm token 读取顺序：
 EOF
 }
 
+parse_json_with_node() {
+  local script="$1"
+  local input="${2:-}"
+
+  REGISTRY_JSON="$input" node -e "$script"
+}
+
 cleanup() {
   if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
     rm -rf "$STAGING_DIR"
@@ -326,6 +333,132 @@ verify_published_tarball() {
   node "$PACKAGE_DIR/scripts/verify-publish-tarball.mjs" "$tarball_path"
 }
 
+registry_version_exists() {
+  local target_package_name="$1"
+  local target_package_version="$2"
+  local versions_json=""
+
+  versions_json="$(
+    npm view "$target_package_name" versions --json --registry https://registry.npmjs.org/ 2>/dev/null || true
+  )"
+
+  if [[ -z "$versions_json" ]]; then
+    return 1
+  fi
+
+  TARGET_PACKAGE_VERSION="$target_package_version" parse_json_with_node '
+    const raw = process.env.REGISTRY_JSON || "";
+    const targetVersion = process.env.TARGET_PACKAGE_VERSION || "";
+
+    if (!raw || !targetVersion) {
+      process.exit(1);
+    }
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      process.exit(1);
+    }
+
+    const versions = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === "string"
+        ? [parsed]
+        : [];
+
+    process.exit(versions.includes(targetVersion) ? 0 : 1);
+  ' "$versions_json"
+}
+
+read_registry_dist_tag_version() {
+  local target_package_name="$1"
+  local target_publish_tag="$2"
+  local dist_tags_json=""
+
+  dist_tags_json="$(
+    npm view "$target_package_name" dist-tags --json --registry https://registry.npmjs.org/ 2>/dev/null || true
+  )"
+
+  if [[ -z "$dist_tags_json" ]]; then
+    return 1
+  fi
+
+  TARGET_PUBLISH_TAG="$target_publish_tag" parse_json_with_node '
+    const raw = process.env.REGISTRY_JSON || "";
+    const targetTag = process.env.TARGET_PUBLISH_TAG || "";
+
+    if (!raw || !targetTag) {
+      process.exit(1);
+    }
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      process.exit(1);
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      process.exit(1);
+    }
+
+    const tagVersion = parsed[targetTag];
+
+    if (typeof tagVersion !== "string" || tagVersion.length === 0) {
+      process.exit(1);
+    }
+
+    process.stdout.write(tagVersion);
+  ' "$dist_tags_json"
+}
+
+verify_registry_version_before_publish() {
+  local target_package_name="$1"
+  local target_package_version="$2"
+
+  echo "==> 检查 npm 是否已存在同版本"
+
+  if registry_version_exists "$target_package_name" "$target_package_version"; then
+    echo "npm 已存在 ${target_package_name}@${target_package_version}，停止发布。" >&2
+    exit 1
+  fi
+
+  echo "npm 尚不存在 ${target_package_name}@${target_package_version}，可以继续发布。"
+}
+
+verify_registry_version_after_publish() {
+  local target_package_name="$1"
+  local target_package_version="$2"
+  local target_publish_tag="$3"
+  local max_attempts="${4:-12}"
+  local sleep_seconds="${5:-5}"
+  local attempt=""
+  local tag_version=""
+
+  echo ""
+  echo "==> 校验 npm 已收录新版本"
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if registry_version_exists "$target_package_name" "$target_package_version"; then
+      tag_version="$(read_registry_dist_tag_version "$target_package_name" "$target_publish_tag" || true)"
+
+      if [[ "$tag_version" == "$target_package_version" ]]; then
+        echo "npm 已收录 ${target_package_name}@${target_package_version}，且 dist-tag ${target_publish_tag} 已指向该版本。"
+        return 0
+      fi
+    fi
+
+    echo "第 $attempt/$max_attempts 次校验未完成，等待 ${sleep_seconds}s 后重试..."
+    sleep "$sleep_seconds"
+  done
+
+  echo "npm 发布后校验失败：未确认 ${target_package_name}@${target_package_version} 已出现在版本列表，或 dist-tag ${target_publish_tag} 仍未指向该版本。" >&2
+  exit 1
+}
+
 execute_publish_flow() {
   local target_root="$1"
   local output_package_dir="$2"
@@ -371,6 +504,8 @@ execute_publish_flow() {
     publish)
       target_publish_tag="$(resolve_publish_tag "$target_package_version")"
 
+      verify_registry_version_before_publish "$target_package_name" "$target_package_version"
+
       echo "==> 校验 npm 打包清单"
       (cd "$STAGING_DIR" && npm pack --dry-run --ignore-scripts >/dev/null)
       tgz="$(run_npm_pack_and_resolve_filename "$STAGING_DIR")"
@@ -401,6 +536,10 @@ execute_publish_flow() {
 
       echo "==> 执行 npm publish"
       (cd "$STAGING_DIR" && "${publish_cmd[@]}" --ignore-scripts)
+      verify_registry_version_after_publish \
+        "$target_package_name" \
+        "$target_package_version" \
+        "$target_publish_tag"
       ;;
     *)
       echo "不支持的执行模式：$mode" >&2
@@ -409,61 +548,71 @@ execute_publish_flow() {
   esac
 }
 
-package_name="$(read_package_field "$ROOT_DIR" "name")"
-package_version="$(read_package_field "$ROOT_DIR" "version")"
+main() {
+  local package_name=""
+  local package_version=""
+  local choice=""
 
-echo ""
-echo "==> $package_name v$package_version"
-echo ""
+  package_name="$(read_package_field "$ROOT_DIR" "name")"
+  package_version="$(read_package_field "$ROOT_DIR" "version")"
 
-if [[ -n "$selected_mode" ]]; then
-  if [[ "$selected_mode" != "pack" && "$selected_mode" != "publish" ]]; then
-    echo "不支持的 --mode：$selected_mode，仅支持 pack 或 publish" >&2
+  echo ""
+  echo "==> $package_name v$package_version"
+  echo ""
+
+  if [[ -n "$selected_mode" ]]; then
+    if [[ "$selected_mode" != "pack" && "$selected_mode" != "publish" ]]; then
+      echo "不支持的 --mode：$selected_mode，仅支持 pack 或 publish" >&2
+      exit 1
+    fi
+
+    execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "$selected_mode" "当前工作区" ""
+    return
+  fi
+
+  echo "  [1] 基于当前工作区仅本地打包（npm pack）"
+  echo "  [2] 基于当前工作区打包并发布到 npm"
+  echo "  [3] 从最近 5 次提交中选择一个版本，仅本地打包"
+  echo "  [4] 从最近 5 次提交中选择一个版本，发布到 npm"
+  echo ""
+
+  read -rp "请选择操作编号 [1-4]: " choice
+
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt 4 ]]; then
+    echo "无效选择：$choice" >&2
     exit 1
   fi
 
-  execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "$selected_mode" "当前工作区" ""
-  exit 0
+  case "$choice" in
+    1)
+      execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "pack" "当前工作区" ""
+      ;;
+    2)
+      execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "publish" "当前工作区" ""
+      ;;
+    3)
+      choose_recent_commit
+      prepare_commit_worktree "$SELECTED_COMMIT_SHA"
+      execute_publish_flow \
+        "$WORKTREE_DIR" \
+        "$PACKAGE_DIR" \
+        "pack" \
+        "提交 $SELECTED_COMMIT_SHORT ($SELECTED_COMMIT_DATE $SELECTED_COMMIT_SUBJECT)" \
+        "$SELECTED_COMMIT_SHORT"
+      ;;
+    4)
+      choose_recent_commit
+      prepare_commit_worktree "$SELECTED_COMMIT_SHA"
+      execute_publish_flow \
+        "$WORKTREE_DIR" \
+        "$PACKAGE_DIR" \
+        "publish" \
+        "提交 $SELECTED_COMMIT_SHORT ($SELECTED_COMMIT_DATE $SELECTED_COMMIT_SUBJECT)" \
+        "$SELECTED_COMMIT_SHORT"
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-echo "  [1] 基于当前工作区仅本地打包（npm pack）"
-echo "  [2] 基于当前工作区打包并发布到 npm"
-echo "  [3] 从最近 5 次提交中选择一个版本，仅本地打包"
-echo "  [4] 从最近 5 次提交中选择一个版本，发布到 npm"
-echo ""
-
-read -rp "请选择操作编号 [1-4]: " choice
-
-if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt 4 ]]; then
-  echo "无效选择：$choice" >&2
-  exit 1
-fi
-
-case "$choice" in
-  1)
-    execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "pack" "当前工作区" ""
-    ;;
-  2)
-    execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "publish" "当前工作区" ""
-    ;;
-  3)
-    choose_recent_commit
-    prepare_commit_worktree "$SELECTED_COMMIT_SHA"
-    execute_publish_flow \
-      "$WORKTREE_DIR" \
-      "$PACKAGE_DIR" \
-      "pack" \
-      "提交 $SELECTED_COMMIT_SHORT ($SELECTED_COMMIT_DATE $SELECTED_COMMIT_SUBJECT)" \
-      "$SELECTED_COMMIT_SHORT"
-    ;;
-  4)
-    choose_recent_commit
-    prepare_commit_worktree "$SELECTED_COMMIT_SHA"
-    execute_publish_flow \
-      "$WORKTREE_DIR" \
-      "$PACKAGE_DIR" \
-      "publish" \
-      "提交 $SELECTED_COMMIT_SHORT ($SELECTED_COMMIT_DATE $SELECTED_COMMIT_SUBJECT)" \
-      "$SELECTED_COMMIT_SHORT"
-    ;;
-esac

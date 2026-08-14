@@ -33,6 +33,7 @@ type HelperRequest =
       workspacePath: string;
       knownSessions: ProviderSessionSummary[];
       enabledProviders: string[];
+      claudeExtraProjectRoots?: string[];
     }
   | {
       id: string;
@@ -115,6 +116,7 @@ async function handleLine(line: string): Promise<void> {
           payload.workspacePath,
           payload.knownSessions,
           payload.enabledProviders,
+          payload.claudeExtraProjectRoots,
           controller.signal
         );
         emitResult(payload.id, result);
@@ -566,10 +568,14 @@ async function discoverWorkspaceSessions(
   workspacePath: string,
   knownSessions: ProviderSessionSummary[],
   enabledProviders: string[],
+  claudeExtraProjectRoots?: string[],
   signal?: AbortSignal
 ): Promise<import("@codingns/session-sync-core").ProviderSessionDiscovery> {
   return await discoverWorkspaceSessionsInRuntime(
-    config,
+    {
+      ...config,
+      claudeExtraProjectRoots
+    },
     workspacePath,
     knownSessions,
     enabledProviders,

@@ -72,6 +72,8 @@ describe("WorkbenchHostSwitcher", () => {
         {
           id: "host-1",
           name: "本地 Host",
+          alias: "HOST",
+          tagColor: null,
           baseUrl: "http://127.0.0.1:3002",
           kind: "local",
           createdAt: "2026-04-14T00:00:00.000Z",
@@ -83,6 +85,8 @@ describe("WorkbenchHostSwitcher", () => {
         {
           id: "host-2",
           name: "办公室 Host",
+          alias: "HOST",
+          tagColor: null,
           baseUrl: "http://10.10.1.8:3002",
           kind: "lan",
           createdAt: "2026-04-14T00:00:00.000Z",
@@ -161,6 +165,26 @@ describe("WorkbenchHostSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "查看 HOST 本地 Host 连接详情" }));
 
     expect(await screen.findByRole("button", { name: "添加 Peer Host" })).toBeInTheDocument();
+  });
+
+  it("主 HOST 标签支持直接打开色板并保存颜色", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "设置 HOST 本地 Host 的标签颜色" }));
+
+    const palette = screen.getByRole("group", { name: "标签颜色" });
+    await user.click(within(palette).getByRole("button", { name: "使用颜色 #34C759" }));
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hosts.find((host) => host.id === "host-1")?.tagColor).toBe("#34C759");
+    });
   });
 
   it("从主 HOST 详情进入添加 Peer Host 表单后会走独立 Peer 接入流程", async () => {
@@ -533,6 +557,60 @@ describe("WorkbenchHostSwitcher", () => {
     expect(switchHostMock).not.toHaveBeenCalled();
   });
 
+  it("Peer HOST 标签色板会同步保存到后端并回写本地 HOST", async () => {
+    const user = userEvent.setup();
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      hosts: clientConfigStore.getState().hosts.map((host) =>
+        host.id === "host-2"
+          ? { ...host, peerHostId: "peer-2", peerEnabled: true }
+          : host
+      )
+    });
+
+    const requestSpy = vi.spyOn(httpClient, "request").mockImplementation(async (path: string, options?: any) => {
+      if (path === "/api/peer-hosts") {
+        return {
+          items: [buildPeerHostDto({ id: "peer-2", status: "reachable", tagColor: null })]
+        } as never;
+      }
+
+      if (path === "/api/peer-hosts/peer-2" && options?.method === "PUT") {
+        return buildPeerHostDto({ id: "peer-2", status: "reachable", tagColor: "#EC4899" }) as never;
+      }
+
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <WorkbenchHostSwitcher />
+      </ToastProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "切换 HOST" }));
+    await user.click(screen.getByRole("button", { name: "设置 HOST 办公室 Host 的标签颜色" }));
+
+    const palette = screen.getByRole("group", { name: "标签颜色" });
+    await user.click(within(palette).getByRole("button", { name: "使用颜色 #EC4899" }));
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith(
+        "/api/peer-hosts/peer-2",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({
+            name: "办公室 Host",
+            alias: "HOST",
+            tagColor: "#EC4899",
+            baseUrl: "http://10.10.1.8:3002"
+          })
+        })
+      );
+      expect(clientConfigStore.getState().hosts.find((host) => host.id === "host-2")?.tagColor).toBe("#EC4899");
+    });
+  });
+
   it("后端残留旧 Peer HOST 记录时，会复用旧记录继续启用", async () => {
     const user = userEvent.setup();
     let listCount = 0;
@@ -771,6 +849,7 @@ function buildPeerHostDto(overrides: Partial<Record<string, unknown>> = {}) {
     ownerUserId: "user-1",
     name: "办公室 Host",
     alias: "HOST",
+    tagColor: null,
     baseUrl: "http://10.10.1.8:3002",
     normalizedBaseUrl: "http://10.10.1.8:3002",
     status: "reachable",

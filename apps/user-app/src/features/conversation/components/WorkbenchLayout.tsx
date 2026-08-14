@@ -95,10 +95,10 @@ import {
   getAffairsLibrarySnapshot,
   getAffairsLightweightSessionMessages,
   getProviderCapabilities,
+  getScopedWorkbenchSnapshot,
   getWorktreeMergePreview,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
-  getScopedWorkbenchSnapshot,
   importWorkspace,
   listWorkspaces,
   listScopedWorkspaces,
@@ -182,7 +182,6 @@ import {
   buildWorkspaceChatIndexPath,
   buildWorkspaceChatPath,
   buildWorkspaceNewChatPath,
-  buildWorkspaceDebugPath,
   buildDocumentsPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
@@ -218,6 +217,12 @@ import {
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
+import {
+  buildScopedSnapshotKey,
+  isSameTargetHostId,
+  normalizeTargetHostId,
+  readSnapshotTargetHostId
+} from "../../workbench/utils/resource-scope";
 import {
   resolveContextMenuPosition,
   type ContextMenuAnchorPoint
@@ -286,6 +291,14 @@ import { WorkbenchUpdateBadge } from "./WorkbenchUpdateBadge";
 import { ParallelSessionCreateModal, type ParallelSessionCreateSource } from "./ParallelSessionCreateModal";
 import { useArchiveSessionSearch } from "./useArchiveSessionSearch";
 import { useTransientScrollbarVisibility } from "./useTransientScrollbarVisibility";
+import {
+  buildWorkspaceHostAssignmentKey,
+  readWorkspaceHostAssignments,
+  type WorkspaceHostAssignment,
+  WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT,
+  writeWorkspaceHostAssignments,
+  writeWorkspaceHostAssignmentsSilently
+} from "./workspace-host-assignment-storage";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -293,8 +306,6 @@ const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
-const WORKSPACE_HOST_ASSIGNMENT_KEY = "workbench.workspace.host.assignment.v1";
-const WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT = "codingns:workspace-host-assignment-changed";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
 
 type CodeShortcutRailSide = "left" | "right";
@@ -893,6 +904,10 @@ function readWorkspaceRefFromLocation(location: Pick<Location, "pathname" | "sea
   };
 }
 
+function hasExplicitTargetHostScopeInLocation(location: Pick<Location, "search">): boolean {
+  return normalizeTargetHostId(new URLSearchParams(location.search).get("targetHostId")) !== null;
+}
+
 function shouldRedirectMobileToWorkspaceHome(pathname: string) {
   return (
     pathname.startsWith("/sessions")
@@ -1055,10 +1070,6 @@ function resolveFallbackWorkspaceRoute(
   workspaceId: string,
   workspaceRef?: WorkspaceRef | null
 ): string {
-  if (matchPath("/workspaces/:workspaceId/debug", pathname)) {
-    return buildWorkspaceDebugPath(workspaceId, workspaceRef);
-  }
-
   if (matchPath("/workspaces/:workspaceId", pathname)) {
     return buildWorkspaceDetailPath(workspaceId, workspaceRef);
   }
@@ -1823,6 +1834,22 @@ interface WorkspaceSidebarWorktreeNode {
   children: WorkspaceSidebarWorktreeNode[];
 }
 
+interface PeerWorkspaceNavigationView {
+  localWorkspaceId: string;
+  activeHostId: string;
+  remoteWorkspaceId: string;
+  targetHostId: string;
+  sessions: SessionSummaryDto[];
+}
+
+function buildPeerWorkspaceSummaryStateKey(
+  activeHostId: string,
+  localWorkspaceId: string,
+  targetHostId: string
+): string {
+  return `${activeHostId}::${localWorkspaceId}::${targetHostId}`;
+}
+
 interface WorktreeNodeExpansionState {
   expandedWorkspaceIds: string[];
   collapsedWorkspaceIds: string[];
@@ -1856,6 +1883,7 @@ interface WorkbenchRealtimeTargetOptions {
 
 interface WorkbenchRealtimeKnownRevisionOptions extends WorkbenchRealtimeTargetOptions {
   knownRevision?: string | null | undefined;
+  skipKnownRevision?: boolean;
 }
 
 interface WorkbenchRealtimeFileTreeOptions extends WorkbenchRealtimeTargetOptions {
@@ -1908,6 +1936,24 @@ interface WorkbenchShellContextValue {
   currentWorkspaceRef: WorkspaceRef | null;
   currentTargetHostId: string | null;
   currentSessionId: string | null;
+  findCanonicalSessionEntryByScope: (
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ) => WorkbenchNavigationEntry | null;
+  findVisibleSessionEntryByScope: (
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ) => WorkbenchNavigationEntry | null;
+  resolveNavigationWorkspaceRef: (workspaceId: string, options?: {
+    preferredTargetHostId?: string | null;
+    fallbackToCurrent?: boolean;
+  }) => WorkspaceRef | null;
   favoriteSessionIds: string[];
   favoriteSessions: WorkbenchNavigationEntry[];
   globalNotifications: WorkbenchGlobalNotification[];
@@ -2697,60 +2743,18 @@ function createWorkbenchSnapshotFromGroups(
   };
 }
 
-function replaceWorkspaceSessionsWithRemoteSnapshot(
-  groups: readonly WorkspaceSessionGroup[],
-  localWorkspaceId: string,
-  remoteSnapshot: RemoteWorkspaceNavigationSnapshot
-): WorkspaceSessionGroup[] {
-  const normalizedLocalWorkspaceId = localWorkspaceId.trim();
-
-  if (!normalizedLocalWorkspaceId) {
-    return [...groups];
-  }
-
-  return groups.map((group) => {
-    if (group.workspace.id !== normalizedLocalWorkspaceId) {
-      return group;
-    }
-
-    // 左侧项目实体必须保留主 HOST 的 workspace id / name / path。
-    // 会话详情和工具面板仍要知道真正的远端 workspaceId，否则会把主 HOST 的 id 发给 Peer。
-    return {
-      ...group,
-      sessions: remoteSnapshot.item.sessions.map((session) => ({
-        ...session,
-        // 会话自己的 workspaceId 必须保持 Peer HOST 返回的真实 id。
-        // 左侧仍挂在本地主项目下展示；需要本地主项目 id 的地方读 sessionIsolatedWorkspace.sourceWorkspaceId。
-        workspaceId: session.workspaceId || remoteSnapshot.item.workspace.id,
-        sessionIsolatedWorkspace: session.sessionIsolatedWorkspace ?? {
-          id: `peer-${remoteSnapshot.targetHostId}-${remoteSnapshot.item.workspace.id}`,
-          workspaceId: session.workspaceId || remoteSnapshot.item.workspace.id,
-          sourceWorkspaceId: group.workspace.id,
-          branchName: remoteSnapshot.item.workspace.name,
-          lifecycleStatus: "active" as const,
-          promotedAt: null,
-          createdAt: session.createdAt,
-          updatedAt: session.updatedAt
-        }
-      })),
-      childWorktrees: remoteSnapshot.item.childWorktrees ?? []
-    };
-  });
-}
-
-interface RemoteWorkspaceNavigationSnapshot {
-  item: WorkbenchSnapshotDto["items"][number];
-  targetHostId: string;
-}
-
 function buildWorkspaceSidebarWorktreeNodes(
   nodes: readonly WorkbenchWorktreeNodeDto[],
   favoriteSessionIdSet: ReadonlySet<string>,
   sessionDisplaySortMode: SessionDisplaySortMode,
-  hiddenSessionIdSet: ReadonlySet<string> = new Set()
+  hiddenSessionIdSet: ReadonlySet<string> = new Set(),
+  resolvePeerNavigationForWorkspace?: (workspace: WorkspaceDto) => PeerWorkspaceNavigationView | null
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.map((node) => {
-    const scopedSessions = node.sessions.filter((session) => !hiddenSessionIdSet.has(session.sessionId));
+    const peerNavigation = resolvePeerNavigationForWorkspace?.(node.workspace);
+    const scopedSessions = (peerNavigation?.sessions ?? node.sessions).filter(
+      (session) => !hiddenSessionIdSet.has(session.sessionId)
+    );
     const visibleSessions = filterVisibleWorkspaceSessions(scopedSessions);
 
     return {
@@ -2772,7 +2776,8 @@ function buildWorkspaceSidebarWorktreeNodes(
         node.children,
         favoriteSessionIdSet,
         sessionDisplaySortMode,
-        hiddenSessionIdSet
+        hiddenSessionIdSet,
+        resolvePeerNavigationForWorkspace
       )
     };
   });
@@ -2792,6 +2797,24 @@ function collectSidebarWorktreeNodes(
   nodes: readonly WorkspaceSidebarWorktreeNode[]
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.flatMap((node) => [node, ...collectSidebarWorktreeNodes(node.children)]);
+}
+
+function collectSidebarWorkspaces(
+  groups: readonly WorkspaceSessionGroup[]
+): WorkspaceDto[] {
+  return groups.flatMap((group) => [
+    group.workspace,
+    ...collectSidebarWorktreeWorkspaceDtos(group.childWorktrees)
+  ]);
+}
+
+function collectSidebarWorktreeWorkspaceDtos(
+  nodes: readonly WorkbenchWorktreeNodeDto[]
+): WorkspaceDto[] {
+  return nodes.flatMap((node) => [
+    node.workspace,
+    ...collectSidebarWorktreeWorkspaceDtos(node.children)
+  ]);
 }
 
 function findSidebarBatchTarget(
@@ -3540,13 +3563,57 @@ function mapWorktreeNodes(
 }
 
 function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `workspace-management.summary.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("workspace-management.summary", {
+    workspaceId,
+    targetHostId
+  });
 }
 
 function buildGitSidebarSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `host.${encodeURIComponent(targetHostId.trim())}.` : "";
-  return `git-sidebar.snapshot.${hostPart}${workspaceId}`;
+  return buildScopedSnapshotKey("git-sidebar.snapshot", {
+    workspaceId,
+    targetHostId
+  });
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
+  return buildScopedSnapshotKey("terminal-manager.snapshot", {
+    workspaceId,
+    targetHostId
+  });
+}
+
+function buildWorkbenchRealtimeScopeKey(workspaceId?: string | null, targetHostId?: string | null): string | null {
+  const normalizedWorkspaceId = workspaceId?.trim() || null;
+
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  return buildScopedSnapshotKey("workbench-realtime.scope", {
+    workspaceId: normalizedWorkspaceId,
+    targetHostId
+  });
+}
+
+type WorkbenchRealtimeScopeBindingBase = {
+  workspaceId: string;
+  scopeKey: string | null;
+  targetHostId?: string | null;
+};
+
+type WorkbenchRealtimeFileTreeBinding = WorkbenchRealtimeScopeBindingBase & {
+  paths: string[];
+  knownRevisionByPath?: Record<string, string | null | undefined>;
+};
+
+type WorkbenchRealtimeFileTreeRefreshBinding = WorkbenchRealtimeScopeBindingBase & {
+  paths?: string[];
+  knownRevisionByPath?: Record<string, string | null | undefined>;
+};
+
+type WorkbenchRealtimeKnownRevisionBinding = WorkbenchRealtimeScopeBindingBase & {
+  knownRevision?: string | null | undefined;
 }
 
 function createWorkspaceManagementFallback(
@@ -5632,91 +5699,6 @@ function getHostAlias(host: Pick<HostProfile, "alias" | "name" | "baseUrl"> | nu
   return normalizeHostAlias(host?.alias ?? null, createHostAliasFallback(host));
 }
 
-
-function buildWorkspaceHostAssignmentKey(workspaceId: string, workspacePath?: string | null): string {
-  const pathPart = workspacePath?.trim() || "unknown";
-  return `${workspaceId}::${pathPart}`;
-}
-
-interface WorkspaceHostAssignment {
-  selectedHostId: string;
-  remoteWorkspaceId: string | null;
-  remoteWorkspacePath: string | null;
-  remoteWorkspaceName: string | null;
-}
-
-function normalizeWorkspaceHostAssignment(value: unknown): WorkspaceHostAssignment | null {
-  if (typeof value === "string" && value.trim()) {
-    return {
-      selectedHostId: value.trim(),
-      remoteWorkspaceId: null,
-      remoteWorkspacePath: null,
-      remoteWorkspaceName: null
-    };
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const raw = value as Partial<Record<keyof WorkspaceHostAssignment, unknown>>;
-  const selectedHostId = typeof raw.selectedHostId === "string" ? raw.selectedHostId.trim() : "";
-
-  if (!selectedHostId) {
-    return null;
-  }
-
-  return {
-    selectedHostId,
-    remoteWorkspaceId: typeof raw.remoteWorkspaceId === "string" && raw.remoteWorkspaceId.trim()
-      ? raw.remoteWorkspaceId.trim()
-      : null,
-    remoteWorkspacePath: typeof raw.remoteWorkspacePath === "string" && raw.remoteWorkspacePath.trim()
-      ? raw.remoteWorkspacePath.trim()
-      : null,
-    remoteWorkspaceName: typeof raw.remoteWorkspaceName === "string" && raw.remoteWorkspaceName.trim()
-      ? raw.remoteWorkspaceName.trim()
-      : null
-  };
-}
-
-function readWorkspaceHostAssignments(): Record<string, WorkspaceHostAssignment> {
-  const raw = readStoredString(WORKSPACE_HOST_ASSIGNMENT_KEY);
-
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const result: Record<string, WorkspaceHostAssignment> = {};
-
-    for (const [key, value] of Object.entries(parsed)) {
-      const assignment = normalizeWorkspaceHostAssignment(value);
-      if (typeof key === "string" && key.trim() && assignment) {
-        result[key] = assignment;
-      }
-    }
-
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function writeWorkspaceHostAssignments(assignments: Record<string, WorkspaceHostAssignment>): void {
-  writeStoredValue(WORKSPACE_HOST_ASSIGNMENT_KEY, JSON.stringify(assignments));
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(WORKSPACE_HOST_ASSIGNMENT_CHANGED_EVENT));
-  }
-}
-
 function applyRemoteWorkspaceHostBindings(
   localAssignments: Record<string, WorkspaceHostAssignment>,
   activeHostId: string,
@@ -5767,12 +5749,14 @@ function WorkspaceHostBadge({
   hostId,
   className = ""
 }: {
-  host: Pick<HostProfile, "id" | "alias" | "name" | "baseUrl"> | null | undefined;
+  host: Pick<HostProfile, "id" | "alias" | "name" | "baseUrl" | "tagColor"> | null | undefined;
   hostId: string;
   className?: string;
 }) {
   const colorHostId = host?.id?.trim() || hostId;
-  const aliasTag = resolveHostAliasTag(host ? { id: colorHostId, alias: host.alias, name: host.name } : null);
+  const aliasTag = resolveHostAliasTag(
+    host ? { id: colorHostId, alias: host.alias, name: host.name, tagColor: host.tagColor } : null
+  );
   const alias = aliasTag?.label ?? getHostAlias(host);
   const title = host?.name?.trim() || host?.baseUrl?.trim() || alias;
   const classNames = ["workspace-host-badge", className].filter(Boolean).join(" ");
@@ -5977,8 +5961,11 @@ function SidebarContent({
   const { showToast } = useToast();
   const navigationBodyRef = useTransientScrollbarVisibility<HTMLDivElement>();
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
+  const routeWorkspaceRef = useMemo(
+    () => readWorkspaceRefFromLocation(location),
+    [location.pathname, location.search]
+  );
   const runtimeConfig = useClientConfigSelector((state) => state);
-  const routeWorkspaceRef = useMemo(() => readWorkspaceRefFromLocation(location), [location.pathname, location.search]);
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = runtimeConfig.activeHostId ?? activeHost?.id ?? "current";
   const selectableWorkspaceHosts = useMemo(() => {
@@ -6077,6 +6064,7 @@ function SidebarContent({
           onStateChange={onCodeEmbeddedAffairsStateChange}
           onRefreshNavigation={onRefreshNavigation}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsSidebarPanel />
         </AffairsWorkbenchProvider>
@@ -6103,7 +6091,7 @@ function SidebarContent({
               : resolveSelectableHostId(item.selectedHostId) ?? item.selectedHostId
           }))
       );
-      writeWorkspaceHostAssignments(nextAssignments);
+      writeWorkspaceHostAssignmentsSilently(nextAssignments);
       setWorkspaceHostAssignments(nextAssignments);
     }).catch(() => undefined);
 
@@ -8580,13 +8568,10 @@ function SidebarContent({
             onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
             onToggleSubagents={() => handleToggleSubagentList(expansionStateKey)}
             onOpen={() => {
-              navigate(
-                buildWorkspaceSessionPath(
-                  sessionWorkspace.id,
-                  session.sessionId,
-                  resolveWorkspaceRefForHost(sessionWorkspace, resolveWorkspaceHostId(sessionWorkspace))
-                )
-              );
+              const targetWorkspaceHostId = resolveWorkspaceHostId(sessionWorkspace);
+              const targetWorkspaceRef = resolveWorkspaceRefForHost(sessionWorkspace, targetWorkspaceHostId) ?? undefined;
+              onSelectWorkspace(sessionWorkspace.id, targetWorkspaceRef);
+              navigate(buildWorkspaceSessionPath(sessionWorkspace.id, session.sessionId, targetWorkspaceRef));
               onClose?.();
             }}
             onRename={() => handleOpenRenameSession(session, sessionWorkspace)}
@@ -8939,7 +8924,7 @@ function SidebarContent({
     setExportingSessionId(session.sessionId);
 
     try {
-      const snapshot = await loadSessionExportSnapshot(session.sessionId);
+      const snapshot = await loadSessionExportSnapshot(session.sessionId, currentTargetHostId);
       const exportLayout = captureSessionExportLayoutSnapshot();
 
       if (format === "md") {
@@ -9026,7 +9011,7 @@ function SidebarContent({
     closeSessionMenu();
 
     try {
-      await deleteSession(session.sessionId);
+      await deleteSession(session.sessionId, { targetHostId: currentTargetHostId });
       setSelectedSessionIds((current) => current.filter((item) => item !== session.sessionId));
       setSessionDeletionTarget(null);
 
@@ -9065,7 +9050,7 @@ function SidebarContent({
       const results = await Promise.allSettled(
         targetSessionIds.map(async (sessionId) => ({
           sessionId,
-          session: await updateSessionArchiveState(sessionId, true)
+          session: await updateSessionArchiveState(sessionId, true, { targetHostId: currentTargetHostId })
         }))
       );
 
@@ -9132,7 +9117,7 @@ function SidebarContent({
     try {
       const results = await Promise.allSettled(
         targetSessionIds.map(async (sessionId) => {
-          await deleteSession(sessionId);
+          await deleteSession(sessionId, { targetHostId: currentTargetHostId });
           return sessionId;
         })
       );
@@ -9273,7 +9258,7 @@ function SidebarContent({
     setRenamingSessionId(renameTarget.session.sessionId);
 
     try {
-      const renamedSession = await renameSessionTitle(renameTarget.session.sessionId, nextTitle);
+      const renamedSession = await renameSessionTitle(renameTarget.session.sessionId, nextTitle, { targetHostId: currentTargetHostId });
       onSessionUpdated(renamedSession);
       setRenameTarget(null);
       setRenameTitleValue("");
@@ -9619,16 +9604,6 @@ function SidebarContent({
             <div className="workbench-modal-actions">
               <button
                 type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setWorkspaceManagerOpen(false);
-                  navigate(buildWorkspaceDebugPath(workspace.id, resolveWorkspaceRefForHost(workspace, resolveWorkspaceHostId(workspace))));
-                }}
-              >
-                {t("shell.workspaceDetailDebugOpenPageAction")}
-              </button>
-              <button
-                type="button"
                 className="secondary-button workbench-danger-button"
                 disabled={Boolean(removingWorkspaceId)}
                 onClick={() => setWorkspaceRemovalTarget(workspace)}
@@ -9934,7 +9909,7 @@ function SidebarContent({
             </div>
           </div>
 
-        {workspaceGroups.map((group) => {
+      {workspaceGroups.map((group) => {
           const visibleSessionTree =
             visibleSessionTreeByWorkspaceId.get(group.workspace.id) ?? getVisibleSessionTreeNodes(group);
           const isDraggedWorkspace = dragWorkspaceId === group.workspace.id;
@@ -11054,6 +11029,7 @@ function WorkbenchInfoPanel({
   currentSessionId,
   activeWorkspaceId,
   requestWorkspaceId,
+  currentWorkspaceRef,
   currentTargetHostId,
   navigationGroups,
   workspaceContext,
@@ -11071,6 +11047,7 @@ function WorkbenchInfoPanel({
   currentSessionId: string | null;
   activeWorkspaceId: string | null;
   requestWorkspaceId?: string | null;
+  currentWorkspaceRef?: WorkspaceRef | null;
   currentTargetHostId?: string | null;
   navigationGroups: WorkspaceSessionGroup[];
   workspaceContext: WorkspaceVisualContext | null;
@@ -11534,9 +11511,11 @@ function WorkbenchInfoPanel({
               <LazyFileContextPanel
                 sessionId={effectiveFilesSessionId}
                 workspaceId={effectiveFilesWorkspaceId}
+                requestWorkspaceId={requestWorkspaceId ?? effectiveFilesWorkspaceId}
                 externalRevealRequest={effectiveFileRevealRequest}
                 workbenchShellOverrides={{
-                  currentTargetHostId
+                  currentTargetHostId,
+                  currentRequestWorkspaceId: requestWorkspaceId ?? effectiveFilesWorkspaceId
                 }}
               />
             </Suspense>
@@ -11552,8 +11531,10 @@ function WorkbenchInfoPanel({
             <Suspense fallback={<InfoPanelSkeleton />}>
               <LazyGitSidebar
                 workspaceId={fallbackWorkspaceId}
+                requestWorkspaceId={requestWorkspaceId ?? fallbackWorkspaceId}
                 workbenchShellOverrides={{
-                  currentTargetHostId
+                  currentTargetHostId,
+                  currentRequestWorkspaceId: requestWorkspaceId ?? fallbackWorkspaceId
                 }}
               />
             </Suspense>
@@ -11568,8 +11549,10 @@ function WorkbenchInfoPanel({
           <Suspense fallback={<InfoPanelSkeleton />}>
             <LazyTerminalManagerPanel
               currentWorkspaceId={fallbackWorkspaceId}
+              requestWorkspaceId={requestWorkspaceId ?? fallbackWorkspaceId}
               navigationGroups={navigationGroups}
               workbenchShellOverrides={{
+                currentWorkspaceRef,
                 currentTargetHostId
               }}
             />
@@ -12003,48 +11986,16 @@ export function WorkbenchLayout({
   const terminalManagerSnapshotListenersRef = useRef(
     new Set<(snapshot: TerminalManagerRealtimeSnapshotDto) => void>()
   );
-  const fileTreeSubscriptionRef = useRef<{
-    workspaceId: string;
-    paths: string[];
-    targetHostId?: string | null;
-    knownRevisionByPath?: Record<string, string | null | undefined>;
-  } | null>(null);
-  const pendingFileTreeRefreshRef = useRef<{
-    workspaceId: string;
-    paths?: string[];
-    targetHostId?: string | null;
-    knownRevisionByPath?: Record<string, string | null | undefined>;
-  } | null>(null);
-  const gitWorkspaceSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingGitRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const workspaceManagementSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const terminalManagerWorkspaceSubscriptionRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
-  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<{
-    workspaceId: string;
-    targetHostId?: string | null;
-    knownRevision?: string | null | undefined;
-  } | null>(null);
+  const fileTreeSubscriptionRef = useRef<WorkbenchRealtimeFileTreeBinding | null>(null);
+  const pendingFileTreeRefreshRef = useRef<WorkbenchRealtimeFileTreeRefreshBinding | null>(null);
+  const gitWorkspaceSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingGitRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const workspaceManagementSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const terminalManagerWorkspaceSubscriptionRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<WorkbenchRealtimeKnownRevisionBinding | null>(null);
+  const activeWorkbenchRealtimeScopeKeyRef = useRef<string | null>(null);
+  const activeWorkbenchRealtimeTargetHostIdRef = useRef<string | null>(null);
   const notificationRefreshRequestIdRef = useRef(0);
   const notificationArchiveMutationRequestIdRef = useRef(0);
   const showToastRef = useRef(showToast);
@@ -12079,6 +12030,11 @@ export function WorkbenchLayout({
   const pendingWorkspaceReorderRef = useRef<{
     originalGroups: WorkspaceSessionGroup[];
   } | null>(null);
+  const routeScopedWorkspaceRef = useMemo(
+    () => readWorkspaceRefFromLocation(location),
+    [location.pathname, location.search]
+  );
+  const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
   const runtimeConfig = useClientConfigSelector((state) => state);
   const activeHost = getActiveHost(runtimeConfig);
   const activeHostId = runtimeConfig.activeHostId ?? activeHost?.id ?? "current";
@@ -12123,9 +12079,6 @@ export function WorkbenchLayout({
   const [workspaceHostAssignments, setWorkspaceHostAssignments] = useState<Record<string, WorkspaceHostAssignment>>(() =>
     readWorkspaceHostAssignments()
   );
-  const [remoteWorkspaceSnapshotByLocalWorkspaceId, setRemoteWorkspaceSnapshotByLocalWorkspaceId] = useState<
-    Record<string, RemoteWorkspaceNavigationSnapshot | null>
-  >({});
   const resolveWorkspaceRefForTargetHost = useCallback((
     workspace: Pick<WorkspaceDto, "id"> & Partial<Pick<WorkspaceDto, "path">>,
     targetHostId: string
@@ -12141,21 +12094,11 @@ export function WorkbenchLayout({
       selectedTargetHostId === targetHostId
         ? assignment?.remoteWorkspaceId?.trim() || null
         : null;
-
-    const snapshotRemoteWorkspaceId =
-      remoteWorkspaceSnapshotByLocalWorkspaceId[workspace.id]?.targetHostId === targetHostId
-        ? remoteWorkspaceSnapshotByLocalWorkspaceId[workspace.id]?.item.workspace.id.trim() || null
-        : null;
-
-    // Peer HOST 不能退回主 HOST 的 workspaceId。
-    // 远端没有绑定好时宁可先不发请求，否则 Peer 会收到主 HOST 的 id 并报 WORKSPACE_NOT_FOUND。
-    const resolvedRemoteWorkspaceId = remoteWorkspaceId || snapshotRemoteWorkspaceId;
-    return resolvedRemoteWorkspaceId
-      ? makeWorkspaceRef(resolvedRemoteWorkspaceId, targetHostId)
+    return remoteWorkspaceId
+      ? makeWorkspaceRef(remoteWorkspaceId, targetHostId)
       : null;
   }, [
     activeHostId,
-    remoteWorkspaceSnapshotByLocalWorkspaceId,
     resolveRemoteSelectedHostId,
     resolveSelectableHostId,
     workspaceHostAssignments
@@ -12203,15 +12146,12 @@ export function WorkbenchLayout({
   const [selectedWorkspaceRef, setSelectedWorkspaceRef] = useState<WorkspaceRef | null>(() =>
     readWorkspaceRefFromLocation(location)
   );
-  const routeScopedWorkspaceRef = useMemo(
-    () => readWorkspaceRefFromLocation(location),
-    [location.pathname, location.search]
-  );
+  const routeHasExplicitWorkspaceScope = hasExplicitTargetHostScopeInLocation(location);
   const activeTargetHostId =
-    selectedWorkspaceRef?.hostId && selectedWorkspaceRef.hostId !== "current"
-      ? selectedWorkspaceRef.hostId
-      : routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current"
-        ? routeScopedWorkspaceRef.hostId
+    routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current"
+      ? routeScopedWorkspaceRef.hostId
+      : !routeHasExplicitWorkspaceScope && selectedWorkspaceRef?.hostId && selectedWorkspaceRef.hostId !== "current"
+        ? selectedWorkspaceRef.hostId
         : null;
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
@@ -12243,6 +12183,9 @@ export function WorkbenchLayout({
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
+  >({});
+  const [peerWorkspaceNavigationByWorkspaceId, setPeerWorkspaceNavigationByWorkspaceId] = useState<
+    Record<string, PeerWorkspaceNavigationView>
   >({});
   const useMacOsNativeTitlebarDragRegion = shouldUseMacOsNativeTitlebarDragRegion(platform);
 
@@ -12678,12 +12621,14 @@ export function WorkbenchLayout({
     workbenchRealtimeClientRef.current?.requestRefresh();
   }, []);
 
-  const openSessionFromToast = useCallback(
-    (workspaceId: string, sessionId: string) => {
-      navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
-    },
-    [navigate]
-  );
+  function openSessionFromToast(workspaceId: string, sessionId: string) {
+    const workspaceRef = resolveNavigationWorkspaceRef(workspaceId, {
+      preferredTargetHostId: currentTargetHostId,
+      fallbackToCurrent: true
+    });
+    handleSelectWorkspace(workspaceId, workspaceRef);
+    navigate(buildWorkspaceSessionPath(workspaceId, sessionId, workspaceRef));
+  }
 
   const dispatchFileTreeSnapshot = useCallback((snapshot: FileTreeRealtimeSnapshotDto, targetHostId?: string | null) => {
     fileTreeSnapshotListenersRef.current.forEach((listener) => listener({
@@ -12770,7 +12715,7 @@ export function WorkbenchLayout({
   }, []);
 
   const getWorkbenchRealtimeClientForTargetHost = useCallback((targetHostId?: string | null): WorkbenchRealtimeClient | null => {
-    const normalizedTargetHostId = targetHostId?.trim() || null;
+    const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
 
     if (!normalizedTargetHostId) {
       return workbenchRealtimeClientRef.current;
@@ -12802,18 +12747,57 @@ export function WorkbenchLayout({
     dispatchWorkspaceManagementSnapshot
   ]);
 
+  const clearWorkbenchRealtimeBindings = useCallback((scopeKey?: string | null) => {
+    const shouldClearBinding = (binding: { scopeKey: string | null } | null) =>
+      Boolean(binding) && (!scopeKey || binding?.scopeKey === scopeKey);
+
+    if (shouldClearBinding(fileTreeSubscriptionRef.current)) {
+      fileTreeSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingFileTreeRefreshRef.current)) {
+      pendingFileTreeRefreshRef.current = null;
+    }
+
+    if (shouldClearBinding(gitWorkspaceSubscriptionRef.current)) {
+      gitWorkspaceSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingGitRefreshWorkspaceIdRef.current)) {
+      pendingGitRefreshWorkspaceIdRef.current = null;
+    }
+
+    if (shouldClearBinding(workspaceManagementSubscriptionRef.current)) {
+      workspaceManagementSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingWorkspaceManagementRefreshWorkspaceIdRef.current)) {
+      pendingWorkspaceManagementRefreshWorkspaceIdRef.current = null;
+    }
+
+    if (shouldClearBinding(terminalManagerWorkspaceSubscriptionRef.current)) {
+      terminalManagerWorkspaceSubscriptionRef.current = null;
+    }
+
+    if (shouldClearBinding(pendingTerminalManagerRefreshWorkspaceIdRef.current)) {
+      pendingTerminalManagerRefreshWorkspaceIdRef.current = null;
+    }
+  }, []);
+
   const subscribeFileTree = useCallback((
     workspaceId: string,
     paths: string[],
     options?: WorkbenchRealtimeFileTreeOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     fileTreeSubscriptionRef.current = {
       workspaceId,
       paths,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevisionByPath: options?.knownRevisionByPath
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeFileTree(workspaceId, paths, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeFileTree(workspaceId, paths, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestFileTreeRefresh = useCallback((
@@ -12821,13 +12805,15 @@ export function WorkbenchLayout({
     paths?: string[],
     options?: WorkbenchRealtimeFileTreeOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingFileTreeRefreshRef.current = {
       workspaceId,
       paths,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevisionByPath: options?.knownRevisionByPath
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestFileTreeRefresh(workspaceId, paths, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestFileTreeRefresh(workspaceId, paths, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addFileTreeSnapshotListener = useCallback(
@@ -12844,24 +12830,28 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     gitWorkspaceSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeGit(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeGit(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestGitRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingGitRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestGitRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestGitRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addGitSnapshotListener = useCallback(
@@ -12878,21 +12868,25 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     workspaceManagementSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeWorkspaceManagement(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeWorkspaceManagement(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestWorkspaceManagementRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingWorkspaceManagementRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
     setWorkspaceManagementStateById((current) => ({
@@ -12903,7 +12897,7 @@ export function WorkbenchLayout({
         error: null
       }
     }));
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestWorkspaceManagementRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestWorkspaceManagementRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addWorkspaceManagementSnapshotListener = useCallback(
@@ -13122,24 +13116,28 @@ export function WorkbenchLayout({
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     terminalManagerWorkspaceSubscriptionRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.subscribeTerminalManager(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.subscribeTerminalManager(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const requestTerminalManagerRefresh = useCallback((
     workspaceId: string,
     options?: WorkbenchRealtimeKnownRevisionOptions
   ) => {
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
     pendingTerminalManagerRefreshWorkspaceIdRef.current = {
       workspaceId,
-      targetHostId: options?.targetHostId ?? null,
+      scopeKey: buildWorkbenchRealtimeScopeKey(workspaceId, normalizedTargetHostId),
+      targetHostId: normalizedTargetHostId,
       knownRevision: options?.knownRevision
     };
-    getWorkbenchRealtimeClientForTargetHost(options?.targetHostId)?.requestTerminalManagerRefresh(workspaceId, options);
+    getWorkbenchRealtimeClientForTargetHost(normalizedTargetHostId)?.requestTerminalManagerRefresh(workspaceId, options);
   }, [getWorkbenchRealtimeClientForTargetHost]);
 
   const addTerminalManagerSnapshotListener = useCallback(
@@ -13158,6 +13156,8 @@ export function WorkbenchLayout({
     );
   }, []);
 
+  const currentTargetHostIdRef = useRef<string | null>(null);
+
   const commitNavigationArchiveState = useCallback(
     async (sessionId: string, isArchived: boolean) => {
       pendingArchiveStateBySessionIdRef.current.set(sessionId, isArchived);
@@ -13166,7 +13166,7 @@ export function WorkbenchLayout({
       );
 
       try {
-        const session = await updateSessionArchiveState(sessionId, isArchived);
+        const session = await updateSessionArchiveState(sessionId, isArchived, { targetHostId: currentTargetHostIdRef.current });
         const nextArchivedState = isArchivedSession(session);
 
         if (nextArchivedState === isArchived) {
@@ -13219,6 +13219,95 @@ export function WorkbenchLayout({
   useEffect(() => {
     hasNavigationDataRef.current = navigationGroups.length > 0;
   }, [navigationGroups]);
+
+  useEffect(() => {
+    const peerBindings = collectSidebarWorkspaces(navigationGroups).flatMap((workspace) => {
+      const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+      const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+      const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+      const remoteWorkspaceId = assignment?.remoteWorkspaceId?.trim() || null;
+
+      if (!targetHostId || targetHostId === "current" || !remoteWorkspaceId) {
+        return [];
+      }
+
+      return [{
+        summaryKey: buildPeerWorkspaceSummaryStateKey(activeHostId, workspace.id, targetHostId),
+        localWorkspaceId: workspace.id,
+        remoteWorkspaceId,
+        targetHostId
+      }];
+    });
+
+    if (peerBindings.length === 0) {
+      setPeerWorkspaceNavigationByWorkspaceId({});
+      return;
+    }
+
+    const grouped = new Map<string, Array<{ summaryKey: string; localWorkspaceId: string; remoteWorkspaceId: string }>>();
+    peerBindings.forEach((item) => {
+      const bucket = grouped.get(item.targetHostId) ?? [];
+      bucket.push({
+        summaryKey: item.summaryKey,
+        localWorkspaceId: item.localWorkspaceId,
+        remoteWorkspaceId: item.remoteWorkspaceId
+      });
+      grouped.set(item.targetHostId, bucket);
+    });
+
+    let disposed = false;
+
+    const load = async () => {
+      const nextNavigationState: Record<string, PeerWorkspaceNavigationView> = {};
+
+      await Promise.allSettled(
+        [...grouped.entries()].map(async ([targetHostId, items]) => {
+          const snapshotResponse = await getScopedWorkbenchSnapshot(targetHostId, {
+            awaitDiscovery: false
+          });
+          const itemByRemoteWorkspaceId = new Map(items.map((item) => [item.remoteWorkspaceId, item] as const));
+
+          snapshotResponse.items.forEach((item) => {
+            const binding = itemByRemoteWorkspaceId.get(item.workspace.id);
+
+            if (!binding) {
+              return;
+            }
+
+            nextNavigationState[binding.summaryKey] = {
+              localWorkspaceId: binding.localWorkspaceId,
+              activeHostId,
+              remoteWorkspaceId: item.workspace.id,
+              targetHostId,
+              sessions: item.sessions
+            };
+          });
+        })
+      );
+
+      if (disposed) {
+        return;
+      }
+
+      setPeerWorkspaceNavigationByWorkspaceId(nextNavigationState);
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 30_000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    activeHostId,
+    navigationGroups,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    workspaceHostAssignments
+  ]);
 
   useEffect(() => {
     logPerfDebug("workbench.navigation_state", {
@@ -13369,6 +13458,8 @@ export function WorkbenchLayout({
       client.close();
       peerWorkbenchRealtimeClientByHostRef.current.forEach((peerClient) => peerClient.close());
       peerWorkbenchRealtimeClientByHostRef.current.clear();
+      activeWorkbenchRealtimeScopeKeyRef.current = null;
+      activeWorkbenchRealtimeTargetHostIdRef.current = null;
     };
   }, [
     dispatchFileTreeSnapshot,
@@ -13420,24 +13511,44 @@ export function WorkbenchLayout({
   const routeSessionMatch = resolveRouteSessionMatch(location.pathname);
   const currentSessionId = routeSessionMatch?.sessionId ?? null;
   const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
-  const effectiveNavigationGroups = useMemo(
+  const scopedNavigationGroups = useMemo(
     () =>
-      Object.entries(remoteWorkspaceSnapshotByLocalWorkspaceId).reduce<WorkspaceSessionGroup[]>(
-        (groups, [localWorkspaceId, remoteItem]) =>
-          remoteItem
-            ? replaceWorkspaceSessionsWithRemoteSnapshot(groups, localWorkspaceId, remoteItem)
-            : groups,
-        navigationGroups
-      ),
-    [navigationGroups, remoteWorkspaceSnapshotByLocalWorkspaceId]
+      navigationGroups.map((group) => {
+        const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, group.workspace);
+        const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+        const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+        const peerNavigation =
+          targetHostId && targetHostId !== "current"
+            ? peerWorkspaceNavigationByWorkspaceId[
+              buildPeerWorkspaceSummaryStateKey(activeHostId, group.workspace.id, targetHostId)
+            ] ?? null
+            : null;
+
+        return {
+          ...group,
+          sessions: peerNavigation?.sessions ?? group.sessions
+        };
+      }),
+    [
+      activeHostId,
+      navigationGroups,
+      peerWorkspaceNavigationByWorkspaceId,
+      resolveRemoteSelectedHostId,
+      resolveSelectableHostId,
+      workspaceHostAssignments
+    ]
   );
-  const flattenedSessions = useMemo(
-    () => flattenNavigationSessions(effectiveNavigationGroups),
-    [effectiveNavigationGroups]
+  const flattenedCanonicalSessions = useMemo(
+    () => flattenNavigationSessions(scopedNavigationGroups),
+    [scopedNavigationGroups]
+  );
+  const flattenedVisibleSessions = useMemo(
+    () => flattenNavigationSessions(scopedNavigationGroups),
+    [scopedNavigationGroups]
   );
   const fullNavigationTree = useMemo(
-    () => buildNavigationSessionTreeFromEntries(flattenedSessions, sessionDisplaySortMode),
-    [flattenedSessions, sessionDisplaySortMode]
+    () => buildNavigationSessionTreeFromEntries(flattenedCanonicalSessions, sessionDisplaySortMode),
+    [flattenedCanonicalSessions, sessionDisplaySortMode]
   );
   const knownWorkspaceIds = useMemo(
     () => collectKnownWorkspaceIds(navigationGroups),
@@ -13446,10 +13557,10 @@ export function WorkbenchLayout({
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
   const favoriteSessionIds = useMemo(
     () =>
-      flattenedSessions
+      flattenedCanonicalSessions
         .filter((item) => item.session.isFavorite === true)
         .map((item) => item.session.sessionId),
-    [flattenedSessions]
+    [flattenedCanonicalSessions]
   );
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const workspaceIdSignature = useMemo(
@@ -13468,11 +13579,14 @@ export function WorkbenchLayout({
       return;
     }
 
+    const abortController = new AbortController();
     let cancelled = false;
 
     void Promise.allSettled(
       workspaceIds.map(async (workspaceId) => {
-        const response = await listAffairsLightweightSessions(workspaceId);
+        const response = await listAffairsLightweightSessions(workspaceId, {
+          signal: abortController.signal
+        });
         return {
           workspaceId,
           sessions: response.items.filter((session) => !session.isArchived),
@@ -13518,119 +13632,9 @@ export function WorkbenchLayout({
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [workspaceIdSignature]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const targets = navigationGroups
-      .map((group) => {
-        const assignment = resolveWorkspaceHostAssignment(
-          workspaceHostAssignments,
-          activeHostId,
-          group.workspace
-        );
-        const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
-        const remoteWorkspaceId = assignment?.remoteWorkspaceId?.trim() || null;
-        const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
-
-        if (!selectedHostId || selectedHostId === "current" || !remoteWorkspaceId || !targetHostId) {
-          return null;
-        }
-
-        return {
-          localWorkspaceId: group.workspace.id,
-          remoteWorkspaceId,
-          targetHostId
-        };
-      })
-      .filter((item): item is { localWorkspaceId: string; remoteWorkspaceId: string; targetHostId: string } => item !== null);
-
-    const targetLocalWorkspaceIds = new Set(targets.map((target) => target.localWorkspaceId));
-    setRemoteWorkspaceSnapshotByLocalWorkspaceId((current) => {
-      const next: Record<string, RemoteWorkspaceNavigationSnapshot | null> = {};
-
-      for (const target of targets) {
-        const currentSnapshot = current[target.localWorkspaceId] ?? null;
-        next[target.localWorkspaceId] =
-          currentSnapshot?.targetHostId === target.targetHostId
-            ? currentSnapshot
-            : null;
-      }
-
-      const currentKeys = Object.keys(current).sort();
-      const nextKeys = Object.keys(next).sort();
-
-      if (
-        currentKeys.length === nextKeys.length
-        && nextKeys.every((key) => current[key] === next[key])
-      ) {
-        return current;
-      }
-
-      return next;
-    });
-
-    if (targets.length === 0) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void Promise.all(
-      targets.map(async (target) => {
-        const snapshot = await getScopedWorkbenchSnapshot(target.targetHostId, {
-          refresh: true,
-          awaitDiscovery: false
-        });
-        const remoteItem = snapshot.items.find((item) => item.workspace.id === target.remoteWorkspaceId) ?? null;
-
-        return {
-          localWorkspaceId: target.localWorkspaceId,
-          targetHostId: target.targetHostId,
-          remoteItem
-        };
-      })
-    ).then((results) => {
-      if (cancelled) {
-        return;
-      }
-
-      setRemoteWorkspaceSnapshotByLocalWorkspaceId((current) => {
-        const next: Record<string, RemoteWorkspaceNavigationSnapshot | null> = {};
-
-        for (const localWorkspaceId of targetLocalWorkspaceIds) {
-          next[localWorkspaceId] = current[localWorkspaceId] ?? null;
-        }
-
-        for (const result of results) {
-          next[result.localWorkspaceId] = result.remoteItem
-            ? {
-              item: result.remoteItem,
-              targetHostId: result.targetHostId
-            }
-            : null;
-        }
-
-        return next;
-      });
-    }).catch(() => {
-      if (cancelled) {
-        return;
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeHostId,
-    navigationGroups,
-    resolveRemoteSelectedHostId,
-    resolveSelectableHostId,
-    workspaceHostAssignments
-  ]);
 
   const applyNavigationGroupsSnapshot = useCallback((groups: WorkspaceSessionGroup[]) => {
     const nextSnapshot = createWorkbenchSnapshotFromGroups(groups, collapsedWorkspaceIds);
@@ -13741,7 +13745,7 @@ export function WorkbenchLayout({
       }
     >();
 
-    flattenedSessions.forEach(({ session }) => {
+    flattenedCanonicalSessions.forEach(({ session }) => {
       nextState.set(session.sessionId, {
         activityState: session.activityState,
         completedAt: session.completedAt ?? null,
@@ -13755,7 +13759,7 @@ export function WorkbenchLayout({
       return;
     }
 
-    flattenedSessions.forEach(({ session }) => {
+    flattenedCanonicalSessions.forEach(({ session }) => {
       if (session.sessionId === currentSessionId) {
         return;
       }
@@ -13824,14 +13828,14 @@ export function WorkbenchLayout({
     previousSessionCompletionStateRef.current = nextState;
   }, [
     currentSessionId,
-    flattenedSessions,
+    flattenedCanonicalSessions,
     notifyOnSessionCompleted,
     notifyOnSessionFailed,
     openSessionFromToast
   ]);
 
   useEffect(() => {
-    permissionWatchSessionsRef.current = flattenedSessions
+    permissionWatchSessionsRef.current = flattenedCanonicalSessions
       .map((item) => item.session)
       .filter((session) => session.sessionId !== currentSessionId && isPermissionWatchSession(session))
       .map((session) => ({
@@ -13839,7 +13843,7 @@ export function WorkbenchLayout({
         workspaceId: session.workspaceId,
         title: session.title?.trim() || t("common.unknown")
       }));
-  }, [currentSessionId, flattenedSessions]);
+  }, [currentSessionId, flattenedCanonicalSessions]);
 
   useEffect(() => {
     let disposed = false;
@@ -13912,10 +13916,13 @@ export function WorkbenchLayout({
               title: result.session.title,
               requestTitle: request.title
             });
+            const toastTitle = request.kind === "user_input"
+              ? t("conversation.permissionQuestionToastTitle")
+              : t("conversation.permissionRequestToastTitle");
 
             showToastRef.current({
               id: `workbench-permission-request-${request.id}`,
-              title: t("conversation.permissionRequestToastTitle"),
+              title: toastTitle,
               description,
               tone: "warning",
               durationMs: 8_000,
@@ -13925,7 +13932,7 @@ export function WorkbenchLayout({
               }
             });
             void platformBridgeRef.current.showNotification(
-              t("conversation.permissionRequestToastTitle"),
+              toastTitle,
               description
             );
           });
@@ -14004,17 +14011,213 @@ export function WorkbenchLayout({
     });
   }, [knownWorkspaceIds, navigationLoading, routeScopedWorkspaceRef, selectedWorkspaceRef]);
 
-  const currentSessionContext =
-    flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
+  const findSessionEntryByScopeFromEntries = useCallback((
+    entries: WorkbenchNavigationEntry[],
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ): WorkbenchNavigationEntry | null => {
+    const normalizedSessionId = sessionId?.trim() || "";
+
+    if (!normalizedSessionId) {
+      return null;
+    }
+
+    const normalizedDisplayWorkspaceId = options?.displayWorkspaceId?.trim() || null;
+    const normalizedTargetHostId = normalizeTargetHostId(options?.targetHostId);
+    const candidates = entries.filter((item) => item.session.sessionId === normalizedSessionId);
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    if (normalizedDisplayWorkspaceId) {
+      const workspaceMatched = candidates.filter((item) => item.workspace.id === normalizedDisplayWorkspaceId);
+
+      if (workspaceMatched.length === 1) {
+        return workspaceMatched[0] ?? null;
+      }
+
+      if (workspaceMatched.length > 1 && normalizedTargetHostId !== null) {
+        const hostMatched = workspaceMatched.find((item) =>
+          isSameTargetHostId(
+            normalizeScopeTargetHostId(resolveWorkspaceRefForTargetHost(item.workspace, normalizedTargetHostId)),
+            normalizedTargetHostId
+          )
+        );
+
+        if (hostMatched) {
+          return hostMatched;
+        }
+      }
+    }
+
+    if (normalizedTargetHostId !== null) {
+      const hostMatched = candidates.find((item) =>
+        isSameTargetHostId(
+          normalizeScopeTargetHostId(resolveWorkspaceRefForTargetHost(item.workspace, normalizedTargetHostId)),
+          normalizedTargetHostId
+        )
+      );
+
+      if (hostMatched) {
+        return hostMatched;
+      }
+    }
+
+    return candidates[0] ?? null;
+  }, [resolveWorkspaceRefForTargetHost]);
+  const findCanonicalSessionEntryByScope = useCallback((
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ): WorkbenchNavigationEntry | null => {
+    const matchedEntry = findSessionEntryByScopeFromEntries(flattenedCanonicalSessions, sessionId, options);
+
+    if (!matchedEntry) {
+      logPerfDebug("resource_scope.find_session_entry.miss", {
+        sessionId: sessionId?.trim() || "",
+        displayWorkspaceId: options?.displayWorkspaceId?.trim() || null,
+        targetHostId: normalizeTargetHostId(options?.targetHostId)
+      });
+      return null;
+    }
+
+    return matchedEntry;
+  }, [findSessionEntryByScopeFromEntries, flattenedCanonicalSessions]);
+  const findVisibleSessionEntryByScope = useCallback((
+    sessionId: string | null | undefined,
+    options?: {
+      displayWorkspaceId?: string | null;
+      targetHostId?: string | null;
+    }
+  ): WorkbenchNavigationEntry | null => {
+    const matchedEntry = findSessionEntryByScopeFromEntries(flattenedVisibleSessions, sessionId, options);
+
+    logPerfDebug("resource_scope.find_visible_session_entry", {
+      sessionId: sessionId?.trim() || "",
+      displayWorkspaceId: options?.displayWorkspaceId?.trim() || null,
+      targetHostId: normalizeTargetHostId(options?.targetHostId),
+      matched: matchedEntry !== null,
+      matchedWorkspaceId: matchedEntry?.workspace.id ?? null,
+      matchedSessionWorkspaceId: matchedEntry?.session.workspaceId ?? null,
+      matchedSessionId: matchedEntry?.session.sessionId ?? null
+    });
+
+    return matchedEntry;
+  }, [
+    findSessionEntryByScopeFromEntries,
+    flattenedVisibleSessions
+  ]);
+
+  const resolveSessionEntryWorkspaceRef = useCallback((entry: WorkbenchNavigationEntry | null): WorkspaceRef | null => {
+    if (!entry) {
+      return null;
+    }
+
+    if (entry.workspace.id === routeWorkspaceId && entry.session.sessionId === currentSessionId) {
+      const routeTargetHostId = normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId;
+
+      if (routeTargetHostId) {
+        const routeRef = resolveWorkspaceRefForTargetHost(entry.workspace, routeTargetHostId);
+        logPerfDebug("resource_scope.resolve_session_entry_workspace_ref", {
+          sessionId: entry.session.sessionId,
+          entryWorkspaceId: entry.workspace.id,
+          routeWorkspaceId,
+          routeTargetHostId,
+          resolvedHostId: routeRef?.hostId ?? null,
+          resolvedWorkspaceId: routeRef?.workspaceId ?? null,
+          source: "route"
+        });
+        return routeRef;
+      }
+
+      return makeWorkspaceRef(entry.workspace.id, "current");
+    }
+
+    const entryAssignment = resolveWorkspaceHostAssignment(
+      workspaceHostAssignments,
+      activeHostId,
+      entry.workspace
+    );
+    const entrySelectedHostId = resolveSelectableHostId(entryAssignment?.selectedHostId);
+    const assignedTargetHostId = entrySelectedHostId ? resolveRemoteSelectedHostId(entrySelectedHostId) : null;
+    const peerNavigation =
+      assignedTargetHostId && assignedTargetHostId !== "current"
+        ? peerWorkspaceNavigationByWorkspaceId[
+          buildPeerWorkspaceSummaryStateKey(activeHostId, entry.workspace.id, assignedTargetHostId)
+        ] ?? null
+        : null;
+    const sessionBelongsToPeerNavigation = Boolean(
+      peerNavigation?.sessions.some((session) => session.sessionId === entry.session.sessionId)
+    );
+    const scopedWorkspaceRef =
+      sessionBelongsToPeerNavigation && assignedTargetHostId
+        ? resolveWorkspaceRefForTargetHost(entry.workspace, assignedTargetHostId)
+        : makeWorkspaceRef(entry.workspace.id, "current");
+    logPerfDebug("resource_scope.resolve_session_entry_workspace_ref", {
+      sessionId: entry.session.sessionId,
+      entryWorkspaceId: entry.workspace.id,
+      routeWorkspaceId,
+      activeTargetHostId: activeTargetHostId ?? null,
+      selectedHostId: entrySelectedHostId ?? null,
+      assignedTargetHostId: assignedTargetHostId ?? null,
+      peerNavigationSessionCount: peerNavigation?.sessions.length ?? 0,
+      sessionBelongsToPeerNavigation,
+      resolvedHostId: scopedWorkspaceRef?.hostId ?? null,
+      resolvedWorkspaceId: scopedWorkspaceRef?.workspaceId ?? null,
+      source: sessionBelongsToPeerNavigation ? "peer_navigation" : "current"
+    });
+    return scopedWorkspaceRef ?? makeWorkspaceRef(entry.workspace.id, "current");
+  }, [
+    activeTargetHostId,
+    activeHostId,
+    peerWorkspaceNavigationByWorkspaceId,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    resolveWorkspaceRefForTargetHost,
+    currentSessionId,
+    routeScopedWorkspaceRef,
+    routeWorkspaceId,
+    workspaceHostAssignments
+  ]);
+
+  const buildSessionEntryPath = useCallback((entry: WorkbenchNavigationEntry | null): string | null => {
+    if (!entry) {
+      return null;
+    }
+
+    const workspaceRef = resolveSessionEntryWorkspaceRef(entry);
+    const path = buildWorkspaceSessionPath(
+      entry.workspace.id,
+      entry.session.sessionId,
+      workspaceRef
+    );
+    logPerfDebug("resource_scope.build_session_entry_path", {
+      sessionId: entry.session.sessionId,
+      entryWorkspaceId: entry.workspace.id,
+      path,
+      hostId: workspaceRef?.hostId ?? null,
+      requestWorkspaceId: workspaceRef?.workspaceId ?? null
+    });
+    return path;
+  }, [resolveSessionEntryWorkspaceRef]);
+
+  const currentSessionContext = findCanonicalSessionEntryByScope(currentSessionId, {
+    displayWorkspaceId: routeWorkspaceId,
+    targetHostId: normalizeScopeTargetHostId(routeScopedWorkspaceRef) ?? activeTargetHostId
+  });
   const sessionWorkspaceId =
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
-  const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
-  const routeWorkspaceRef = routeScopedWorkspaceRef;
   const validatedRouteWorkspaceId =
     routeWorkspaceId && (
       knownWorkspaceIds.has(routeWorkspaceId)
-      || (routeWorkspaceRef?.hostId && routeWorkspaceRef.hostId !== "current")
+      || (routeScopedWorkspaceRef?.hostId && routeScopedWorkspaceRef.hostId !== "current")
     )
       ? routeWorkspaceId
       : null;
@@ -14033,16 +14236,37 @@ export function WorkbenchLayout({
     validatedRouteWorkspaceId ?? sessionWorkspaceId ?? validatedSelectedWorkspaceId ?? null;
   const currentWorkspaceId =
     explicitWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const currentWorkspace = useMemo(
+    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null,
+    [currentWorkspaceId, navigationGroups]
+  );
+  const currentWorkspaceAssignedTargetHostId = useMemo(() => {
+    if (!currentWorkspace) {
+      return null;
+    }
+
+    const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, currentWorkspace);
+    const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+    return selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+  }, [
+    activeHostId,
+    currentWorkspace,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    workspaceHostAssignments
+  ]);
   const currentWorkspaceRef = useMemo<WorkspaceRef | null>(() => {
     if (!currentWorkspaceId) {
       return null;
     }
 
-    if (routeWorkspaceRef?.hostId && routeWorkspaceRef.hostId !== "current") {
-      const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
+    if (routeHasExplicitWorkspaceScope && routeScopedWorkspaceRef?.workspaceId === currentWorkspaceId) {
+      if (routeScopedWorkspaceRef.hostId === "current") {
+        return routeScopedWorkspaceRef;
+      }
 
       if (currentWorkspace) {
-        return resolveWorkspaceRefForTargetHost(currentWorkspace, routeWorkspaceRef.hostId);
+        return resolveWorkspaceRefForTargetHost(currentWorkspace, routeScopedWorkspaceRef.hostId);
       }
 
       return null;
@@ -14055,12 +14279,11 @@ export function WorkbenchLayout({
         || (
           selectedWorkspaceId === currentWorkspaceId
           && selectedWorkspaceRef.hostId !== "current"
+          && !routeHasExplicitWorkspaceScope
         )
       )
     ) {
       if (selectedWorkspaceRef.hostId !== "current") {
-        const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
-
         if (currentWorkspace) {
           return resolveWorkspaceRefForTargetHost(currentWorkspace, selectedWorkspaceRef.hostId);
         }
@@ -14068,46 +14291,133 @@ export function WorkbenchLayout({
         return null;
       }
 
+      if (currentWorkspaceAssignedTargetHostId) {
+        // 普通工作区路由里读出来的 current 引用可能已经过期。
+        // 只要当前工作区已经绑定到 Peer HOST，就不能让这条本地选择把作用域压回主 HOST。
+        if (currentWorkspace) {
+          const assignedWorkspaceRef = resolveWorkspaceRefForTargetHost(currentWorkspace, currentWorkspaceAssignedTargetHostId);
+
+          if (assignedWorkspaceRef) {
+            return assignedWorkspaceRef;
+          }
+        }
+      }
+
       return selectedWorkspaceRef;
     }
 
-    if (routeWorkspaceRef?.workspaceId === currentWorkspaceId) {
-      if (routeWorkspaceRef.hostId !== "current") {
-        return null;
-      }
-
-      return routeWorkspaceRef;
-    }
-
     if (activeTargetHostId) {
-      const currentWorkspace = navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
       return currentWorkspace
         ? resolveWorkspaceRefForTargetHost(currentWorkspace, activeTargetHostId)
         : null;
     }
 
+    if (currentWorkspace && currentWorkspaceAssignedTargetHostId) {
+      const assignedWorkspaceRef = resolveWorkspaceRefForTargetHost(currentWorkspace, currentWorkspaceAssignedTargetHostId);
+
+      if (assignedWorkspaceRef) {
+        return assignedWorkspaceRef;
+      }
+    }
+
     return makeWorkspaceRef(currentWorkspaceId, "current");
   }, [
     activeTargetHostId,
+    activeHostId,
+    currentWorkspace,
+    currentWorkspaceAssignedTargetHostId,
     currentWorkspaceId,
-    navigationGroups,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
     resolveWorkspaceRefForTargetHost,
-    routeWorkspaceRef,
+    routeHasExplicitWorkspaceScope,
+    routeScopedWorkspaceRef,
     selectedWorkspaceId,
-    selectedWorkspaceRef
+    selectedWorkspaceRef,
+    workspaceHostAssignments
   ]);
   const currentTargetHostId =
     currentWorkspaceRef && currentWorkspaceRef.hostId !== "current"
       ? currentWorkspaceRef.hostId
       : activeTargetHostId;
-  const currentWorkspace = useMemo(
-    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null,
-    [currentWorkspaceId, navigationGroups]
-  );
+  currentTargetHostIdRef.current = currentTargetHostId;
   const currentWorkspaceName = useMemo(
     () => currentWorkspace?.name ?? null,
     [currentWorkspace]
   );
+  const currentToolWorkspaceId =
+    currentSessionContext
+      ? resolveSessionToolWorkspaceId(
+        currentSessionContext.session,
+        currentSessionContext.session.sessionIsolatedWorkspace
+      )
+      : currentWorkspaceId;
+  const currentAuxiliaryWorkspaceId = currentToolWorkspaceId ?? currentWorkspaceId;
+  const currentRequestWorkspaceId =
+    currentTargetHostId
+      ? currentSessionContext
+        ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
+        : currentWorkspaceRef?.workspaceId ?? null
+      : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
+  const currentWorkbenchRealtimeScopeKey = useMemo(
+    () => buildWorkbenchRealtimeScopeKey(currentRequestWorkspaceId, currentTargetHostId),
+    [currentRequestWorkspaceId, currentTargetHostId]
+  );
+  const currentTerminalSnapshotCacheKey = useMemo(
+    () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
+    [currentRequestWorkspaceId, currentTargetHostId]
+  );
+  const refreshTerminalManagerSnapshot = useCallback((
+    workspaceId: string | null | undefined,
+    targetHostId?: string | null
+  ) => {
+    const normalizedWorkspaceId = workspaceId?.trim() || null;
+
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    const normalizedTargetHostId = normalizeTargetHostId(targetHostId);
+    const cacheKey = buildTerminalManagerSnapshotKey(normalizedWorkspaceId, normalizedTargetHostId);
+    const cachedSnapshot = readViewSnapshot<{ revision?: string | null }>(cacheKey, 60 * 1000);
+    const knownRevision = typeof cachedSnapshot?.revision === "string" ? cachedSnapshot.revision : null;
+
+    subscribeTerminalManagerSnapshot(normalizedWorkspaceId, {
+      knownRevision,
+      skipKnownRevision: true,
+      targetHostId: normalizedTargetHostId
+    });
+    requestTerminalManagerRefresh(normalizedWorkspaceId, {
+      knownRevision,
+      skipKnownRevision: true,
+      targetHostId: normalizedTargetHostId
+    });
+  }, [
+    requestTerminalManagerRefresh,
+    subscribeTerminalManagerSnapshot
+  ]);
+  useEffect(() => {
+    const previousScopeKey = activeWorkbenchRealtimeScopeKeyRef.current;
+    const previousTargetHostId = activeWorkbenchRealtimeTargetHostIdRef.current;
+    const nextTargetHostId = normalizeTargetHostId(currentTargetHostId);
+
+    if (previousScopeKey === currentWorkbenchRealtimeScopeKey) {
+      return;
+    }
+
+    if (previousScopeKey) {
+      clearWorkbenchRealtimeBindings(previousScopeKey);
+    }
+
+    if (previousTargetHostId && previousTargetHostId !== nextTargetHostId) {
+      const previousPeerClient = peerWorkbenchRealtimeClientByHostRef.current.get(previousTargetHostId);
+      previousPeerClient?.close();
+      peerWorkbenchRealtimeClientByHostRef.current.delete(previousTargetHostId);
+    }
+
+    activeWorkbenchRealtimeScopeKeyRef.current = currentWorkbenchRealtimeScopeKey;
+    activeWorkbenchRealtimeTargetHostIdRef.current = nextTargetHostId;
+  }, [clearWorkbenchRealtimeBindings, currentTargetHostId, currentWorkbenchRealtimeScopeKey]);
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
   const routeCodeEmbeddedAffairsSection = resolveCodeEmbeddedAffairsSectionFromPath(location.pathname);
@@ -14117,9 +14427,12 @@ export function WorkbenchLayout({
       return;
     }
 
+    const abortController = new AbortController();
     let cancelled = false;
 
-    void listAffairsLightweightSessions(currentWorkspaceId)
+    void listAffairsLightweightSessions(currentWorkspaceId, {
+      signal: abortController.signal
+    })
       .then((response) => {
         if (cancelled) {
           return;
@@ -14133,6 +14446,7 @@ export function WorkbenchLayout({
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
   }, [currentWorkspaceId, location.pathname]);
 
@@ -14284,16 +14598,41 @@ export function WorkbenchLayout({
     const nextWorkspaceId = workspaceId?.trim() || currentWorkspaceId;
     const nextWorkspaceRef = workspaceRef === undefined
       ? nextWorkspaceId
-        ? ({
-            hostId: "current",
-            workspaceId: nextWorkspaceId
-          } satisfies WorkspaceRef)
+        ? workspaceId === undefined && currentWorkspaceRef
+          ? currentWorkspaceRef
+          : currentWorkspaceRef?.workspaceId === nextWorkspaceId
+          ? currentWorkspaceRef
+          : ({
+              hostId: "current",
+              workspaceId: nextWorkspaceId
+            } satisfies WorkspaceRef)
         : null
       : workspaceRef;
 
     if (!nextWorkspaceId || !nextWorkspaceRef) {
       return;
     }
+
+    const nextTargetHostId = nextWorkspaceRef.hostId !== "current" ? nextWorkspaceRef.hostId : activeTargetHostId;
+    const nextRequestWorkspaceId =
+      nextTargetHostId && nextWorkspaceRef.hostId === nextTargetHostId
+        ? nextWorkspaceRef.workspaceId?.trim() || nextWorkspaceId
+        : nextWorkspaceId;
+
+    logPerfDebug("resource_scope.open_terminal_dock", {
+      pathname: location.pathname,
+      currentWorkspaceId: currentWorkspaceId ?? null,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      requestedWorkspaceId: workspaceId ?? null,
+      resolvedWorkspaceId: nextWorkspaceId,
+      resolvedWorkspaceRefHostId: nextWorkspaceRef.hostId,
+      resolvedWorkspaceRefWorkspaceId: nextWorkspaceRef.workspaceId,
+      nextTargetHostId: nextTargetHostId ?? null,
+      nextRequestWorkspaceId
+    });
+
+    refreshTerminalManagerSnapshot(nextRequestWorkspaceId, nextTargetHostId);
 
     setSelectedWorkspaceId(nextWorkspaceId);
     setSelectedWorkspaceRef(nextWorkspaceRef);
@@ -14322,7 +14661,17 @@ export function WorkbenchLayout({
       writeCodeTerminalDockState(nextState);
       return nextState;
     });
-  }, [currentWorkspaceId, goToConversationTab, isMobileShell, location.pathname, navigate, workbenchHomePath]);
+  }, [
+    activeTargetHostId,
+    currentWorkspaceId,
+    currentWorkspaceRef,
+    goToConversationTab,
+    isMobileShell,
+    location.pathname,
+    navigate,
+    refreshTerminalManagerSnapshot,
+    workbenchHomePath
+  ]);
   const closeCodeTerminalDock = useCallback(() => {
     updateCodeTerminalDockState((current) => ({
       ...current,
@@ -14364,7 +14713,7 @@ export function WorkbenchLayout({
             badge: currentWorkspaceTerminalCount > 99 ? "99+" : String(currentWorkspaceTerminalCount),
             badgeLabel: `${t("terminalManager.terminalCountLabel")}: ${currentWorkspaceTerminalCount}`,
             actionLabel: t("shell.codeShortcutTerminalAction"),
-            onClick: openCodeTerminalDock
+            onClick: () => openCodeTerminalDock()
           },
           {
             id: "skills",
@@ -14403,6 +14752,7 @@ export function WorkbenchLayout({
         state={codeShortcutAffairsState}
         onStateChange={(nextState) => setCodeShortcutAffairsState(nextState)}
         onRefreshNavigation={refreshNavigation}
+        targetHostId={currentTargetHostId}
       >
         <AffairsShortcutAppsRail
           systemItems={codeShortcutSystemItems}
@@ -14514,6 +14864,7 @@ export function WorkbenchLayout({
         onStateChange={setCodeEmbeddedAffairsState}
         onRefreshNavigation={refreshNavigation}
         forceRoute={false}
+        targetHostId={currentTargetHostId}
       >
         <AffairsWorkbenchView workspaceId={currentWorkspaceId} />
       </AffairsWorkbenchProvider>
@@ -14530,15 +14881,15 @@ export function WorkbenchLayout({
   const findFallbackSessionEntry = useCallback((preferredWorkspaceId?: string | null): WorkbenchNavigationEntry | null => {
     if (preferredWorkspaceId) {
       const preferredEntry =
-        flattenedSessions.find((item) => item.workspace.id === preferredWorkspaceId) ?? null;
+        flattenedCanonicalSessions.find((item) => item.workspace.id === preferredWorkspaceId) ?? null;
 
       if (preferredEntry) {
         return preferredEntry;
       }
     }
 
-    return flattenedSessions[0] ?? null;
-  }, [flattenedSessions]);
+    return flattenedCanonicalSessions[0] ?? null;
+  }, [flattenedCanonicalSessions]);
   const resolveStoredConversationPath = useCallback((preferredWorkspaceId?: string | null): string | null => {
     const storedSessionPath =
       typeof window === "undefined" ? null : window.localStorage.getItem(LAST_SESSION_PATH_KEY);
@@ -14556,8 +14907,12 @@ export function WorkbenchLayout({
     }
 
     const storedSessionId = storedSessionMatch.sessionId;
-    const storedSessionEntry =
-      flattenedSessions.find((item) => item.session.sessionId === storedSessionId) ?? null;
+    const storedSearch = storedSessionPath.includes("?") ? `?${storedSessionPath.split("?")[1] ?? ""}` : "";
+    const storedTargetHostId = new URLSearchParams(storedSearch).get("targetHostId")?.trim() || null;
+    const storedSessionEntry = findCanonicalSessionEntryByScope(storedSessionId, {
+      displayWorkspaceId: storedSessionMatch.workspaceId,
+      targetHostId: storedTargetHostId
+    });
     const storedSessionWorkspaceId =
       storedSessionMatch.workspaceId ?? storedSessionEntry?.workspace.id ?? null;
 
@@ -14565,16 +14920,28 @@ export function WorkbenchLayout({
       storedSessionEntry &&
       (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
     ) {
-      return buildWorkspaceSessionPath(
-        storedSessionEntry.workspace.id,
-        storedSessionEntry.session.sessionId,
-        currentWorkspaceRef
-      );
+      const resolvedPath = buildSessionEntryPath(storedSessionEntry);
+      logPerfDebug("resource_scope.resolve_stored_conversation_path.hit", {
+        preferredWorkspaceId: preferredWorkspaceId ?? null,
+        storedSessionId,
+        storedRouteWorkspaceId: storedSessionMatch.workspaceId ?? null,
+        storedTargetHostId,
+        resolvedWorkspaceId: storedSessionEntry.workspace.id,
+        resolvedPath
+      });
+      return resolvedPath;
     }
 
+    logPerfDebug("resource_scope.resolve_stored_conversation_path.clear", {
+      preferredWorkspaceId: preferredWorkspaceId ?? null,
+      storedSessionId,
+      storedRouteWorkspaceId: storedSessionMatch.workspaceId ?? null,
+      storedTargetHostId,
+      foundEntry: storedSessionEntry !== null
+    });
     window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
     return null;
-  }, [currentWorkspaceRef, flattenedSessions]);
+  }, [buildSessionEntryPath, findCanonicalSessionEntryByScope]);
   const activeNotifications = useMemo(
     () => globalNotifications.filter((item) => !archivedNotificationIds.has(item.id)),
     [archivedNotificationIds, globalNotifications]
@@ -14688,11 +15055,7 @@ export function WorkbenchLayout({
         ? resolveStoredConversationPath(fallbackSessionWorkspaceId)
         : null;
     const fallbackSessionPath = fallbackSessionEntry
-      ? buildWorkspaceSessionPath(
-          fallbackSessionEntry.workspace.id,
-          fallbackSessionEntry.session.sessionId,
-          currentWorkspaceRef
-        )
+      ? buildSessionEntryPath(fallbackSessionEntry)
       : null;
     const fallbackWorkspaceRef = currentWorkspaceRef;
 
@@ -14727,6 +15090,7 @@ export function WorkbenchLayout({
     navigate,
     navigationGroups,
     navigationLoading,
+    buildSessionEntryPath,
     resolveStoredConversationPath,
     routeWorkspaceId,
     sessionWorkspaceId,
@@ -14751,25 +15115,120 @@ export function WorkbenchLayout({
           ? "workspaceSelection"
           : "navigationFallback"
     });
+    logPerfDebug("resource_scope.current_scope", {
+      pathname: location.pathname,
+      search: location.search,
+      currentSessionId,
+      routeWorkspaceId,
+      sessionWorkspaceId,
+      selectedWorkspaceId,
+      currentWorkspaceId,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      currentTargetHostId: currentTargetHostId ?? null,
+      currentRequestWorkspaceId: currentRequestWorkspaceId ?? null,
+      routeScopedWorkspaceRefHostId: routeScopedWorkspaceRef?.hostId ?? null,
+      routeScopedWorkspaceRefWorkspaceId: routeScopedWorkspaceRef?.workspaceId ?? null,
+      selectedWorkspaceRefHostId: selectedWorkspaceRef?.hostId ?? null,
+      selectedWorkspaceRefWorkspaceId: selectedWorkspaceRef?.workspaceId ?? null
+    });
   }, [
+    currentRequestWorkspaceId,
     currentSessionContext,
     currentSessionId,
+    currentTargetHostId,
     currentWorkspaceId,
+    currentWorkspaceRef,
+    location.pathname,
+    location.search,
     routeWorkspaceId,
+    routeScopedWorkspaceRef,
     selectedWorkspaceId,
+    selectedWorkspaceRef,
     sessionWorkspaceId
   ]);
 
+  const resolvePeerNavigationForWorkspace = useCallback((workspace: WorkspaceDto): PeerWorkspaceNavigationView | null => {
+    const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+    const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+    const targetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+
+    if (!targetHostId || targetHostId === "current") {
+      return null;
+    }
+
+    return peerWorkspaceNavigationByWorkspaceId[
+      buildPeerWorkspaceSummaryStateKey(activeHostId, workspace.id, targetHostId)
+    ] ?? null;
+  }, [
+    activeHostId,
+    peerWorkspaceNavigationByWorkspaceId,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    workspaceHostAssignments
+  ]);
+  const resolveNavigationWorkspaceRef = useCallback((
+    workspaceId: string,
+    options?: {
+      preferredTargetHostId?: string | null;
+      fallbackToCurrent?: boolean;
+    }
+  ): WorkspaceRef | null => {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId) {
+      return null;
+    }
+
+    const workspace =
+      navigationGroups.find((group) => group.workspace.id === normalizedWorkspaceId)?.workspace
+      ?? null;
+    const preferredTargetHostId = normalizeTargetHostId(options?.preferredTargetHostId);
+    const fallbackToCurrent = options?.fallbackToCurrent !== false;
+
+    if (preferredTargetHostId && workspace) {
+      const preferredWorkspaceRef = resolveWorkspaceRefForTargetHost(workspace, preferredTargetHostId);
+
+      if (preferredWorkspaceRef) {
+        return preferredWorkspaceRef;
+      }
+    }
+
+    if (workspace) {
+      const assignment = resolveWorkspaceHostAssignment(workspaceHostAssignments, activeHostId, workspace);
+      const selectedHostId = resolveSelectableHostId(assignment?.selectedHostId);
+      const assignedTargetHostId = selectedHostId ? resolveRemoteSelectedHostId(selectedHostId) : null;
+
+      if (assignedTargetHostId && assignedTargetHostId !== "current") {
+        const assignedWorkspaceRef = resolveWorkspaceRefForTargetHost(workspace, assignedTargetHostId);
+
+        if (assignedWorkspaceRef) {
+          return assignedWorkspaceRef;
+        }
+      }
+    }
+
+    return fallbackToCurrent ? makeWorkspaceRef(normalizedWorkspaceId, "current") : null;
+  }, [
+    activeHostId,
+    navigationGroups,
+    resolveRemoteSelectedHostId,
+    resolveSelectableHostId,
+    resolveWorkspaceRefForTargetHost,
+    workspaceHostAssignments
+  ]);
   const workspaceSidebarGroups = useMemo(
     () =>
-      effectiveNavigationGroups.map((group) => {
-        const visibleSessions = filterVisibleWorkspaceSessions(group.sessions);
-        const projectedSessionIds = new Set(group.sessions.map((session) => session.sessionId));
+      navigationGroups.map((group) => {
+        const peerNavigation = resolvePeerNavigationForWorkspace(group.workspace);
+        const scopedSessions = peerNavigation?.sessions ?? group.sessions;
+        const visibleSessions = filterVisibleWorkspaceSessions(scopedSessions);
+        const projectedSessionIds = new Set(scopedSessions.map((session) => session.sessionId));
 
         return {
           workspace: group.workspace,
           visibleSessions,
-          archivedSessions: group.sessions.filter(
+          archivedSessions: scopedSessions.filter(
             (session) => isArchivedSession(session)
           ),
           visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
@@ -14781,38 +15240,28 @@ export function WorkbenchLayout({
             group.childWorktrees,
             favoriteSessionIdSet,
             sessionDisplaySortMode,
-            projectedSessionIds
+            projectedSessionIds,
+            resolvePeerNavigationForWorkspace
           ),
           isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
         };
       }),
-    [collapsedWorkspaceIdSet, effectiveNavigationGroups, favoriteSessionIdSet, sessionDisplaySortMode]
+    [
+      collapsedWorkspaceIdSet,
+      favoriteSessionIdSet,
+      navigationGroups,
+      peerWorkspaceNavigationByWorkspaceId,
+      resolvePeerNavigationForWorkspace,
+      sessionDisplaySortMode
+    ]
   );
   const workspaceVisualContextMap = useMemo(
-    () => buildWorkspaceVisualContextMap(effectiveNavigationGroups),
-    [effectiveNavigationGroups]
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
   );
   const currentWorktreeNode = useMemo(
-    () => findNavigationWorktreeNodeByWorkspaceId(effectiveNavigationGroups, currentWorkspaceId),
-    [currentWorkspaceId, effectiveNavigationGroups]
-  );
-  const currentToolWorkspaceId =
-    currentSessionContext
-      ? resolveSessionToolWorkspaceId(
-        currentSessionContext.session,
-        currentSessionContext.session.sessionIsolatedWorkspace
-      )
-      : currentWorkspaceId;
-  const currentAuxiliaryWorkspaceId = currentToolWorkspaceId ?? currentWorkspaceId;
-  const currentRequestWorkspaceId =
-    currentTargetHostId
-      ? currentSessionContext
-        ? currentToolWorkspaceId ?? currentWorkspaceRef?.workspaceId ?? null
-        : currentWorkspaceRef?.workspaceId ?? null
-      : currentWorkspaceRef?.workspaceId ?? currentAuxiliaryWorkspaceId;
-  const currentTerminalSnapshotCacheKey = useMemo(
-    () => currentRequestWorkspaceId ? buildTerminalManagerSnapshotKey(currentRequestWorkspaceId, currentTargetHostId) : null,
-    [currentRequestWorkspaceId, currentTargetHostId]
+    () => findNavigationWorktreeNodeByWorkspaceId(navigationGroups, currentWorkspaceId),
+    [currentWorkspaceId, navigationGroups]
   );
   useEffect(() => {
     if (!currentTerminalSnapshotCacheKey) {
@@ -14886,30 +15335,30 @@ export function WorkbenchLayout({
   ]);
 
   const currentAuxiliaryWorktreeNode = useMemo(
-    () => findNavigationWorktreeNodeByWorkspaceId(effectiveNavigationGroups, currentAuxiliaryWorkspaceId),
-    [currentAuxiliaryWorkspaceId, effectiveNavigationGroups]
+    () => findNavigationWorktreeNodeByWorkspaceId(navigationGroups, currentAuxiliaryWorkspaceId),
+    [currentAuxiliaryWorkspaceId, navigationGroups]
   );
   const currentWorkspaceEntity = useMemo(
     () =>
       currentWorkspaceId
         ? currentWorktreeNode?.workspace
-          ?? effectiveNavigationGroups
+          ?? navigationGroups
             .map((group) => group.workspace)
             .find((workspace) => workspace.id === currentWorkspaceId)
           ?? null
         : null,
-    [currentWorkspaceId, currentWorktreeNode, effectiveNavigationGroups]
+    [currentWorkspaceId, currentWorktreeNode, navigationGroups]
   );
   const currentAuxiliaryWorkspaceEntity = useMemo(
     () =>
       currentAuxiliaryWorkspaceId
         ? currentAuxiliaryWorktreeNode?.workspace
-          ?? effectiveNavigationGroups
+          ?? navigationGroups
             .map((group) => group.workspace)
             .find((workspace) => workspace.id === currentAuxiliaryWorkspaceId)
           ?? null
         : null,
-    [currentAuxiliaryWorkspaceId, currentAuxiliaryWorktreeNode, effectiveNavigationGroups]
+    [currentAuxiliaryWorkspaceId, currentAuxiliaryWorktreeNode, navigationGroups]
   );
   const currentWorktreeMeta: WorktreeMetaDto | null = currentAuxiliaryWorktreeNode?.meta ?? null;
   const currentWorkspaceContext =
@@ -14990,7 +15439,7 @@ export function WorkbenchLayout({
 
   const favoriteSessions = useMemo(
     () => {
-      const workspaceSessionFavorites = flattenedSessions
+      const workspaceSessionFavorites = flattenedCanonicalSessions
         .filter(
           (item) =>
             favoriteSessionIdSet.has(item.session.sessionId) &&
@@ -15003,7 +15452,7 @@ export function WorkbenchLayout({
         }));
       const seenLightweightFavoriteKeys = new Set<string>();
       const lightweightFavorites = Object.entries(lightweightChatSessionsByWorkspaceId).flatMap(([workspaceId, sessions]) => {
-        const workspace = effectiveNavigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
+        const workspace = navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
 
         if (!workspace) {
           return [];
@@ -15030,7 +15479,7 @@ export function WorkbenchLayout({
 
       return [...workspaceSessionFavorites, ...lightweightFavorites];
     },
-    [effectiveNavigationGroups, favoriteSessionIdSet, flattenedSessions, lightweightChatSessionsByWorkspaceId]
+    [favoriteSessionIdSet, flattenedCanonicalSessions, lightweightChatSessionsByWorkspaceId, navigationGroups]
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
@@ -15068,13 +15517,13 @@ export function WorkbenchLayout({
   const availableSearchWorkspaces = useMemo(
     () => mergeWorkspaceCatalogs(
       searchWorkspaceCatalog,
-      effectiveNavigationGroups.map((group) => group.workspace)
+      navigationGroups.map((group) => group.workspace)
     ),
-    [effectiveNavigationGroups, searchWorkspaceCatalog]
+    [navigationGroups, searchWorkspaceCatalog]
   );
   const currentWorkspaceGroup = useMemo(
-    () => effectiveNavigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ?? null,
-    [currentWorkspaceId, effectiveNavigationGroups]
+    () => navigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ?? null,
+    [currentWorkspaceId, navigationGroups]
   );
   const searchScope = searchRequest?.scope ?? null;
   const submittedSearchKeyword = searchRequest?.keyword ?? "";
@@ -15089,13 +15538,13 @@ export function WorkbenchLayout({
       return [] as NavigationSessionEntry[];
     }
 
-    return flattenedSessions.filter((item) => includesNormalizedSearch(
+    return flattenedCanonicalSessions.filter((item) => includesNormalizedSearch(
       normalizedKeyword,
       item.session.title,
       item.workspace.name,
       formatProviderLabel(item.session.provider, "full")
     ));
-  }, [flattenedSessions, searchScope, submittedSearchKeyword]);
+  }, [flattenedCanonicalSessions, searchScope, submittedSearchKeyword]);
   const displayedAffairsSearchResults = useMemo(
     () => sortAffairsSearchResults(affairsSearchResults, affairsSearchSortMode),
     [affairsSearchResults, affairsSearchSortMode]
@@ -15733,6 +16182,23 @@ export function WorkbenchLayout({
       hostId: "current",
       workspaceId
     } : workspaceRef;
+    const nextTargetHostId = normalizeScopeTargetHostId(effectiveWorkspaceRef);
+    const routeTargetHostId = normalizeScopeTargetHostId(routeScopedWorkspaceRef);
+
+    logPerfDebug("resource_scope.select_workspace", {
+      pathname: location.pathname,
+      currentSessionId: currentSessionId ?? null,
+      sessionWorkspaceId: sessionWorkspaceId ?? null,
+      currentWorkspaceId: currentWorkspaceId ?? null,
+      currentWorkspaceRefHostId: currentWorkspaceRef?.hostId ?? null,
+      currentWorkspaceRefWorkspaceId: currentWorkspaceRef?.workspaceId ?? null,
+      currentTargetHostId: currentTargetHostId ?? null,
+      selectedWorkspaceId: workspaceId,
+      selectedWorkspaceRefHostId: effectiveWorkspaceRef?.hostId ?? null,
+      selectedWorkspaceRefWorkspaceId: effectiveWorkspaceRef?.workspaceId ?? null,
+      isTerminalsRoute: isTerminalsRoute(location.pathname),
+      isMobileShell
+    });
 
     setSelectedWorkspaceId(workspaceId);
     setSelectedWorkspaceRef(effectiveWorkspaceRef);
@@ -15751,6 +16217,20 @@ export function WorkbenchLayout({
       return;
     }
 
+    // 桌面端如果还停在旧的终端路由，routeScopedWorkspaceRef 会继续把整个页面压在旧 HOST 上。
+    // 这里必须立刻退出旧 terminal route，不能只改选中态。
+    if (isTerminalsRoute(location.pathname)) {
+      navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
+      return;
+    }
+
+    // 同一个工作区只切 HOST 作用域时，也必须立刻把 targetHostId 写回路由。
+    // 否则地址栏仍停在主 HOST，页面内部却已经切到 PeerHOST，请求作用域会继续打架。
+    if (!isSameTargetHostId(routeTargetHostId, nextTargetHostId)) {
+      navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
+      return;
+    }
+
     // 会话上下文和工作区上下文不能混着用；切到别的工作区时先退回空白工作台。
     if (currentSessionId && sessionWorkspaceId !== workspaceId) {
       navigate(buildWorkspaceSessionIndexPath(workspaceId, effectiveWorkspaceRef));
@@ -15759,15 +16239,20 @@ export function WorkbenchLayout({
 
   const toggleFavoriteSession = useCallback(
     async (sessionId: string) => {
-      const currentSession = flattenedSessions.find((item) => item.session.sessionId === sessionId)?.session ?? null;
+      const currentSessionEntry = findCanonicalSessionEntryByScope(sessionId, {
+        displayWorkspaceId: currentWorkspaceId,
+        targetHostId: currentTargetHostId
+      });
+      const currentSession = currentSessionEntry?.session ?? null;
       const nextFavorite = currentSession?.isFavorite !== true;
+      const targetHostId = normalizeScopeTargetHostId(resolveSessionEntryWorkspaceRef(currentSessionEntry));
 
       setNavigationGroups((current) =>
         updateSessionFavoriteStateInGroups(current, sessionId, nextFavorite)
       );
 
       try {
-        const session = await updateSessionFavoriteState(sessionId, nextFavorite);
+        const session = await updateSessionFavoriteState(sessionId, nextFavorite, { targetHostId });
         upsertNavigationSession(session);
         requestNavigationRefresh();
       } catch (error) {
@@ -15777,7 +16262,14 @@ export function WorkbenchLayout({
         throw error;
       }
     },
-    [flattenedSessions, requestNavigationRefresh, upsertNavigationSession]
+    [
+      currentTargetHostId,
+      currentWorkspaceId,
+      findCanonicalSessionEntryByScope,
+      requestNavigationRefresh,
+      resolveSessionEntryWorkspaceRef,
+      upsertNavigationSession
+    ]
   );
 
   const startDraftSession = useCallback(
@@ -15843,11 +16335,11 @@ export function WorkbenchLayout({
 
   const renameNavigationSession = useCallback(
     async (sessionId: string, title: string) => {
-      const renamedSession = await renameSessionTitle(sessionId, title.trim());
+      const renamedSession = await renameSessionTitle(sessionId, title.trim(), { targetHostId: currentTargetHostId });
       upsertNavigationSession(renamedSession);
       return renamedSession;
     },
-    [upsertNavigationSession]
+    [upsertNavigationSession, currentTargetHostId]
   );
 
   const toggleLightweightChatFavorite = useCallback(
@@ -16093,14 +16585,14 @@ export function WorkbenchLayout({
     }
 
     // 桌面端保留老行为：没有明确上下文时直接落到最近一条会话。
-    if (flattenedSessions.length === 0) {
+    if (flattenedCanonicalSessions.length === 0) {
       navigate(currentWorkspaceId ? buildWorkspaceSessionIndexPath(currentWorkspaceId, currentWorkspaceRef) : workbenchHomePath);
       return;
     }
 
   const fallbackSessionPath = buildWorkspaceSessionPath(
-    flattenedSessions[0].workspace.id,
-    flattenedSessions[0].session.sessionId,
+    flattenedCanonicalSessions[0].workspace.id,
+    flattenedCanonicalSessions[0].session.sessionId,
     currentWorkspaceRef
   );
     navigate(fallbackSessionPath);
@@ -16241,13 +16733,16 @@ export function WorkbenchLayout({
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
       shellMode,
-      navigationGroups: effectiveNavigationGroups,
+      navigationGroups,
       navigationLoading,
       navigationError,
       currentWorkspaceId,
       currentWorkspaceRef,
       currentTargetHostId,
       currentSessionId,
+      findCanonicalSessionEntryByScope,
+      findVisibleSessionEntryByScope,
+      resolveNavigationWorkspaceRef,
       favoriteSessionIds,
       favoriteSessions,
       globalNotifications,
@@ -16304,6 +16799,9 @@ export function WorkbenchLayout({
       currentTargetHostId,
       currentWorkspaceRef,
       currentWorkspaceId,
+      findCanonicalSessionEntryByScope,
+      findVisibleSessionEntryByScope,
+      resolveNavigationWorkspaceRef,
       globalNotifications,
       favoriteSessionIds,
       favoriteSessions,
@@ -16311,7 +16809,7 @@ export function WorkbenchLayout({
       archivedNotificationIds,
       markNavigationSessionSeen,
       navigationError,
-      effectiveNavigationGroups,
+      navigationGroups,
       navigationLoading,
       unreadNotificationCount,
       requestFileTreeRefresh,
@@ -16357,14 +16855,15 @@ export function WorkbenchLayout({
         currentSessionId={isDraftSession ? null : currentSessionId}
         activeWorkspaceId={currentAuxiliaryWorkspaceId}
         requestWorkspaceId={currentRequestWorkspaceId}
+        currentWorkspaceRef={currentWorkspaceRef}
         currentTargetHostId={currentTargetHostId}
-        navigationGroups={effectiveNavigationGroups}
+        navigationGroups={navigationGroups}
         workspaceContext={currentAuxiliaryWorkspaceContext}
         worktreeMeta={currentWorktreeMeta}
         worktreeMergeState={currentWorktreeMergeState}
         onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
         onApplyWorktreeMerge={applyWorktreeMerge}
-        onCleanupWorktree={applyWorktreeCleanup}
+        onCleanupWorktree={requestWorktreeCleanup}
       />
     );
   const codeEmbeddedAffairsAuxiliaryPanelContent =
@@ -16378,6 +16877,7 @@ export function WorkbenchLayout({
           onStateChange={setCodeEmbeddedAffairsState}
           onRefreshNavigation={refreshNavigation}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsAuxiliaryPanel workspaceId={currentWorkspaceId} onToggleCollapse={() => setRightCollapsed(true)} />
         </AffairsWorkbenchProvider>
@@ -16405,6 +16905,13 @@ export function WorkbenchLayout({
     isParallelConversationActive
     && parallelConversationTransition !== null
     && !rightCollapsed;
+  const shouldRenderAuxiliaryPanel =
+    shouldAllowAuxiliaryPanel
+    && (
+      !shouldRenderCodeEmbeddedAffairs
+      || !effectiveRightCollapsed
+      || shouldKeepParallelAuxiliaryMounted
+    );
   const shellStyle = {
     "--workbench-left-width": `${leftPanelWidth}px`,
     "--workbench-left-current-width": effectiveLeftCollapsed ? "0px" : `${leftPanelWidth}px`,
@@ -17085,7 +17592,7 @@ export function WorkbenchLayout({
                       </button>
                     </div>
 
-                    {shouldShowAuxiliaryPanel && !isParallelConversationActive ? (
+                    {shouldAllowAuxiliaryPanel && effectiveRightCollapsed && !isParallelConversationActive ? (
                       <div
                         className="workbench-collapsed-controls right"
                         data-visible={effectiveRightCollapsed}
@@ -17124,7 +17631,7 @@ export function WorkbenchLayout({
                   </CodeWorkbenchView>
                 </div>
 
-                {shouldShowAuxiliaryPanel ? (
+                {shouldRenderAuxiliaryPanel ? (
                   <>
                     <div
                       className="workbench-side-resizer"
@@ -17174,6 +17681,7 @@ export function WorkbenchLayout({
           onRefreshNavigation={refreshNavigation}
           onConversationDraftSelected={handleLightweightChatDraftSelected}
           forceRoute={false}
+          targetHostId={currentTargetHostId}
         >
           <AffairsLightweightConversationCreateModalLauncher onClose={closeLightweightChatCreateModal} />
         </AffairsWorkbenchProvider>
@@ -17234,12 +17742,15 @@ export function WorkbenchLayout({
         }}
         onOpenSession={(sessionId) => {
           closeSearchModal();
-          const entry = flattenedSessions.find((item) => item.session.sessionId === sessionId) ?? null;
-          navigate(
-            entry
-              ? buildWorkspaceSessionPath(entry.workspace.id, sessionId, currentWorkspaceRef)
-              : buildWorkspaceHomePath()
-          );
+          const entry = findCanonicalSessionEntryByScope(sessionId, {
+            displayWorkspaceId: currentWorkspaceId,
+            targetHostId: currentTargetHostId
+          });
+          const workspaceRef = resolveSessionEntryWorkspaceRef(entry);
+          if (entry) {
+            handleSelectWorkspace(entry.workspace.id, workspaceRef);
+          }
+          navigate(buildSessionEntryPath(entry) ?? buildWorkspaceHomePath());
         }}
         onOpenCodeFile={(item) => {
           closeSearchModal();
@@ -17508,6 +18019,9 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       currentWorkspaceRef: null,
       currentTargetHostId: null,
       currentSessionId: null,
+      findCanonicalSessionEntryByScope: () => null,
+      findVisibleSessionEntryByScope: () => null,
+      resolveNavigationWorkspaceRef: () => null,
       favoriteSessionIds: [],
       favoriteSessions: [],
       globalNotifications: [],
@@ -17551,19 +18065,12 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
   );
 }
 
-function readSnapshotTargetHostId(snapshot: unknown): string | null {
-  return snapshot && typeof snapshot === "object" && "targetHostId" in snapshot
-    ? ((snapshot as { targetHostId?: unknown }).targetHostId as string | null | undefined) ?? null
-    : null;
-}
+function normalizeScopeTargetHostId(workspaceRef?: WorkspaceRef | null): string | null {
+  if (!workspaceRef) {
+    return null;
+  }
 
-function isSameTargetHostId(left?: string | null, right?: string | null): boolean {
-  return (left ?? null) === (right ?? null);
-}
-
-function buildTerminalManagerSnapshotKey(workspaceId: string, targetHostId?: string | null) {
-  const hostPart = targetHostId?.trim() ? `${targetHostId.trim()}:` : "";
-  return `terminal-manager.snapshot.${hostPart}${workspaceId}`;
+  return workspaceRef.hostId !== "current" ? workspaceRef.hostId : null;
 }
 
 function isDraftSessionId(sessionId: string): boolean {

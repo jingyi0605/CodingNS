@@ -5,6 +5,7 @@ import path from "node:path";
 import { AppError } from "../../shared/errors/app-error.js";
 import {
   createGitAuthContext,
+  createGitCredentialHelperBypassEnv,
   createGitNonInteractiveEnv,
   type GitAuthInput
 } from "./git-auth.js";
@@ -154,6 +155,20 @@ export class GitWriteService {
     return await this.gitReadService.getStatus(workspaceId);
   }
 
+  async addToGitIgnore(workspaceId: string, targets: string[]) {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const relativeTargets = ensureTargets(repo.repoRoot, targets, this.workspaceRepoGuard);
+    const gitignorePath = path.join(repo.repoRoot, ".gitignore");
+    const existingContent = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+    const nextContent = mergeGitIgnoreContent(existingContent, relativeTargets);
+
+    if (nextContent !== existingContent) {
+      fs.writeFileSync(gitignorePath, nextContent, "utf8");
+    }
+
+    return await this.gitReadService.getStatus(workspaceId);
+  }
+
   async commit(workspaceId: string, draft: CommitDraft): Promise<{ commitHash: string }> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const stagedNames = await this.gitCommandRunner.run(
@@ -283,7 +298,9 @@ export class GitWriteService {
             ? ["push", remote, currentBranch]
             : ["push", "--set-upstream", remote, currentBranch];
     const authContext = createGitAuthContext(effectiveAuth);
-    const commandEnv = createGitNonInteractiveEnv(authContext?.env);
+    const commandEnv = createGitNonInteractiveEnv(
+      effectiveAuth ? createGitCredentialHelperBypassEnv(authContext?.env) : authContext?.env
+    );
 
     try {
       const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
@@ -396,6 +413,44 @@ function formatCommitMessage(draft: CommitDraft): string {
     .join("\n\n");
 }
 
+function mergeGitIgnoreContent(existingContent: string, targets: string[]): string {
+  const normalizedLines = existingContent
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+  while (normalizedLines.length > 0 && normalizedLines[normalizedLines.length - 1] === "") {
+    normalizedLines.pop();
+  }
+  const existingLines = new Set(normalizedLines.map((line) => line.trim()));
+  const nextLines = [...normalizedLines];
+
+  for (const target of targets) {
+    for (const entry of buildGitIgnoreEntries(target)) {
+      if (existingLines.has(entry)) {
+        continue;
+      }
+
+      nextLines.push(entry);
+      existingLines.add(entry);
+    }
+  }
+
+  while (nextLines.length > 0 && nextLines[nextLines.length - 1] === "") {
+    nextLines.pop();
+  }
+
+  return `${nextLines.join("\n")}${nextLines.length > 0 ? "\n" : ""}`;
+}
+
+function buildGitIgnoreEntries(target: string): string[] {
+  const normalized = target.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+
+  if (!normalized) {
+    return [];
+  }
+
+  return [normalized];
+}
+
 function mapBranchSwitchError(detail: string): AppError {
   if (/not a valid object name|invalid reference/i.test(detail)) {
     return new AppError({
@@ -421,6 +476,8 @@ function mapBranchSwitchError(detail: string): AppError {
 }
 
 function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): AppError {
+  const gitDetail = summarizeGitRemoteDetail(detail);
+
   if (
     /authentication failed|could not read from remote repository|could not read Username|could not read Password|permission denied|terminal prompts disabled/i.test(
       detail
@@ -429,7 +486,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 401,
       errorCode: "GIT_REMOTE_AUTH_FAILED",
-      detail: "Remote authentication failed"
+      detail: "Remote authentication failed",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -437,7 +495,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 404,
       errorCode: "REMOTE_NOT_FOUND",
-      detail: "Remote repository or branch not found"
+      detail: "Remote repository or branch not found",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -445,7 +504,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 409,
       errorCode: "BRANCH_CONFLICT",
-      detail: "Remote sync failed because of non-fast-forward conflict"
+      detail: "Remote sync failed because of non-fast-forward conflict",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -453,7 +513,8 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 502,
       errorCode: "GIT_REMOTE_FAILED",
-      detail: "Remote network request failed"
+      detail: "Remote network request failed",
+      data: gitDetail ? { gitDetail } : undefined
     });
   }
 
@@ -465,8 +526,24 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
         : action === "push"
           ? "GIT_PUSH_FAILED"
           : "GIT_REMOTE_FAILED",
-    detail: detail.trim() || "Remote sync failed"
+    detail: detail.trim() || "Remote sync failed",
+    data: gitDetail ? { gitDetail } : undefined
   });
+}
+
+function summarizeGitRemoteDetail(detail: string): string | null {
+  const normalized = detail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^fatal:\s*$/i.test(line));
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const joined = normalized.join(" | ");
+  return joined.length > 300 ? `${joined.slice(0, 297)}...` : joined;
 }
 
 function buildRemoteSummary(action: GitRemoteSyncResult["action"], branch: string): string {

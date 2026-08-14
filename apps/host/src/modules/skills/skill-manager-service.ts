@@ -1197,7 +1197,7 @@ function buildSimplifiedWorkspaceSessionMcpStatus(
       : commands.globalCodingnsInstalled
         ? "你机器上有全局 codingns，但版本偏旧，help 里还看不到完整 workspace office 能力。"
         : "当前机器还没有可直接调用的全局 codingns，模型如果走 PATH 很容易查到旧能力或查不到能力。",
-    recommendedPath: "登录态、验证码、复杂真实站点优先用 browser.opencli_bridge；它不是 profile 型任务，不需要先查/建浏览器 Profile。"
+    recommendedPath: ""
   };
 }
 

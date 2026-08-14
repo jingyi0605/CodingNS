@@ -241,6 +241,103 @@ rl.on("line", (line) => {
   }
 });
 
+test("CodexRuntimeAdapter 不等待 turn/start 响应就返回运行句柄", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-fast-launch-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-fast.jsonl").replace(/\\/g, "/");
+
+  writeFileSync(threadPath, "", "utf8");
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-fast",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-fast",
+        turn: { id: "turn-fast", items: [], status: "inProgress" }
+      }
+    });
+    return;
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}"\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}"\n`,
+    "utf8"
+  );
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      commandPath: launcherPath
+    });
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-fast",
+        workspacePath: "C:/workspace-1"
+      }),
+      {
+        async emit() {},
+        updateSessionBinding() {}
+      }
+    );
+
+    assert.equal(launch.providerSessionId, "thread-fast");
+    await launch.interrupt();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 支持直接使用 Node 脚本作为 codex 命令入口", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-script-"));
   const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
@@ -1500,6 +1597,115 @@ test("CodexRuntimeAdapter 收到 turn/completed 后会等事件流结束再上�
   }
 });
 
+test("CodexRuntimeAdapter 不会在已有 assistant 完成消息后再用 lastAgentMessage 补发重复结尾", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-final-text-dedupe-"));
+  const threadId = "019ec000-1111-7111-8111-111111111111";
+  const threadPath = join(tempDir, "final-dedupe.jsonl");
+  const emitted = [];
+  let notificationHandler = null;
+  let onClose = null;
+  let closed = false;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: threadId,
+            rawStoreRef: threadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(async () => {
+            await notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId,
+                turnId: "turn-final-dedupe",
+                item: {
+                  type: "agentMessage",
+                  id: "assistant-final-1",
+                  text: "可以，但只能下载到 bundle 外面再运行。"
+                }
+              }
+            });
+            await notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId,
+                turn: {
+                  id: "turn-final-dedupe",
+                  items: [],
+                  status: "completed",
+                  lastAgentMessage: "可以，但只能下载到 bundle 外面再运行。"
+                }
+              }
+            });
+            onClose?.(null);
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose(handler) {
+          onClose = handler;
+        },
+        isClosed() {
+          return closed;
+        },
+        close() {
+          closed = true;
+        }
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      sessionId: "session-final-dedupe",
+      workspacePath: tempDir,
+      sequenceBase: 0
+    }), {
+      async emit(event) {
+        emitted.push(event);
+      },
+      updateSessionBinding() {}
+    });
+
+    await launch.completed;
+
+    const assistantMessages = emitted.filter((event) =>
+      event.type === "message"
+      && event.message.role === "assistant"
+      && event.message.kind === "text"
+    );
+
+    assert.equal(assistantMessages.length, 1);
+    assert.equal(assistantMessages[0]?.message.content, "可以，但只能下载到 bundle 外面再运行。");
+    assert.equal(
+      assistantMessages[0]?.message.messageId,
+      createStableMessageId(threadId, "assistant:text:assistant-final-1")
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会话完成", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-wait-"));
   const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
@@ -1661,6 +1867,113 @@ test("CodexRuntimeAdapter 会等 spawn_agent 子会话结束后再上报父会�
     assert.deepEqual(closedAgentIds, [childThreadId]);
     assert.equal(emitted.some((event) => event.type === "complete"), true);
     assert.equal(closed, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 实时 spawn_agent 事件优先使用 call_id，避免与历史回放的工具调用身份漂移", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-subagent-callid-"));
+  const parentThreadId = "019eab4e-e1d9-7cd3-8b4d-4f6edcc01604";
+  const childThreadId = "019eab55-1f95-7a64-89ea-6f1234567890";
+  const parentThreadPath = join(tempDir, "parent.jsonl");
+  const emitted = [];
+  let notificationHandler = null;
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      transportFactory: () => ({
+        async initialize() {},
+        async startThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThread() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async resumeThreadFromHistory() {
+          return {
+            providerSessionId: parentThreadId,
+            rawStoreRef: parentThreadPath
+          };
+        },
+        async startTurn() {
+          queueMicrotask(() => {
+            void notificationHandler?.({
+              method: "item/completed",
+              params: {
+                threadId: parentThreadId,
+                turnId: "turn-parent",
+                item: {
+                  type: "function_call",
+                  id: "item-spawn-1",
+                  call_id: "call-spawn-1",
+                  name: "spawn_agent",
+                  arguments: JSON.stringify({
+                    agent_type: "explorer",
+                    message: "请只读检查消息时间线"
+                  }),
+                  output: JSON.stringify({
+                    agent_id: childThreadId,
+                    nickname: "Arendt"
+                  }),
+                  status: "completed"
+                }
+              }
+            });
+            void notificationHandler?.({
+              method: "turn/completed",
+              params: {
+                threadId: parentThreadId,
+                turn: { id: "turn-parent", items: [], status: "completed" }
+              }
+            });
+          });
+        },
+        async steerTurn() {},
+        async interruptTurn() {},
+        async closeSpawnedAgent() {},
+        setNotificationHandler(handler) {
+          notificationHandler = handler;
+        },
+        setServerRequestHandler() {},
+        setOnClose() {},
+        isClosed() {
+          return false;
+        },
+        close() {}
+      })
+    });
+
+    const launch = await adapter.startSession(createRunRequest({
+      workspacePath: tempDir
+    }), {
+      emit: async (event) => {
+        emitted.push(event);
+      },
+      updateSessionBinding: () => undefined
+    });
+
+    await launch.completed;
+
+    const toolMessages = emitted.filter((event) =>
+      event.type === "message"
+      && event.message.role === "tool"
+      && event.message.toolCall?.name === "spawn_agent"
+    );
+
+    assert.equal(toolMessages.length, 1);
+    assert.equal(toolMessages[0]?.message.toolCall?.callId, "call-spawn-1");
+    assert.equal(
+      toolMessages[0]?.message.messageId,
+      createStableMessageId(parentThreadId, "tool:result:call-spawn-1")
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

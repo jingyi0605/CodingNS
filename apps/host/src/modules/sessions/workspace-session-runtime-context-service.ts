@@ -1,8 +1,8 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { resolveBuiltinSkillDirectory } from "../skills/builtin-skill-service.js";
-import { CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV } from "../opencli/opencli-runtime-guard.js";
 import type { SessionBinding } from "../../types/domain.js";
 import type { WorkspaceSessionAuthService } from "./workspace-session-auth-service.js";
 import {
@@ -308,6 +308,7 @@ function syncCodexRuntimeBase(runtimeHomeDir: string, codexHomeDir?: string): vo
     return;
   }
 
+  syncOptionalFile(path.join(sourceHomeDir, ".codex-global-state.json"), path.join(runtimeHomeDir, ".codex-global-state.json"));
   syncOptionalFile(path.join(sourceHomeDir, "auth.json"), path.join(runtimeHomeDir, "auth.json"));
   syncOptionalDirectory(path.join(sourceHomeDir, "skills"), path.join(runtimeHomeDir, "skills"));
 
@@ -401,9 +402,20 @@ function upsertClaudeMcpConfig(runtimeHomeDir: string, authFilePath: string): vo
   const configPath = path.join(runtimeHomeDir, ".claude.json");
   const parsed = readJsonObject(configPath);
   const mcpCommandArgs = buildWorkspaceOfficeMcpCommandArgs(authFilePath);
+
+  // 读取用户全局 ~/.claude.json 中的 mcpServers，合并到会话级配置中。
+  // 这样用户在原生 Claude Code CLI 中注册的 MCP 服务器（如 zai-mcp-server）
+  // 也能在工作区会话中自动可用，不需要手动重复配置。
+  const globalConfigPath = path.join(os.homedir(), ".claude.json");
+  const globalParsed = readJsonObject(globalConfigPath);
+  const globalMcpServers = isPlainObject(globalParsed.mcpServers) ? globalParsed.mcpServers as Record<string, unknown> : {};
+  // 排除 codingns-workspace-office，避免和会话级注入冲突
+  const { [WORKSPACE_OFFICE_MCP_NAME]: _, ...safeGlobalMcpServers } = globalMcpServers;
+
   const next = {
     ...parsed,
     mcpServers: {
+      ...safeGlobalMcpServers,
       ...(isPlainObject(parsed.mcpServers) ? parsed.mcpServers : {}),
       [WORKSPACE_OFFICE_MCP_NAME]: {
         type: "stdio",
@@ -468,25 +480,9 @@ function buildWorkspaceAssistantInstructions(input: {
 
 - 当前会话是工作区普通会话，不是 Butler 控制面，也不是全局管理员。
 - 当前受控范围固定为 workspaceId=\`${input.workspaceId}\`${input.projectId ? `，projectId=\`${input.projectId}\`` : ""}。
-- 助手正式能力必须优先走 \`codingns assistant ...\` 或对应 \`/api/assistant/*\` 入口，不要自己拼私有 HTTP。
-- 文档操作优先走 \`assistant office.document.*\`。
-- 浏览器操作优先走 \`assistant office.browser.*\`。
-- 当前工作区会话已经暴露正式浏览器入口命令：\`codingns assistant office browser-profile-list\`、\`codingns assistant office browser-profile-create\`、\`codingns assistant office browser-task-create\`、\`codingns assistant office browser-task-get\`。
-- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、提交表单、下载文件这一类真实网页操作，默认先用 \`assistant office.browser.task.create\`，不要先落到 Codex 自带 Browser。
-- 如果当前会话同时还能看到 \`$codingns-opencli\`，不要被它里面的站点命令带偏：公开页面、公开榜单、公开帖子、公开趋势数据才考虑它；登录态、验证码、订单、购物车、个人账户、后台页面、表单提交、下载文件、点击页面控件、复用人工已登录 Chrome/Edge 这类任务必须走 \`office.browser.*\`。
-- 就算 \`codingns-opencli\` 里存在 \`taobao/*\`、\`jd/*\` 这类 browser-dependent 命令，也不能把它们当成工作区真实站点任务的默认入口。
-- 涉及登录、验证码、二次确认弹窗、复杂前端站点、必须复用现有 Chrome/Edge 登录态这几类任务时，创建浏览器任务优先显式传 \`executionBackend=opencli_bridge\`，不要继续默认无头浏览器。
-- 当 \`executionBackend=opencli_bridge\` 时，\`browser-task-create\` 可以不传 \`profileId\`；这条链路会直接走无感浏览器桥接，不再依赖 Profile。
-- 只有任务本身明显适合无头执行，或者用户明确要求无头链路时，才继续使用默认 \`playwright\`。
-- \`browser-task-create --input-json\` 必须传 JSON 对象，不要猜私有 body。最小模板直接照抄：\`{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"}]}\`。
-- 浏览器动作类型当前只支持：\`goto\`、\`click\`、\`fill\`、\`press\`、\`select\`、\`upload\`、\`download\`、\`wait\`、\`read_dom\`、\`extract_text\`、\`screenshot\`。
-- 常见模板：打开页面读 DOM 用 \`{"startUrl":"https://target.example","actions":[{"type":"read_dom"}]}\`；打开页面截图用 \`{"startUrl":"https://target.example","actions":[{"type":"screenshot","fullPage":true}]}\`；等待后再读用 \`{"startUrl":"https://target.example","actions":[{"type":"wait","timeoutMs":3000},{"type":"read_dom"}]}\`。
-- 不要回答“当前环境没有浏览器能力”或“没有暴露浏览器能力”；对真实站点任务，先查上面这组 \`codingns assistant office ...\` 命令的 \`--help\` 或直接调用它们。
+- 助手正式能力优先走 \`codingns assistant ...\` 或对应 \`/api/assistant/*\` 入口，不要自己拼私有 HTTP。
+- 遇到当前会话已经开放的能力时，先查对应命令的 \`--help\` 或工作区专用 skill，不要退回去翻源码、编译产物或自己拼接口路径。
 - 只有本地预览、开发调试 \`localhost\` / \`127.0.0.1\` / \`::1\`，或用户明确要求当前 in-app browser 时，才优先使用 Codex 自带 Browser。
-- 真实浏览器任务的最小顺序是：优先直接用 \`assistant office.browser.task.create\` 并显式传 \`executionBackend=opencli_bridge\`；只有用户明确要求无头 \`playwright\`，或者要手工管理独立浏览器资料目录时，再先查/建 Profile。
-- 遇到真实站点浏览器任务，先查 \`browser-task-create --help\` 或工作区专用 skill 里的模板，不要退回去翻源码、编译产物或自己拼接口路径。
-- 运维任务优先走 \`assistant office.ops.*\`。
-- 新建终端优先走 \`assistant terminals create\`。
 - 默认可直接执行只读型终端/浏览器操作；仅在会产生写入、删除、提交、支付、发布、merge、修改系统状态的操作前征得用户确认。
 - 不要尝试跨工作区、跨项目，或调用当前未开放能力。
 - 当前工作区会话 scoped 认证文件：\`${input.authFilePath}\`。
@@ -556,13 +552,17 @@ function buildWorkspaceSessionRuntimeEnv(
     [CODINGNS_OFFICE_MCP_AUTH_FILE_ENV]: authFilePath
   };
 
-  if (provider === "codex") {
+  if (provider === "codex" && shouldInjectCodexWorkspaceOfficeMcp()) {
     runtimeEnv[CODEX_WORKSPACE_OFFICE_MCP_ENABLE_ENV] = "1";
   }
 
-  runtimeEnv[CODINGNS_OPENCLI_BLOCK_BROWSER_DEPENDENT_COMMANDS_ENV] = "1";
-
   return runtimeEnv;
+}
+
+function shouldInjectCodexWorkspaceOfficeMcp(): boolean {
+  return /^(1|true|yes)$/i.test(
+    (process.env.CODINGNS_CODEX_WORKSPACE_OFFICE_MCP_DEFAULT ?? "").trim()
+  );
 }
 
 function collectWorkspaceSessionRuntimeHomeDirs(input: {

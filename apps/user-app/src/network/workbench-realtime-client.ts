@@ -25,6 +25,10 @@ import type {
 } from "../features/terminal/api/terminal-api";
 
 type WorkbenchConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
+type KnownRevisionOptions = {
+  knownRevision?: string | null | undefined;
+  skipKnownRevision?: boolean;
+};
 
 interface SystemConnectedEvent {
   type: "system.connected";
@@ -150,7 +154,11 @@ export class WorkbenchRealtimeClient {
     knownRevisionByPath: Record<string, string>;
   } | null = null;
   private pendingGitRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
-  private pendingTerminalManagerRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
+  private pendingTerminalManagerRefresh: {
+    workspaceId: string;
+    knownRevision: string | null;
+    skipKnownRevision?: boolean;
+  } | null = null;
   private pendingWorkspaceManagementRefresh: { workspaceId: string; knownRevision: string | null } | null = null;
   private readonly fileTreeRevisionByPath = new Map<string, string>();
   private readonly gitRevisionByWorkspaceId = new Map<string, string>();
@@ -308,37 +316,56 @@ export class WorkbenchRealtimeClient {
 
   subscribeTerminalManager(
     workspaceId: string,
-    options?: { knownRevision?: string | null | undefined }
+    options?: KnownRevisionOptions
   ): void {
     this.terminalManagerSubscription = {
       workspaceId,
       knownRevision: normalizeKnownRevision(options?.knownRevision)
     };
+    logPerfDebug("resource_scope.terminal.subscribe", {
+      workspaceId,
+      knownRevision: this.terminalManagerSubscription.knownRevision ?? null,
+      skipKnownRevision: options?.skipKnownRevision === true,
+      targetHostId: this.options.targetHostId ?? null
+    });
     this.sendWhenReady({
       type: "terminalManager.subscribe",
       workspaceId,
-      knownRevision:
-        this.terminalManagerSubscription.knownRevision
-        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+      knownRevision: options?.skipKnownRevision
+        ? undefined
+        : (
+            this.terminalManagerSubscription.knownRevision
+            ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+          )
     });
   }
 
   requestTerminalManagerRefresh(
     workspaceId: string,
-    options?: { knownRevision?: string | null | undefined }
+    options?: KnownRevisionOptions
   ): void {
     const payload = {
       type: "terminalManager.refresh",
       workspaceId,
-      knownRevision:
-        normalizeKnownRevision(options?.knownRevision)
-        ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+      knownRevision: options?.skipKnownRevision
+        ? undefined
+        : (
+            normalizeKnownRevision(options?.knownRevision)
+            ?? this.terminalManagerRevisionByWorkspaceId.get(workspaceId)
+          )
     };
+    logPerfDebug("resource_scope.terminal.refresh", {
+      workspaceId,
+      knownRevision: payload.knownRevision ?? null,
+      skipKnownRevision: options?.skipKnownRevision === true,
+      targetHostId: this.options.targetHostId ?? null
+    });
 
     if (!this.sendWhenReady(payload)) {
       this.pendingTerminalManagerRefresh = {
         workspaceId,
-        knownRevision: normalizeKnownRevision(options?.knownRevision)
+        knownRevision: normalizeKnownRevision(options?.knownRevision),
+        skipKnownRevision: options?.skipKnownRevision
       };
     } else {
       this.pendingTerminalManagerRefresh = null;
@@ -447,6 +474,13 @@ export class WorkbenchRealtimeClient {
     const baseUrl = transportTarget.baseUrl;
     const wsPath = buildHostWsPath(this.options.targetHostId);
     const socketUrl = `${getHostWebSocketUrl(wsPath, baseUrl)}?access_token=${encodeURIComponent(accessToken)}`;
+    logPerfDebug("resource_scope.workbench_ws.connect", {
+      targetHostId: this.options.targetHostId ?? null,
+      requestedBaseUrl,
+      baseUrl,
+      wsPath,
+      socketUrl
+    });
     const socket = transportTarget.transport.createWebSocket({
       path: wsPath,
       baseUrl,
@@ -516,6 +550,14 @@ export class WorkbenchRealtimeClient {
       }
 
       if (this.terminalManagerSubscription) {
+        logPerfDebug("resource_scope.terminal.subscribe_replay", {
+          workspaceId: this.terminalManagerSubscription.workspaceId,
+          knownRevision:
+            this.terminalManagerSubscription.knownRevision
+            ?? this.terminalManagerRevisionByWorkspaceId.get(this.terminalManagerSubscription.workspaceId)
+            ?? null,
+          targetHostId: this.options.targetHostId ?? null
+        });
         socket.send(
           JSON.stringify({
             type: "terminalManager.subscribe",
@@ -529,7 +571,8 @@ export class WorkbenchRealtimeClient {
 
       if (this.pendingTerminalManagerRefresh) {
         this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefresh.workspaceId, {
-          knownRevision: this.pendingTerminalManagerRefresh.knownRevision
+          knownRevision: this.pendingTerminalManagerRefresh.knownRevision,
+          skipKnownRevision: this.pendingTerminalManagerRefresh.skipKnownRevision
         });
       }
 
@@ -677,6 +720,14 @@ export class WorkbenchRealtimeClient {
           return;
         }
 
+        logPerfDebug("resource_scope.terminal.snapshot", {
+          workspaceId: snapshot.workspaceId,
+          revision: payload.revision,
+          unchanged: payload.unchanged,
+          targetHostId: this.options.targetHostId ?? null,
+          terminalCount: snapshot.terminals.length
+        });
+
         this.options.onTerminalManagerSnapshot?.(snapshot);
         this.terminalManagerListeners.forEach((listener) => listener(snapshot));
         return;
@@ -772,9 +823,24 @@ export class WorkbenchRealtimeClient {
     const socket = this.socket;
 
     if (!isSocketOpen(socket)) {
+      if (payload.type === "terminalManager.subscribe" || payload.type === "terminalManager.refresh") {
+        logPerfDebug("resource_scope.terminal.queue_until_ready", {
+          type: payload.type,
+          workspaceId: typeof payload.workspaceId === "string" ? payload.workspaceId : null,
+          targetHostId: this.options.targetHostId ?? null
+        });
+      }
       return false;
     }
 
+    if (payload.type === "terminalManager.subscribe" || payload.type === "terminalManager.refresh") {
+      logPerfDebug("resource_scope.terminal.ws_send", {
+        type: payload.type,
+        workspaceId: typeof payload.workspaceId === "string" ? payload.workspaceId : null,
+        knownRevision: typeof payload.knownRevision === "string" ? payload.knownRevision : null,
+        targetHostId: this.options.targetHostId ?? null
+      });
+    }
     socket.send(JSON.stringify(payload));
     return true;
   }

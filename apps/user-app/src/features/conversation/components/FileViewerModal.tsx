@@ -56,6 +56,7 @@ declare global {
 export interface FileViewerModalProps {
   workspaceId: string | null | undefined;
   filePath: string | null;
+  targetHostId?: string | null;
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
@@ -67,6 +68,7 @@ export interface FileViewerModalProps {
 export interface FileViewerPanelProps {
   workspaceId: string | null | undefined;
   filePath: string | null;
+  targetHostId?: string | null;
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
@@ -312,6 +314,7 @@ export function FileViewerModal(props: FileViewerModalProps) {
 export function FileViewerPanel({
   workspaceId,
   filePath,
+  targetHostId = null,
   open,
   onClose,
   onSaved,
@@ -346,6 +349,39 @@ export function FileViewerPanel({
   const platform = usePlatform();
   const onCloseRef = useRef(onClose);
   const showToastRef = useRef(showToast);
+  const isDirtyRef = useRef(false);
+  const loadedTargetKeyRef = useRef<string | null>(null);
+  const normalizedTargetHostId = targetHostId?.trim() || null;
+  const effectivePreviewLoader = useMemo(() => {
+    if (previewLoader !== getFilePreview || !normalizedTargetHostId) {
+      return previewLoader;
+    }
+
+    return (targetWorkspaceId: string, targetFilePath: string, options?: FilePreviewRequestOptions) => (
+      getFilePreview(targetWorkspaceId, targetFilePath, {
+        ...options,
+        targetHostId: normalizedTargetHostId
+      })
+    );
+  }, [normalizedTargetHostId, previewLoader]);
+  const effectiveSaveHandler = useMemo(() => {
+    if (saveHandler !== defaultFileViewerSaveHandler || !normalizedTargetHostId) {
+      return saveHandler;
+    }
+
+    return (input: {
+      workspaceId: string;
+      filePath: string;
+      content: string;
+      expectedVersion: string;
+      preview: FilePreviewDto;
+    }) => (
+      defaultFileViewerSaveHandler({
+        ...input,
+        targetHostId: normalizedTargetHostId
+      })
+    );
+  }, [normalizedTargetHostId, saveHandler]);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
@@ -407,7 +443,7 @@ export function FileViewerPanel({
   }, [currentContent, filePath, presentationProbe]);
   const canShowPreviewTab = canUsePreviewMode(previewKind);
   const canShowCodeTab = canUseCodeMode(previewKind);
-  const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html";
+  const canShowSeparateCodeTab = canShowCodeTab && previewKind !== "html" && previewKind !== "markdown";
   const canShowEditTab = canUseEditMode(previewKind) && canEdit && !saveDisabledReason;
   const isMobileViewer = platform.isMobile;
   const isWindowViewer = chrome === "window";
@@ -428,6 +464,10 @@ export function FileViewerPanel({
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
 
   useLayoutEffect(() => {
     if (!open || !filePath || isInlineViewer) {
@@ -467,6 +507,7 @@ export function FileViewerPanel({
 
   useEffect(() => {
     if (!open) {
+      loadedTargetKeyRef.current = null;
       setPreview(null);
       setEditorContent("");
       setPresentationProject(null);
@@ -499,13 +540,21 @@ export function FileViewerPanel({
       setLoading(true);
 
       try {
-        const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+        const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
           officeDisplayMode
         });
 
         if (!cancelled) {
+          const targetKey = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
+          const isPassiveReloadForSameTarget = loadedTargetKeyRef.current === targetKey;
+
+          if (isPassiveReloadForSameTarget && isDirtyRef.current) {
+            setLoading(false);
+            return;
+          }
+
           applyPreviewState(nextPreview, safeFilePath, {
-            preserveMode: false,
+            preserveMode: isPassiveReloadForSameTarget,
             setPreview,
             setEditorContent,
             setPresentationProject,
@@ -517,6 +566,7 @@ export function FileViewerPanel({
             setPdfScale,
             setPdfFitWidth
           });
+          loadedTargetKeyRef.current = targetKey;
         }
       } catch (error) {
         if (!cancelled) {
@@ -538,7 +588,7 @@ export function FileViewerPanel({
     return () => {
       cancelled = true;
     };
-  }, [filePath, officeDisplayMode, open, previewLoader, workspaceId]);
+  }, [effectivePreviewLoader, filePath, officeDisplayMode, open, workspaceId]);
 
   if (!open || !filePath) {
     return null;
@@ -559,18 +609,18 @@ export function FileViewerPanel({
         ? presentationSavedContent ?? editorContent
         : editorContent;
 
-      await saveHandler({
+      await effectiveSaveHandler({
         workspaceId: safeWorkspaceId,
         filePath: safeFilePath,
         content: nextContent,
         expectedVersion: preview.version,
         preview
       });
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+      const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
         officeDisplayMode
       });
       applyPreviewState(nextPreview, safeFilePath, {
-        preserveMode: false,
+        preserveMode: true,
         setPreview,
         setEditorContent,
         setPresentationProject,
@@ -582,6 +632,7 @@ export function FileViewerPanel({
         setPdfScale,
         setPdfFitWidth
       });
+      loadedTargetKeyRef.current = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
       await onSaved(safeFilePath);
       showToast({
         title: t("conversation.filePanelSaveSuccess"),
@@ -605,7 +656,7 @@ export function FileViewerPanel({
     setLoading(true);
 
     try {
-      const nextPreview = await previewLoader(safeWorkspaceId, safeFilePath, {
+      const nextPreview = await effectivePreviewLoader(safeWorkspaceId, safeFilePath, {
         officeDisplayMode
       });
       applyPreviewState(nextPreview, safeFilePath, {
@@ -621,7 +672,7 @@ export function FileViewerPanel({
         setPdfScale,
         setPdfFitWidth
       });
-      setResourceRefreshVersion((previous) => previous + 1);
+      loadedTargetKeyRef.current = buildFileViewerTargetKey(safeWorkspaceId, safeFilePath);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.fileViewerRefreshFailed")),
@@ -1149,6 +1200,10 @@ function resetResourceViewerState(setters: {
   setters.setPdfFitWidth(true);
 }
 
+function buildFileViewerTargetKey(workspaceId: string, filePath: string): string {
+  return `${workspaceId}\u0000${filePath}`;
+}
+
 function canUsePreviewMode(previewKind: FilePreviewDto["kind"] | null): boolean {
   return previewKind === "markdown"
     || previewKind === "html"
@@ -1214,8 +1269,19 @@ async function defaultFileViewerSaveHandler(input: {
   content: string;
   expectedVersion: string;
   preview: FilePreviewDto;
+  targetHostId?: string | null;
 }): Promise<void> {
-  await saveFileContent(input.workspaceId, input.filePath, input.content, input.expectedVersion);
+  await saveFileContent(
+    input.workspaceId,
+    input.filePath,
+    input.content,
+    input.expectedVersion,
+    input.targetHostId
+      ? {
+          targetHostId: input.targetHostId
+        }
+      : undefined
+  );
 }
 
 function buildFormatActions(input: {
@@ -1863,7 +1929,7 @@ function MarkdownPreview({
     >
       <div className="markdown-content file-viewer-markdown" ref={scrollContainerRef}>
         <Markdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkSoftLineBreaks]}
           components={markdownComponents}
         >
           {content}
@@ -1879,6 +1945,47 @@ type MarkdownSourceNode = {
     end?: { line?: number | null };
   } | null;
 };
+
+type MarkdownAstNode = {
+  type?: string;
+  value?: string;
+  children?: MarkdownAstNode[];
+};
+
+function remarkSoftLineBreaks() {
+  return (tree: MarkdownAstNode) => {
+    rewriteSoftBreakTextNodes(tree);
+  };
+}
+
+function rewriteSoftBreakTextNodes(node: MarkdownAstNode) {
+  if (!Array.isArray(node.children) || node.children.length === 0) {
+    return;
+  }
+
+  node.children = node.children.flatMap((child) => {
+    rewriteSoftBreakTextNodes(child);
+
+    if (child.type !== "text" || typeof child.value !== "string" || !child.value.includes("\n")) {
+      return [child];
+    }
+
+    // 编辑态会把单个回车直接显示成换行，这里也转成 <br>，避免预览吞掉软换行。
+    return child.value.split("\n").flatMap((segment, index, segments) => {
+      const nextNodes: MarkdownAstNode[] = [];
+      if (segment.length > 0) {
+        nextNodes.push({
+          type: "text",
+          value: segment
+        });
+      }
+      if (index < segments.length - 1) {
+        nextNodes.push({ type: "break" });
+      }
+      return nextNodes;
+    });
+  });
+}
 
 interface MarkdownDiffRange {
   start: number;
@@ -3189,7 +3296,9 @@ function readConfigScalar(
     };
   }
 
-  const wordMatch = /^[A-Za-z0-9_.:+/-]+/.exec(text);
+  // 配置值里经常会出现邮箱、密码、URL 查询串这类特殊字符。
+  // 这里只排除空白和注释起始符，避免把 @、! 后面的正文错误吞掉。
+  const wordMatch = /^[^\s#;]+/.exec(text);
 
   if (!wordMatch) {
     return null;

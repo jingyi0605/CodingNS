@@ -247,6 +247,45 @@ jobs:
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.sig
             apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.sig
 
+      - name: 校验 Windows 产物符合版本通道
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < VERSION)"
+          bundle_root="apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          msi_dir="${bundle_root}/msi"
+          nsis_dir="${bundle_root}/nsis"
+          msi_count="0"
+          exe_count="0"
+
+          if [[ -d "${msi_dir}" ]]; then
+            msi_count="$(find "${msi_dir}" -maxdepth 1 -type f -name '*.msi' | wc -l | tr -d '[:space:]')"
+          fi
+
+          if [[ -d "${nsis_dir}" ]]; then
+            exe_count="$(find "${nsis_dir}" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d '[:space:]')"
+          fi
+
+          if [[ "${exe_count}" -eq 0 ]]; then
+            echo "Windows 构建没有产出 NSIS 安装包" >&2
+            exit 1
+          fi
+
+          if [[ "$version" == *-* ]]; then
+            if [[ "${msi_count}" -ne 0 ]]; then
+              echo "预发布版本 ${version} 不应产出 MSI" >&2
+              exit 1
+            fi
+            echo "预发布版本 ${version} 校验通过：仅产出 NSIS。"
+          else
+            if [[ "${msi_count}" -eq 0 ]]; then
+              echo "稳定版 ${version} 必须产出 MSI" >&2
+              exit 1
+            fi
+            echo "稳定版 ${version} 校验通过：同时产出 MSI 和 NSIS。"
+          fi
+
   build-android:
     name: android-apk
     runs-on: ubuntu-22.04

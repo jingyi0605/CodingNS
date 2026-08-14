@@ -1,6 +1,8 @@
 import {
   createContext,
   isValidElement,
+  memo,
+  useDeferredValue,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -18,6 +20,7 @@ import remarkGfm from "remark-gfm";
 import { DesktopModal } from "../../../components/DesktopModal";
 import { getHostBaseUrl, getHostRequestUrl } from "../../../config/env";
 import {
+  logPerfDebug,
   logConversationTimelineDebug,
   isTimelineScrollDebugEnabled,
   logTimelineScrollDebug
@@ -70,6 +73,7 @@ import type {
   AttachmentPayload,
   MessageAttachmentDto,
   ProviderId,
+  SessionPermissionRequestDto,
   SessionSummaryDto,
   SessionInterruptSource
 } from "../api/conversation-api";
@@ -93,12 +97,25 @@ interface MessageTimelineProps {
   assistantAvatar?: ReactNode;
   followTailUpdates?: boolean;
   onSubmitStructuredQuestion?: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
+  permissionRequests?: SessionPermissionRequestDto[];
+  replyingPermissionRequestId?: string | null;
+  onReplyPermissionRequest?: (requestId: string, payload: { action: string; answers?: Record<string, string[]> }) => Promise<void> | void;
 }
 
 interface MessageActionState {
   canCopy: boolean;
   canFork: boolean;
 }
+
+const DEFAULT_MESSAGE_ACTION_STATE: MessageActionState = {
+  canCopy: false,
+  canFork: false
+};
+
+const DEFAULT_USER_MESSAGE_ACTION_STATE: MessageActionState = {
+  canCopy: true,
+  canFork: false
+};
 
 function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
@@ -319,6 +336,11 @@ type TimelineRenderItem =
       type: "session_error";
       key: string;
       error: Extract<ConversationTimelineSourceItem, { type: "session_error" }>["error"];
+    }
+  | {
+      type: "runtime_notice";
+      key: string;
+      notice: Extract<ConversationTimelineSourceItem, { type: "runtime_notice" }>["notice"];
     };
 
 function normalizeMessagePathSeparators(value: string): string {
@@ -1085,6 +1107,37 @@ function buildCodexAgentToolRows(
   return rows.slice(0, 5);
 }
 
+function buildClaudeAgentToolSnapshot(
+  tool: ResolvedToolCall
+): AssistantCapabilitySnapshot | null {
+  if (tool.name !== "Agent") {
+    return null;
+  }
+
+  const input = parseToolInputRecord(tool.input);
+  if (!input) {
+    return null;
+  }
+
+  const subagentType = readText(input, "subagent_type");
+  const description = readText(input, "description");
+
+  const rows: AssistantCapabilitySnapshot["rows"] = [];
+  pushAssistantCapabilityRow(rows, t("conversation.claudeAgentToolLabelType"), subagentType);
+  pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), resolveToolStatusLabel(tool.status));
+  if (description) {
+    pushAssistantCapabilityRow(rows, t("conversation.claudeAgentToolLabelDescription"), description);
+  }
+
+  return {
+    kind: "session",
+    badge: t("conversation.assistantCapabilityBadgeSubAgent"),
+    title: t("conversation.claudeAgentToolTitle"),
+    summary: description || subagentType || "",
+    rows
+  };
+}
+
 function resolveCodexAgentNickname(
   output: Record<string, unknown> | null
 ): string | null {
@@ -1549,9 +1602,6 @@ function resolveAssistantCliKind(group: string | null): AssistantCapabilitySnaps
     case "workspaces":
     case "worktrees":
       return "workspace";
-    case "debug-targets":
-    case "debug-runtimes":
-      return "debug";
     default:
       return "query";
   }
@@ -1741,13 +1791,6 @@ function resolveAssistantCapabilityMeta(capability: string): Omit<AssistantCapab
         title: t("conversation.assistantCapabilityWorktreeCleanupTitle"),
         summary: t("conversation.assistantCapabilitySummaryWorktree")
       };
-    case "debug-targets.run":
-      return {
-        kind: "debug",
-        badge: t("conversation.assistantCapabilityBadgeDebug"),
-        title: t("conversation.assistantCapabilityDebugRunTitle"),
-        summary: t("conversation.assistantCapabilitySummaryDebug")
-      };
     default:
       if (capability.startsWith("sessions.") || capability.startsWith("projects.")) {
         return {
@@ -1781,15 +1824,6 @@ function resolveAssistantCapabilityMeta(capability: string): Omit<AssistantCapab
           kind: "workspace",
           badge: t("conversation.assistantCapabilityBadgeWorkspace"),
           title: t("conversation.assistantCapabilityWorkspaceReadTitle"),
-          summary: t("conversation.assistantCapabilitySummaryRead")
-        };
-      }
-
-      if (capability.startsWith("debug-targets.") || capability.startsWith("debug-runtimes.")) {
-        return {
-          kind: "debug",
-          badge: t("conversation.assistantCapabilityBadgeDebug"),
-          title: t("conversation.assistantCapabilityDebugReadTitle"),
           summary: t("conversation.assistantCapabilitySummaryRead")
         };
       }
@@ -1948,12 +1982,6 @@ function buildAssistantCapabilityRows(
         resolveAssistantWorkspaceName(receipt.targetRef.id, null, navigationLookup)
       );
       pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelStatus"), readText(result, "status"));
-      break;
-    }
-    case "debug-targets.run": {
-      const result = readRecord(payload, "result");
-      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelDebugTarget"), receipt.targetRef.id);
-      pushAssistantCapabilityRow(rows, t("conversation.assistantCapabilityLabelRuntime"), readText(result, "runtimeId"));
       break;
     }
     default:
@@ -2368,6 +2396,20 @@ function buildUpdatePreview(
   };
 }
 
+
+function resolveToolPreviewSource(tool: ResolvedToolCall, hasResult: boolean): ResolvedToolCall {
+  const normalizedName = tool.name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+
+  if (hasResult && normalizedName === "taskupdate" && tool.output?.trim()) {
+    return {
+      ...tool,
+      input: ""
+    };
+  }
+
+  return tool;
+}
+
 function getToolPreview(tool: ResolvedToolCall): string {
   const parsedInput = parseToolInputRecord(tool.input);
   const command =
@@ -2564,6 +2606,12 @@ function fillSeparatedViewImageResults(messages: SessionMessageViewModel[]): Ses
 }
 
 function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] {
+  const claudeTaskGroups = mergeClaudeTaskToolMessageBlock(messages);
+
+  if (claudeTaskGroups) {
+    return claudeTaskGroups;
+  }
+
   const groups: ToolMessageGroup[] = [];
   let currentBlock: SessionMessageViewModel[] = [];
   let currentCallId: string | null = null;
@@ -2585,7 +2633,7 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
 
   for (const message of messages) {
     const tool = resolveToolCall(message);
-    const nextCallId = tool?.callId.trim() ?? "";
+    const nextCallId = resolveToolMessageMergeKey(message, tool);
 
     if (!tool || nextCallId.length === 0) {
       flushCurrentBlock();
@@ -2615,6 +2663,180 @@ function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessage
 
   flushCurrentBlock();
   return groups;
+}
+
+function mergeClaudeTaskToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] | null {
+  const groups: ToolMessageGroup[] = [];
+  const groupMessagesByKey = new Map<string, SessionMessageViewModel[]>();
+  const groupIndexByKey = new Map<string, number>();
+  let hasClaudeTaskTool = false;
+
+  for (const message of messages) {
+    const tool = resolveToolCall(message);
+    const taskKey = tool ? resolveClaudeTaskToolLifecycleKey(message, tool) : null;
+
+    if (!tool || !taskKey) {
+      const merged = mergeToolMessages([message]);
+
+      if (merged) {
+        groups.push(merged);
+      }
+      continue;
+    }
+
+    hasClaudeTaskTool = true;
+
+    const groupMessages = groupMessagesByKey.get(taskKey);
+
+    if (!groupMessages) {
+      const nextMessages = [message];
+      const merged = mergeToolMessages(nextMessages);
+
+      if (merged) {
+        groupMessagesByKey.set(taskKey, nextMessages);
+        groupIndexByKey.set(taskKey, groups.length);
+        groups.push(merged);
+      }
+      continue;
+    }
+
+    groupMessages.push(message);
+    const merged = mergeToolMessages(groupMessages);
+    const existingIndex = groupIndexByKey.get(taskKey);
+
+    if (merged && existingIndex !== undefined) {
+      groups[existingIndex] = merged;
+    }
+  }
+
+  return hasClaudeTaskTool ? groups : null;
+}
+
+function resolveToolMessageMergeKey(
+  message: SessionMessageViewModel,
+  tool: ResolvedToolCall | null
+): string {
+  if (!tool) {
+    return "";
+  }
+
+  const taskLifecycleKey = resolveClaudeTaskToolLifecycleKey(message, tool);
+
+  if (taskLifecycleKey) {
+    return taskLifecycleKey;
+  }
+
+  return tool.callId.trim();
+}
+
+function resolveClaudeTaskToolLifecycleKey(
+  message: SessionMessageViewModel,
+  tool: ResolvedToolCall
+): string | null {
+  const normalizedName = tool.name.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+
+  if (normalizedName === "taskcreate") {
+    const createTitle = extractClaudeTaskCreateTitle(tool);
+    const createId = extractClaudeTaskCreateId(tool);
+
+    if (createTitle) {
+      return `claude-task-create-title:${createTitle}`;
+    }
+
+    if (createId) {
+      return `claude-task-create:${createId}`;
+    }
+  }
+
+  if (normalizedName === "taskupdate") {
+    const updateId = extractClaudeTaskUpdateId(tool);
+
+    if (updateId) {
+      return `claude-task-update:${updateId}`;
+    }
+  }
+
+  if (normalizedName === "tasklist" || normalizedName === "taskget") {
+    return `claude-task-list:${normalizedName}`;
+  }
+
+  return message.toolCall?.callId.trim() ? null : null;
+}
+
+function extractClaudeTaskCreateId(tool: ResolvedToolCall): string | null {
+  const text = [tool.input, tool.output].find((value) => value && /Task\s*#?\d+\s+created/i.test(value));
+  const match = text?.match(/Task\s*#?(\d+)\s+created/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractClaudeTaskCreateTitle(tool: ResolvedToolCall): string | null {
+  const structured = parseToolJsonObject(tool.input) ?? parseToolJsonObject(tool.output);
+  const title =
+    readToolTextOrNumber(structured?.title)
+    ?? readToolTextOrNumber(structured?.subject)
+    ?? readToolTextOrNumber(structured?.content)
+    ?? readToolTextOrNumber(structured?.task);
+
+  if (title) {
+    return title;
+  }
+
+  const text = [tool.input, tool.output].find((value) => value && /created\s+(?:successfully\s*)?:/i.test(value));
+  const match = text?.match(/created\s+(?:successfully\s*)?:\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractClaudeTaskUpdateId(tool: ResolvedToolCall): string | null {
+  const structured = parseToolJsonObject(tool.input) ?? parseToolJsonObject(tool.output);
+  const taskId = readToolTextOrNumber(structured?.taskId) ?? readToolTextOrNumber(structured?.task_id);
+
+  if (taskId) {
+    return taskId;
+  }
+
+  const text = [tool.input, tool.output].find((value) => value && /task\s*#?\d+/i.test(value));
+  const match = text?.match(/task\s*#?(\d+)/i);
+  return match?.[1]?.trim() || null;
+}
+
+function parseToolJsonObject(text: string | null): Record<string, unknown> | null {
+  const normalized = text?.trim() ?? "";
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    const objectStart = normalized.indexOf("{");
+    const objectEnd = normalized.lastIndexOf("}");
+
+    if (objectStart < 0 || objectEnd <= objectStart) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(normalized.slice(objectStart, objectEnd + 1)) as unknown;
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function readToolTextOrNumber(value: unknown): string | null {
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function buildTimelineRenderItems(
@@ -4096,18 +4318,28 @@ function ToolCallItem({
   sessionId,
   workspaceId,
   workspacePath,
-  exportMode = false
+  exportMode = false,
+  onSubmitStructuredQuestion = null,
+  permissionRequests = [],
+  replyingPermissionRequestId = null
 }: {
   group: ToolMessageGroup;
   sessionId?: string | null;
   workspaceId?: string | null;
   workspacePath?: string | null;
   exportMode?: boolean;
+  onSubmitStructuredQuestion?: ((payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void) | null;
+  permissionRequests?: SessionPermissionRequestDto[];
+  replyingPermissionRequestId?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { navigationGroups } = useWorkbenchShell();
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
+  const askUserQuestionPrompt = useMemo(
+    () => resolveAskUserQuestionPrompt(tool),
+    [tool]
+  );
   const viewImageSnapshot = useMemo(
     () => resolveViewImageToolSnapshot(tool, workspacePath, sessionId),
     [sessionId, tool, workspacePath]
@@ -4128,14 +4360,31 @@ function ToolCallItem({
     () => buildCodexAgentToolSnapshot(tool),
     [tool]
   );
+  const claudeAgentToolSnapshot = useMemo(
+    () => buildClaudeAgentToolSnapshot(tool),
+    [tool]
+  );
   const taskSnapshot = useMemo(
     () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
     [group.updatedAt, tool]
+  );
+  const inlinePlanApprovalRequest = useMemo(
+    () => resolveInlinePlanApprovalRequest(tool, permissionRequests),
+    [permissionRequests, tool]
   );
   const applyPatchPreview = useMemo(
     () => buildEditableToolPreview(tool),
     [tool.input, tool.name]
   );
+
+  if (askUserQuestionPrompt) {
+    return (
+      <StructuredQuestionResultCard
+        prompt={askUserQuestionPrompt}
+        tool={tool}
+      />
+    );
+  }
 
   if (viewImageSnapshot) {
     return (
@@ -4201,11 +4450,11 @@ function ToolCallItem({
     );
   }
 
-  if (taskSnapshot) {
+  if (claudeAgentToolSnapshot) {
     return (
-      <TaskToolItem
+      <AssistantCapabilityToolItem
         tool={tool}
-        snapshot={taskSnapshot}
+        snapshot={claudeAgentToolSnapshot}
         expanded={expanded}
         hasRequest={hasRequest}
         hasResult={hasResult}
@@ -4217,7 +4466,24 @@ function ToolCallItem({
     );
   }
 
-  const preview = getToolPreview(tool);
+  if (taskSnapshot) {
+    return (
+      <TaskToolItem
+        tool={tool}
+        snapshot={taskSnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        exportMode={exportMode}
+        hideClaudePlanNotes={Boolean(inlinePlanApprovalRequest)}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
+  }
+
+  const preview = getToolPreview(resolveToolPreviewSource(tool, hasResult));
   const webSearchResult = parseWebSearchToolResult(tool);
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
   const canToggleExpanded = hasDetails && !exportMode;
@@ -4320,6 +4586,17 @@ function ToolCallItem({
   );
 }
 
+const MemoizedToolCallItem = memo(ToolCallItem, (previous, next) => {
+  return previous.group === next.group
+    && previous.sessionId === next.sessionId
+    && previous.workspaceId === next.workspaceId
+    && previous.workspacePath === next.workspacePath
+    && previous.exportMode === next.exportMode
+    && previous.onSubmitStructuredQuestion === next.onSubmitStructuredQuestion
+    && previous.permissionRequests === next.permissionRequests
+    && previous.replyingPermissionRequestId === next.replyingPermissionRequestId;
+});
+
 function AssistantCapabilityToolItem({
   tool,
   snapshot,
@@ -4417,8 +4694,11 @@ function SubagentNotificationReportCard({
     ? t("conversation.assistantCapabilityRawCollapse")
     : t("conversation.assistantCapabilityRawExpand");
 
-  return (
-    <article className="message-item tool-message-row subagent-notification-row" data-message-id={message.id}>
+    return (
+      <article
+        className="message-item tool-message-row subagent-notification-row"
+        data-message-id={message.id}
+      >
       <div className="tool-call-item assistant-capability-item" data-kind="session">
         <div className="assistant-capability-header">
           <div className="assistant-capability-heading">
@@ -4488,7 +4768,8 @@ function TaskToolItem({
   hasRequest,
   hasResult,
   onToggleExpanded,
-  exportMode = false
+  exportMode = false,
+  hideClaudePlanNotes = false
 }: {
   tool: ResolvedToolCall;
   snapshot: ConversationTaskSnapshot;
@@ -4497,6 +4778,7 @@ function TaskToolItem({
   hasResult: boolean;
   onToggleExpanded: () => void;
   exportMode?: boolean;
+  hideClaudePlanNotes?: boolean;
 }) {
   return (
     <ConversationTaskProgressCard
@@ -4504,6 +4786,7 @@ function TaskToolItem({
       toolName={tool.name}
       expanded={expanded}
       exportMode={exportMode}
+      hideClaudePlanNotes={hideClaudePlanNotes}
       onToggleExpanded={exportMode ? undefined : onToggleExpanded}
     >
       {!exportMode && expanded ? (
@@ -4527,6 +4810,35 @@ function TaskToolItem({
       ) : null}
     </ConversationTaskProgressCard>
   );
+}
+
+function resolveInlinePlanApprovalRequest(
+  tool: ResolvedToolCall,
+  permissionRequests: SessionPermissionRequestDto[]
+): SessionPermissionRequestDto | null {
+  const normalizedToolName = tool.name.trim().toLowerCase();
+
+  if (normalizedToolName !== "exitplanmode") {
+    return null;
+  }
+
+  const inputText = tool.input?.trim() ?? "";
+
+  return permissionRequests.find((request) => {
+    if (request.kind !== "plan_approval" || request.status !== "pending") {
+      return false;
+    }
+
+    if (request.toolName?.trim().toLowerCase() !== "exitplanmode") {
+      return false;
+    }
+
+    if (!inputText) {
+      return true;
+    }
+
+    return request.detail?.includes(inputText) ?? false;
+  }) ?? null;
 }
 
 function getApplyPatchActionLabel(action: ApplyPatchFileChange["action"]) {
@@ -4784,8 +5096,11 @@ function RulesMessageCard({
           ? t("conversation.skillContextExpand")
         : t("conversation.rulesMessageExpand");
 
-  return (
-    <article className={`message-item ${tone} rules-message-row`} data-message-id={message.id}>
+    return (
+      <article
+        className={`message-item ${tone} rules-message-row`}
+        data-message-id={message.id}
+      >
       <div className="message-content-wrapper">
         <div className="rules-message-card">
           {forceExpanded ? (
@@ -5075,7 +5390,10 @@ function MessageItem({
 
   if (isThinking) {
     return (
-      <article className="message-item assistant-message thinking-message-row" data-message-id={message.id}>
+      <article
+        className="message-item assistant-message thinking-message-row"
+        data-message-id={message.id}
+      >
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="thinking-message-content">
           <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
@@ -5121,12 +5439,8 @@ function MessageItem({
               exportMode={exportMode}
             />
           )}
-          {structuredQuestions && onSubmitStructuredQuestion ? (
-            <StructuredQuestionCard
-              messageId={message.id}
-              prompt={structuredQuestions}
-              onSubmit={onSubmitStructuredQuestion}
-            />
+          {structuredQuestions ? (
+            <StructuredQuestionPromptPreviewCard prompt={structuredQuestions} />
           ) : null}
           <MessageMetadataBar
             text={visibleContent}
@@ -5164,6 +5478,84 @@ function MessageItem({
   );
 }
 
+const MemoizedMessageItem = memo(MessageItem, (previous, next) => {
+  return previous.message === next.message
+    && previous.provider === next.provider
+    && previous.interruptedSource === next.interruptedSource
+    && previous.foldedPromptKind === next.foldedPromptKind
+    && previous.actionState === next.actionState
+    && previous.onRetry === next.onRetry
+    && previous.onForkMessage === next.onForkMessage
+    && previous.assistantAvatar === next.assistantAvatar
+    && previous.exportMode === next.exportMode
+    && previous.onSubmitStructuredQuestion === next.onSubmitStructuredQuestion;
+});
+
+function StructuredQuestionPromptPreviewCard({
+  prompt
+}: {
+  prompt: StructuredQuestionPrompt;
+}) {
+  return (
+    <section className="permission-request-card permission-request-card-inline permission-request-card-readonly">
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <div className="permission-request-provider-copy">
+            <strong>{t("conversation.permissionQuestionPendingTitle")}</strong>
+            <span>{t("conversation.permissionQuestionPendingDescription")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{t("conversation.permissionRequestKindUserInput")}</span>
+      </header>
+      <div className="permission-request-card-body">
+        <div className="permission-request-question-result-list">
+          {prompt.questions.map((question) => (
+            <div key={question.id} className="permission-request-question-result">
+              <span>{question.question}</span>
+              <strong>{t("conversation.permissionQuestionPendingEmpty")}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StructuredQuestionResultCard({
+  prompt,
+  tool
+}: {
+  prompt: StructuredQuestionPrompt;
+  tool: ResolvedToolCall;
+}) {
+  const answers = resolveStructuredQuestionResultAnswers(prompt, tool);
+  const hasAnswered = answers.some((answer) => Boolean(answer.answer.trim()));
+
+  return (
+    <section className="permission-request-card permission-request-card-inline permission-request-card-readonly">
+      <header className="permission-request-card-header">
+        <div className="permission-request-provider">
+          <div className="permission-request-provider-copy">
+            <strong>{hasAnswered ? t("conversation.permissionQuestionResultTitle") : t("conversation.permissionQuestionPendingTitle")}</strong>
+            <span>{hasAnswered ? t("conversation.permissionQuestionResultDescription") : t("conversation.permissionQuestionPendingDescription")}</span>
+          </div>
+        </div>
+        <span className="permission-request-kind">{t("conversation.permissionRequestKindUserInput")}</span>
+      </header>
+      <div className="permission-request-card-body">
+        <div className="permission-request-question-result-list">
+          {answers.map((answer) => (
+            <div key={answer.questionId} className="permission-request-question-result">
+              <span>{answer.question}</span>
+              <strong>{answer.answer || t("conversation.permissionQuestionPendingEmpty")}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function StructuredQuestionCard({
   messageId,
   prompt,
@@ -5174,9 +5566,12 @@ function StructuredQuestionCard({
   onSubmit: (payload: { messageId: string; answers: Record<string, string[]> }) => Promise<void> | void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const disableSubmit = prompt.questions.some(
-    (question) => (answers[question.id]?.filter(Boolean).length ?? 0) === 0
+    (question) =>
+      (answers[question.id]?.filter(Boolean).length ?? 0) === 0 &&
+      !otherAnswers[question.id]?.trim()
   );
 
   return (
@@ -5204,17 +5599,24 @@ function StructuredQuestionCard({
                 <div className="permission-request-question-options">
                   {question.options.map((option) => {
                     const checked = answers[question.id]?.includes(option.label) ?? false;
+                    const inputType = question.multiSelect ? "checkbox" : "radio";
 
                     return (
                       <label key={`${question.id}:${option.label}`} className="permission-request-question-option">
                         <input
-                          type="radio"
+                          type={inputType}
                           name={`${messageId}:${question.id}`}
                           checked={checked}
                           onChange={() => {
+                            setOtherAnswers((current) => ({
+                              ...current,
+                              [question.id]: ""
+                            }));
                             setAnswers((current) => ({
                               ...current,
-                              [question.id]: [option.label]
+                              [question.id]: question.multiSelect
+                                ? toggleStructuredQuestionAnswer(current[question.id] ?? [], option.label)
+                                : [option.label]
                             }));
                           }}
                         />
@@ -5225,6 +5627,41 @@ function StructuredQuestionCard({
                       </label>
                     );
                   })}
+                  {question.allowOther ? (
+                    <label className="permission-request-question-option permission-request-question-option-other">
+                      <input
+                        type="radio"
+                        name={`${messageId}:${question.id}`}
+                        checked={Boolean(otherAnswers[question.id]?.trim())}
+                        onChange={() => {
+                          setAnswers((current) => ({
+                            ...current,
+                            [question.id]: []
+                          }));
+                        }}
+                      />
+                      <span>
+                        <strong>{t("conversation.permissionRequestQuestionOtherLabel")}</strong>
+                        <input
+                          className="permission-request-question-other-input"
+                          type={question.secret ? "password" : "text"}
+                          value={otherAnswers[question.id] ?? ""}
+                          placeholder={t("conversation.permissionRequestQuestionOtherPlaceholder")}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setOtherAnswers((current) => ({
+                              ...current,
+                              [question.id]: value
+                            }));
+                            setAnswers((current) => ({
+                              ...current,
+                              [question.id]: []
+                            }));
+                          }}
+                        />
+                      </span>
+                    </label>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -5243,7 +5680,7 @@ function StructuredQuestionCard({
             try {
               await onSubmit({
                 messageId,
-                answers
+                answers: mergeStructuredQuestionAnswers(answers, otherAnswers)
               });
             } finally {
               setSubmitting(false);
@@ -5255,6 +5692,114 @@ function StructuredQuestionCard({
       </footer>
     </section>
   );
+}
+
+function resolveStructuredQuestionResultAnswers(
+  prompt: StructuredQuestionPrompt,
+  tool: ResolvedToolCall
+): Array<{ questionId: string; question: string; answer: string }> {
+  const inputRecord = parseToolJsonObject(tool.input);
+  const outputRecord = parseToolJsonObject(tool.output);
+  const inputAnswers = isRecord(inputRecord?.answers) ? inputRecord.answers : null;
+  const outputAnswers = isRecord(outputRecord?.answers) ? outputRecord.answers : null;
+  const answersRecord = outputAnswers ?? inputAnswers;
+
+  return prompt.questions.map((question, index) => {
+    const value = answersRecord
+      ? readStructuredQuestionAnswerValue(answersRecord, [
+          question.question,
+          question.id,
+          String(index)
+        ])
+      : tool.output?.trim() ?? "";
+
+    return {
+      questionId: question.id,
+      question: question.question,
+      answer: value
+    };
+  });
+}
+
+function readStructuredQuestionAnswerValue(
+  answers: Record<string, unknown>,
+  keys: string[]
+): string {
+  for (const key of keys) {
+    const raw = answers[key];
+
+    if (Array.isArray(raw)) {
+      const values = raw
+        .map((item) => (typeof item === "string" || typeof item === "number" ? String(item).trim() : ""))
+        .filter(Boolean);
+
+      if (values.length > 0) {
+        return values.join(", ");
+      }
+    }
+
+    if (typeof raw === "string" || typeof raw === "number") {
+      const value = String(raw).trim();
+
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  return "";
+}
+
+function resolveAskUserQuestionPrompt(tool: ResolvedToolCall): StructuredQuestionPrompt | null {
+  if (tool.name.trim().toLowerCase() !== "askuserquestion") {
+    return null;
+  }
+
+  const parsed = parseMessageRichContent(tool.input).structuredQuestions;
+
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    questions: parsed.questions.map((question) => ({
+      ...question,
+      allowOther: true
+    }))
+  };
+}
+
+function toggleStructuredQuestionAnswer(values: string[], nextValue: string): string[] {
+  if (values.includes(nextValue)) {
+    return values.filter((value) => value !== nextValue);
+  }
+
+  return [...values, nextValue];
+}
+
+function mergeStructuredQuestionAnswers(
+  selectedAnswers: Record<string, string[]>,
+  otherAnswers: Record<string, string>
+): Record<string, string[]> {
+  const merged: Record<string, string[]> = {};
+
+  for (const [questionId, values] of Object.entries(selectedAnswers)) {
+    const normalizedValues = values.filter(Boolean);
+
+    if (normalizedValues.length > 0) {
+      merged[questionId] = normalizedValues;
+    }
+  }
+
+  for (const [questionId, value] of Object.entries(otherAnswers)) {
+    const normalized = value.trim();
+
+    if (normalized) {
+      merged[questionId] = [normalized];
+    }
+  }
+
+  return merged;
 }
 
 function renderRuntimeThinkingItem(item: Extract<TimelineRenderItem, { type: "runtime_thinking" }>) {
@@ -5277,7 +5822,10 @@ function renderRuntimeThinkingItem(item: Extract<TimelineRenderItem, { type: "ru
 
 function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "session_error" }>) {
   return (
-    <article key={item.key} className="message-item assistant-message session-runtime-error-row">
+    <article
+      key={item.key}
+      className="message-item assistant-message session-runtime-error-row"
+    >
       <div className="session-runtime-error-row__spacer" aria-hidden="true" />
       <section
         className="message-content-wrapper session-runtime-error-panel"
@@ -5311,6 +5859,28 @@ function renderSessionErrorItem(item: Extract<TimelineRenderItem, { type: "sessi
             })}
           </p>
         ) : null}
+      </section>
+    </article>
+  );
+}
+
+function renderRuntimeNoticeItem(item: Extract<TimelineRenderItem, { type: "runtime_notice" }>) {
+  return (
+    <article key={item.key} className="message-item assistant-message">
+      <div className="message-avatar"><DefaultAssistantAvatar /></div>
+      <section className="permission-request-card permission-request-card-inline permission-request-card-readonly runtime-notice-card">
+        <header className="permission-request-card-header">
+          <div className="permission-request-provider">
+            <div className="permission-request-provider-copy">
+              <strong>{item.notice.title}</strong>
+              <span>{t("conversation.runtimeNoticeDescription")}</span>
+            </div>
+          </div>
+          <span className="permission-request-kind">{item.notice.kindLabel}</span>
+        </header>
+        <div className="permission-request-card-body">
+          <p className="permission-request-summary">{item.notice.summary}</p>
+        </div>
       </section>
     </article>
   );
@@ -5358,20 +5928,23 @@ export function ConversationTranscriptExport({
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
             <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem
+              <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
                 exportMode
+                onSubmitStructuredQuestion={null}
               />
             </article>
           ) : item.type === "runtime_thinking" ? (
             renderRuntimeThinkingItem(item)
+          ) : item.type === "runtime_notice" ? (
+            renderRuntimeNoticeItem(item)
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
-            <MessageItem
+            <MemoizedMessageItem
               key={item.key}
               message={item.message}
               provider={provider}
@@ -5380,7 +5953,7 @@ export function ConversationTranscriptExport({
                   ? "system_prompt"
                   : null
               }
-              actionState={{ canCopy: false, canFork: false }}
+              actionState={DEFAULT_MESSAGE_ACTION_STATE}
               onRetry={() => undefined}
               onForkMessage={null}
               interruptedSource={interruptedSource}
@@ -5439,7 +6012,9 @@ export function MessageTimeline({
   interruptedSource = null,
   assistantAvatar,
   followTailUpdates = false,
-  onSubmitStructuredQuestion
+  onSubmitStructuredQuestion,
+  permissionRequests = [],
+  replyingPermissionRequestId = null
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const platform = usePlatform();
@@ -5472,32 +6047,50 @@ export function MessageTimeline({
   const lastProgrammaticRestoreScrollTopRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const previousRuntimeThinkingPlaceholderRef = useRef<string | null>(null);
+  const renderCycleIdRef = useRef(0);
+  const renderCountForSessionRef = useRef(0);
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const hasNewMessagesBelowRef = useRef(false);
   const previousRenderMessageIdsRef = useRef<string[] | null>(null);
   const manualRestoreDurationMs = platform.isMobile ? 0 : MANUAL_RESTORE_DURATION_MS;
+  const deferredItems = useDeferredValue(items);
+  const deferredSessionSummary = useDeferredValue(sessionSummary);
   const messages = useMemo(
-    () => extractConversationTimelineMessages(items),
-    [items]
+    () => extractConversationTimelineMessages(deferredItems),
+    [deferredItems]
   );
   const runtimeThinkingPlaceholder = useMemo(
-    () => findConversationTimelineRuntimeThinkingLabel(items),
-    [items]
+    () => findConversationTimelineRuntimeThinkingLabel(deferredItems),
+    [deferredItems]
   );
   const timelineViewModel = useMemo(
     () => buildTimelineViewModel({
-      sessionSummary,
-      items,
+      sessionSummary: deferredSessionSummary,
+      items: deferredItems,
       provider
     }),
-    [items, provider, sessionSummary]
+    [deferredItems, deferredSessionSummary, provider]
   );
   const visibleMessages = timelineViewModel.visibleMessages;
   const renderItems = timelineViewModel.renderItems;
   const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
   const actionStateByMessageId = timelineViewModel.actionStateByMessageId;
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
+
+  useEffect(() => {
+    renderCycleIdRef.current += 1;
+    renderCountForSessionRef.current = 0;
+    logPerfDebug("timeline.session_cycle.start", {
+      sessionId,
+      renderCycleId: renderCycleIdRef.current,
+      followTailUpdates,
+      historyState,
+      rawMessagesLength: messages.length,
+      visibleMessagesLength: visibleMessages.length,
+      renderItemsLength: renderItems.length
+    });
+  }, [sessionId]);
 
   function summarizeMessageSignature(signature: string | null): Record<string, unknown> | null {
     if (!signature) {
@@ -5590,6 +6183,14 @@ export function MessageTimeline({
         key: item.key,
         code: item.error.code,
         summary: item.error.summary
+      };
+    }
+
+    if (item.type === "runtime_notice") {
+      return {
+        type: item.type,
+        key: item.key,
+        summary: item.notice.summary
       };
     }
 
@@ -5758,6 +6359,10 @@ export function MessageTimeline({
     logTimelineScrollDebug(scope, buildTimelineScrollDebugDetail(list, extra));
   }
 
+  function buildPersistedTailMessageSignature(): string | null {
+    return buildMessageSignature(visibleMessages.at(-1) ?? null);
+  }
+
   function buildCurrentScrollState(list: HTMLDivElement) {
     const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
     const stickToBottom = distanceToBottom <= STICK_TO_BOTTOM_DISTANCE_PX;
@@ -5768,7 +6373,7 @@ export function MessageTimeline({
       lastMessageSignature:
         hasNewMessagesBelowRef.current && !stickToBottom
           ? restoredTailSignatureRef.current
-          : buildMessageSignature(renderItems.at(-1) ?? null)
+          : buildPersistedTailMessageSignature()
     };
   }
 
@@ -5785,7 +6390,7 @@ export function MessageTimeline({
     if (nextStickToBottom && hasNewMessagesBelowRef.current) {
       finishManualRestore();
       hasNewMessagesBelowRef.current = false;
-      restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
+      restoredTailSignatureRef.current = buildPersistedTailMessageSignature();
       setHasNewMessagesBelow(false);
     }
     setShowScrollToBottomButton(
@@ -6029,11 +6634,12 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     const list = listRef.current;
-    const currentLastSignature = buildMessageSignature(renderItems.at(-1) ?? null);
+    const currentTailRenderSignature = buildMessageSignature(renderItems.at(-1) ?? null);
+    const currentPersistedTailSignature = buildPersistedTailMessageSignature();
 
     if (!list) {
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       return;
     }
 
@@ -6043,12 +6649,13 @@ export function MessageTimeline({
     const hasTailUpdate =
       previousCount === 0 ||
       renderItems.length !== previousCount ||
-      currentLastSignature !== previousLastSignature;
+      currentTailRenderSignature !== previousLastSignature;
 
     emitTimelineScrollDebug("messages.effect.start", list, {
       previousCount,
       previousLastMessage: summarizeMessageSignature(previousLastSignature),
-      currentLastMessage: summarizeMessageSignature(currentLastSignature),
+      currentLastMessage: summarizeMessageSignature(currentTailRenderSignature),
+      currentPersistedTailMessage: summarizeMessageSignature(currentPersistedTailSignature),
       hasTailUpdate
     });
 
@@ -6057,8 +6664,8 @@ export function MessageTimeline({
       const hasTailUpdates =
         !pendingRestoreState.stickToBottom
         && pendingRestoreState.lastMessageSignature !== null
-        && currentLastSignature !== null
-        && pendingRestoreState.lastMessageSignature !== currentLastSignature;
+        && currentPersistedTailSignature !== null
+        && pendingRestoreState.lastMessageSignature !== currentPersistedTailSignature;
 
       if (pendingRestoreState.stickToBottom) {
         finishManualRestore();
@@ -6079,7 +6686,7 @@ export function MessageTimeline({
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6098,7 +6705,7 @@ export function MessageTimeline({
       pendingRestoreStateRef.current = null;
       syncScrollAffordance(list);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6106,7 +6713,7 @@ export function MessageTimeline({
     if (manualRestoreInProgressRef.current) {
       applyManualRestorePosition(list, manualRestoreTargetRef.current ?? list.scrollTop);
       previousMessageCountRef.current = renderItems.length;
-      previousLastMessageSignatureRef.current = currentLastSignature;
+      previousLastMessageSignatureRef.current = currentTailRenderSignature;
       rememberCurrentScrollState(list);
       return;
     }
@@ -6152,7 +6759,7 @@ export function MessageTimeline({
 
     syncScrollAffordance(list);
     previousMessageCountRef.current = renderItems.length;
-    previousLastMessageSignatureRef.current = currentLastSignature;
+    previousLastMessageSignatureRef.current = currentTailRenderSignature;
   }, [historyState, loadingOlderMessages, renderItems, sessionId]);
 
   useEffect(() => {
@@ -6203,6 +6810,21 @@ export function MessageTimeline({
   }, [sessionId, visibleMessages.length]);
 
   useEffect(() => {
+    renderCountForSessionRef.current += 1;
+    logPerfDebug("timeline.render_cycle", {
+      sessionId,
+      renderCycleId: renderCycleIdRef.current,
+      renderCountForSession: renderCountForSessionRef.current,
+      followTailUpdates,
+      historyState,
+      rawMessagesLength: messages.length,
+      visibleMessagesLength: visibleMessages.length,
+      renderItemsLength: renderItems.length,
+      hiddenMessageCount: timelineViewModel.hiddenMessageIds.length,
+      validationIssueCount: timelineViewModel.validationIssues.length,
+      tailItemType: renderItems.at(-1)?.type ?? null
+    });
+
     const currentRenderMessageIds = collectRenderItemMessageIds(renderItems);
     const assistantRenderMoves = collectAssistantRenderMoves(
       previousRenderMessageIdsRef.current,
@@ -6348,19 +6970,24 @@ export function MessageTimeline({
         {renderItems.map((item) =>
           item.type === "tool_group" ? (
             <article key={item.key} className="message-item tool-message-row">
-              <ToolCallItem
+              <MemoizedToolCallItem
                 group={item.group}
                 sessionId={sessionId}
                 workspaceId={workspaceId}
                 workspacePath={workspacePath}
+                onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+                permissionRequests={permissionRequests}
+                replyingPermissionRequestId={replyingPermissionRequestId}
               />
             </article>
           ) : item.type === "runtime_thinking" ? (
             renderRuntimeThinkingItem(item)
+          ) : item.type === "runtime_notice" ? (
+            renderRuntimeNoticeItem(item)
           ) : item.type === "session_error" ? (
             renderSessionErrorItem(item)
           ) : (
-            <MessageItem
+            <MemoizedMessageItem
               key={item.key}
               message={item.message}
               provider={provider}
@@ -6370,10 +6997,10 @@ export function MessageTimeline({
                   : null
               }
               actionState={
-                actionStateByMessageId.get(item.message.id) ?? {
-                  canCopy: item.message.role === "user",
-                  canFork: false
-                }
+                actionStateByMessageId.get(item.message.id)
+                ?? (item.message.role === "user"
+                  ? DEFAULT_USER_MESSAGE_ACTION_STATE
+                  : DEFAULT_MESSAGE_ACTION_STATE)
               }
               onRetry={onRetryMessage}
               onForkMessage={onForkMessage}
@@ -6401,7 +7028,7 @@ export function MessageTimeline({
             finishManualRestore();
             jumpToBottom(list, "scroll_button_click");
             hasNewMessagesBelowRef.current = false;
-            restoredTailSignatureRef.current = buildMessageSignature(renderItems.at(-1) ?? null);
+            restoredTailSignatureRef.current = buildPersistedTailMessageSignature();
             setHasNewMessagesBelow(false);
             syncScrollAffordance(list);
             persistCurrentScrollState(list);
@@ -6458,6 +7085,16 @@ function buildMessageSignature(
         type: item.type,
         key: item.key,
         label: item.label
+      });
+    }
+
+    if (item.type === "runtime_notice") {
+      return JSON.stringify({
+        type: item.type,
+        key: item.key,
+        title: item.notice.title,
+        summary: item.notice.summary,
+        kindLabel: item.notice.kindLabel
       });
     }
 

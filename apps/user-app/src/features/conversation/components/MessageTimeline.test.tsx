@@ -1085,7 +1085,7 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(/"plan":/)).toBeInTheDocument();
   });
 
-  it("会把 Claude TaskUpdate 渲染成任务卡片", async () => {
+  it("会把 Claude 的 ExitPlanMode 渲染成计划卡片，并展示后续执行提示", async () => {
     render(
       <MessageTimeline
         historyState="ready"
@@ -1093,31 +1093,489 @@ describe("MessageTimeline", () => {
         onRetryMessage={vi.fn()}
         messages={[
           createToolMessage({
-            id: "task-update-1",
-            callId: "task-update-1",
-            name: "TaskUpdate",
-            kind: "tool_result",
+            id: "exit-plan-call-1",
+            callId: "exit-plan-call-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
             content: JSON.stringify({
-              tasks: [
-                { id: "spec", title: "补 spec", status: "completed" },
-                { id: "ui", title: "补时间线卡片", status: "in_progress", detail: "正在改 MessageTimeline" }
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
               ]
             }, null, 2),
             toolOutput: JSON.stringify({
-              tasks: [
-                { id: "spec", title: "补 spec", status: "completed" },
-                { id: "ui", title: "补时间线卡片", status: "in_progress", detail: "正在改 MessageTimeline" }
-              ]
+              plan: [
+                { step: "检查现有 Hook 设置", status: "completed" },
+                { step: "补 Host 计划审批", status: "in_progress" }
+              ],
+              explanation: "先把计划审批主链路打通，再补前端展示。"
             }, null, 2)
           })
         ]}
       />
     );
 
-    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
-    expect(screen.getByText("补 spec")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskCardPlanTitle"))).toBeInTheDocument();
+    expect(screen.getByText("检查现有 Hook 设置")).toBeInTheDocument();
+    expect(screen.getByText("补 Host 计划审批")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskProgressExplanationTitle"))).toBeInTheDocument();
+    expect(screen.getByText("先把计划审批主链路打通，再补前端展示。")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskCardAllowedPromptsTitle"))).toBeInTheDocument();
+    expect(screen.getByText("run tests")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.taskCardRawExpand") }));
+
+    expect(screen.getByText(t("conversation.toolInputLabel"))).toBeInTheDocument();
+    expect(screen.getByText(/"allowedPrompts":/)).toBeInTheDocument();
+  });
+
+  it("Claude 的 ExitPlanMode 长文本计划说明会按 markdown 渲染", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-markdown-raw-1",
+            callId: "exit-plan-markdown-raw-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: `## 济南 3 日游\n\n> 先定节奏，再拆每天安排\n\n- Day 1：老城泉水\n- Day 2：千佛山与博物馆`,
+              allowedPrompts: []
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "济南 3 日游" })).toBeInTheDocument();
+    expect(screen.getByText("先定节奏，再拆每天安排")).toBeInTheDocument();
+    expect(screen.getByText("Day 1：老城泉水")).toBeInTheDocument();
+    expect(screen.getByText("Day 2：千佛山与博物馆")).toBeInTheDocument();
+  });
+
+  it("Claude 的 ExitPlanMode 任务项标题会按 markdown 渲染加粗", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-bold-list-1",
+            callId: "exit-plan-bold-list-1",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: []
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: [
+                "**一日一主题**，每天景点地理集中，减少跨城奔波；",
+                "**热在中午、人在室内**——把山东省博物馆固定在最热时段；"
+              ],
+              allowedPrompts: []
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    const firstStrong = screen.getByText("一日一主题", { selector: "strong" });
+    const secondStrong = screen.getByText("热在中午、人在室内", { selector: "strong" });
+
+    expect(firstStrong).toBeInTheDocument();
+    expect(secondStrong).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*一日一主题\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("Claude 的 ExitPlanMode 在顶部有待处理审批时，不再重复显示底部计划说明", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        replyingPermissionRequestId={null}
+        permissionRequests={[
+          {
+            id: "permission-plan-1",
+            sessionId: "session-1",
+            provider: "claude-code",
+            providerSessionId: "provider-session-1",
+            requestKey: "exit-plan-1",
+            kind: "plan_approval",
+            status: "pending",
+            title: "Claude 请求确认执行计划",
+            summary: "先确认方案，再继续改代码。",
+            detail: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            reason: null,
+            toolName: "ExitPlanMode",
+            command: null,
+            cwd: "/tmp/workspace",
+            paths: [],
+            permissionProfile: null,
+            questions: [],
+            actions: [
+              {
+                value: "allow",
+                label: "批准计划",
+                tone: "primary",
+                description: "允许 Claude 按当前计划继续执行"
+              },
+              {
+                value: "deny",
+                label: "退回计划",
+                tone: "danger",
+                description: "拒绝这次计划，要求 Claude 停在计划阶段"
+              }
+            ],
+            rawPayload: null,
+            createdAt: "2026-06-14T09:00:00.000Z",
+            updatedAt: "2026-06-14T09:00:00.000Z",
+            resolvedAt: null
+          }
+        ]}
+        messages={[
+          createToolMessage({
+            id: "exit-plan-call-2",
+            callId: "exit-plan-call-2",
+            name: "ExitPlanMode",
+            kind: "tool_call",
+            content: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolInput: JSON.stringify({
+              allowedPrompts: [
+                {
+                  tool: "Bash",
+                  prompt: "run tests"
+                }
+              ]
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              plan: [
+                { step: "写清楚剩余 Hook", status: "completed" },
+                { step: "补 plan 审批 UI", status: "in_progress" }
+              ],
+              explanation: "## 本轮更新\n\n- 先把审批卡片贴到计划下面\n- 再补 markdown 展示"
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.queryByRole("heading", { name: "本轮更新" })).not.toBeInTheDocument();
+    expect(screen.queryByText("先把审批卡片贴到计划下面")).not.toBeInTheDocument();
+    expect(screen.queryByText("再补 markdown 展示")).not.toBeInTheDocument();
+  });
+
+  it("Claude TaskUpdate 只有 taskId 时也会渲染成任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-create-1",
+            callId: "task-create-1",
+            name: "TaskCreate",
+            kind: "tool_call",
+            content: JSON.stringify({
+              title: "补时间线卡片"
+            }, null, 2),
+            toolInput: JSON.stringify({
+              title: "补时间线卡片"
+            }, null, 2),
+            toolOutput: JSON.stringify("1")
+          }),
+          createToolMessage({
+            id: "task-update-1",
+            callId: "task-update-1",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: JSON.stringify({
+              status: "in_progress",
+              taskId: 1,
+              activeForm: "正在改 MessageTimeline"
+            }, null, 2),
+            toolInput: JSON.stringify({
+              status: "in_progress",
+              taskId: 1,
+              activeForm: "正在改 MessageTimeline"
+            }, null, 2),
+            toolOutput: "Updated task #1 status"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getAllByText(t("conversation.taskCardTodoTitle"))).toHaveLength(2);
     expect(screen.getByText("补时间线卡片")).toBeInTheDocument();
-    expect(screen.getByText("正在改 MessageTimeline")).toBeInTheDocument();
+    expect(screen.getByText("Task #1")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.taskProgressStatusInProgress"))).toBeInTheDocument();
+  });
+
+  it("会把 Claude 纯文本 TaskCreate 输出渲染成任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-create-text-1",
+            callId: "task-create-text-1",
+            name: "TaskCreate",
+            kind: "tool_result",
+            content: "Task #1 created successfully: 调研目标工具的文档结构",
+            toolInput: "",
+            toolOutput: "Task #1 created successfully: 调研目标工具的文档结构"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
+  });
+
+  it("会把 Claude TaskCreate 的调用和结果按任务语义合并，避免同一任务显示两次", async () => {
+    const taskTitles = [
+      "调研目标工具的文档结构",
+      "初始化 Docusaurus 中文站点脚手架",
+      "翻译核心章节并校对术语",
+      "配置中文搜索与部署流程"
+    ];
+    const messages = taskTitles.flatMap((title, index) => {
+      const taskNo = index + 1;
+
+      return [
+        createToolMessage({
+          id: `task-create-call-${taskNo}`,
+          callId: `task-create-call-${taskNo}`,
+          name: "TaskCreate",
+          kind: "tool_call",
+          content: JSON.stringify({
+            title
+          }),
+          toolInput: JSON.stringify({
+            title
+          }),
+          sequence: taskNo * 2 - 1
+        }),
+        createToolMessage({
+          id: `task-create-result-${taskNo}`,
+          callId: `task-create-result-${taskNo}`,
+          name: "TaskCreate",
+          kind: "tool_result",
+          content: `Task #${taskNo} created successfully: ${title}`,
+          toolInput: "",
+          toolOutput: `Task #${taskNo} created successfully: ${title}`,
+          sequence: taskNo * 2
+        })
+      ];
+    });
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={messages}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(4);
+    expect(screen.getAllByText(t("conversation.taskCardTodoTitle"))).toHaveLength(4);
+    expect(screen.getAllByText("调研目标工具的文档结构")).toHaveLength(1);
+    expect(screen.getAllByText("配置中文搜索与部署流程")).toHaveLength(1);
+  });
+
+  it("会把 Claude TaskUpdate 的调用和结果按 taskId 合并", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-update-call-1",
+            callId: "task-update-call-1",
+            name: "TaskUpdate",
+            kind: "tool_call",
+            content: JSON.stringify({
+              status: "completed",
+              taskId: "1"
+            }),
+            toolInput: JSON.stringify({
+              status: "completed",
+              taskId: "1"
+            }),
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "task-update-result-1",
+            callId: "task-update-result-1",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: "Updated task #1 status",
+            toolOutput: "Updated task #1 status",
+            sequence: 2
+          }),
+          createToolMessage({
+            id: "task-update-call-2",
+            callId: "task-update-call-2",
+            name: "TaskUpdate",
+            kind: "tool_call",
+            content: JSON.stringify({
+              status: "in_progress",
+              taskId: "2"
+            }),
+            toolInput: JSON.stringify({
+              status: "in_progress",
+              taskId: "2"
+            }),
+            sequence: 3
+          }),
+          createToolMessage({
+            id: "task-update-result-2",
+            callId: "task-update-result-2",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: "Updated task #2 status",
+            toolOutput: "Updated task #2 status",
+            sequence: 4
+          })
+        ]}
+      />
+    );
+
+    const previews = Array.from(document.querySelectorAll(".tool-message-row")).map(
+      (node) => node.textContent?.replace(/\s+/g, " ").trim() ?? ""
+    );
+
+    expect(previews).toHaveLength(2);
+    expect(previews[0]).toContain(t("conversation.taskCardTodoTitle"));
+    expect(previews[0]).toContain("Task #1");
+    expect(previews[0]).toContain(t("conversation.taskProgressStatusCompleted"));
+    expect(previews[1]).toContain(t("conversation.taskCardTodoTitle"));
+    expect(previews[1]).toContain("Task #2");
+    expect(previews[1]).toContain(t("conversation.taskProgressStatusInProgress"));
+  });
+
+  it("会把 Claude TaskList 的调用和结果合并成一张任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-list-call-1",
+            callId: "task-list-call-1",
+            name: "TaskList",
+            kind: "tool_call",
+            content: "{}",
+            toolInput: "{}",
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "task-list-result-1",
+            callId: "task-list-result-1",
+            name: "TaskList",
+            kind: "tool_result",
+            content: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            toolOutput: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            sequence: 2
+          })
+        ]}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
+    expect(screen.getByText("配置中文搜索与部署流程")).toBeInTheDocument();
+  });
+
+  it("会把 Claude 纯文本 TaskList 输出渲染成完整任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-list-result-1",
+            callId: "task-list-result-1",
+            name: "TaskList",
+            kind: "tool_result",
+            content: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n"),
+            toolInput: "{}",
+            toolOutput: [
+              "#1 [completed] 调研目标工具的文档结构",
+              "#2 [completed] 初始化 Docusaurus 中文站点脚手架",
+              "#3 [in_progress] 翻译核心章节并校对术语",
+              "#4 [pending] 配置中文搜索与部署流程"
+            ].join("\n")
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("调研目标工具的文档结构")).toBeInTheDocument();
+    expect(screen.getByText("翻译核心章节并校对术语")).toBeInTheDocument();
+    expect(screen.getByText("配置中文搜索与部署流程")).toBeInTheDocument();
   });
 
   it("会把 Claude TodoWrite 渲染成任务卡片", async () => {
@@ -1546,7 +2004,7 @@ describe("MessageTimeline", () => {
 
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
     expect(screen.getByText("接时间线卡片")).toBeInTheDocument();
-    expect(screen.getByText("保留原始展开")).toBeInTheDocument();
+    expect(screen.queryByText("保留原始展开")).not.toBeInTheDocument();
   });
 
   it("不依赖 provider，也会合并相邻的 claude 工具消息", async () => {
@@ -1752,6 +2210,26 @@ describe("MessageTimeline", () => {
       "runtime-thinking",
       "session-error"
     ]);
+  });
+
+  it("主要 Claude 运行态会按 Ask Question 同款只读卡片展示", () => {
+    render(
+      <MessageTimeline
+        items={buildConversationTimelineSourceItems({
+          messages: [createAssistantTextMessage("我先继续处理这一轮。", "assistant-runtime-notice-1")],
+          sessionDetail: "Claude 正在执行初始化：/tmp/workspace"
+        })}
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Claude 正在处理当前任务")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.runtimeNoticeDescription"))).toBeInTheDocument();
+    expect(screen.getByText("运行状态")).toBeInTheDocument();
+    expect(screen.getByText("Claude 正在执行初始化：/tmp/workspace")).toBeInTheDocument();
+    expect(document.querySelector(".runtime-notice-card")).not.toBeNull();
   });
 
   it("会给代码块和 text 文本块渲染复制按钮", async () => {
@@ -2558,6 +3036,95 @@ ARGUMENTS: capabilities list`)
     expect(
       screen.getByRole("button", { name: t("conversation.scrollToBottomAction") })
     ).toHaveTextContent("NEW");
+  });
+
+  it("runtime_thinking 和 runtime_notice 变化时，仍按最后一条真实消息恢复阅读位置", () => {
+    const baseMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-runtime-anchor-1"),
+        sessionId: "session-runtime-anchor"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-runtime-anchor-2"),
+        sessionId: "session-runtime-anchor",
+        sequence: 2,
+        rawRef: "codex://raw#line=runtime-anchor-2"
+      }
+    ];
+    const initialItems = buildConversationTimelineSourceItems({
+      messages: baseMessages,
+      runtimeThinkingPlaceholder: "Claude 正在执行初始化",
+      sessionDetail: "Claude 正在展开用户指令：/tmp/old"
+    });
+    const updatedItems = buildConversationTimelineSourceItems({
+      messages: baseMessages,
+      runtimeThinkingPlaceholder: "Claude 正在创建工作树",
+      sessionDetail: "Claude 正在展开用户指令：/tmp/new"
+    });
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-runtime-anchor"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        items={initialItems}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2000,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-runtime-anchor-other"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("其他会话", "assistant-runtime-anchor-other"),
+            sessionId: "session-runtime-anchor-other"
+          }
+        ]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-runtime-anchor"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        items={updatedItems}
+      />
+    );
+
+    const restoredMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(restoredMessageList).not.toBeNull();
+    expect(restoredMessageList!.scrollTop).toBe(420);
+    const jumpButton = screen.queryByRole("button", {
+      name: t("conversation.scrollToBottomAction")
+    });
+
+    expect(jumpButton?.getAttribute("data-has-new")).toBe("false");
+    expect(screen.queryByText("NEW")).not.toBeInTheDocument();
   });
 
   it("恢复阅读位置后用户一旦滚动，就不会再被手动恢复逻辑拉回旧位置", () => {

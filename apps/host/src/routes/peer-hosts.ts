@@ -4,6 +4,7 @@ import type {
   HostApiProxyController,
   PeerHostController,
 } from "../modules/peer-host/peer-host-controller.js";
+import { SESSION_MESSAGE_BODY_LIMIT_BYTES } from "./body-limits.js";
 
 export async function registerPeerHostRoutes(
   app: FastifyInstance,
@@ -34,6 +35,7 @@ export async function registerPeerHostRoutes(
   app.route({
     method: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
     url: "/api/host-proxy/hosts/:peerHostId/*",
+    bodyLimit: SESSION_MESSAGE_BODY_LIMIT_BYTES,
     handler: hostApiProxyController.proxy,
   });
 }

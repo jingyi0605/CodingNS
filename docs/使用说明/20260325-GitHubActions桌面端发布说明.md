@@ -4,6 +4,14 @@
 
 这份说明写的是仓库里桌面端 GitHub Actions 工作流怎么用、会产出什么，以及现在有哪些边界。
 
+如果你的目标是“准备正式发布”，不要只单独看这条桌面工作流。发布前默认入口已经改成：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
+
+这个统一脚本会先做本地 npm 打包测试，再触发桌面端验包和 Windows 安装回放。
+
 对应工作流文件：
 
 - [desktop-release.yml](C:/Code/CodingNS/.github/workflows/desktop-release.yml)
@@ -26,6 +34,14 @@
 
 现在支持两种触发方式：
 
+发布前建议先跑统一入口：
+
+```bash
+bash scripts/verify-release-ci.sh
+```
+
+统一入口会自动触发这条桌面工作流，不需要手工再点一次。
+
 1. 手动触发
 2. 推送 tag 触发
 
@@ -36,6 +52,8 @@ v*
 ```
 
 也就是说，像 `v0.1.0`、`v0.2.3` 这种 tag 会触发整套桌面端构建与发布流程。
+
+开发版 tag（如 `v0.9.8-beta.1`、`v0.9.8-beta.2`）同样匹配 `v*` 规则，会触发同样的桌面端构建和 Release 发布流程。开发版 tag 的命名规范详见 [开发版 tag 与版本号规则](../../specs/spec001.12-更新通道与预览版本更新体验/docs/20260612-开发版tag与版本号规则.md)。
 
 ## 触发后会发生什么
 

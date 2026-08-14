@@ -113,6 +113,10 @@ export class ClientService {
     }
   }
 
+  getHostVersion(): { version: string } {
+    return { version: readHostPackageVersion() };
+  }
+
   async getServiceUpdate(channel: "stable" | "beta"): Promise<ServiceUpdateListDto> {
     const currentVersion = readHostPackageVersion();
     const packages = await this.npmGlobalPackageService.listManagedPackages(

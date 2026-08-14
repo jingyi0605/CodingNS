@@ -136,6 +136,73 @@ test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异�
   }
 });
 
+test("CodexAdapter 会把同一次带图用户输入的 response_item 与 event_msg 去重", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-image-user-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const imagePath = join(tempDir, "image.png");
+  const attachmentBlock = [
+    "[[CODINGNS_IMAGE_ATTACHMENTS]]",
+    "下面这些图片是用户随消息附带的本地附件。请先读取并理解它们，再继续处理这条请求。",
+    `1. ${imagePath}`,
+    "[[/CODINGNS_IMAGE_ATTACHMENTS]]"
+  ].join("\n\n");
+
+  try {
+    const lines = [
+      JSON.stringify({
+        timestamp: "2026-06-15T08:49:35.849Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `分析图片内容\n\n${attachmentBlock}`
+            },
+            {
+              type: "input_text",
+              text: "<image name=[Image #1]>"
+            },
+            {
+              type: "input_image",
+              image_url: "data:image/png;base64,iVBORw0KGgo="
+            },
+            {
+              type: "input_text",
+              text: "</image>"
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-06-15T08:49:35.849Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: `分析图片内容\n\n${attachmentBlock}`,
+          local_images: [imagePath]
+        }
+      })
+    ];
+
+    writeFileSync(sessionFile, lines.join("\n"), "utf8");
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory("session-1", sessionFile, null, 50);
+
+    assert.equal(page.messages.length, 1);
+    assert.equal(page.messages[0].role, "user");
+    assert.equal(page.messages[0].content.includes("CODINGNS_IMAGE_ATTACHMENTS"), true);
+    assert.equal(
+      page.messages[0].rawRef,
+      `codex://${sessionFile.replaceAll("\\", "/")}#line=1`
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 会为 app-server 落盘的 assistant 与 tool 消息复用稳定 messageId", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-stable-id-"));
   const sessionFile = join(tempDir, "session.jsonl");
@@ -4193,6 +4260,85 @@ test("CodexAdapter 在 metadata 已经给出当前工作区 active transcript �
     assert.equal(sessions.sessions.length, 1);
     assert.equal(sessions.sessions[0]?.providerSessionId, targetThreadId);
     assert.deepEqual(parsedFiles, [targetFile]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 元数据缺失时只扫描最近少量活动会话文件", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-recent-only-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const recentDir = join(tempDir, "sessions", "2026", "06", "13");
+  const oldDir = join(tempDir, "sessions", "2026", "05", "01");
+  const recentFiles = Array.from({ length: 30 }, (_, index) =>
+    join(recentDir, `rollout-recent-${String(index).padStart(2, "0")}.jsonl`)
+  );
+  const oldFile = join(oldDir, "rollout-old.jsonl");
+
+  try {
+    mkdirSync(recentDir, { recursive: true });
+    mkdirSync(oldDir, { recursive: true });
+
+    for (const [index, filePath] of recentFiles.entries()) {
+      writeFileSync(
+        filePath,
+        [
+          JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: `recent-${index}`,
+              cwd: workspacePath
+            }
+          }),
+          JSON.stringify({
+            timestamp: `2026-06-13T08:${String(index).padStart(2, "0")}:00.000Z`,
+            type: "event_msg",
+            payload: {
+              type: "user_message",
+              message: `最近会话 ${index}`
+            }
+          })
+        ].join("\n"),
+        "utf8"
+      );
+      const mtime = new Date(Date.parse("2026-06-13T08:00:00.000Z") + index * 1000);
+      utimesSync(filePath, mtime, mtime);
+    }
+
+    writeFileSync(
+      oldFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "old-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-01T08:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "旧会话不该被默认扫描"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    const oldMtime = new Date("2026-05-01T08:00:00.000Z");
+    utimesSync(oldFile, oldMtime, oldMtime);
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessionsDetailed(workspacePath);
+    const diagnostic = sessions.providerDiagnostics?.find((entry) => entry.provider === "codex");
+
+    assert.equal(diagnostic?.scannedFiles, 12);
+    assert.equal(sessions.sessions.length, 12);
+    assert.equal(
+      sessions.sessions.some((session) => session.providerSessionId === "old-thread"),
+      false
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

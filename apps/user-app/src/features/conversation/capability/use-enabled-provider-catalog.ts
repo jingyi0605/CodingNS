@@ -33,7 +33,7 @@ export function useEnabledProviderCatalog(
       .map((item) => item.provider);
 
     return orderProviderIds(enabledProviders);
-  }, [orderedProviders, providerCatalog]);
+  }, [orderedProviders, providerCatalog, loading, requested]);
 
   return {
     providerCatalog,

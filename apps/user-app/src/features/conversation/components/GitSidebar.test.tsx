@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { ApiError } from "../../../shared/network/api-error";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 
@@ -14,6 +16,7 @@ const gitApiMock = vi.hoisted(() => ({
   getGitCommitDetail: vi.fn(),
   getGitBranches: vi.fn(),
   getGitRemotes: vi.fn(),
+  addGitIgnoreTargets: vi.fn(),
   stageGitTargets: vi.fn(),
   unstageGitTargets: vi.fn(),
   discardGitTargets: vi.fn(),
@@ -55,6 +58,7 @@ const platformMock = vi.hoisted(() => ({
 }));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const fileViewerModalMock = vi.hoisted(() => vi.fn());
 const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
 let gitSnapshotListener: ((snapshot: ReturnType<typeof createGitSnapshot>) => void) | null = null;
 const initialPreferenceState = userPreferenceStore.getState();
@@ -102,6 +106,7 @@ vi.mock("../api/git-api", () => ({
   getGitCommitDetail: gitApiMock.getGitCommitDetail,
   getGitBranches: gitApiMock.getGitBranches,
   getGitRemotes: gitApiMock.getGitRemotes,
+  addGitIgnoreTargets: gitApiMock.addGitIgnoreTargets,
   stageGitTargets: gitApiMock.stageGitTargets,
   unstageGitTargets: gitApiMock.unstageGitTargets,
   discardGitTargets: gitApiMock.discardGitTargets,
@@ -116,6 +121,7 @@ vi.mock("../api/conversation-api", () => ({
   startLiveSession: conversationApiMock.startLiveSession,
   getSessionDetail: conversationApiMock.getSessionDetail,
   listProviderCatalog: conversationApiMock.listProviderCatalog,
+  getProviderCapabilities: conversationApiMock.listProviderCapabilities,
   listProviderCapabilities: conversationApiMock.listProviderCapabilities
 }));
 
@@ -145,11 +151,28 @@ vi.mock("../../../shared/haptics", () => ({
   })
 }));
 
+vi.mock("./FileViewerModal", () => ({
+  FileViewerModal: (props: {
+    workspaceId: string | null;
+    targetHostId?: string | null;
+    filePath: string | null;
+    open: boolean;
+  }) => {
+    fileViewerModalMock(props);
+    return props.open ? (
+      <div data-testid="file-viewer-modal-props">
+        {`${props.workspaceId ?? "null"}|${props.targetHostId ?? "null"}|${props.filePath ?? "null"}|${props.open ? "open" : "closed"}`}
+      </div>
+    ) : null;
+  }
+}));
+
 describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workbenchShellMock.currentTargetHostId = null;
     workbenchShellMock.currentWorkspaceRef = null;
+    fileViewerModalMock.mockReset();
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     setViewportWidth(430);
     hapticsMock.trigger.mockReset();
@@ -761,6 +784,121 @@ describe("GitSidebar", () => {
     });
   });
 
+  it("PEERHOST Git 双击预览文件时会使用远端 request workspaceId", async () => {
+    setViewportWidth(1280);
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+    workbenchShellMock.currentWorkspaceRef = {
+      hostId: "peer-host-1",
+      workspaceId: "remote-workspace-1"
+    };
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+    });
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      gitSnapshotListener = listener;
+      listener({
+        ...createGitSnapshot(),
+        targetHostId: "peer-host-1"
+      });
+      return () => {
+        if (gitSnapshotListener === listener) {
+          gitSnapshotListener = null;
+        }
+      };
+    });
+
+    renderSidebar();
+
+    const changedFile = await screen.findByText("App.tsx");
+    await userEvent.click(changedFile);
+    await userEvent.click(changedFile);
+
+    await waitFor(() => {
+      expect(
+        fileViewerModalMock.mock.calls.some(([props]) =>
+          props.workspaceId === "remote-workspace-1" &&
+          props.targetHostId === "peer-host-1" &&
+          props.filePath === "apps/user-app/src/app/App.tsx" &&
+          props.open === true
+        )
+      ).toBe(true);
+    });
+  });
+
+  it("从 PEERHOST Git 作用域切回主 HOST 后不会复用旧缓存或接收旧快照", async () => {
+    const peerSnapshotKey = "git-sidebar.snapshot.host.peer-host-1.workspace-1";
+
+    workbenchShellMock.currentTargetHostId = "peer-host-1";
+    writeViewSnapshot(peerSnapshotKey, {
+      revision: "peer-revision",
+      status: createStatus(["peer-only.ts"]),
+      history: [],
+      historyTotalCount: 0,
+      historyNextCursor: null,
+      branches: {
+        currentBranch: "peer-main",
+        local: [{ name: "peer-main", current: true, upstream: null, remote: false }],
+        remote: []
+      }
+    });
+
+    const view = renderSidebar();
+    const peerGroup = await findGroup("当前变更");
+
+    expect(within(peerGroup).getAllByText("peer-only.ts").length).toBeGreaterThan(0);
+
+    workbenchShellMock.currentTargetHostId = null;
+    workbenchShellMock.currentWorkspaceRef = null;
+    workbenchShellMock.subscribeGitSnapshot.mockClear();
+    workbenchShellMock.requestGitRefresh.mockClear();
+    workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+      gitSnapshotListener?.({
+        ...createGitSnapshot(createStatus(["host-main.ts"])),
+        targetHostId: null
+      });
+    });
+
+    view.rerender(
+      <ToastProvider>
+        <GitSidebar
+          workspaceId="workspace-1"
+          panelActive
+          workbenchShellOverrides={{ currentTargetHostId: null } as never}
+        />
+      </ToastProvider>
+    );
+
+    expect(screen.queryAllByText("peer-only.ts")).toHaveLength(0);
+
+    await waitFor(() => {
+      expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1", {
+        knownRevision: null,
+        targetHostId: null
+      });
+    });
+
+    const hostGroup = await findGroup("当前变更");
+    await waitFor(() => {
+      expect(within(hostGroup).getAllByText("host-main.ts").length).toBeGreaterThan(0);
+    });
+
+    gitSnapshotListener?.({
+      ...createGitSnapshot(createStatus(["peer-leak.ts"])),
+      workspaceId: "workspace-1",
+      targetHostId: "peer-host-1"
+    });
+
+    await waitFor(() => {
+      expect(within(hostGroup).getAllByText("host-main.ts").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText("peer-leak.ts")).toHaveLength(0);
+
+    clearViewSnapshot(peerSnapshotKey);
+  });
+
   it("移动端最近版本标题右侧提供 Git 操作菜单，并复用桌面端菜单内容", async () => {
     renderSidebar();
 
@@ -932,6 +1070,24 @@ describe("GitSidebar", () => {
     ).toBeInTheDocument();
   });
 
+  it("远程同步失败时会展示 Git 关键报错摘要", async () => {
+    gitApiMock.syncGitRemote.mockRejectedValueOnce(new ApiError(502, {
+      error_code: "GIT_REMOTE_FAILED",
+      detail: "Remote network request failed",
+      data: {
+        gitDetail: "fatal: unable to access 'https://github.com/example/repo.git/': The requested URL returned error: 403"
+      }
+    }));
+
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fetch" }));
+
+    expect(await screen.findByText(/The requested URL returned error: 403/)).toBeInTheDocument();
+  });
+
   it("非 GitHub 远程认证弹窗保持通用用户名密码提示", async () => {
     renderSidebar();
 
@@ -1030,6 +1186,30 @@ describe("GitSidebar", () => {
     }
 
     expect(entry.querySelector(".git-history-more")).toBeNull();
+  });
+
+  it("桌面端变更文件右键会提供添加到 Git 排除", async () => {
+    setViewportWidth(1280);
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+    renderSidebar();
+
+    const fileLabel = await screen.findByText("App.tsx");
+    const fileButton = fileLabel.closest("button");
+
+    if (!(fileButton instanceof HTMLElement)) {
+      throw new Error("未找到变更文件按钮");
+    }
+
+    fireEvent.contextMenu(fileButton);
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const menuItems = showDesktopContextMenuMock.mock.calls[0][0] as Array<{ label: string }>;
+    expect(menuItems.map((item) => item.label)).toEqual(
+      expect.arrayContaining([t("git.addToIgnore")])
+    );
   });
 
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {
@@ -1136,8 +1316,8 @@ function createRect({
   } as DOMRect;
 }
 
-function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }) {
-  render(
+function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }): RenderResult {
+  return render(
     <ToastProvider>
       <GitSidebar
         workspaceId={options?.workspaceId ?? "workspace-1"}

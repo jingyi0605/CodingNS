@@ -2,10 +2,12 @@ import { useEffect } from "react";
 import { useState } from "react";
 
 import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-api";
-import { listProviderCapabilities } from "../api/conversation-api";
+import { getProviderCapabilities } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 import {
+  createDraftCapabilities,
   getProviderDisplayName,
   getProviderIcon,
   SESSION_PROVIDER_PICKER_IDS,
@@ -49,15 +51,22 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
+  /**
+   * "current" 只是缓存 key 的约定值，不是有效的 peer host ID。
+   * 传给 httpClient 时必须归一化为 null，否则 buildTargetHostProxyPath
+   * 会拼出 /api/host-proxy/hosts/current/... 导致 404。
+   */
+  const targetHostIdForRequest = normalizeTargetHostId(targetHostId);
+
   const { visibleProviders, ready: providerCatalogReady } = useEnabledProviderCatalog(
     providers,
     true,
-    targetHostId
+    targetHostIdForRequest
   );
   const requiresCapabilityResolution = Boolean(workspaceId);
   const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilitiesDto>>
-  >(() => readCachedCapabilities(visibleProviders, workspaceId, targetHostId));
+  >(() => readCachedCapabilities(visibleProviders, workspaceId, targetHostIdForRequest));
   const sessionProviderDefinitions: SessionProviderDefinition[] = visibleProviders.map((provider) => ({ provider }));
 
   useEffect(() => {
@@ -75,7 +84,7 @@ export function SessionProviderPicker({
       return;
     }
 
-    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId, targetHostId);
+    const cachedCapabilities = readCachedCapabilities(visibleProviders, workspaceId, targetHostIdForRequest);
     setCapabilitiesByProvider(cachedCapabilities);
 
     const missingProviders = visibleProviders.filter((provider) => !cachedCapabilities[provider]);
@@ -86,23 +95,35 @@ export function SessionProviderPicker({
 
     let cancelled = false;
 
-    void listProviderCapabilities(missingProviders, workspaceId, {
-      targetHostId
-    }).then((nextCapabilities) => {
-      writeCachedCapabilities(workspaceId, targetHostId, nextCapabilities);
+    // 每个供应商单独请求，完成一个刷新一个，不用等最慢的
+    for (const provider of missingProviders) {
+      void getProviderCapabilities(provider, workspaceId, undefined, {
+        targetHostId: targetHostIdForRequest
+      }).then((capabilities) => {
+        if (cancelled) return;
 
-      if (!cancelled) {
+        writeCachedCapabilities(workspaceId, targetHostIdForRequest, { [provider]: capabilities });
         setCapabilitiesByProvider((current) => ({
           ...current,
-          ...nextCapabilities
+          [provider]: capabilities
         }));
-      }
-    });
+      }).catch(() => {
+        if (cancelled) return;
+
+        // 单个供应商请求失败，用 fallback 让卡片从"检查中"变为可操作
+        const fallback = createDraftCapabilities(provider);
+        writeCachedCapabilities(workspaceId, targetHostIdForRequest, { [provider]: fallback });
+        setCapabilitiesByProvider((current) => ({
+          ...current,
+          [provider]: fallback
+        }));
+      });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [providerCatalogReady, targetHostId, visibleProviders, workspaceId]);
+  }, [providerCatalogReady, targetHostIdForRequest, visibleProviders, workspaceId]);
 
   if (!providerCatalogReady) {
     return (
@@ -183,7 +204,7 @@ function readCachedCapabilities(
   targetHostId: string | null | undefined
 ): Partial<Record<ProviderId, ProviderCapabilitiesDto>> {
   const normalizedWorkspaceId = workspaceId?.trim() ?? "";
-  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId) ?? "current";
 
   if (!normalizedWorkspaceId) {
     return {};
@@ -210,7 +231,7 @@ function writeCachedCapabilities(
   capabilitiesByProvider: Partial<Record<ProviderId, ProviderCapabilitiesDto>>
 ): void {
   const normalizedWorkspaceId = workspaceId.trim();
-  const normalizedTargetHostId = targetHostId?.trim() ?? "current";
+  const normalizedTargetHostId = normalizeTargetHostId(targetHostId) ?? "current";
 
   if (!normalizedWorkspaceId) {
     return;

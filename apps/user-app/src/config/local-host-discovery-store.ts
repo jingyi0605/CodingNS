@@ -119,6 +119,7 @@ async function probeDiscoveredHosts(
         baseUrl,
         kind: "local" as const,
         alias: "本机",
+        tagColor: null,
         peerEnabled: false,
         peerHostId: null,
         createdAt: probeStartedAt,

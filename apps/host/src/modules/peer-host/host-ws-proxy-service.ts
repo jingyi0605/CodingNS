@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import type { AuthContext } from "../auth/auth-service.js";
 import type { WsAuthGuard } from "../../ws/ws-auth-guard.js";
 import type { PeerHostService } from "./peer-host-service.js";
@@ -108,6 +109,12 @@ export class HostWsProxyService {
         peerHost.baseUrl,
         accessToken,
       );
+      logResourceScopeDebug("peer_ws_proxy.open", {
+        userId: authContext.user.userId,
+        peerHostId,
+        requestUrl: request.url ?? null,
+        upstreamBaseUrl: peerHost.baseUrl
+      });
     } catch (error) {
       writeUpgradeError(socket, error);
       return;
@@ -133,10 +140,10 @@ export class HostWsProxyService {
 
       closed = true;
       if (remoteSocket.readyState === WebSocket.OPEN || remoteSocket.readyState === WebSocket.CONNECTING) {
-        remoteSocket.close(code, reason);
+        closeSocketSafely(remoteSocket, code, reason);
       }
       if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-        client.close(code, reason);
+        closeSocketSafely(client, code, reason);
       }
     };
 
@@ -148,6 +155,15 @@ export class HostWsProxyService {
 
       const raw = data.toString("utf8");
       const messageType = readMessageType(raw);
+
+      if (messageType === "terminalManager.subscribe" || messageType === "terminalManager.refresh") {
+        logResourceScopeDebug("peer_ws_proxy.client_message", {
+          userId: authContext.user.userId,
+          peerHostId,
+          messageType,
+          workspaceId: readMessageWorkspaceId(raw)
+        });
+      }
 
       if (!messageType || !ALLOWED_CLIENT_MESSAGE_TYPES.has(messageType)) {
         sendWsError(client, "HOST_PROXY_WS_MESSAGE_NOT_ALLOWED", "这个 WebSocket 消息没有加入 Peer HOST 代理白名单");
@@ -170,6 +186,16 @@ export class HostWsProxyService {
       const raw = data.toString("utf8");
       const messageType = readMessageType(raw);
 
+      if (messageType === "terminalManager.snapshot" || messageType === "session.error") {
+        logResourceScopeDebug("peer_ws_proxy.remote_message", {
+          userId: authContext.user.userId,
+          peerHostId,
+          messageType,
+          workspaceId: readMessageWorkspaceId(raw),
+          errorCode: readSessionErrorCode(raw)
+        });
+      }
+
       if (!messageType || !ALLOWED_REMOTE_MESSAGE_TYPES.has(messageType)) {
         return;
       }
@@ -180,6 +206,12 @@ export class HostWsProxyService {
     });
 
     remoteSocket.on("close", (code, reason) => {
+      logResourceScopeDebug("peer_ws_proxy.closed", {
+        userId: authContext.user.userId,
+        peerHostId,
+        code,
+        reason: reason.length > 0 ? reason.toString("utf8") : null
+      });
       if (code === 1008 || code === 4001 || code === 4401) {
         this.peerHostService.clearSession(authContext.user.userId, peerHostId);
       }
@@ -213,6 +245,24 @@ function buildRemoteWsUrl(baseUrl: string, accessToken: string): string {
   return url.toString();
 }
 
+function readMessageWorkspaceId(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { workspaceId?: unknown };
+    return typeof parsed.workspaceId === "string" ? parsed.workspaceId.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionErrorCode(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { error_code?: unknown };
+    return typeof parsed.error_code === "string" ? parsed.error_code.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
 function connectRemoteWorkbenchSocket(
   baseUrl: string,
   accessToken: string,
@@ -220,16 +270,25 @@ function connectRemoteWorkbenchSocket(
   const remoteSocket = new WebSocket(buildRemoteWsUrl(baseUrl, accessToken));
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timedOut = false;
+
+    const rejectOnce = (error: AppError) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       cleanup();
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      timedOut = true;
       remoteSocket.terminate();
-      reject(
-        new AppError({
-          statusCode: 504,
-          errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
-          detail: "连接目标 HOST 实时通道超时",
-        }),
-      );
     }, 5_000);
 
     const cleanup = () => {
@@ -239,12 +298,27 @@ function connectRemoteWorkbenchSocket(
       remoteSocket.off("close", handleClose);
     };
     const handleOpen = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       cleanup();
       resolve(remoteSocket);
     };
     const handleError = (error: Error) => {
-      cleanup();
-      reject(
+      if (timedOut) {
+        rejectOnce(
+          new AppError({
+            statusCode: 504,
+            errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
+            detail: "连接目标 HOST 实时通道超时",
+          }),
+        );
+        return;
+      }
+
+      rejectOnce(
         new AppError({
           statusCode: 502,
           errorCode: "HOST_PROXY_WS_UPSTREAM_FAILED",
@@ -253,8 +327,18 @@ function connectRemoteWorkbenchSocket(
       );
     };
     const handleClose = () => {
-      cleanup();
-      reject(
+      if (timedOut) {
+        rejectOnce(
+          new AppError({
+            statusCode: 504,
+            errorCode: "HOST_PROXY_WS_CONNECT_TIMEOUT",
+            detail: "连接目标 HOST 实时通道超时",
+          }),
+        );
+        return;
+      }
+
+      rejectOnce(
         new AppError({
           statusCode: 502,
           errorCode: "HOST_PROXY_WS_UPSTREAM_CLOSED",
@@ -291,6 +375,57 @@ function sendWsError(client: WebSocket, errorCode: string, detail: string): void
       detail,
       timestamp: new Date().toISOString(),
     }),
+  );
+}
+
+function closeSocketSafely(
+  socket: WebSocket,
+  code?: number,
+  reason?: string,
+): void {
+  const sanitizedCode = sanitizeCloseCode(code);
+  const sanitizedReason = sanitizeCloseReason(reason);
+
+  if (sanitizedCode === undefined) {
+    socket.close();
+    return;
+  }
+
+  socket.close(sanitizedCode, sanitizedReason);
+}
+
+function sanitizeCloseCode(code?: number): number | undefined {
+  if (typeof code !== "number" || !Number.isInteger(code)) {
+    return undefined;
+  }
+
+  if (!isValidWsCloseCode(code)) {
+    return undefined;
+  }
+
+  return code;
+}
+
+function sanitizeCloseReason(reason?: string): string | undefined {
+  if (!reason) {
+    return undefined;
+  }
+
+  const bytes = Buffer.byteLength(reason);
+  if (bytes <= 123) {
+    return reason;
+  }
+
+  return Buffer.from(reason, "utf8").subarray(0, 123).toString("utf8");
+}
+
+function isValidWsCloseCode(code: number): boolean {
+  return (
+    ((code >= 1000 && code <= 1014) &&
+      code !== 1004 &&
+      code !== 1005 &&
+      code !== 1006) ||
+    (code >= 3000 && code <= 4999)
   );
 }
 

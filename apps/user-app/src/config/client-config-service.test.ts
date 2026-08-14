@@ -132,6 +132,130 @@ describe("client-config-service", () => {
     expect(config.hosts[1].baseUrl).toBe("http://10.10.1.9:4200");
   });
 
+  it("桌面端读到旧 hosts patch 时会保留本地已有 HOST 别名", async () => {
+    window.localStorage.setItem(
+      "codingns.client.runtime-config",
+      JSON.stringify({
+        platform: "desktop",
+        activeHostId: DEFAULT_HOST_PROFILE_ID,
+        hosts: [
+          {
+            id: DEFAULT_HOST_PROFILE_ID,
+            name: "10.255.0.83:3009",
+            alias: "MAC",
+            baseUrl: "http://10.255.0.83:3009",
+            kind: "lan",
+            createdAt: "2026-06-13T08:00:00.000Z",
+            updatedAt: "2026-06-13T09:00:00.000Z",
+            lastConnectedAt: null,
+            lastUserId: null,
+            lastUsername: null,
+            peerEnabled: false,
+            peerHostId: null,
+            relayTunnel: null
+          }
+        ],
+        releaseChannel: "stable",
+        autoReconnect: true,
+        autoCheckUpdate: true,
+        language: "zh-CN",
+        defaultPermissionMode: "default"
+      })
+    );
+    vi.mocked(createPlatformAdapter).mockReturnValue(
+      createMockAdapter({
+        platform: "desktop",
+        isDesktop: true,
+        desktopConfig: {
+          platform: "desktop",
+          activeHostId: DEFAULT_HOST_PROFILE_ID,
+          hosts: [
+            {
+              id: DEFAULT_HOST_PROFILE_ID,
+              name: "10.255.0.83:3009",
+              baseUrl: "http://10.255.0.83:3009",
+              kind: "lan",
+              createdAt: "2026-06-13T08:00:00.000Z",
+              updatedAt: "2026-06-13T08:30:00.000Z",
+              lastConnectedAt: null,
+              lastUserId: null,
+              lastUsername: null
+            }
+          ]
+        }
+      })
+    );
+
+    const config = await loadClientRuntimeConfig();
+
+    expect(config.hosts[0].alias).toBe("MAC");
+    expect(config.hosts[0].updatedAt).toBe("2026-06-13T09:00:00.000Z");
+  });
+
+  it("桌面端读到较旧的 HOST 别名时不会覆盖本地新别名", async () => {
+    window.localStorage.setItem(
+      "codingns.client.runtime-config",
+      JSON.stringify({
+        platform: "desktop",
+        activeHostId: DEFAULT_HOST_PROFILE_ID,
+        hosts: [
+          {
+            id: DEFAULT_HOST_PROFILE_ID,
+            name: "10.255.0.83:3009",
+            alias: "MAC",
+            baseUrl: "http://10.255.0.83:3009",
+            kind: "lan",
+            createdAt: "2026-06-13T08:00:00.000Z",
+            updatedAt: "2026-06-13T09:00:00.000Z",
+            lastConnectedAt: null,
+            lastUserId: null,
+            lastUsername: null,
+            peerEnabled: false,
+            peerHostId: null,
+            relayTunnel: null
+          }
+        ],
+        releaseChannel: "stable",
+        autoReconnect: true,
+        autoCheckUpdate: true,
+        language: "zh-CN",
+        defaultPermissionMode: "default"
+      })
+    );
+    vi.mocked(createPlatformAdapter).mockReturnValue(
+      createMockAdapter({
+        platform: "desktop",
+        isDesktop: true,
+        desktopConfig: {
+          platform: "desktop",
+          activeHostId: DEFAULT_HOST_PROFILE_ID,
+          hosts: [
+            {
+              id: DEFAULT_HOST_PROFILE_ID,
+              name: "10.255.0.83:3009",
+              alias: "HOST",
+              baseUrl: "http://10.255.0.83:3009",
+              kind: "lan",
+              createdAt: "2026-06-13T08:00:00.000Z",
+              updatedAt: "2026-06-13T08:30:00.000Z",
+              lastConnectedAt: null,
+              lastUserId: null,
+              lastUsername: null,
+              peerEnabled: false,
+              peerHostId: null,
+              relayTunnel: null
+            }
+          ]
+        }
+      })
+    );
+
+    const config = await loadClientRuntimeConfig();
+
+    expect(config.hosts[0].alias).toBe("MAC");
+    expect(config.hosts[0].updatedAt).toBe("2026-06-13T09:00:00.000Z");
+  });
+
   it("会按归一化后的 URL 去重 relay 候选入口", async () => {
     window.localStorage.setItem(
       "codingns.client.runtime-config",

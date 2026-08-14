@@ -25,6 +25,22 @@ export interface GitAuthContext {
 }
 
 /**
+ * 当上层已经显式提供了远端认证时，必须关掉本机 credential helper。
+ * 否则 Git 可能优先命中 osxkeychain / gh / GCM 里缓存的旧账号，
+ * 最终把错误凭据发给远端，看起来像是“PAT 不生效”。
+ */
+export function createGitCredentialHelperBypassEnv(
+  overrides?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "credential.helper",
+    GIT_CONFIG_VALUE_0: "",
+    ...(overrides ?? {})
+  };
+}
+
+/**
  * Git 在无终端环境里依然可能尝试弹交互提示。
  * 这里统一强制关掉终端交互，避免请求直接卡到超时。
  */

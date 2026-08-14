@@ -69,8 +69,7 @@ describe("butler user scope", () => {
         focus: {
           projectIds: [],
           riskPreference: "balanced",
-          reportPriority: [],
-          summaryDebounceSeconds: 300
+          reportPriority: []
         },
         setupCompleted: true,
         initializedAt: timestamp,

@@ -144,3 +144,15 @@ export function useAffairsLibraryCapability(autoLoad = true): AffairsLibraryCapa
 
   return current;
 }
+
+export function resetAffairsLibraryCapabilityStoreForTests(): void {
+  inFlight = null;
+  snapshot = {
+    enabled: false,
+    binding: null,
+    loading: false,
+    requested: false,
+    error: null
+  };
+  emitChange();
+}

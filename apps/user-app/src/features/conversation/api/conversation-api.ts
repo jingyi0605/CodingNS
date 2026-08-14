@@ -1011,6 +1011,7 @@ export interface SessionSummaryDto {
   activityResolutionSource?: SessionActivityResolutionSource;
   activityConfidence?: SessionActivityConfidence;
   runId?: string | null;
+  detail?: string | null;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
@@ -1106,7 +1107,8 @@ export type SessionPermissionRequestKind =
   | "command"
   | "file_change"
   | "permissions"
-  | "user_input";
+  | "user_input"
+  | "plan_approval";
 export type SessionPermissionRequestStatus =
   | "pending"
   | "approved"
@@ -1133,6 +1135,7 @@ export interface SessionPermissionRequestQuestionDto {
   question: string;
   allowOther: boolean;
   secret: boolean;
+  multiSelect?: boolean;
   options: SessionPermissionRequestQuestionOptionDto[];
 }
 
@@ -1238,6 +1241,7 @@ export interface HistoryMessageDto {
   content: string;
   toolCall?: ToolCallDto | null;
   attachments?: MessageAttachmentDto[];
+  attachmentPayloads?: AttachmentPayload[] | null;
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -1517,6 +1521,17 @@ export interface SessionRuntimeDto {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageDto | null;
+  permissionStatus: SessionRuntimePermissionStatusDto | null;
+}
+
+export interface SessionRuntimePermissionStatusDto {
+  requestedPermissionMode: string | null;
+  effectivePermissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  effectiveSandboxMode: "read-only" | "workspace-write" | "danger-full-access" | null;
+  effectiveApprovalPolicy: "never" | "cli-default" | null;
+  source: "codex-cli-default" | "codingns-override" | "provider-non-codex";
+  summary: string;
+  detail: string;
 }
 
 export interface SessionQueueItemDto {
@@ -1574,6 +1589,7 @@ export interface QuickPhraseDto {
 
 export interface ScopedRequestOptions {
   targetHostId?: string | null;
+  signal?: AbortSignal;
 }
 
 export function listWorkspaces(options?: { includeHidden?: boolean }) {
@@ -1691,55 +1707,6 @@ export function removeWorkspace(workspaceId: string) {
   return httpClient.request<WorkspaceDto>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "DELETE"
   });
-}
-
-export function analyzeDebugTarget(payload: {
-  workspaceId: string;
-  rootPath: string;
-  commandHints?: string[];
-}) {
-  return httpClient.request<DebugTargetAnalysisEnvelopeDto>("/api/debug-targets/analyze", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
-}
-
-export function getFrameworkAnalysis(targetId: string) {
-  return httpClient.request<FrameworkAnalysisListEnvelopeDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/framework-analysis`
-  );
-}
-
-export function createDebugLaunchPlan(
-  targetId: string,
-  payload?: { portRequests?: DebugTargetPortRequestDto[] }
-) {
-  return httpClient.request<DebugLaunchPlanDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/launch-plan`,
-    {
-      method: "POST",
-      body: JSON.stringify(payload ?? {})
-    }
-  );
-}
-
-export function getLatestDebugRuntime(targetId: string) {
-  return httpClient.request<DebugRuntimeDetailDto | null>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/runtime-latest`
-  );
-}
-
-export function getRecentDebugRuntimes(targetId: string, limit = 5) {
-  const search = new URLSearchParams();
-  search.set("limit", String(limit));
-
-  return httpClient.request<DebugRuntimeHistoryEnvelopeDto>(
-    `/api/debug-targets/${encodeURIComponent(targetId)}/runtimes?${search.toString()}`
-  );
-}
-
-export function getFrameworkCompatibilityMatrix() {
-  return httpClient.request<FrameworkCompatibilityMatrixDto>("/api/framework-compatibility-matrix");
 }
 
 export function reorderWorkspaces(payload: ReorderWorkspacesPayload) {
@@ -2666,7 +2633,8 @@ export function getProviderCapabilities(
       search.size > 0 ? `?${search.toString()}` : ""
     }`,
     {
-      targetHostId: options?.targetHostId ?? undefined
+      targetHostId: options?.targetHostId ?? undefined,
+      signal: options?.signal
     }
   );
 }
@@ -2674,7 +2642,7 @@ export function getProviderCapabilities(
 export async function listProviderCatalog(options?: ScopedRequestOptions): Promise<ProviderCatalogEntryDto[]> {
   const response = await httpClient.request<{ items: ProviderCatalogEntryDto[] }>(
     "/api/providers/catalog",
-    { targetHostId: options?.targetHostId ?? undefined }
+    { targetHostId: options?.targetHostId ?? undefined, signal: options?.signal }
   );
   return response.items;
 }
@@ -2750,7 +2718,7 @@ export function getSessionMessages(
 
   return httpClient.request<HistoryPageDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`,
-    { targetHostId: options?.targetHostId ?? undefined }
+    { targetHostId: options?.targetHostId ?? undefined, signal: options?.signal }
   );
 }
 
@@ -2771,6 +2739,7 @@ export interface AffairsAssistantSessionsSnapshotDto {
 
 export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options?: {
   refresh?: boolean;
+  signal?: AbortSignal;
 }) {
   const headers = new Headers();
   if (options?.refresh) {
@@ -2778,9 +2747,10 @@ export function getAffairsAssistantSessionsSnapshot(workspaceId: string, options
   }
 
   return httpClient.request<{ item: AffairsAssistantSessionsSnapshotDto }>(
-    "/api/affairs/assistant-sessions",
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/assistant-sessions`,
     {
-      headers
+      headers,
+      signal: options?.signal
     }
   );
 }
@@ -2819,21 +2789,30 @@ export function startLiveSession(payload: StartLivePayload, options?: ScopedRequ
   });
 }
 
-export function listAffairsLightweightSessions(workspaceId: string) {
+export function listAffairsLightweightSessions(workspaceId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<{ items: SessionSummaryDto[] }>(
-    "/api/affairs/lightweight-sessions"
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions`,
+    {
+      signal: options?.signal
+    }
   );
 }
 
-export function getAffairsLightweightSession(workspaceId: string, sessionId: string) {
+export function getAffairsLightweightSession(workspaceId: string, sessionId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<SessionSummaryDto>(
-    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}`,
+    {
+      signal: options?.signal
+    }
   );
 }
 
-export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string) {
+export function getAffairsLightweightSessionMessages(workspaceId: string, sessionId: string, options?: { signal?: AbortSignal }) {
   return httpClient.request<HistoryPageDto>(
-    `/api/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/affairs/lightweight-sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      signal: options?.signal
+    }
   );
 }
 

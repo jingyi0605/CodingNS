@@ -1,11 +1,11 @@
 import { createId } from "../../shared/utils/id.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthCallerKind } from "../auth/auth-service.js";
 import type { AssistantAutomationService } from "../butler/assistant-automation-service.js";
 import type { ButlerControlSessionService } from "../butler/butler-control-session-service.js";
 import type { ButlerControlTimerService } from "../butler/butler-control-timer-service.js";
-import type { BrowserRuntimeService } from "../browser-runtime/browser-runtime-service.js";
 import type {
   ButlerFollowUpService,
   CompleteButlerFollowUpTaskInput,
@@ -16,12 +16,7 @@ import type {
 } from "../butler/butler-follow-up-service.js";
 import type { ButlerProjectService } from "../butler/butler-project-service.js";
 import type { ButlerSessionService } from "../butler/butler-session-service.js";
-import type {
-  DebugTargetPortRequest,
-  DebugTargetService
-} from "../debug-target/debug-target-service.js";
 import type { DocumentRuntimeService } from "../document-runtime/document-runtime-service.js";
-import type { OpsRuntimeService } from "../ops-runtime/ops-runtime-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
@@ -83,17 +78,6 @@ const WORKSPACE_SCOPED_DEFAULT_CAPABILITIES = new Set([
   "office.document.update",
   "office.document.export",
   "office.document.task.get",
-  "office.browser.profile.list",
-  "office.browser.profile.create",
-  "office.browser.profile.get",
-  "office.browser.task.create",
-  "office.browser.task.get",
-  "office.ops.target.list",
-  "office.ops.target.create",
-  "office.ops.target.get",
-  "office.ops.ssh-task.create",
-  "office.ops.browser-task.create",
-  "office.ops.task.get",
   "worktrees.tree",
   "worktrees.create",
   "worktrees.merge-preview",
@@ -103,11 +87,6 @@ const WORKSPACE_SCOPED_DEFAULT_CAPABILITIES = new Set([
 const WORKSPACE_SCOPED_CONFIRMATION_CAPABILITIES = new Set([
   "terminals.input.send",
   "terminals.close",
-  "office.ops.task.execute",
-  "debug-targets.analyze",
-  "debug-targets.framework-analysis.refresh",
-  "debug-targets.launch-plan.create",
-  "debug-targets.run",
   "worktrees.merge-into-parent"
 ]);
 
@@ -136,26 +115,6 @@ const WORKSPACE_SCOPED_CAPABILITIES = new Set([
   "office.document.update",
   "office.document.export",
   "office.document.task.get",
-  "office.browser.profile.list",
-  "office.browser.profile.create",
-  "office.browser.profile.get",
-  "office.browser.task.create",
-  "office.browser.task.get",
-  "office.ops.target.list",
-  "office.ops.target.create",
-  "office.ops.target.get",
-  "office.ops.ssh-task.create",
-  "office.ops.browser-task.create",
-  "office.ops.task.get",
-  "office.ops.task.execute",
-  "debug-targets.analyze",
-  "debug-targets.framework-analysis.get",
-  "debug-targets.framework-analysis.refresh",
-  "debug-targets.launch-plan.create",
-  "debug-targets.run",
-  "debug-targets.runtime-latest.get",
-  "debug-targets.runtimes.list",
-  "debug-runtimes.get"
 ]);
 
 export interface AssistantCapabilityReceipt<TPayload> {
@@ -373,26 +332,6 @@ interface ListAssistantAutomationRunsInput {
   limit?: number | null;
 }
 
-interface AnalyzeAssistantDebugTargetInput {
-  workspaceId: string;
-  rootPath: string;
-  commandHints?: string[];
-}
-
-interface CreateAssistantDebugLaunchPlanInput {
-  targetId: string;
-  userId: string;
-  portRequests: DebugTargetPortRequest[];
-}
-
-interface RunAssistantDebugTargetInput {
-  targetId: string;
-  userId: string;
-  shell?: string | null;
-  runtimeType?: Parameters<DebugTargetService["run"]>[0]["runtimeType"];
-  portRequests: DebugTargetPortRequest[];
-}
-
 interface CreateAssistantWorkspaceDirectoryInput {
   parentPath: string;
   directoryName: string;
@@ -457,62 +396,6 @@ interface ExportAssistantOfficeDocumentInput {
   format?: OfficeDocumentExportFormat;
   riskLevel?: "low" | "medium" | "high";
   execute?: boolean;
-}
-
-interface CreateAssistantOfficeBrowserProfileInput {
-  userId: string;
-  workspaceId?: string | null;
-  engine?: "chrome" | "edge" | null;
-  mode?: "persistent" | "cdp_attached" | null;
-  displayName?: string | null;
-  ownershipScope?: "user" | "workspace" | null;
-  cdpEndpoint?: string | null;
-}
-
-interface CreateAssistantOfficeBrowserTaskInput {
-  userId: string;
-  workspaceId?: string | null;
-  title: string;
-  profileId?: string | null;
-  riskLevel?: "low" | "medium" | "high";
-  executionBackend?: "playwright" | "opencli_bridge";
-  sessionRequirement?: "none" | "reuse_current_logged_in_browser";
-  input?: unknown;
-  execute?: boolean;
-}
-
-interface CreateAssistantOfficeOpsTargetInput {
-  userId: string;
-  workspaceId?: string | null;
-  kind: "ssh_host" | "web_console";
-  displayName: string;
-  environment?: string | null;
-  config: unknown;
-  credentialRef?: string | null;
-}
-
-interface CreateAssistantOfficeOpsSshTaskInput {
-  userId: string;
-  title: string;
-  targetId: string;
-  riskLevel?: "low" | "medium" | "high";
-  input?: unknown;
-  execute?: boolean;
-}
-
-interface CreateAssistantOfficeOpsBrowserTaskInput {
-  userId: string;
-  title: string;
-  targetId: string;
-  profileId?: string | null;
-  executionBackend?: "playwright" | "opencli_bridge";
-  riskLevel?: "low" | "medium" | "high";
-  input?: unknown;
-}
-
-interface ExecuteAssistantOfficeOpsTaskInput {
-  userId: string;
-  taskId: string;
 }
 
 interface ReplyAssistantOfficeTaskApprovalInput {
@@ -740,136 +623,10 @@ const ASSISTANT_CAPABILITIES: AssistantCapabilityDescriptor[] = [
     summary: "读取办公文档导出任务状态、产物与回执"
   },
   {
-    name: "office.browser.profile.list",
-    mode: "read",
-    enabled: true,
-    summary: "列出办公浏览器 Profile"
-  },
-  {
-    name: "office.browser.profile.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建独立或接管模式的办公浏览器 Profile"
-  },
-  {
-    name: "office.browser.profile.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取办公浏览器 Profile 详情"
-  },
-  {
-    name: "office.browser.task.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建并可选执行办公浏览器任务"
-  },
-  {
-    name: "office.browser.task.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取办公浏览器任务状态、产物与回执"
-  },
-  {
-    name: "office.ops.target.list",
-    mode: "read",
-    enabled: true,
-    summary: "列出办公运维目标"
-  },
-  {
-    name: "office.ops.target.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建 SSH 或网页控制台运维目标"
-  },
-  {
-    name: "office.ops.target.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取办公运维目标详情"
-  },
-  {
-    name: "office.ops.ssh-task.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建 SSH 运维任务"
-  },
-  {
-    name: "office.ops.task.execute",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "执行已创建并准备好的 SSH 运维任务"
-  },
-  {
     name: "office.task.approval.reply",
     mode: "proxy_execute",
     enabled: true,
     summary: "处理办公任务审批，批准后任务可以继续执行"
-  },
-  {
-    name: "office.ops.browser-task.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "创建浏览器运维任务"
-  },
-  {
-    name: "office.ops.task.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取办公运维任务状态、产物与回执"
-  },
-  {
-    name: "debug-targets.compatibility-matrix.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试框架兼容矩阵"
-  },
-  {
-    name: "debug-targets.analyze",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "分析工作区调试目标和服务"
-  },
-  {
-    name: "debug-targets.framework-analysis.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标框架分析结果"
-  },
-  {
-    name: "debug-targets.framework-analysis.refresh",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "刷新调试目标框架分析结果"
-  },
-  {
-    name: "debug-targets.launch-plan.create",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "生成调试目标启动计划，支持显式端口请求"
-  },
-  {
-    name: "debug-targets.run",
-    mode: "proxy_execute",
-    enabled: true,
-    summary: "启动调试目标，支持显式端口请求"
-  },
-  {
-    name: "debug-targets.runtime-latest.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标最近一次运行态"
-  },
-  {
-    name: "debug-targets.runtimes.list",
-    mode: "read",
-    enabled: true,
-    summary: "读取调试目标运行历史"
-  },
-  {
-    name: "debug-runtimes.get",
-    mode: "read",
-    enabled: true,
-    summary: "读取指定调试运行时详情"
   },
   {
     name: "workspaces.list",
@@ -997,20 +754,6 @@ export class AssistantCapabilityService {
       TerminalService,
       "createTerminal" | "listTerminals" | "readTerminalHistory" | "writeInput" | "closeTerminal" | "getTerminalOrThrow"
     >,
-    private readonly debugTargetService: Pick<
-      DebugTargetService,
-      | "analyze"
-      | "getTargetWorkspaceId"
-      | "getRuntimeWorkspaceId"
-      | "getFrameworkAnalysis"
-      | "refreshFrameworkAnalysis"
-      | "createLaunchPlan"
-      | "run"
-      | "getLatestRuntimeDetail"
-      | "getRecentRuntimeDetails"
-      | "getRuntimeDetail"
-      | "getCompatibilityMatrix"
-    >,
     private readonly workspaceService: Pick<
       WorkspaceService,
       | "list"
@@ -1065,24 +808,8 @@ export class AssistantCapabilityService {
       OfficePreviewLinkService,
       "createArtifactLink"
     > | null = null,
-    private readonly browserRuntimeService: Pick<
-      BrowserRuntimeService,
-      | "listProfiles"
-      | "getProfile"
-      | "createProfile"
-      | "attachCdpProfile"
-      | "createBrowserTask"
-      | "executeBrowserTask"
-    > | null = null,
-    private readonly opsRuntimeService: Pick<
-      OpsRuntimeService,
-      | "listTargets"
-      | "getTarget"
-      | "createTarget"
-      | "createSshTask"
-      | "executeSshTask"
-      | "createBrowserTask"
-    > | null = null
+    private readonly browserRuntimeService: null = null,
+    private readonly opsRuntimeService: null = null
   ) {}
 
   listCapabilities(context?: AssistantExecutionContext): AssistantCapabilityReceipt<{
@@ -1259,258 +986,6 @@ export class AssistantCapabilityService {
     });
   }
 
-  listOfficeBrowserProfiles(
-    userId: string,
-    workspaceId?: string | null
-  ): AssistantCapabilityReceipt<{
-    items: ReturnType<BrowserRuntimeService["listProfiles"]>;
-  }> {
-    const items = this.requireBrowserRuntimeService().listProfiles(
-      userId,
-      normalizeAssistantText(workspaceId) ?? undefined
-    );
-
-    return this.createReceipt("office.browser.profile.list", {
-      kind: "workspace",
-      id: normalizeAssistantText(workspaceId)
-    }, {
-      items
-    });
-  }
-
-  getOfficeBrowserProfile(
-    profileId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    profile: ReturnType<BrowserRuntimeService["getProfile"]>;
-  }> {
-    const profile = this.requireBrowserRuntimeService().getProfile(profileId, userId);
-
-    return this.createReceipt("office.browser.profile.get", {
-      kind: "workspace",
-      id: profile.workspaceId
-    }, {
-      profile
-    });
-  }
-
-  createOfficeBrowserProfile(
-    input: CreateAssistantOfficeBrowserProfileInput
-  ): AssistantCapabilityReceipt<{
-    profile: ReturnType<BrowserRuntimeService["createProfile"]>;
-  }> {
-    const browserRuntimeService = this.requireBrowserRuntimeService();
-    const profile = input.mode === "cdp_attached"
-      ? browserRuntimeService.attachCdpProfile({
-        userId: input.userId,
-        workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
-        engine: input.engine ?? "chrome",
-        mode: "cdp_attached",
-        displayName: input.displayName ?? undefined,
-        ownershipScope: input.ownershipScope ?? undefined,
-        cdpEndpoint: input.cdpEndpoint ?? undefined
-      })
-      : browserRuntimeService.createProfile({
-        userId: input.userId,
-        workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
-        engine: input.engine ?? "chrome",
-        mode: "persistent",
-        displayName: input.displayName ?? undefined,
-        ownershipScope: input.ownershipScope ?? undefined,
-        cdpEndpoint: input.cdpEndpoint ?? undefined
-      });
-
-    return this.createReceipt("office.browser.profile.create", {
-      kind: "workspace",
-      id: profile.workspaceId
-    }, {
-      profile
-    });
-  }
-
-  async createOfficeBrowserTask(
-    input: CreateAssistantOfficeBrowserTaskInput
-  ): Promise<AssistantCapabilityReceipt<{
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-    execution:
-      | {
-        taskId: string;
-        executionTaskId: string;
-        deduped: boolean;
-      }
-      | null;
-  }>> {
-    const createResult = this.requireBrowserRuntimeService().createBrowserTask({
-      userId: input.userId,
-      workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
-      title: input.title,
-      profileId: normalizeAssistantText(input.profileId) ?? undefined,
-      riskLevel: input.riskLevel,
-      executionBackend: input.executionBackend,
-      sessionRequirement: input.sessionRequirement,
-      input: input.input
-    });
-    const execution = input.execute === false
-      ? null
-      : await this.requireBrowserRuntimeService().executeBrowserTask(createResult.task.id, input.userId);
-    const detail = this.requireOfficeTaskService().getTaskDetail(createResult.task.id, input.userId);
-
-    return this.createReceipt("office.browser.task.create", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId: input.userId
-      }),
-      execution
-    });
-  }
-
-  getOfficeBrowserTask(
-    taskId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-  }> {
-    const detail = this.requireOfficeTaskService().getTaskDetail(taskId, userId);
-
-    return this.createReceipt("office.browser.task.get", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId
-      })
-    });
-  }
-
-  listOfficeOpsTargets(
-    userId: string,
-    workspaceId?: string | null,
-    kind?: "ssh_host" | "web_console" | null,
-    status?: "active" | "disabled" | "error" | null
-  ): AssistantCapabilityReceipt<{
-    items: ReturnType<OpsRuntimeService["listTargets"]>;
-  }> {
-    const items = this.requireOpsRuntimeService().listTargets({
-      userId,
-      workspaceId: normalizeAssistantText(workspaceId) ?? undefined,
-      kind: kind ?? undefined,
-      status: status ?? undefined
-    });
-
-    return this.createReceipt("office.ops.target.list", {
-      kind: "workspace",
-      id: normalizeAssistantText(workspaceId)
-    }, {
-      items
-    });
-  }
-
-  getOfficeOpsTarget(
-    targetId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    target: ReturnType<OpsRuntimeService["getTarget"]>;
-  }> {
-    const target = this.requireOpsRuntimeService().getTarget(targetId, userId);
-
-    return this.createReceipt("office.ops.target.get", {
-      kind: "workspace",
-      id: target.workspaceId
-    }, {
-      target
-    });
-  }
-
-  createOfficeOpsTarget(
-    input: CreateAssistantOfficeOpsTargetInput
-  ): AssistantCapabilityReceipt<{
-    target: ReturnType<OpsRuntimeService["createTarget"]>;
-  }> {
-    const target = this.requireOpsRuntimeService().createTarget({
-      userId: input.userId,
-      workspaceId: normalizeAssistantText(input.workspaceId) ?? undefined,
-      kind: input.kind,
-      displayName: input.displayName,
-      environment: input.environment ?? undefined,
-      config: input.config,
-      credentialRef: input.credentialRef ?? undefined
-    });
-
-    return this.createReceipt("office.ops.target.create", {
-      kind: "workspace",
-      id: target.workspaceId
-    }, {
-      target
-    });
-  }
-
-  async createOfficeOpsSshTask(
-    input: CreateAssistantOfficeOpsSshTaskInput
-  ): Promise<AssistantCapabilityReceipt<{
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-    execution:
-      | {
-        taskId: string;
-        executionTaskId: string;
-        deduped: boolean;
-      }
-      | null;
-  }>> {
-    const createResult = this.requireOpsRuntimeService().createSshTask({
-      userId: input.userId,
-      title: input.title,
-      targetId: input.targetId,
-      riskLevel: input.riskLevel,
-      input: input.input
-    });
-    const execution = input.execute === false
-      ? null
-      : createResult.task.status === "ready"
-        ? await this.requireOpsRuntimeService().executeSshTask(createResult.task.id, input.userId)
-        : null;
-    const detail = this.requireOfficeTaskService().getTaskDetail(createResult.task.id, input.userId);
-
-    return this.createReceipt("office.ops.ssh-task.create", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId: input.userId
-      }),
-      execution
-    });
-  }
-
-  async executeOfficeOpsTask(
-    input: ExecuteAssistantOfficeOpsTaskInput
-  ): Promise<AssistantCapabilityReceipt<{
-    execution: {
-      taskId: string;
-      executionTaskId: string;
-      deduped: boolean;
-    };
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-  }>> {
-    const execution = await this.requireOpsRuntimeService().executeSshTask(input.taskId, input.userId);
-    const detail = this.requireOfficeTaskService().getTaskDetail(input.taskId, input.userId);
-
-    return this.createReceipt("office.ops.task.execute", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      execution,
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId: input.userId
-      })
-    });
-  }
-
   replyOfficeTaskApproval(
     input: ReplyAssistantOfficeTaskApprovalInput
   ): AssistantCapabilityReceipt<{
@@ -1533,52 +1008,6 @@ export class AssistantCapabilityService {
       task: summarizeOfficeTaskDetail(detail, {
         officePreviewLinkService: this.officePreviewLinkService,
         userId: input.userId
-      })
-    });
-  }
-
-  createOfficeOpsBrowserTask(
-    input: CreateAssistantOfficeOpsBrowserTaskInput
-  ): AssistantCapabilityReceipt<{
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-  }> {
-    const createResult = this.requireOpsRuntimeService().createBrowserTask({
-      userId: input.userId,
-      title: input.title,
-      targetId: input.targetId,
-      profileId: normalizeAssistantText(input.profileId) ?? undefined,
-      executionBackend: input.executionBackend,
-      riskLevel: input.riskLevel,
-      input: input.input
-    });
-    const detail = this.requireOfficeTaskService().getTaskDetail(createResult.task.id, input.userId);
-
-    return this.createReceipt("office.ops.browser-task.create", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId: input.userId
-      })
-    });
-  }
-
-  getOfficeOpsTask(
-    taskId: string,
-    userId: string
-  ): AssistantCapabilityReceipt<{
-    task: ReturnType<typeof summarizeOfficeTaskDetail>;
-  }> {
-    const detail = this.requireOfficeTaskService().getTaskDetail(taskId, userId);
-
-    return this.createReceipt("office.ops.task.get", {
-      kind: "workspace",
-      id: detail.task.workspaceId
-    }, {
-      task: summarizeOfficeTaskDetail(detail, {
-        officePreviewLinkService: this.officePreviewLinkService,
-        userId
       })
     });
   }
@@ -1730,8 +1159,18 @@ export class AssistantCapabilityService {
   ): Promise<AssistantCapabilityReceipt<{
     runtime: Awaited<ReturnType<SessionLiveRuntimeService["getSessionRuntime"]>>;
   }>> {
+    logResourceScopeDebug("assistant_capability.get_session_runtime.start", {
+      sessionId,
+      userId
+    });
     this.sessionHistoryService.getSession(sessionId, userId);
     const runtime = await this.sessionLiveRuntimeService.getSessionRuntime(sessionId, userId);
+    logResourceScopeDebug("assistant_capability.get_session_runtime.end", {
+      sessionId,
+      userId,
+      runningState: runtime.runningState,
+      errorCode: runtime.errorCode ?? null
+    });
 
     return this.createReceipt("sessions.runtime.get", {
       kind: "session",
@@ -1848,11 +1287,7 @@ export class AssistantCapabilityService {
   ): AssistantCapabilityReceipt<{
     items: ReturnType<AssistantAutomationService["listTasks"]>;
   }> {
-    const items = this.assistantAutomationService.listTasks({
-      userId: input.userId,
-      statuses: input.status ? [input.status] : undefined,
-      controlSessionId: input.controlSessionId ?? null
-    });
+    const items = this.safeListAutomations(input);
 
     return this.createReceipt("automations.list", {
       kind: "none",
@@ -1992,11 +1427,7 @@ export class AssistantCapabilityService {
   ): AssistantCapabilityReceipt<{
     items: ReturnType<AssistantAutomationService["listRecentRuns"]>;
   }> {
-    const items = this.assistantAutomationService.listRecentRuns({
-      userId: input.userId,
-      controlSessionId: input.controlSessionId ?? null,
-      limit: input.limit ?? undefined
-    });
+    const items = this.safeListRecentAutomationRuns(input);
 
     return this.createReceipt("automations.runs.recent", {
       kind: "none",
@@ -2004,6 +1435,42 @@ export class AssistantCapabilityService {
     }, {
       items
     });
+  }
+
+  private safeListAutomations(
+    input: ListAssistantAutomationsInput
+  ): ReturnType<AssistantAutomationService["listTasks"]> {
+    try {
+      return this.assistantAutomationService.listTasks({
+        userId: input.userId,
+        statuses: input.status ? [input.status] : undefined,
+        controlSessionId: input.controlSessionId ?? null
+      });
+    } catch (error) {
+      if (isButlerProfileNotInitializedError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
+  private safeListRecentAutomationRuns(
+    input: ListAssistantAutomationRunsInput
+  ): ReturnType<AssistantAutomationService["listRecentRuns"]> {
+    try {
+      return this.assistantAutomationService.listRecentRuns({
+        userId: input.userId,
+        controlSessionId: input.controlSessionId ?? null,
+        limit: input.limit ?? undefined
+      });
+    } catch (error) {
+      if (isButlerProfileNotInitializedError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
   }
 
   listFollowUps(
@@ -2321,147 +1788,6 @@ export class AssistantCapabilityService {
     });
   }
 
-  getDebugCompatibilityMatrix(): AssistantCapabilityReceipt<{
-    matrix: ReturnType<DebugTargetService["getCompatibilityMatrix"]>;
-  }> {
-    return this.createReceipt("debug-targets.compatibility-matrix.get", {
-      kind: "none",
-      id: null
-    }, {
-      matrix: this.debugTargetService.getCompatibilityMatrix()
-    });
-  }
-
-  analyzeDebugTarget(
-    input: AnalyzeAssistantDebugTargetInput
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["analyze"]>;
-  }> {
-    const result = this.debugTargetService.analyze({
-      workspaceId: input.workspaceId,
-      rootPath: input.rootPath,
-      commandHints: input.commandHints ?? []
-    });
-
-    return this.createReceipt("debug-targets.analyze", {
-      kind: "debug_target",
-      id: result.target.id
-    }, {
-      result
-    });
-  }
-
-  getDebugFrameworkAnalysis(
-    targetId: string
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["getFrameworkAnalysis"]>;
-  }> {
-    return this.createReceipt("debug-targets.framework-analysis.get", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      result: this.debugTargetService.getFrameworkAnalysis(targetId)
-    });
-  }
-
-  refreshDebugFrameworkAnalysis(
-    targetId: string
-  ): AssistantCapabilityReceipt<{
-    result: ReturnType<DebugTargetService["refreshFrameworkAnalysis"]>;
-  }> {
-    return this.createReceipt("debug-targets.framework-analysis.refresh", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      result: this.debugTargetService.refreshFrameworkAnalysis(targetId)
-    });
-  }
-
-  async createDebugLaunchPlan(
-    input: CreateAssistantDebugLaunchPlanInput
-  ): Promise<AssistantCapabilityReceipt<{
-    plan: Awaited<ReturnType<DebugTargetService["createLaunchPlan"]>>;
-  }>> {
-    const plan = await this.debugTargetService.createLaunchPlan(
-      input.targetId,
-      input.portRequests,
-      input.userId
-    );
-
-    return this.createReceipt("debug-targets.launch-plan.create", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      plan
-    });
-  }
-
-  async runDebugTarget(
-    input: RunAssistantDebugTargetInput
-  ): Promise<AssistantCapabilityReceipt<{
-    result: Awaited<ReturnType<DebugTargetService["run"]>>;
-  }>> {
-    const result = await this.debugTargetService.run({
-      targetId: input.targetId,
-      userId: input.userId,
-      shell: input.shell ?? undefined,
-      runtimeType: input.runtimeType ?? undefined,
-      portRequests: input.portRequests
-    });
-
-    return this.createReceipt("debug-targets.run", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      result
-    });
-  }
-
-  async getLatestDebugRuntime(
-    targetId: string
-  ): Promise<AssistantCapabilityReceipt<{
-    runtime: Awaited<ReturnType<DebugTargetService["getLatestRuntimeDetail"]>>;
-  }>> {
-    const runtime = await this.debugTargetService.getLatestRuntimeDetail(targetId);
-
-    return this.createReceipt("debug-targets.runtime-latest.get", {
-      kind: "debug_target",
-      id: targetId
-    }, {
-      runtime
-    });
-  }
-
-  async listDebugRuntimes(
-    input: { targetId: string; limit: number }
-  ): Promise<AssistantCapabilityReceipt<{
-    history: Awaited<ReturnType<DebugTargetService["getRecentRuntimeDetails"]>>;
-  }>> {
-    const history = await this.debugTargetService.getRecentRuntimeDetails(input.targetId, input.limit);
-
-    return this.createReceipt("debug-targets.runtimes.list", {
-      kind: "debug_target",
-      id: input.targetId
-    }, {
-      history
-    });
-  }
-
-  async getDebugRuntime(
-    runtimeId: string
-  ): Promise<AssistantCapabilityReceipt<{
-    runtime: Awaited<ReturnType<DebugTargetService["getRuntimeDetail"]>>;
-  }>> {
-    const runtime = await this.debugTargetService.getRuntimeDetail(runtimeId);
-
-    return this.createReceipt("debug-runtimes.get", {
-      kind: "debug_runtime",
-      id: runtimeId
-    }, {
-      runtime
-    });
-  }
-
   listWorkspaces(userId: string): AssistantCapabilityReceipt<{
     items: ReturnType<WorkspaceService["listForUser"]>;
   }> {
@@ -2736,8 +2062,6 @@ export class AssistantCapabilityService {
       officeTaskId?: string | null;
       browserProfileId?: string | null;
       worktreeWorkspaceId?: string | null;
-      debugTargetId?: string | null;
-      debugRuntimeId?: string | null;
     }
   ): void {
     const definition = this.getCapabilityDefinition(capability);
@@ -2776,32 +2100,17 @@ export class AssistantCapabilityService {
       const officeTaskWorkspaceId = target?.officeTaskId
         ? this.requireOfficeTaskService().getTaskDetail(target.officeTaskId, userId).task.workspaceId
         : null;
-      const browserProfileWorkspaceId = target?.browserProfileId
-        ? this.requireBrowserRuntimeService().getProfile(target.browserProfileId, userId).workspaceId
-        : null;
-      const debugTargetWorkspaceId = target?.debugTargetId
-        ? this.debugTargetService.getTargetWorkspaceId(target.debugTargetId)
-        : null;
-      const debugRuntimeWorkspaceId = target?.debugRuntimeId
-        ? this.debugTargetService.getRuntimeWorkspaceId(target.debugRuntimeId)
-        : null;
       this.assertConsistentWorkspaceTargets(
         capability,
         [
           targetWorkspaceId,
           documentWorkspaceId,
-          officeTaskWorkspaceId,
-          browserProfileWorkspaceId,
-          debugTargetWorkspaceId,
-          debugRuntimeWorkspaceId
+          officeTaskWorkspaceId
         ]
       );
       const resolvedWorkspaceId = target?.worktreeWorkspaceId
         ? this.resolveRootWorkspaceId(target.worktreeWorkspaceId)
-        : debugRuntimeWorkspaceId
-          ?? debugTargetWorkspaceId
-          ?? browserProfileWorkspaceId
-          ?? officeTaskWorkspaceId
+        : officeTaskWorkspaceId
           ?? documentWorkspaceId
           ?? targetWorkspaceId;
       this.assertWorkspaceScopedTarget(context.workspaceId, resolvedWorkspaceId, capability);
@@ -2985,38 +2294,6 @@ export class AssistantCapabilityService {
       statusCode: 503,
       errorCode: "ASSISTANT_OFFICE_DOCUMENT_CAPABILITY_UNAVAILABLE",
       detail: "当前实例没有启用办公文档能力"
-    });
-  }
-
-  private requireBrowserRuntimeService(): Pick<
-    BrowserRuntimeService,
-    | "listProfiles"
-    | "getProfile"
-    | "createProfile"
-    | "attachCdpProfile"
-    | "createBrowserTask"
-    | "executeBrowserTask"
-  > {
-    if (this.browserRuntimeService) {
-      return this.browserRuntimeService;
-    }
-
-    throw new AppError({
-      statusCode: 503,
-      errorCode: "ASSISTANT_OFFICE_BROWSER_CAPABILITY_UNAVAILABLE",
-      detail: "当前实例没有启用办公浏览器能力"
-    });
-  }
-
-  private requireOpsRuntimeService(): NonNullable<AssistantCapabilityService["opsRuntimeService"]> {
-    if (this.opsRuntimeService) {
-      return this.opsRuntimeService;
-    }
-
-    throw new AppError({
-      statusCode: 503,
-      errorCode: "ASSISTANT_OFFICE_OPS_CAPABILITY_UNAVAILABLE",
-      detail: "当前实例没有启用办公运维能力"
     });
   }
 
@@ -3297,6 +2574,10 @@ function requireAssistantConditionKind(
 
 function assertNeverAssistantAutomationTriggerType(value: never): never {
   throw new Error(`Unexpected assistant automation triggerType: ${String(value)}`);
+}
+
+function isButlerProfileNotInitializedError(error: unknown): boolean {
+  return error instanceof AppError && error.errorCode === "BUTLER_PROFILE_NOT_INITIALIZED";
 }
 
 function augmentAssistantCapabilities(

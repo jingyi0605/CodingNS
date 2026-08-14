@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Socket } from "node:net";
 
 import WebSocket, { WebSocketServer } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -105,6 +106,61 @@ describe("Peer HOST WebSocket 终端代理", () => {
     ]);
     expect(clearSession).not.toHaveBeenCalled();
   });
+
+  it("远端握手超时时返回升级失败而不是打崩 host 进程", async () => {
+    const remote = await createHangingRemoteServer();
+    const proxy = new HostWsProxyService(
+      createAuthGuardStub(),
+      createPeerHostServiceStub(remote.baseUrl, vi.fn()),
+    );
+    const proxyServer = createServer();
+    proxyServer.on("upgrade", (request, socket, head) => {
+      if (!proxy.handleUpgrade(request, socket, head)) {
+        socket.destroy();
+      }
+    });
+    closeables.push(() => closeServer(proxyServer));
+    await listen(proxyServer);
+
+    const proxyPort = (proxyServer.address() as AddressInfo).port;
+    const client = new WebSocket(
+      `ws://127.0.0.1:${proxyPort}/api/host-proxy/hosts/peer-1/ws?access_token=current-token`,
+    );
+    sockets.push(client);
+
+    await expect(waitForUpgradeFailure(client)).resolves.toContain("502 Bad Gateway");
+  });
+
+  it("远端异常断开产生非法 close code 时不会把代理进程打崩", async () => {
+    const remote = await createRemoteWsServer();
+    const proxy = new HostWsProxyService(
+      createAuthGuardStub(),
+      createPeerHostServiceStub(remote.baseUrl, vi.fn()),
+    );
+    const proxyServer = createServer();
+    proxyServer.on("upgrade", (request, socket, head) => {
+      if (!proxy.handleUpgrade(request, socket, head)) {
+        socket.destroy();
+      }
+    });
+    closeables.push(() => closeServer(proxyServer));
+    await listen(proxyServer);
+
+    remote.wss.on("connection", (socket) => {
+      socket.terminate();
+    });
+
+    const proxyPort = (proxyServer.address() as AddressInfo).port;
+    const client = new WebSocket(
+      `ws://127.0.0.1:${proxyPort}/api/host-proxy/hosts/peer-1/ws?access_token=current-token`,
+    );
+    sockets.push(client);
+
+    await waitForOpen(client);
+    await expect(waitForClose(client)).resolves.toMatchObject({
+      reason: "",
+    });
+  });
 });
 
 async function createRemoteWsServer(): Promise<{
@@ -134,6 +190,29 @@ async function createRemoteWsServer(): Promise<{
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     wss,
+  };
+}
+
+async function createHangingRemoteServer(): Promise<{
+  baseUrl: string;
+}> {
+  const socketsToDestroy: Socket[] = [];
+  const server = createServer();
+
+  server.on("upgrade", (_request, socket) => {
+    socketsToDestroy.push(socket);
+  });
+  closeables.push(() => closeServer(server));
+  closeables.push(async () => {
+    for (const socket of socketsToDestroy.splice(0)) {
+      socket.destroy();
+    }
+  });
+  await listen(server);
+
+  const port = (server.address() as AddressInfo).port;
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -257,6 +336,42 @@ function waitForOpen(socket: WebSocket): Promise<void> {
     socket.once("open", () => resolve());
     socket.once("error", reject);
   });
+}
+
+function waitForUpgradeFailure(socket: WebSocket): Promise<string> {
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      socket.once("unexpected-response", (_request, response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          resolve(
+            `${response.statusCode} ${response.statusMessage}\n${Buffer.concat(chunks).toString("utf8")}`,
+          );
+        });
+        response.on("error", reject);
+        response.resume();
+      });
+      socket.once("error", reject);
+    }),
+    8_000,
+    "等待 Peer HOST 升级失败超时",
+  );
+}
+
+function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string }> {
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      socket.once("close", (code, reason) => {
+        resolve({ code, reason: reason.toString("utf8") });
+      });
+      socket.once("error", reject);
+    }),
+    5_000,
+    "等待 Peer HOST WebSocket 关闭超时",
+  );
 }
 
 function collectMessages(

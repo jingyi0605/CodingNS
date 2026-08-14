@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { ensureNode22ForCurrentScript, resolvePackageRoot } from "../scripts/node22-runtime.mjs";
+
+ensureNode22ForCurrentScript({
+  rootDir: resolvePackageRoot(import.meta.url),
+  scriptLabel: "codingns-office-mcp",
+  allowWindowsPrivateRuntimeInstall: process.platform === "win32"
+});
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = {

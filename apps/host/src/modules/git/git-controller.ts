@@ -189,6 +189,18 @@ export class GitController {
     );
   };
 
+  readonly addToGitIgnore = async (
+    request: FastifyRequest<{ Body: TargetsBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.gitWriteService.addToGitIgnore(
+        requireWorkspaceId(request.body.workspaceId),
+        request.body.targets ?? []
+      )
+    );
+  };
+
   readonly getRules = async (
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply

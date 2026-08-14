@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 
 import {
@@ -10,6 +11,7 @@ import {
   CodexRuntimeAdapter,
   GeminiRuntimeAdapter,
   type InRunInputMode,
+  type NormalizedMessage,
   KimiRuntimeAdapter,
   LegnaRuntimeAdapter,
   type NormalizedMessageAttachment,
@@ -18,6 +20,7 @@ import {
   type ProviderRuntimeAdapter,
   type ProviderRuntimeRunRequest,
   type ProviderSubscription,
+  resolveCodexPermissionResolution,
   type RuntimeEvent,
   type RuntimeRunState,
   type SendMessageResult
@@ -28,6 +31,7 @@ import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { isPerfDebugEnabled, logPerformance } from "../../shared/utils/perf-log.js";
 import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
+import { logResourceScopeDebug } from "../../shared/utils/resource-scope-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
 import type { SessionBindingRepository } from "../../storage/repositories/session-binding-repository.js";
@@ -86,8 +90,8 @@ import {
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 import { SessionProviderConfigService } from "./session-provider-config-service.js";
-import type { OpenCliSessionPromptService } from "../opencli/opencli-session-prompt-service.js";
 import type { WorkspaceSessionRuntimeContextService } from "./workspace-session-runtime-context-service.js";
+import { inspectSessionActivity } from "./session-activity-inspector.js";
 
 const OPENCODE_ORDER_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
   process.env.CODINGNS_OPENCODE_ORDER_DEBUG?.trim() ?? ""
@@ -198,6 +202,61 @@ export interface SessionRuntimeStatusView {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageSnapshot | null;
+  permissionStatus: SessionRuntimePermissionStatusView | null;
+}
+
+export interface SessionRuntimePermissionStatusView {
+  requestedPermissionMode: string | null;
+  effectivePermissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  effectiveSandboxMode: "read-only" | "workspace-write" | "danger-full-access" | null;
+  effectiveApprovalPolicy: "never" | "cli-default" | null;
+  source: "codex-cli-default" | "codingns-override" | "provider-non-codex";
+  summary: string;
+  detail: string;
+}
+
+function buildSessionRuntimePermissionStatus(input: {
+  provider: string;
+  requestedPermissionMode: string | null;
+}): SessionRuntimePermissionStatusView | null {
+  if (input.provider !== "codex") {
+    return {
+      requestedPermissionMode: input.requestedPermissionMode,
+      effectivePermissionMode: "default",
+      effectiveSandboxMode: null,
+      effectiveApprovalPolicy: null,
+      source: "provider-non-codex",
+      summary: "当前 provider 不使用 Codex 沙箱权限映射。",
+      detail: "这份权限说明只对 Codex 会话生效，其他 provider 仍沿用各自的权限体系。"
+    };
+  }
+
+  const resolution = resolveCodexPermissionResolution(input.requestedPermissionMode);
+
+  if (resolution.effectivePermissionMode === "default") {
+    return {
+      requestedPermissionMode: input.requestedPermissionMode,
+      effectivePermissionMode: resolution.effectivePermissionMode,
+      effectiveSandboxMode: resolution.sandboxMode,
+      effectiveApprovalPolicy: resolution.approvalPolicy ? "never" : "cli-default",
+      source: "codex-cli-default",
+      summary: "当前会话跟随 Codex CLI 默认权限。",
+      detail: resolution.reasoning
+    };
+  }
+
+  return {
+    requestedPermissionMode: input.requestedPermissionMode,
+    effectivePermissionMode: resolution.effectivePermissionMode,
+    effectiveSandboxMode: resolution.sandboxMode,
+    effectiveApprovalPolicy: resolution.approvalPolicy ? "never" : "cli-default",
+    source: "codingns-override",
+    summary:
+      resolution.effectivePermissionMode === "acceptEdits"
+        ? "当前会话已切到工作区可写权限。"
+        : "当前会话已切到完整权限。",
+    detail: resolution.reasoning
+  };
 }
 
 export interface InterruptSessionResult {
@@ -293,6 +352,13 @@ interface ClaudeHookEventPayload {
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
+  path?: string;
+  file_path?: string;
+  worktree_path?: string;
+  config_path?: string;
+  rule_file?: string;
+  matcher?: string;
+  permission_mode?: string;
   reason?: string;
   stop_hook_active?: boolean;
   tool_name?: string;
@@ -300,6 +366,11 @@ interface ClaudeHookEventPayload {
   permission_suggestions?: unknown;
   title?: string;
   message?: string;
+  prompt?: string;
+  command_name?: string;
+  action?: string;
+  trigger?: string;
+  mcp_server_name?: string;
   notification_type?: string;
 }
 
@@ -311,6 +382,16 @@ interface ExternalRuntimeSnapshot {
   runningState: ExternalRuntimeStatus;
   detail: string | null;
   updatedAt: string;
+}
+
+interface ClaudeForkBootstrapDescriptor {
+  instructionFilePath: string;
+}
+
+interface SessionPermissionRuntimeState {
+  requestedPermissionMode: string | null;
+  updatedAt: string;
+  source: "start_live" | "send_live" | "queue_dispatch" | "runtime_snapshot";
 }
 
 export class SessionLiveRuntimeService {
@@ -334,6 +415,7 @@ export class SessionLiveRuntimeService {
   private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingSendDebugTracesBySessionId = new Map<string, PendingSessionSendDebugTrace[]>();
   private readonly runtimePersistenceQueues = new Map<string, Promise<void>>();
+  private readonly sessionPermissionRuntimeStates = new Map<string, SessionPermissionRuntimeState>();
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
@@ -349,7 +431,6 @@ export class SessionLiveRuntimeService {
     private readonly sessionProviderConfigService: SessionProviderConfigService,
     private readonly config: HostConfig,
     sessionActivityAuthorityService = new SessionActivityAuthorityService(),
-    private readonly openCliSessionPromptService: OpenCliSessionPromptService | null = null,
     private readonly workspaceSessionRuntimeContextService: Pick<
       WorkspaceSessionRuntimeContextService,
       "prepareWorkspaceInstructionBundle"
@@ -409,6 +490,11 @@ export class SessionLiveRuntimeService {
     });
 
     try {
+      this.rememberRequestedPermissionMode(
+        sessionId,
+        input.runtimeOptions?.permissionMode ?? null,
+        "start_live"
+      );
       const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
       const providerBinding = this.sessionProviderConfigService.prepareSessionBinding({
         sessionId,
@@ -892,6 +978,14 @@ export class SessionLiveRuntimeService {
       return this.sessionPermissionRequestService.handleClaudePermissionRequest(resolvedPayload, provider);
     }
 
+    if (hookEventName === "Elicitation") {
+      logPermissionDebug("claude_hook_event.route", {
+        hookEventName,
+        route: "handleClaudeElicitation"
+      });
+      return this.sessionPermissionRequestService.handleClaudeElicitation(resolvedPayload, provider);
+    }
+
     const providerSessionId = normalizeRequiredText(resolvedPayload.session_id, "session_id");
     const workspacePath = normalizeRequiredText(resolvedPayload.cwd, "cwd");
     const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
@@ -969,6 +1063,13 @@ export class SessionLiveRuntimeService {
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
     const runtimeSnapshot = this.getLiveRuntimeSnapshot(runtimeSessionId);
     const externalRuntimeSnapshot = this.getFreshExternalRuntimeSnapshot(runtimeSessionId);
+    logResourceScopeDebug("session_live_runtime.get_session_runtime.start", {
+      sessionId,
+      userId,
+      runtimeSessionId,
+      hasRuntimeSnapshot: runtimeSnapshot !== null,
+      hasExternalRuntimeSnapshot: externalRuntimeSnapshot !== null
+    });
     const runtimeHasActiveRun = runtimeSnapshot ? isActiveRuntimeState(runtimeSnapshot.runningState) : false;
     const externalHasActiveRun = externalRuntimeSnapshot
       ? isActiveRuntimeState(externalRuntimeSnapshot.runningState)
@@ -979,6 +1080,12 @@ export class SessionLiveRuntimeService {
     this.maybeDispatchQueuedMessages(session);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
+    const requestedPermissionMode = this.resolveRequestedPermissionMode(sessionId);
+    const permissionStatus = buildSessionRuntimePermissionStatus({
+      provider: session.provider,
+      requestedPermissionMode
+    });
+    this.logSessionPermissionStatus(sessionId, session.provider, permissionStatus);
     const resolution = runtimeSnapshot
       ? this.sessionActivityAuthorityService.observe(
           createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot)
@@ -1014,7 +1121,8 @@ export class SessionLiveRuntimeService {
             : null,
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-        contextUsage
+        contextUsage,
+        permissionStatus
       };
     }
 
@@ -1037,12 +1145,21 @@ export class SessionLiveRuntimeService {
         errorDetail: resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null,
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-        contextUsage
+        contextUsage,
+        permissionStatus
       };
     }
 
     const persistedErrorCode = resolution.runningState === "failed" ? resolution.errorCode ?? session.lastErrorCode : null;
     const persistedErrorDetail = resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null;
+
+    logResourceScopeDebug("session_live_runtime.get_session_runtime.persisted", {
+      sessionId,
+      userId,
+      runtimeSessionId,
+      runningState: resolution.runningState,
+      errorCode: persistedErrorCode
+    });
 
     return {
       sessionId,
@@ -1062,7 +1179,8 @@ export class SessionLiveRuntimeService {
       errorDetail: persistedErrorDetail,
       updatedAt: resolution.updatedAt,
       watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-      contextUsage
+      contextUsage,
+      permissionStatus
     };
   }
 
@@ -1357,12 +1475,91 @@ export class SessionLiveRuntimeService {
     }
 
     if (this.providerRuntimeService.isRunHealthy(sessionId) === false) {
+      if (
+        snapshot.provider === "codex"
+        && snapshot.rawStoreRef
+      ) {
+        const inspection = inspectSessionActivity("codex", snapshot.rawStoreRef);
+        const snapshotLastEventAtMs = snapshot.lastEventAt ? Date.parse(snapshot.lastEventAt) : Number.NaN;
+        const inspectionLastEventAtMs = inspection.lastEventAt ? Date.parse(inspection.lastEventAt) : Number.NaN;
+
+        if (
+          inspection.runningState === "running"
+          && Number.isFinite(snapshotLastEventAtMs)
+          && Number.isFinite(inspectionLastEventAtMs)
+          && inspectionLastEventAtMs > snapshotLastEventAtMs
+        ) {
+          return snapshot;
+        }
+      }
+
       this.demoteDeadRuntimeSnapshot(snapshot);
       this.scheduleDeadRuntimeReconciliation(snapshot);
       return null;
     }
 
     return snapshot;
+  }
+
+  private resolveRequestedPermissionMode(sessionId: string): string | null {
+    const runtimeState = this.sessionPermissionRuntimeStates.get(sessionId);
+
+    if (runtimeState?.requestedPermissionMode?.trim()) {
+      return runtimeState.requestedPermissionMode.trim();
+    }
+
+    const queuedItems = this.sessionSendQueueRepository.listBySessionId(sessionId);
+    const dispatchingItem = queuedItems.find((item) => item.status === "dispatching");
+
+    if (dispatchingItem?.permissionMode?.trim()) {
+      return dispatchingItem.permissionMode.trim();
+    }
+
+    const latestPermissionItem = [...queuedItems]
+      .reverse()
+      .find((item) => item.permissionMode?.trim());
+
+    if (latestPermissionItem?.permissionMode?.trim()) {
+      return latestPermissionItem.permissionMode.trim();
+    }
+
+    return null;
+  }
+
+  private rememberRequestedPermissionMode(
+    sessionId: string,
+    permissionMode: string | null,
+    source: SessionPermissionRuntimeState["source"]
+  ): void {
+    this.sessionPermissionRuntimeStates.set(sessionId, {
+      requestedPermissionMode: permissionMode?.trim() || null,
+      updatedAt: nowIso(),
+      source
+    });
+  }
+
+  private logSessionPermissionStatus(
+    sessionId: string,
+    provider: string,
+    permissionStatus: SessionRuntimePermissionStatusView | null
+  ): void {
+    if (!permissionStatus) {
+      return;
+    }
+
+    const runtimeState = this.sessionPermissionRuntimeStates.get(sessionId);
+
+    logPermissionDebug("session_runtime.permission_status", {
+      sessionId,
+      provider,
+      requestedPermissionMode: permissionStatus.requestedPermissionMode,
+      effectivePermissionMode: permissionStatus.effectivePermissionMode,
+      effectiveSandboxMode: permissionStatus.effectiveSandboxMode,
+      effectiveApprovalPolicy: permissionStatus.effectiveApprovalPolicy,
+      source: permissionStatus.source,
+      runtimeStateSource: runtimeState?.source ?? null,
+      runtimeStateUpdatedAt: runtimeState?.updatedAt ?? null
+    });
   }
 
   private demoteDeadRuntimeSnapshot(snapshot: ActiveRunSnapshot): void {
@@ -1771,6 +1968,11 @@ export class SessionLiveRuntimeService {
       runtimeHomeDir: string | null;
     }
   ): Promise<void> {
+    this.rememberRequestedPermissionMode(
+      request.sessionId,
+      request.options.permissionMode ?? null,
+      "runtime_snapshot"
+    );
     this.runtimeMessageSeenSessions.delete(request.sessionId);
     this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
     this.clearExternalRuntimeInterruptSuppression(request.sessionId);
@@ -1819,6 +2021,11 @@ export class SessionLiveRuntimeService {
     });
 
     try {
+      this.rememberRequestedPermissionMode(
+        input.sessionId,
+        input.runtimeOptions?.permissionMode ?? null,
+        "send_live"
+      );
       const capabilities = await this.sessionHistoryService.getSessionCapabilities(
         input.sessionId,
         input.userId
@@ -1882,10 +2089,15 @@ export class SessionLiveRuntimeService {
         runtimeMode === "start"
           ? syntheticForkRawStoreRef
           : await this.resolveCodexRuntimeRequestRawStoreRef(session, providerBinding);
+      const sequenceBase = resolveRuntimeSequenceBase(session, runtimeMode);
       const nextUserSequence =
-        runtimeMode === "start"
-          ? 1
-          : await this.resolveNextUserSequence(input.sessionId, session.messageCount);
+        sequenceBase !== null
+          ? sequenceBase
+          : (
+              runtimeMode === "start"
+                ? 1
+                : await this.resolveNextUserSequence(input.sessionId, session.messageCount)
+            );
       const resolvedAttachments =
         persistedAttachments
         ?? this.persistMessageAttachments(
@@ -1922,10 +2134,21 @@ export class SessionLiveRuntimeService {
         providerLaunchRuntimeHomeDir: providerLaunchContext.runtimeHomeDir,
         providerBindingRuntimeHomeDir: providerBinding.runtimeHomeDir
       });
+      const claudeForkBootstrap = await this.buildClaudeForkBootstrapDescriptor({
+        session,
+        runtimeMode,
+        baseInstructionFilePath:
+          input.runtimeOptions?.providerInstructionFilePath
+          ?? workspaceRuntimeContext.instructionFilePath
+          ?? providerLaunchContext.providerInstructionFilePath
+          ?? null,
+        runtimeHomeDir: effectiveRuntimeHomeDir
+      });
       const providerInstructionFilePath = resolveRuntimeInstructionFilePath(
         session.provider,
         workspace.path,
-        input.runtimeOptions?.providerInstructionFilePath
+        claudeForkBootstrap?.instructionFilePath
+          ?? input.runtimeOptions?.providerInstructionFilePath
           ?? workspaceRuntimeContext.instructionFilePath
           ?? providerLaunchContext.providerInstructionFilePath
           ?? null
@@ -2079,9 +2302,9 @@ export class SessionLiveRuntimeService {
       return null;
     }
 
-    // OpenCLI 约束必须走 runtime skill / runtime 环境本身，不能再内联到用户消息里。
+    // 运行时约束必须走 runtime skill / runtime 环境本身，不能再内联到用户消息里。
     // Codex / Claude 会优先把 providerPrompt 当成真实用户输入发送；一旦这里拼上
-    // OpenCLI 提示，就会覆盖或污染用户原始内容，导致模型只对提示词本身作答。
+    // 额外提示，就会覆盖或污染用户原始内容，导致模型只对提示词本身作答。
     return normalizedBasePrompt;
   }
 
@@ -2139,6 +2362,11 @@ export class SessionLiveRuntimeService {
       };
 
       try {
+        this.rememberRequestedPermissionMode(
+          nextQueueItem.sessionId,
+          nextQueueItem.permissionMode,
+          "queue_dispatch"
+        );
         await this.sendLiveMessageDirect(
           {
             sessionId: nextQueueItem.sessionId,
@@ -2365,7 +2593,7 @@ export class SessionLiveRuntimeService {
       workspacePath: input.workspacePath,
       projectId: input.projectId ?? null,
       provider: input.provider,
-      instructionOverlay: buildBrowserTaskInstructionOverlay(input.messageContent ?? null)
+      instructionOverlay: null
     });
   }
 
@@ -2551,6 +2779,9 @@ export class SessionLiveRuntimeService {
     const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
 
     if (!existingBinding) {
+      logResourceScopeDebug("session_live_runtime.session_binding_missing", {
+        sessionId
+      });
       throw new AppError({
         statusCode: 404,
         errorCode: "SESSION_NOT_FOUND",
@@ -2688,6 +2919,70 @@ export class SessionLiveRuntimeService {
     mkdirSync(syntheticDir, { recursive: true });
     writeFileSync(syntheticFilePath, `${serialized}\n`, "utf8");
     return syntheticFilePath;
+  }
+
+  private async buildClaudeForkBootstrapDescriptor(input: {
+    session: Pick<
+      SessionListItem,
+      | "sessionId"
+      | "provider"
+      | "messageCount"
+      | "forkMethod"
+      | "forkSourceType"
+      | "title"
+      | "inheritedPrefixMessageCount"
+    >;
+    runtimeMode: "start" | "continue";
+    baseInstructionFilePath: string | null;
+    runtimeHomeDir: string | null;
+  }): Promise<ClaudeForkBootstrapDescriptor | null> {
+    if (input.runtimeMode !== "start" || !shouldBootstrapClaudeForkSession(input.session)) {
+      return null;
+    }
+
+    const messages = await Promise.resolve(
+      this.sessionHistoryService.readAllTextHistoryMessages(input.session.sessionId)
+    ).catch(() => []);
+
+    const textMessages = Array.isArray(messages)
+      ? messages.filter(
+        (message): message is typeof message & { role: "user" | "assistant" } =>
+          (message.role === "user" || message.role === "assistant")
+          && message.kind === "text"
+          && message.content.trim().length > 0
+      )
+      : [];
+
+    if (textMessages.length === 0) {
+      return null;
+    }
+
+    const overlay = buildClaudeForkBootstrapInstructionOverlay({
+      sessionTitle: input.session.title,
+      messages: textMessages
+    });
+
+    if (!overlay) {
+      return null;
+    }
+
+    const baseInstructionContent = readInstructionFileSafe(input.baseInstructionFilePath);
+    const targetRoot =
+      input.runtimeHomeDir?.trim()
+      || path.resolve(path.dirname(this.config.databasePath), "runtime", "claude-fork-bootstrap");
+    const targetDir = path.join(targetRoot, ".codingns-fork-bootstrap");
+    const instructionFilePath = path.join(targetDir, `${input.session.sessionId}.md`);
+
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(
+      instructionFilePath,
+      composeForkBootstrapInstructionFile(baseInstructionContent, overlay),
+      "utf8"
+    );
+
+    return {
+      instructionFilePath
+    };
   }
 
   private buildBindingSnapshot(
@@ -3784,8 +4079,30 @@ function normalizeClaudeHookEventName(value: string | undefined): string | null 
 function isSupportedClaudeHookEvent(value: string): boolean {
   return (
     value === "PreToolUse" ||
+    value === "PostToolUse" ||
+    value === "PostToolUseFailure" ||
     value === "PermissionRequest" ||
+    value === "PermissionDenied" ||
+    value === "Elicitation" ||
+    value === "ElicitationResult" ||
+    value === "MessageDisplay" ||
     value === "Notification" ||
+    value === "PostToolBatch" ||
+    value === "TaskCreated" ||
+    value === "TaskCompleted" ||
+    value === "TeammateIdle" ||
+    value === "SubagentStart" ||
+    value === "SubagentStop" ||
+    value === "PreCompact" ||
+    value === "PostCompact" ||
+    value === "InstructionsLoaded" ||
+    value === "ConfigChange" ||
+    value === "CwdChanged" ||
+    value === "FileChanged" ||
+    value === "WorktreeCreate" ||
+    value === "WorktreeRemove" ||
+    value === "Setup" ||
+    value === "UserPromptExpansion" ||
     value === "UserPromptSubmit" ||
     value === "SessionStart" ||
     value === "Stop" ||
@@ -3839,6 +4156,182 @@ function mapClaudeHookToRuntimeUpdate(
     };
   }
 
+  if (hookEventName === "Setup") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在执行初始化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "UserPromptExpansion") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在展开用户指令", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolUse") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成一次工具调用", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolUseFailure") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 的一次工具调用失败", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PermissionDenied") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 的工具权限请求被拒绝", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "Notification") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 发来一条通知", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "MessageDisplay") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在展示回复内容", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "ElicitationResult") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已收到补充信息结果", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostToolBatch") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成一批工具调用", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TaskCreated") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 新建了一个任务", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TaskCompleted") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 完成了一个任务", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "SubagentStart") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 子任务已启动", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "SubagentStop") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 子任务已结束", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "TeammateIdle") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 队友任务即将空闲", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PreCompact") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在压缩上下文", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "PostCompact") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已完成上下文压缩", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "InstructionsLoaded") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已加载指令文件", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "ConfigChange") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 检测到配置变化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "CwdChanged") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 已切换工作目录", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "FileChanged") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 检测到文件变化", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "WorktreeCreate") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在创建工作树", payload),
+      timestamp
+    };
+  }
+
+  if (hookEventName === "WorktreeRemove") {
+    return {
+      runningState: "running",
+      detail: buildClaudeHookRunningDetail("Claude 正在移除工作树", payload),
+      timestamp
+    };
+  }
+
   if (hookEventName === "StopFailure") {
     return {
       runningState: "failed",
@@ -3874,6 +4367,41 @@ function mapClaudeHookToRuntimeUpdate(
   return null;
 }
 
+function buildClaudeHookRunningDetail(
+  base: string,
+  payload: Pick<
+    ClaudeHookEventPayload,
+      "tool_name" | "title" | "message" | "reason" | "notification_type" | "prompt" | "command_name" | "action" | "trigger" | "mcp_server_name"
+      | "path" | "file_path" | "worktree_path" | "config_path" | "rule_file" | "matcher" | "cwd"
+  >
+): string {
+  const candidates = [
+    normalizeOptionalText(payload.title),
+    normalizeOptionalText(payload.message),
+    normalizeOptionalText(payload.reason),
+    normalizeOptionalText(payload.prompt),
+    normalizeOptionalText(payload.path),
+    normalizeOptionalText(payload.file_path),
+    normalizeOptionalText(payload.worktree_path),
+    normalizeOptionalText(payload.config_path),
+    normalizeOptionalText(payload.rule_file),
+    normalizeOptionalText(payload.cwd),
+    normalizeOptionalText(payload.command_name),
+    normalizeOptionalText(payload.notification_type),
+    normalizeOptionalText(payload.mcp_server_name),
+    normalizeOptionalText(payload.matcher),
+    normalizeOptionalText(payload.trigger),
+    normalizeOptionalText(payload.action)
+  ].filter((value): value is string => Boolean(value));
+  const suffix = payload.tool_name?.trim()
+    ? `（${payload.tool_name.trim()}）`
+    : candidates[0]
+      ? `：${candidates[0]}`
+      : "";
+
+  return `${base}${suffix}`;
+}
+
 
 function resolveRuntimeSessionTitle(
   provider: string,
@@ -3898,6 +4426,118 @@ function resolveRuntimeSessionTitle(
   return buildSessionTitleFromContent(content, "继续对话");
 }
 
+function shouldBootstrapClaudeForkSession(
+  session: Pick<
+    SessionListItem,
+    "provider" | "forkMethod" | "forkSourceType" | "messageCount" | "inheritedPrefixMessageCount"
+  >
+): boolean {
+  if (session.provider !== "claude-code") {
+    return false;
+  }
+
+  if (
+    session.forkMethod !== "native_message_fork"
+    && session.forkMethod !== "native_session_fork"
+  ) {
+    return false;
+  }
+
+  const inheritedCount =
+    typeof session.inheritedPrefixMessageCount === "number"
+      ? Math.max(0, session.inheritedPrefixMessageCount)
+      : null;
+
+  if (inheritedCount === null) {
+    return false;
+  }
+
+  return session.messageCount <= inheritedCount;
+}
+
+function resolveRuntimeSequenceBase(
+  session: Pick<
+    SessionListItem,
+    "provider" | "forkMethod" | "forkSourceType" | "inheritedPrefixMessageCount"
+  >,
+  runtimeMode: "start" | "continue"
+): number | null {
+  if (
+    runtimeMode !== "start"
+    || session.provider !== "claude-code"
+    || (
+      session.forkMethod !== "native_message_fork"
+      && session.forkMethod !== "native_session_fork"
+    )
+    || typeof session.inheritedPrefixMessageCount !== "number"
+  ) {
+    return null;
+  }
+
+  return Math.max(0, session.inheritedPrefixMessageCount);
+}
+
+function buildClaudeForkBootstrapInstructionOverlay(input: {
+  sessionTitle: string;
+  messages: Array<Pick<NormalizedMessage, "role" | "kind" | "content">>;
+}): string | null {
+  const title = input.sessionTitle.trim() || "未命名会话";
+  const lines = [
+    `这是一个从既有 Claude Code 会话 fork 出来的子会话，标题：${title}。`,
+    "下面这些历史内容已经发生过，只是给你恢复上下文。",
+    "不要把它们当成新的用户问题逐条重答，也不要重复总结。",
+    "真正需要处理的新用户输入，会在你看到这段说明之后单独发给你。",
+    ""
+  ];
+
+  let appended = 0;
+
+  for (const message of input.messages) {
+    if (message.kind !== "text") {
+      continue;
+    }
+
+    const normalizedContent = message.content.trim();
+
+    if (!normalizedContent) {
+      continue;
+    }
+
+    lines.push(message.role === "user" ? "[历史用户]" : "[历史助手]");
+    lines.push(normalizedContent);
+    lines.push("");
+    appended += 1;
+  }
+
+  if (appended === 0) {
+    return null;
+  }
+
+  return lines.join("\n").trim();
+}
+
+function readInstructionFileSafe(filePath: string | null): string | null {
+  const normalizedPath = filePath?.trim() || null;
+
+  if (!normalizedPath || !existsSync(normalizedPath)) {
+    return null;
+  }
+
+  try {
+    return readFileSync(normalizedPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function composeForkBootstrapInstructionFile(
+  baseInstructionContent: string | null,
+  overlay: string
+): string {
+  const sections = [baseInstructionContent?.trim() ?? "", overlay.trim()].filter((value) => value.length > 0);
+  return `${sections.join("\n\n")}\n`;
+}
+
 function isSyntheticRuntimeSessionTitle(provider: string, title: string): boolean {
   if (provider !== "codex") {
     return false;
@@ -3913,8 +4553,18 @@ function shouldStartNativeSessionOnFirstMessage(session: {
   provider: string;
   providerSessionId: string;
   messageCount: number;
+  forkMethod?: SessionListItem["forkMethod"] | null;
+  forkSourceType?: SessionListItem["forkSourceType"] | null;
+  inheritedPrefixMessageCount?: number | null;
 }): "start" | "continue" {
   if (session.provider !== "codex" && session.provider !== "opencode") {
+    if (
+      session.provider === "claude-code"
+      && shouldBootstrapClaudeForkSession(session)
+    ) {
+      return "start";
+    }
+
     return "continue";
   }
 
@@ -4210,56 +4860,6 @@ function resolveRuntimeInstructionFilePath(
     : null;
 }
 
-function buildBrowserTaskInstructionOverlay(content: string | null): string | null {
-  const intent = classifyBrowserTaskIntent(content);
-
-  if (intent !== "real_site_authenticated") {
-    return null;
-  }
-
-  return `## 浏览器任务临时规则（本轮生效）
-
-- 当前用户消息已识别为真实站点登录态浏览器任务。
-- 如果任务涉及登录态、个人账户、订单、后台页面、验证码、下载文件、表单提交，必须优先走 \`codingns assistant office browser-task-create\`。
-- 如果用户明确要求复用当前已登录的 Edge/Chrome 会话，必须显式传 \`executionBackend=opencli_bridge\`。
-- 这类任务不要把 persistent profile 当成当前真人浏览器会话的替代品。
-- 首次桥接失败时，不要自动切到 \`playwright\`；先检查 \`executionBackend\`、\`finalUrl\` 和步骤结果，再重试一次 \`opencli_bridge\`。
-- 只有用户明确同意放弃“当前已登录会话”约束后，才允许改用 \`playwright\` 或手工指定 profile。
-- 成功标准不仅是任务执行完成，还必须同时满足：
-  - \`executionBackend = opencli_bridge\`
-  - \`finalUrl\` 落在目标业务页
-  - 页面确认处于已登录状态
-- 如果结果是 \`about:blank\`、登录页、验证码页或错误页，必须明确说明“未满足用户约束”。`;
-}
-
-function classifyBrowserTaskIntent(content: string | null): "none" | "local_debug" | "real_site_public" | "real_site_authenticated" {
-  const normalized = normalizeIntentText(content);
-
-  if (!normalized) {
-    return "none";
-  }
-
-  if (/(localhost|127\.0\.0\.1|::1|本地预览|前端调试|热更新|ui 冒烟|ui冒烟)/i.test(normalized)) {
-    return "local_debug";
-  }
-
-  const browserActionPattern = /(打开网页|打开页面|登录网站|抓取页面|读取dom|读取 dom|截图|点按钮|点击按钮|填写表单|提交表单|下载文件|浏览器|网页|页面|站点)/i;
-  if (!browserActionPattern.test(normalized)) {
-    return "none";
-  }
-
-  const authenticatedPattern = /(已登录|登录态|当前浏览器|当前窗口|现有窗口|复用.*登录|edge|chrome|淘宝|京东|飞书|订单|购物车|个人账户|账号|后台|验证码|待收货|待付款|商家后台|管理后台)/i;
-  if (authenticatedPattern.test(normalized)) {
-    return "real_site_authenticated";
-  }
-
-  return "real_site_public";
-}
-
-function normalizeIntentText(content: string | null): string {
-  return (content ?? "").trim().toLowerCase();
-}
-
 function buildClaudeHookBridgeConfig(
   config: HostConfig,
   provider: ClaudeCompatibleProviderId
@@ -4276,8 +4876,30 @@ function buildClaudeHookBridgeConfig(
     command,
     supportedEvents: [
       "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "PostToolBatch",
       "PermissionRequest",
+      "PermissionDenied",
+      "Elicitation",
+      "ElicitationResult",
+      "MessageDisplay",
       "Notification",
+      "TaskCreated",
+      "TaskCompleted",
+      "TeammateIdle",
+      "SubagentStart",
+      "SubagentStop",
+      "PreCompact",
+      "PostCompact",
+      "InstructionsLoaded",
+      "ConfigChange",
+      "CwdChanged",
+      "FileChanged",
+      "WorktreeCreate",
+      "WorktreeRemove",
+      "Setup",
+      "UserPromptExpansion",
       "UserPromptSubmit",
       "SessionStart",
       "Stop",
@@ -4288,7 +4910,13 @@ function buildClaudeHookBridgeConfig(
 }
 
 function resolveClaudeHookBridgeScriptPath(): string {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFilePath);
+  const packageRoot = path.resolve(currentDir, "..", "..", "..", "..");
+  const workspaceRoot = path.resolve(packageRoot, "..", "..", "..");
   const candidates = [
+    path.resolve(packageRoot, "scripts", "claude-hook-bridge.cjs"),
+    path.resolve(workspaceRoot, "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "..", "scripts", "claude-hook-bridge.cjs"),
     path.resolve(process.cwd(), "..", "..", "scripts", "claude-hook-bridge.cjs")

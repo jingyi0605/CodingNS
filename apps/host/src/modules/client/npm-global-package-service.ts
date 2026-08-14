@@ -50,6 +50,9 @@ export class NpmGlobalPackageService {
         packagePageUrl: `https://www.npmjs.com/package/${packageName}`,
         currentVersion,
         latestVersion: checkResult.latestVersion,
+        latestTitle: null,
+        latestNotes: null,
+        latestPublishedAt: null,
         hasUpdate: checkResult.hasUpdate,
         checkStatus: checkResult.checkStatus,
         checkError: checkResult.checkError,
@@ -181,7 +184,6 @@ export class NpmGlobalPackageService {
     currentVersion: string
   ): Promise<ManagedPackageCheckResult> {
     const registryUrl = buildRegistryPackageUrl(this.config.npmRegistryBaseUrl, packageName);
-    const distTag = channel === "beta" ? "beta" : "latest";
 
     try {
       const response = await fetch(registryUrl, {
@@ -195,7 +197,8 @@ export class NpmGlobalPackageService {
       }
 
       const payload = (await response.json()) as NpmRegistryPackageDocument;
-      const latestVersion = pickTargetVersion(payload, channel);
+      const target = pickTargetVersion(payload, channel);
+      const latestVersion = target.version;
       const hasUpdate =
         latestVersion !== null && compareSemver(latestVersion, currentVersion) > 0;
 
@@ -204,7 +207,7 @@ export class NpmGlobalPackageService {
         hasUpdate,
         checkStatus: hasUpdate ? "ready" : "up_to_date",
         checkError: null,
-        distTag
+        distTag: target.distTag
       };
     } catch (error) {
       return {
@@ -212,7 +215,7 @@ export class NpmGlobalPackageService {
         hasUpdate: false,
         checkStatus: "check_failed",
         checkError: error instanceof Error ? error.message : "未知错误",
-        distTag
+        distTag: channel === "beta" ? "beta" : "latest"
       };
     }
   }
@@ -226,14 +229,45 @@ function buildRegistryPackageUrl(baseUrl: string, packageName: string): string {
 function pickTargetVersion(
   payload: NpmRegistryPackageDocument,
   channel: "stable" | "beta"
-): string | null {
+): {
+  version: string | null;
+  distTag: "latest" | "beta";
+} {
   const distTags = payload["dist-tags"] ?? {};
+  const latestVersion = distTags.latest ?? null;
 
-  if (channel === "beta") {
-    return distTags.beta ?? distTags.latest ?? null;
+  if (channel !== "beta") {
+    return {
+      version: latestVersion,
+      distTag: "latest"
+    };
   }
 
-  return distTags.latest ?? null;
+  const betaVersion = distTags.beta ?? null;
+
+  if (!betaVersion) {
+    return {
+      version: latestVersion,
+      distTag: "latest"
+    };
+  }
+
+  if (!latestVersion) {
+    return {
+      version: betaVersion,
+      distTag: "beta"
+    };
+  }
+
+  return compareSemver(latestVersion, betaVersion) >= 0
+    ? {
+        version: latestVersion,
+        distTag: "latest"
+      }
+    : {
+        version: betaVersion,
+        distTag: "beta"
+      };
 }
 
 function compareSemver(left: string, right: string): number {

@@ -19,6 +19,21 @@ describe("parseMessageRichContent", () => {
     });
   });
 
+  it("会隐藏未闭合的内部图片附件调试块", () => {
+    const content = [
+      "分析图片内容",
+      "[[CODINGNS_IMAGE_ATTACHMENTS]]",
+      "下面这些图片是用户随消息附带的本地附件。",
+      "/Users/jackson/.codingns/session-attachments/session-1/example-image.png"
+    ].join("\n\n");
+
+    expect(parseMessageRichContent(content)).toEqual({
+      text: "分析图片内容",
+      inlineImages: [],
+      structuredQuestions: null
+    });
+  });
+
   it("会识别结构化问题并从可见文本里剥掉 questions JSON", () => {
     const content = JSON.stringify({
       questions: [
@@ -46,6 +61,7 @@ describe("parseMessageRichContent", () => {
             question: "你想把笑话保存到哪个文件名？",
             allowOther: false,
             secret: false,
+            multiSelect: false,
             options: [
               {
                 label: "jokes.md",
@@ -90,6 +106,7 @@ describe("parseMessageRichContent", () => {
             question: "spec 目录下的 requirements.md 是否存在？",
             allowOther: false,
             secret: false,
+            multiSelect: false,
             options: [
               {
                 label: "帮我创建",

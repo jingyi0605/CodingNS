@@ -1132,6 +1132,8 @@ mod tests {
             focus_owner: Some("file-preview-window".to_string()),
             payload: crate::window_manager::WindowDescriptorPayload {
                 file_path: Some("docs/README.md".to_string()),
+                target_host_id: Some("peer-host-1".to_string()),
+                route_path: None,
             },
         };
 

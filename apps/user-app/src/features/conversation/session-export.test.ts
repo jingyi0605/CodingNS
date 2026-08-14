@@ -151,7 +151,7 @@ describe("session-export", () => {
       createMessage({
         id: "message-1",
         role: "user",
-        content: "使用opencli查询",
+        content: "使用技能查询",
         timestamp: "2026-04-28T10:00:01.000Z"
       })
     ]);

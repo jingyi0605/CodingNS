@@ -272,9 +272,9 @@ function composeSharedInstructionBody(
 - 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
 - 如果当前 CLI 环境能发现 \`${BUTLER_ASSISTANT_SKILL_DIRECTORY}\` skill，优先按这个 skill 的流程工作：先确认 CLI 的默认认证入口可用，再查能力，再查项目/会话/终端，再决定是否发送消息、fork 或发终端输入。
 - 默认查询顺序固定为：先看 \`BUTLER_CONTEXT.md\`，再确认 CLI 认证入口可用，然后用 \`codingns assistant capabilities list\` 确认能力，再按 \`projects / sessions / terminals\` 分组查具体对象；不要先翻一大堆旧 REST 文档。
-- 如果任务是办公文档、浏览器操作、SSH 运维或控制台运维，优先走 \`codingns assistant office ...\`，不要自己拼私有 HTTP，也不要绕回裸 \`ssh\`、裸脚本或临时浏览器自动化。
-- 文档任务用 \`document-create / document-update / document-export / document-task\`；浏览器任务用 \`browser-profile-create / browser-task-create / browser-task-get\`；运维任务用 \`ops-target-create / ops-ssh-task-create / ops-task-execute / ops-task-get\`。
-- 只要任务属于打开网页、登录网站、抓取页面、读取 DOM、截图、点击按钮、填写表单、下载文件这类真实网页操作，默认先走 \`codingns assistant office browser-profile-list / browser-task-create\`，不要先落到 Codex 自带 Browser。
+- 文档任务优先走 \`codingns assistant office ...\`，不要自己拼私有 HTTP。
+- 文档任务用 \`document-create / document-update / document-export / document-task\`。
+- 真实网页操作和远程运维任务用 Codex / Claude Code 自带浏览器与终端能力。
 - 只有本地前端预览、开发调试 \`localhost\` / \`127.0.0.1\` / \`::1\` 页面，或者用户明确点名要用当前 in-app browser，才优先保留 Codex 自带 Browser。
 - 高风险办公任务如果返回 \`pending_approval\`，必须先处理审批，再继续执行。不要把“任务已创建”误当成“任务已执行”。
 - 对办公能力的真实性判断，以任务状态、步骤、产物、回执为准，不以模型口头描述为准。
@@ -391,9 +391,9 @@ export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
 ## 办公能力调用顺序
 
 1. 需要正式文档产物时，先 \`codingns assistant office document-create\`，再 \`document-update\`，最后 \`document-export --execute true\`，并用 \`document-task\` 看真实导出结果。
-2. 需要真实 Chrome/Edge 自动化时，优先直接 \`codingns assistant office browser-task-create --execution-backend opencli_bridge --execute true\`，最后 \`browser-task-get\` 看截图、DOM、下载产物和回执。只有明确要走无头 playwright，或者要手工管理独立 Profile 时，再先 \`browser-profile-list\` / \`browser-profile-create\`。
-3. 需要 SSH 运维时，先 \`codingns assistant office ops-target-create\`，再 \`ops-ssh-task-create\`。如果状态是 \`pending_approval\`，先 \`task-approval-reply\`，再 \`ops-task-execute\`，最后 \`ops-task-get\` 看 stdout、stderr 和回执。
-4. 能用 \`office\` 的地方，不要绕回私有 HTTP、裸 \`ssh\` 或单次临时脚本。这样状态、审批、回执和产物才不会散掉。
+2. 需要真实 Chrome/Edge 自动化时，优先用 Codex / Claude Code 自带浏览器能力。
+3. 需要 SSH 或网页控制台运维时，优先用 Codex / Claude Code 自带终端或浏览器能力。
+4. 不要再调用已经下线的私有浏览器和运维路由。
 
 ## 执行边界
 
@@ -433,14 +433,7 @@ codingns assistant terminals send --help
 - \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。
 - \`codingns assistant office document-create --title "周报" --template-key team.doct.weekly --content-json '{"sections":[]}'\`：创建办公文档。
 - \`codingns assistant office document-export <documentId> --format docx --execute true\`：按 doct 模板导出真实生产文档。
-- \`codingns assistant office browser-profile-list\`：列出当前工作区可复用的无头/手工管理浏览器 Profile。
-- \`codingns assistant office browser-profile-create --engine chrome --mode persistent --display-name "办公 Chrome"\`：创建手工管理的真实浏览器 Profile。
-- \`codingns assistant office browser-task-create --execution-backend opencli_bridge --execute true --input-json '{"startUrl":"https://example.invalid","actions":[{"type":"read_dom"},{"type":"screenshot"}]}'\`：执行真实浏览器桥接任务，通常不需要传 \`--profile-id\`。
-- \`codingns assistant office ops-target-create --kind ssh_host --display-name "生产 SSH" --config-json '{"host":"10.0.0.8","username":"root"}'\`：创建 SSH 运维目标。
-- \`codingns assistant office ops-ssh-task-create --target-id <targetId> --execute false --input-json '{"command":"df -h","timeoutMs":60000}'\`：创建 SSH 运维任务。
 - \`codingns assistant office task-approval-reply <approvalId> --status approved\`：批准高风险办公任务。
-- \`codingns assistant office ops-task-execute <taskId>\`：执行已批准的 SSH 运维任务。
-- \`codingns assistant office ops-task-get <taskId>\`：读取运维任务状态、stdout/stderr 产物和回执。
 
 ## 底层说明
 

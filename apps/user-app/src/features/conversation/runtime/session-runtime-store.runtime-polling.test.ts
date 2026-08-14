@@ -459,6 +459,7 @@ describe("SessionRuntimeStore runtime polling", () => {
   });
 
   it("收到终态 runtime status 后会清掉残留的 runtime 工具尾钉", async () => {
+    vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
     await store.initialize();
     emitRealtimeSubscribed();
@@ -508,6 +509,8 @@ describe("SessionRuntimeStore runtime polling", () => {
         }
       }
     });
+
+    await vi.advanceTimersByTimeAsync(16);
 
     expect(store.getState().messages.map((message) => message.id)).toEqual([
       "assistant-latest-1",

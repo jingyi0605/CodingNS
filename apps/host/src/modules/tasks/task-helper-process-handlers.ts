@@ -32,6 +32,7 @@ interface TaskHelperProcessHandlerMap {
       workspacePath: string;
       knownSessions: ProviderSessionSummary[];
       enabledProviders: string[];
+      claudeExtraProjectRoots?: string[];
     },
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
@@ -62,8 +63,17 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
     readWorkspaceCodeCompositionWithSignal(workspacePath, signal),
   "terminal.template_runtime_status_discovery": ({ items }, signal) =>
     discoverTemplateRuntimeStatuses(items, signal),
-  "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders }, signal) =>
-    discoverWorkspaceSessionsInRuntime(config, workspacePath, knownSessions, enabledProviders, signal),
+  "session.workspace_discovery": ({ config, workspacePath, knownSessions, enabledProviders, claudeExtraProjectRoots }, signal) =>
+    discoverWorkspaceSessionsInRuntime(
+      {
+        ...config,
+        claudeExtraProjectRoots
+      },
+      workspacePath,
+      knownSessions,
+      enabledProviders,
+      signal
+    ),
   "affairs.library_apply_config": ({ rootDir, reason, __taskMeta }, signal) =>
     runAffairsIndexerCommand(
       rootDir,

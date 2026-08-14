@@ -22,7 +22,8 @@ export type SessionPermissionRequestKind =
   | "command"
   | "file_change"
   | "permissions"
-  | "user_input";
+  | "user_input"
+  | "plan_approval";
 export type SessionPermissionRequestStatus =
   | "pending"
   | "approved"
@@ -49,6 +50,7 @@ export interface SessionPermissionRequestQuestionView {
   question: string;
   allowOther: boolean;
   secret: boolean;
+  multiSelect: boolean;
   options: SessionPermissionRequestQuestionOptionView[];
 }
 
@@ -146,6 +148,11 @@ interface ClaudeHookPermissionPayload {
   cwd?: string;
   tool_name?: string;
   tool_input?: unknown;
+  options?: unknown;
+  prompt?: string;
+  question?: string;
+  message?: string;
+  title?: string;
   permission_suggestions?: unknown;
   reason?: string;
   hook_event_name?: string;
@@ -192,6 +199,8 @@ interface CodexCommandActionRecord {
 }
 
 const CLAUDE_PRE_TOOL_USE_TIMEOUT_MS = 90_000;
+const CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS = 600_000;
+const CLAUDE_PLAN_APPROVAL_TIMEOUT_MS = 600_000;
 const OPENCODE_RECONNECT_DELAY_MS = 1_500;
 
 export class SessionPermissionRequestService {
@@ -276,11 +285,43 @@ export class SessionPermissionRequestService {
     if (request.source.kind === "claude-pre-tool-use") {
       const action = normalizeText(input.action);
 
-      if (action !== "allow" && action !== "allow_session" && action !== "deny") {
+      if (
+        action !== "allow" &&
+        action !== "allow_session" &&
+        action !== "deny" &&
+        action !== "submit"
+      ) {
         throw new AppError({
           statusCode: 400,
           errorCode: "INVALID_INPUT",
-        detail: "Claude 权限申请只支持 allow、allow_session 或 deny",
+          detail: "Claude 请求只支持 allow、allow_session、deny 或 submit",
+          field: "action"
+        });
+      }
+
+      if (request.kind === "user_input" && action !== "submit") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "Claude 问题请求只支持提交答案",
+          field: "action"
+        });
+      }
+
+      if (request.kind !== "user_input" && action === "submit") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "只有问题请求可以提交答案",
+          field: "action"
+        });
+      }
+
+      if (request.kind === "plan_approval" && action === "allow_session") {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "计划审批不支持设置整场会话默认允许",
           field: "action"
         });
       }
@@ -300,7 +341,8 @@ export class SessionPermissionRequestService {
       }
 
       request.source.resolve({
-        action: action === "deny" ? "deny" : "allow"
+        action: action === "deny" ? "deny" : "allow",
+        answers: request.kind === "user_input" ? input.answers : undefined
       });
       return await this.markResolved(
         request,
@@ -558,7 +600,7 @@ export class SessionPermissionRequestService {
       const timer = setTimeout(() => {
         resolvedByTimeout = true;
         resolve({ action: "ask" });
-      }, CLAUDE_PRE_TOOL_USE_TIMEOUT_MS);
+      }, resolveClaudeBlockingRequestTimeoutMs(normalized.kind));
       const record: SessionPermissionRequestInternalRecord = {
         ...normalized,
         source: {
@@ -595,10 +637,24 @@ export class SessionPermissionRequestService {
       accepted: true,
       ignored: false,
       sessionId: binding.sessionId,
-      bridgeResponse: buildClaudePreToolUseBridgeResponse(
-        decision.action,
-        buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
-      )
+      bridgeResponse: normalized.kind === "user_input"
+        ? buildClaudeAskUserQuestionBridgeResponse(
+            decision.action,
+            decision.answers ?? {},
+            normalized.questions,
+            payload.tool_input,
+            buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+          )
+        : normalized.kind === "plan_approval"
+          ? buildClaudeExitPlanModeBridgeResponse(
+              decision.action,
+              payload.tool_input,
+              buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+            )
+        : buildClaudePreToolUseBridgeResponse(
+            decision.action,
+            buildClaudeDecisionReason(decision.action, normalized.title, resolvedByTimeout)
+          )
     };
   }
 
@@ -762,6 +818,129 @@ export class SessionPermissionRequestService {
           : resolvedByTimeout
             ? "CodingNS 审批超时，拒绝本次权限申请"
             : "CodingNS 已拒绝本次权限申请"
+      )
+    };
+  }
+
+  async handleClaudeElicitation(
+    payload: ClaudeHookPermissionPayload,
+    provider: ClaudeCompatibleProviderId = "claude-code"
+  ): Promise<ClaudePreToolUseResult> {
+    logPermissionDebug("claude_permission.elicitation.begin", {
+      provider,
+      providerSessionId: payload.session_id ?? null,
+      cwd: payload.cwd ?? null,
+      transcriptPath: payload.transcript_path ?? null,
+      title: payload.title ?? null
+    });
+    const providerSessionId = requireNonEmptyText(payload.session_id, "session_id");
+    const workspacePath = requireNonEmptyText(payload.cwd, "cwd");
+    const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
+
+    if (!workspace) {
+      return {
+        accepted: true,
+        ignored: true,
+        sessionId: null,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse(
+          "ask",
+          "未匹配到工作区，回退 Claude 原生征询"
+        )
+      };
+    }
+
+    const transcriptPath = normalizeText(payload.transcript_path) || null;
+    const binding =
+      await this.resolveClaudeBinding(
+        provider,
+        providerSessionId,
+        workspace.id,
+        workspace.path,
+        transcriptPath,
+        workspace.ownerUserId ?? null
+      ).catch(() => null)
+      ?? this.resolveClaudeWorkspaceSessionFallback({
+        provider,
+        providerSessionId,
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        transcriptPath,
+        userId: workspace.ownerUserId ?? null
+      })
+      ?? (this.resolveActiveClaudeSession
+        ? await this.resolveActiveClaudeSession({
+            provider,
+            providerSessionId,
+            workspaceId: workspace.id,
+            workspacePath: workspace.path,
+            transcriptPath
+          }).catch(() => null)
+        : null);
+
+    if (!binding) {
+      return {
+        accepted: true,
+        ignored: true,
+        sessionId: null,
+        bridgeResponse: buildClaudePreToolUseBridgeResponse(
+          "ask",
+          "未匹配到会话绑定，回退 Claude 原生征询"
+        )
+      };
+    }
+
+    const now = nowIso();
+    const normalized = normalizeClaudeElicitationRequest({
+      provider,
+      sessionId: binding.sessionId,
+      providerSessionId,
+      payload,
+      createdAt: now
+    });
+    let resolvedByTimeout = false;
+
+    const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
+      const timer = setTimeout(() => {
+        resolvedByTimeout = true;
+        resolve({ action: "deny" });
+      }, CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS);
+      const record: SessionPermissionRequestInternalRecord = {
+        ...normalized,
+        source: {
+          kind: "claude-pre-tool-use",
+          resolve,
+          timer
+        }
+      };
+
+      this.upsertRequest(record);
+      void this.emitEnvelope({
+        type: "session.permission_request",
+        sessionId: binding.sessionId,
+        request: this.toRequestView(record)
+      });
+    });
+
+    const existing = this.requestsById.get(normalized.id);
+
+    if (existing) {
+      await this.markResolved(existing, resolvedByTimeout ? "expired" : "approved");
+    }
+
+    return {
+      accepted: true,
+      ignored: false,
+      sessionId: binding.sessionId,
+      bridgeResponse: buildClaudeAskUserQuestionBridgeResponse(
+        decision.action,
+        decision.answers ?? {},
+        normalized.questions,
+        payload,
+        decision.action === "allow"
+          ? "用户已提供补充信息"
+          : resolvedByTimeout
+            ? "用户补充信息超时，回退 Claude 原生处理"
+            : "用户拒绝补充信息"
       )
     };
   }
@@ -1605,13 +1784,62 @@ export function normalizeClaudePreToolUseRequest(input: {
     cwd: normalizeText(toRecord(toolInput)?.cwd) || null,
     paths: normalized.paths,
     permissionProfile: null,
-    questions: [],
+    questions: normalized.questions,
     actions: buildClaudeActions({
       kind: normalized.kind,
       command: normalized.command,
       paths: normalized.paths,
       toolName
     }),
+    rawPayload,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    resolvedAt: null,
+    source: {
+      kind: "claude-pre-tool-use",
+      resolve: () => undefined,
+      timer: null
+    }
+  };
+}
+
+export function normalizeClaudeElicitationRequest(input: {
+  provider: ClaudeCompatibleProviderId;
+  sessionId: string;
+  providerSessionId: string;
+  payload: ClaudeHookPermissionPayload;
+  createdAt: string;
+}): SessionPermissionRequestInternalRecord {
+  const rawPayload = stringifyPayload(input.payload);
+  const questions = readClaudeElicitationQuestions(input.payload);
+  const requestKey =
+    normalizeText(input.payload.title) ||
+    normalizeText(input.payload.prompt) ||
+    normalizeText(input.payload.question) ||
+    normalizeText(input.payload.message) ||
+    `Elicitation:${hashLike(rawPayload)}`;
+
+  return {
+    id: `permission-${createId()}`,
+    sessionId: input.sessionId,
+    provider: input.provider,
+    providerSessionId: input.providerSessionId,
+    requestKey,
+    kind: "user_input",
+    status: "pending",
+    title: normalizeText(input.payload.title) || "Claude 需要你补充信息",
+    summary: questions[0]?.question ?? "Claude 需要你补充信息后才能继续",
+    detail: rawPayload,
+    reason: normalizeText(input.payload.reason) || null,
+    toolName: "Elicitation",
+    command: null,
+    cwd: normalizeText(input.payload.cwd) || null,
+    paths: [],
+    permissionProfile: null,
+    questions,
+    actions: [
+      createAction("submit", "提交答案", "primary", "把补充信息交给 Claude 继续处理")
+    ],
     rawPayload,
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
@@ -1828,6 +2056,7 @@ export function normalizeCodexServerRequest(
             question: normalizeText(question.question) || "请输入答案",
             allowOther: Boolean(question.isOther),
             secret: Boolean(question.isSecret),
+            multiSelect: Boolean(question.multiSelect),
             options: Array.isArray(question.options)
               ? question.options
                   .map((option) => toRecord(option))
@@ -1884,6 +2113,53 @@ function buildClaudePreToolUseBridgeResponse(
       hookEventName: "PreToolUse",
       permissionDecision: action,
       permissionDecisionReason: reason
+    }
+  };
+}
+
+function buildClaudeAskUserQuestionBridgeResponse(
+  action: "allow" | "deny" | "ask",
+  answers: Record<string, string[]>,
+  questions: SessionPermissionRequestQuestionView[],
+  originalInput: unknown,
+  reason: string
+): Record<string, unknown> {
+  const response = buildClaudePreToolUseBridgeResponse(action, reason);
+  const originalInputRecord = toRecord(originalInput);
+
+  if (action === "allow") {
+    return {
+      hookSpecificOutput: {
+        ...(response.hookSpecificOutput as Record<string, unknown>),
+        updatedInput: {
+          ...(originalInputRecord ?? {}),
+          answers: buildClaudeAskUserQuestionAnswers(answers, questions)
+        }
+      }
+    };
+  }
+
+  return response;
+}
+
+function buildClaudeExitPlanModeBridgeResponse(
+  action: "allow" | "deny" | "ask",
+  originalInput: unknown,
+  reason: string
+): Record<string, unknown> {
+  const originalInputRecord = toRecord(originalInput);
+  const response = buildClaudePreToolUseBridgeResponse(action, reason);
+
+  if (action !== "allow") {
+    return response;
+  }
+
+  return {
+    hookSpecificOutput: {
+      ...(response.hookSpecificOutput as Record<string, unknown>),
+      updatedInput: {
+        ...(originalInputRecord ?? {})
+      }
     }
   };
 }
@@ -2092,6 +2368,7 @@ function buildClaudeKind(
   detail: string | null;
   command: string | null;
   paths: string[];
+  questions: SessionPermissionRequestQuestionView[];
 } {
   const normalizedToolName = toolName.trim().toLowerCase();
   const inputRecord = toRecord(toolInput);
@@ -2100,6 +2377,7 @@ function buildClaudeKind(
     normalizeText(inputRecord?.command) ||
     normalizeText(inputRecord?.cmd) ||
     null;
+  const allowedPrompts = readClaudeAllowedPrompts(inputRecord);
 
   if (normalizedToolName === "bash" || normalizedToolName === "shell") {
     return {
@@ -2108,7 +2386,41 @@ function buildClaudeKind(
       summary: command ?? "Bash 工具需要确认",
       detail: stringifyPayload(toolInput),
       command,
-      paths: []
+      paths: [],
+      questions: []
+    };
+  }
+
+  if (normalizedToolName === "askuserquestion") {
+    const questions = readClaudeAskUserQuestionQuestions(inputRecord);
+    return {
+      kind: "user_input",
+      title: "Claude 需要你回答问题",
+      summary: questions[0]?.question ?? "Claude 需要你补充选择",
+      detail: stringifyPayload(toolInput),
+      command: null,
+      paths: [],
+      questions
+    };
+  }
+
+  if (normalizedToolName === "exitplanmode") {
+    const summary =
+      normalizeText(inputRecord?.plan) ||
+      normalizeText(inputRecord?.summary) ||
+      normalizeText(inputRecord?.title) ||
+      (allowedPrompts[0]
+        ? `Claude 准备按计划继续执行：${allowedPrompts[0].prompt}`
+        : "Claude 准备退出计划模式并继续执行");
+
+    return {
+      kind: "plan_approval",
+      title: "Claude 请求确认执行计划",
+      summary,
+      detail: stringifyPayload(toolInput),
+      command: null,
+      paths: [],
+      questions: []
     };
   }
 
@@ -2124,7 +2436,8 @@ function buildClaudeKind(
       summary: paths[0] ?? `${toolName} 工具需要确认`,
       detail: stringifyPayload(toolInput),
       command: null,
-      paths
+      paths,
+      questions: []
     };
   }
 
@@ -2134,8 +2447,192 @@ function buildClaudeKind(
     summary: toolName,
     detail: stringifyPayload(toolInput),
     command,
-    paths
+    paths,
+    questions: []
   };
+}
+
+function readClaudeAskUserQuestionQuestions(
+  inputRecord: Record<string, unknown> | null
+): SessionPermissionRequestQuestionView[] {
+  if (!inputRecord) {
+    return [];
+  }
+
+  const rawQuestions = Array.isArray(inputRecord.questions)
+    ? inputRecord.questions
+    : [
+        {
+          ...inputRecord,
+          id: normalizeText(inputRecord.id) || "question"
+        }
+      ];
+
+  return rawQuestions
+    .map((question, index) => normalizeClaudeAskUserQuestion(question, index))
+    .filter((question): question is SessionPermissionRequestQuestionView => question !== null);
+}
+
+function normalizeClaudeAskUserQuestion(
+  value: unknown,
+  index: number
+): SessionPermissionRequestQuestionView | null {
+  const record = toRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const questionText =
+    normalizeText(record.question) ||
+    normalizeText(record.prompt) ||
+    normalizeText(record.message) ||
+    "请选择一个选项";
+  const options = readClaudeAskUserQuestionOptions(
+    record.options ?? record.choices ?? record.answers
+  );
+
+  return {
+    id:
+      normalizeText(record.id) ||
+      normalizeText(record.name) ||
+      `question-${index + 1}`,
+    header:
+      normalizeText(record.header) ||
+      normalizeText(record.title) ||
+      `问题 ${index + 1}`,
+    question: questionText,
+    allowOther:
+      readBoolean(record.allowOther) ??
+      readBoolean(record.allow_other) ??
+      readBoolean(record.isOther) ??
+      readBoolean(record.allowFreeform) ??
+      readBoolean(record.allow_freeform) ??
+      true,
+    secret:
+      readBoolean(record.secret) ??
+      readBoolean(record.isSecret) ??
+      false,
+    multiSelect:
+      readBoolean(record.multiSelect) ??
+      readBoolean(record.multi_select) ??
+      false,
+    options
+  };
+}
+
+function readClaudeAskUserQuestionOptions(value: unknown): SessionPermissionRequestQuestionOptionView[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const label = item.trim();
+        return label ? { label, description: null } : null;
+      }
+
+      const record = toRecord(item);
+      const label =
+        normalizeText(record?.label) ||
+        normalizeText(record?.value) ||
+        normalizeText(record?.text) ||
+        normalizeText(record?.title);
+
+      if (!label) {
+        return null;
+      }
+
+      return {
+        label,
+        description: normalizeText(record?.description) || normalizeText(record?.detail) || null
+      };
+    })
+    .filter((option): option is SessionPermissionRequestQuestionOptionView => option !== null);
+}
+
+function readClaudeElicitationQuestions(
+  payload: Pick<ClaudeHookPermissionPayload, "options" | "prompt" | "question" | "message" | "title">
+): SessionPermissionRequestQuestionView[] {
+  const options = readClaudeAskUserQuestionOptions(payload.options);
+  const questionText =
+    normalizeText(payload.question) ||
+    normalizeText(payload.prompt) ||
+    normalizeText(payload.message) ||
+    "请补充 Claude 继续执行所需的信息";
+
+  return [
+    {
+      id: "elicitation",
+      header: normalizeText(payload.title) || "补充信息",
+      question: questionText,
+      allowOther: true,
+      secret: false,
+      multiSelect: false,
+      options
+    }
+  ];
+}
+
+export function buildClaudeAskUserQuestionAnswers(
+  answers: Record<string, string[]>,
+  questions: SessionPermissionRequestQuestionView[]
+): Record<string, string> {
+  return Object.fromEntries(
+    questions
+      .map((question) => {
+        const values = Array.isArray(answers[question.id])
+          ? answers[question.id].map((value) => normalizeText(value)).filter(Boolean)
+          : [];
+
+        if (values.length === 0) {
+          return null;
+        }
+
+        return [
+          question.question,
+          question.multiSelect ? values.join(", ") : values[0] ?? ""
+        ] as const;
+      })
+      .filter((entry): entry is readonly [string, string] => entry !== null)
+  );
+}
+
+export function resolveClaudeBlockingRequestTimeoutMs(
+  kind: SessionPermissionRequestKind
+): number {
+  if (kind === "user_input") {
+    return CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS;
+  }
+
+  if (kind === "plan_approval") {
+    return CLAUDE_PLAN_APPROVAL_TIMEOUT_MS;
+  }
+
+  return CLAUDE_PRE_TOOL_USE_TIMEOUT_MS;
+}
+
+function readClaudeAllowedPrompts(
+  inputRecord: Record<string, unknown> | null
+): Array<{ tool: string; prompt: string }> {
+  if (!inputRecord || !Array.isArray(inputRecord.allowedPrompts)) {
+    return [];
+  }
+
+  return inputRecord.allowedPrompts
+    .map((value) => {
+      const record = toRecord(value);
+      const tool = normalizeText(record?.tool);
+      const prompt = normalizeText(record?.prompt);
+
+      if (!tool || !prompt) {
+        return null;
+      }
+
+      return { tool, prompt };
+    })
+    .filter((item): item is { tool: string; prompt: string } => item !== null);
 }
 
 function buildOpenCodeKind(
@@ -2308,6 +2805,19 @@ function buildClaudeAllowedScopeKey(
 }
 
 function buildClaudeActions(request: Pick<SessionPermissionRequestInternalRecord, "kind" | "command" | "paths" | "toolName">): SessionPermissionRequestActionView[] {
+  if (request.kind === "user_input") {
+    return [
+      createAction("submit", "提交选择", "primary", "把选择结果交给 Claude 继续处理")
+    ];
+  }
+
+  if (request.kind === "plan_approval") {
+    return [
+      createAction("allow", "批准计划", "primary", "允许 Claude 按当前计划继续执行"),
+      createAction("deny", "退回计划", "danger", "拒绝这次计划，要求 Claude 停在计划阶段")
+    ];
+  }
+
   const actions: SessionPermissionRequestActionView[] = [
     createAction("allow", "允许", "primary", "只允许这一次")
   ];
@@ -2689,14 +3199,6 @@ function getSupportedAssistantCliActions(group: string | null): {
       readonly: new Set(["list", "history"]),
       mutating: new Set(["send", "close"])
     },
-    "debug-targets": {
-      readonly: new Set(["compatibility-matrix", "framework-analysis", "runtime-latest", "runtimes"]),
-      mutating: new Set(["analyze", "refresh-framework-analysis", "launch-plan", "run"])
-    },
-    "debug-runtimes": {
-      readonly: new Set(["get"]),
-      mutating: new Set()
-    },
     workspaces: {
       readonly: new Set(["list", "browse", "management"]),
       mutating: new Set(["mkdir", "import", "clone", "reorder", "nav-state", "remove"])
@@ -2745,6 +3247,7 @@ function normalizeHarnessQuestions(value: unknown): SessionPermissionRequestQues
       question: normalizeText(record.question ?? record.text) ?? "请提供所需信息",
       allowOther: record.allowOther !== false,
       secret: record.secret === true,
+      multiSelect: record.multiSelect === true,
       options
     };
   });
@@ -2758,6 +3261,26 @@ function normalizeText(value: unknown): string | null {
 
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
+  }
+
+  return null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
   }
 
   return null;

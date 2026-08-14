@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  registerSessionRoutes,
-  SESSION_MESSAGE_BODY_LIMIT_BYTES
-} from "../../src/routes/sessions.js";
+import { SESSION_MESSAGE_BODY_LIMIT_BYTES } from "../../src/routes/body-limits.js";
+import { registerSessionRoutes } from "../../src/routes/sessions.js";
 
 function createRouteAppMock() {
   return {

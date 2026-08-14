@@ -67,6 +67,20 @@ describe("butler assistant api", () => {
     expect(vi.mocked(httpClient.request)).toHaveBeenCalledTimes(1);
   });
 
+  it("Butler 未初始化时，读取接口会自动降级为空结果", async () => {
+    vi.mocked(httpClient.request).mockRejectedValueOnce(new ApiError(409, {
+      detail: "代码助手尚未完成初始化，不能启动控制会话",
+      error_code: "BUTLER_PROFILE_NOT_INITIALIZED"
+    }));
+
+    await expect(listAssistantAutomations()).resolves.toEqual({
+      payload: {
+        items: []
+      }
+    });
+    expect(vi.mocked(httpClient.request)).toHaveBeenCalledTimes(1);
+  });
+
   it("旧 Host 缺少助手能力路由时，写接口会抛出明确升级提示", async () => {
     vi.mocked(httpClient.request).mockRejectedValueOnce(new ApiError(404, {
       detail: "Not Found",

@@ -107,6 +107,43 @@ describe("provider-discovery-runtime", () => {
 
     expect(readSessionTitle).toHaveBeenCalledTimes(1);
   });
+
+  it("创建 Claude adapter 时会带上额外 projects 根", async () => {
+    const claudeAdapterOptions: unknown[] = [];
+    const discoverWorkspaceSessions = vi.fn(async () => DISCOVERY_RESULT);
+    const readSessionTitle = vi.fn(async () => "title");
+
+    vi.doMock("@codingns/session-sync-core", () => ({
+      ClaudeCodeAdapter: class {
+        constructor(options: unknown) {
+          claudeAdapterOptions.push(options);
+        }
+      },
+      LegnaCodeAdapter: class {},
+      CodexAdapter: class {},
+      GeminiAdapter: class {},
+      KimiAdapter: class {},
+      OpenCodeAdapter: class {},
+      ProviderRegistry: class {},
+      SessionSyncService: class {
+        discoverWorkspaceSessions = discoverWorkspaceSessions;
+        readSessionTitle = readSessionTitle;
+      }
+    }));
+
+    const runtime = await import("../../src/modules/provider/provider-discovery-runtime.js");
+    const config = {
+      ...createConfig(),
+      claudeExtraProjectRoots: ["/tmp/runtime-home/projects"]
+    };
+
+    await runtime.discoverWorkspaceSessionsInRuntime(config, "/tmp/workspace", [], ["claude-code"]);
+
+    expect(claudeAdapterOptions).toContainEqual({
+      homeDir: "/tmp/claude",
+      extraProjectRoots: ["/tmp/runtime-home/projects"]
+    });
+  });
 });
 
 function createConfig() {

@@ -6,6 +6,7 @@ import {
   updateProviderCatalogEntry,
   type ProviderCatalogEntryDto
 } from "../api/conversation-api";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 
 interface ProviderCatalogSnapshot {
   items: ProviderCatalogEntryDto[] | null;
@@ -27,8 +28,7 @@ const snapshotsByHost = new Map<string, ProviderCatalogSnapshot>();
 const inFlightByHost = new Map<string, Promise<ProviderCatalogEntryDto[] | null>>();
 
 function normalizeTargetHostKey(targetHostId?: string | null): string {
-  const trimmedTargetHostId = targetHostId?.trim();
-  return trimmedTargetHostId || CURRENT_HOST_KEY;
+  return normalizeTargetHostId(targetHostId) ?? CURRENT_HOST_KEY;
 }
 
 function emitChange(): void {

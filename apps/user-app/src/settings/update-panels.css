@@ -146,3 +146,174 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Beta channel consent modal ---- */
+
+.modal-section.settings-beta-warning-section[data-tone="danger"] {
+  margin-bottom: 16px;
+  padding: 20px 16px;
+  border: 1px solid color-mix(in srgb, #ff9f0a 34%, var(--border-subtle));
+  border-left: 4px solid #ff9f0a;
+  border-radius: 12px;
+  background: color-mix(in srgb, #ff9f0a 7%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #ff9f0a 8%, transparent);
+}
+
+.settings-beta-warning-description {
+  margin: 0;
+  color: color-mix(in srgb, #8f5a00 90%, var(--text-primary));
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 500;
+}
+
+.settings-beta-warning-risks {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+
+.settings-beta-warning-risks li {
+  position: relative;
+  padding-left: 4px;
+  color: color-mix(in srgb, #8f5a00 82%, var(--text-primary));
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-beta-warning-risks li::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, #ff9f0a 60%, var(--border-subtle));
+}
+
+/* ---- Consent checkbox card ---- */
+
+.modal-section.settings-beta-consent-section[data-tone="accent"] {
+  margin-bottom: 12px;
+  padding: 20px 16px;
+  border: 1px solid var(--modal-list-item-border);
+  border-radius: 12px;
+  background: var(--bg-primary);
+}
+
+.settings-beta-consent-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-beta-consent-checkbox {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0 0;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.settings-beta-consent-checkbox-label span {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Confirm button row: add top padding so it doesn't hug the consent card */
+.settings-beta-consent-section + .workbench-modal-actions,
+.settings-beta-consent-section + .modal-actions {
+  padding-top: 8px;
+}
+
+/* Confirm button: when disabled, keep a visible but subdued state */
+.settings-beta-consent-confirm-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .modal-section.settings-beta-warning-section[data-tone="danger"] {
+    margin-bottom: 12px;
+    padding: 16px 14px;
+    border-radius: 10px;
+  }
+
+  .modal-section.settings-beta-consent-section[data-tone="accent"] {
+    margin-bottom: 10px;
+    padding: 16px 14px;
+    border-radius: 10px;
+  }
+}
+
+/* ---- Update notes modal ---- */
+
+.settings-update-notes-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-update-notes-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-update-notes-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.settings-update-notes-version {
+  font-family: monospace;
+  font-weight: 500;
+}
+
+.settings-update-notes-channel {
+  color: var(--text-secondary);
+}
+
+.settings-update-notes-separator {
+  color: var(--text-tertiary);
+}
+
+.settings-update-notes-published {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-update-notes-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-update-notes-content {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-update-notes-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}

@@ -13,6 +13,7 @@ export async function registerGitRoutes(
   app.post("/api/git/stage", gitController.stage);
   app.post("/api/git/unstage", gitController.unstage);
   app.post("/api/git/discard", gitController.discard);
+  app.post("/api/git/ignore", gitController.addToGitIgnore);
   app.get("/api/git/rules", gitController.getRules);
   app.put("/api/git/rules", gitController.saveRules);
   app.post("/api/git/commit/draft", gitController.createCommitDraft);

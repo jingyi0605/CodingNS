@@ -30,7 +30,6 @@ import {
   reorderWorkspaceGroups,
   useWorkbenchShell
 } from "./WorkbenchLayout";
-import { WorkspaceDebugDetailPage } from "../../debug-target/pages/WorkspaceDebugDetailPage";
 
 export {
   authStore,
@@ -386,7 +385,6 @@ export function renderWorkbenchRoute(
             <Route path="/landing" element={<CurrentLocationProbe />} />
             <Route path="/workspaces" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId" element={<CurrentLocationProbe />} />
-            <Route path="/workspaces/:workspaceId/debug" element={<WorkspaceDebugDetailPage />} />
             <Route path="/workspaces/:workspaceId/sessions" element={<CurrentLocationProbe />} />
             <Route
               path="/workspaces/:workspaceId/sessions/:sessionId"

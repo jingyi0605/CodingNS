@@ -62,18 +62,12 @@ export CODINGNS_ACCESS_TOKEN=your-access-token
 codingns assistant --help
 codingns assistant help workspaces
 codingns assistant help worktrees
-codingns assistant help debug-targets
 codingns assistant help sessions
 codingns assistant help timers
 codingns assistant sessions send --help
 codingns assistant capabilities list
 codingns assistant projects list --status active
 codingns assistant projects get project-123
-codingns assistant debug-targets compatibility-matrix
-codingns assistant debug-targets analyze --workspace-id workspace-123 --root-path /repo/demo
-codingns assistant debug-targets launch-plan target-123 --port-request role=frontend,cwd=apps/web,port=43001 --port-request role=backend,cwd=apps/api,port=44001
-codingns assistant debug-targets run target-123 --port-request role=backend,cwd=apps/api,port=44001
-codingns assistant debug-runtimes get runtime-123
 codingns assistant workspaces list
 codingns assistant workspaces management workspace-123
 codingns assistant worktrees tree --root-workspace-id workspace-123

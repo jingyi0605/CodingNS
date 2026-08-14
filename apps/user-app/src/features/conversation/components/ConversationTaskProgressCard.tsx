@@ -5,6 +5,7 @@ import {
   countConversationTasksByStatus,
   type ConversationTaskSnapshot
 } from "../session-task-progress";
+import { MarkdownText } from "./MessageMarkdown";
 
 interface ConversationTaskProgressCardProps {
   snapshot: ConversationTaskSnapshot;
@@ -12,6 +13,7 @@ interface ConversationTaskProgressCardProps {
   expanded?: boolean;
   exportMode?: boolean;
   className?: string;
+  hideClaudePlanNotes?: boolean;
   children?: ReactNode;
   onToggleExpanded?: () => void;
 }
@@ -22,10 +24,13 @@ export function ConversationTaskProgressCard({
   expanded = false,
   exportMode = false,
   className,
+  hideClaudePlanNotes = false,
   children,
   onToggleExpanded
 }: ConversationTaskProgressCardProps) {
   const summary = countConversationTasksByStatus(snapshot.items);
+  const normalizedToolName = toolName.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+  const shouldShowClaudePlanNotes = normalizedToolName === "exitplanmode";
   const rawLabel = expanded
     ? t("conversation.taskCardRawCollapse")
     : t("conversation.taskCardRawExpand");
@@ -60,11 +65,43 @@ export function ConversationTaskProgressCard({
         ) : null}
       </div>
 
+      {!hideClaudePlanNotes && shouldShowClaudePlanNotes && (snapshot.explanation || (snapshot.allowedPrompts?.length ?? 0) > 0) ? (
+        <div className="task-tool-notes">
+          {snapshot.explanation ? (
+            <div className="task-tool-note-block">
+              <span className="task-tool-note-label">{t("conversation.taskProgressExplanationTitle")}</span>
+              <MarkdownText
+                content={snapshot.explanation}
+                className="task-tool-note-text markdown-content"
+                paragraphClassName="task-tool-note-paragraph"
+              />
+            </div>
+          ) : null}
+          {(snapshot.allowedPrompts?.length ?? 0) > 0 ? (
+            <div className="task-tool-note-block">
+              <span className="task-tool-note-label">{t("conversation.taskCardAllowedPromptsTitle")}</span>
+              <ul className="task-tool-note-list">
+                {snapshot.allowedPrompts?.map((item, index) => (
+                  <li key={`${item.tool}:${item.prompt}:${index}`} className="task-tool-note-list-item">
+                    <strong>{item.tool}</strong>
+                    <span>{item.prompt}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <ol className="task-tool-list">
         {snapshot.items.map((item) => (
           <li key={item.id} className="task-tool-list-item" data-status={item.status}>
             <span className="task-tool-item-indicator" data-status={item.status} aria-hidden="true" />
-            <strong className="task-tool-item-title">{item.title}</strong>
+            <MarkdownText
+              content={item.title}
+              className="task-tool-item-title markdown-content"
+              inline
+            />
             {item.detail ? <span className="task-tool-item-detail">{item.detail}</span> : null}
             <span className="task-tool-item-status">{resolveTaskCardStatusLabel(item.status)}</span>
           </li>

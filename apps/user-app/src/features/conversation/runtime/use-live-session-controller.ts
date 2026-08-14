@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDefaultSessionPermissionMode } from "../../../preferences/default-session-permission-mode";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -25,6 +26,7 @@ import {
 } from "./session-runtime-store";
 import type { SessionMessageViewModel } from "./session-runtime-machine";
 import { withConversationTimelineRuntimeThinkingItem } from "../timeline-source-items";
+import { normalizeTargetHostId } from "../../workbench/utils/resource-scope";
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
@@ -100,14 +102,13 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const previousRunningStateRef = useRef<string | null>(input.externalSession?.runningState ?? null);
   const notifiedPermissionRequestIdsRef = useRef<Set<string>>(new Set());
 
-  const normalizedTargetHostId = input.targetHostId?.trim() || null;
+  const normalizedTargetHostId = normalizeTargetHostId(input.targetHostId);
 
   if (
     !storeRef.current
     || currentSessionIdRef.current !== input.sessionId
     || currentTargetHostIdRef.current !== normalizedTargetHostId
   ) {
-    storeRef.current?.destroy();
     storeRef.current = new SessionRuntimeStore(input.sessionId, {
       targetHostId: normalizedTargetHostId,
       initialSession: input.externalSession,
@@ -128,6 +129,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
   const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
+  const permissionStatus = useSessionRuntimeStore(store, (state) => state.permissionStatus);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
   const runtimeErrorDetail = useSessionRuntimeStore(store, (state) => state.errorDetail);
@@ -204,12 +206,21 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       return;
     }
 
-    input.onBindSessionWorkspace(input.sessionId, session?.workspaceId ?? null);
+    const boundWorkspaceId =
+      session?.workspaceId?.trim()
+      || input.externalSession?.workspaceId?.trim()
+      || null;
+
+    if (!boundWorkspaceId) {
+      return;
+    }
+
+    input.onBindSessionWorkspace(input.sessionId, boundWorkspaceId);
 
     return () => {
       input.onBindSessionWorkspace?.(input.sessionId, null);
     };
-  }, [input.onBindSessionWorkspace, input.sessionId, session?.workspaceId]);
+  }, [input.externalSession?.workspaceId, input.onBindSessionWorkspace, input.sessionId, session?.workspaceId]);
 
   useEffect(() => {
     if (input.enableCompletionHaptics === false) {
@@ -250,9 +261,10 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
         continue;
       }
 
+      const toastTitle = getPermissionRequestToastTitle(request.kind);
       showToast({
         id: `${input.permissionToastIdPrefix ?? "permission-request"}-${request.id}`,
-        title: t("conversation.permissionRequestToastTitle"),
+        title: toastTitle,
         description: request.title,
         tone: "warning",
         durationMs: 8_000,
@@ -267,7 +279,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
             : undefined
       });
       void platform.bridge.showNotification(
-        t("conversation.permissionRequestToastTitle"),
+        toastTitle,
         request.title
       );
     }
@@ -307,12 +319,24 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       return;
     }
 
+    logPerfDebug("resource_scope.session_runtime.missing", {
+      sessionId: input.sessionId,
+      targetHostId: normalizedTargetHostId,
+      runtimeErrorCode,
+      runtimeErrorDetail,
+      externalWorkspaceId: input.externalSession?.workspaceId ?? null
+    });
+
     dismissToast("conversation-runtime-error");
     input.onResolveMissingSession?.();
   }, [
     dismissToast,
     input.enableRuntimeErrorHandling,
+    input.externalSession?.workspaceId,
     input.onResolveMissingSession,
+    input.sessionId,
+    normalizedTargetHostId,
+    runtimeErrorDetail,
     runtimeErrorCode
   ]);
 
@@ -569,6 +593,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     permissionRequests,
     queuedMessages,
     contextUsage,
+    permissionStatus,
     historyState,
     runtimeErrorCode,
     runtimeErrorDetail,
@@ -597,6 +622,12 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     deleteQueuedMessage,
     steerQueuedMessage
   };
+}
+
+function getPermissionRequestToastTitle(kind: string): string {
+  return kind === "user_input"
+    ? t("conversation.permissionQuestionToastTitle")
+    : t("conversation.permissionRequestToastTitle");
 }
 
 function createClientRequestId(): string {
