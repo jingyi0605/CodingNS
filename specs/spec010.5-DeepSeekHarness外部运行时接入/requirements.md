@@ -1,6 +1,6 @@
 # 需求文档 - DeepSeek Harness 外部运行时接入
 
-状态：Draft
+状态：Completed
 
 ## 简介
 
