@@ -894,6 +894,63 @@ describe("ComposerPanel", () => {
     expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
   });
 
+  it("将会话统计详情合并到上下文占用圆环，并移除独立统计按钮", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        contextUsage={{
+          provider: "codex",
+          promptTokens: 64000,
+          uncachedInputTokens: 40000,
+          cachedInputTokens: 24000,
+          contextWindow: 200000,
+          usageRatio: 0.32,
+          source: "provider-log",
+          contextWindowSource: "provider-log",
+          modelId: "gpt-5.3-codex",
+          capturedAt: "2026-03-26T10:00:00.000Z",
+          isEstimated: false
+        }}
+        sessionStats={{
+          provider: "codex",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 4_949_000,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            outputTokens: {
+              value: 23_000,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const ring = container.querySelector(".composer-context-ring");
+    const statsControl = container.querySelector(".composer-session-stats-control");
+    const summary = container.querySelector(".composer-session-stats-summary");
+
+    expect(container.querySelector(".composer-session-stats-trigger")).toBeNull();
+    expect(statsControl?.firstElementChild).toBe(ring);
+    expect(ring?.nextElementSibling).toBe(summary);
+    fireEvent.click(ring!);
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(t("conversation.contextUsageTitle"));
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsTitle"));
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsInputTokens"));
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
+    expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent("tok");
+  });
+
   it("只显示 Provider 真实提供的会话统计字段，并保留明确的零值", () => {
     render(
       <ComposerPanel
@@ -933,7 +990,7 @@ describe("ComposerPanel", () => {
     expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsCost"));
   });
 
-  it("桌面摘要显示核心指标和缓存命中率，详情只由点击开关", () => {
+  it("桌面摘要只显示核心指标，缓存命中率由双圆环和详情显示", () => {
     const { container } = render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -964,6 +1021,18 @@ describe("ComposerPanel", () => {
               source: "provider-projection",
               semantic: "cumulative",
               watermark: { kind: "source-sequence", value: "12" }
+            },
+            cacheWriteTokens: {
+              value: 0,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            },
+            cacheHitRate: {
+              value: 20,
+              source: "derived-provider-metrics",
+              semantic: "derived-ratio",
+              watermark: { kind: "source-sequence", value: "12" }
             }
           }
         }}
@@ -977,21 +1046,136 @@ describe("ComposerPanel", () => {
     expect(summary).toHaveTextContent(t("conversation.sessionStatsSummaryTurns", { value: "4" }));
     expect(summary).toHaveTextContent(t("conversation.sessionStatsInputTokens"));
     expect(summary).toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
-    expect(summary).toHaveTextContent(t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" }));
+    expect(summary).not.toHaveTextContent(t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" }));
+    expect(summary).not.toHaveTextContent("tok");
 
-    const trigger = screen.getByLabelText(t("conversation.sessionStatsTitle"));
+    const trigger = container.querySelector(".composer-context-ring");
+    expect(trigger).toHaveClass("has-cache-hit-rate", "is-cache-low");
+    expect(trigger).toHaveAttribute("aria-label", `${t("conversation.sessionStatsTitle")}，${t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" })}`);
     fireEvent.mouseEnter(trigger);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    fireEvent.click(trigger);
+    fireEvent.click(trigger!);
     expect(screen.getByRole("tooltip")).toHaveTextContent(t("conversation.sessionStatsCacheHitRate"));
     expect(screen.getByRole("tooltip")).toHaveTextContent("20%");
 
-    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseLeave(trigger!);
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
-    fireEvent.click(trigger);
+    fireEvent.click(trigger!);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("使用 Provider 已核验的缓存命中率，不再把 Codex 缓存读取重复加入分母", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "codex",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 1000,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            cacheReadTokens: {
+              value: 800,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            cacheHitRate: {
+              value: 80,
+              source: "derived-provider-metrics",
+              semantic: "derived-ratio",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent(
+      t("conversation.sessionStatsSummaryCacheHitRate", { value: "80%" })
+    );
+    expect(container.querySelector(".composer-context-ring")).toHaveClass(
+      "has-cache-hit-rate",
+      "is-cache-medium"
+    );
+  });
+
+  it.each([
+    [79.9, "is-cache-low"],
+    [80, "is-cache-medium"],
+    [89.9, "is-cache-medium"],
+    [90, "is-cache-high"]
+  ])("缓存命中率为 %s%% 时使用 %s 圆环", (cacheHitRate, expectedClassName) => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "codex",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 1000,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            cacheHitRate: {
+              value: cacheHitRate,
+              source: "derived-provider-metrics",
+              semantic: "derived-ratio",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const ring = container.querySelector(".composer-context-ring");
+
+    expect(ring).toHaveClass("has-cache-hit-rate", expectedClassName);
+  });
+
+  it("Provider 未给出核验后的缓存命中率时保持隐藏", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "gemini",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 800,
+              source: "provider-history-log",
+              semantic: "sum-of-final-events",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            cacheReadTokens: {
+              value: 200,
+              source: "provider-history-log",
+              semantic: "sum-of-final-events",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent(
+      t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" })
+    );
+    expect(container.querySelector(".composer-context-ring")).not.toHaveClass("has-cache-hit-rate");
   });
 
   it("有任务记录时会在上下文占用按钮右侧显示任务按钮", () => {
@@ -1036,10 +1220,11 @@ describe("ComposerPanel", () => {
     });
 
     const taskEntry = taskButton.closest(".conversation-task-progress-entry");
+    const statsControl = ring?.closest(".composer-session-stats-control");
 
     expect(taskButton).toHaveClass("composer-task-progress-button");
     expect(leftControls?.lastElementChild).toBe(taskEntry);
-    expect(ring?.nextElementSibling).toBe(taskEntry);
+    expect(statsControl?.nextElementSibling).toBe(taskEntry);
   });
 
   it("粘贴图片后会显示预览卡片", async () => {

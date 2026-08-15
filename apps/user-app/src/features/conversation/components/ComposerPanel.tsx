@@ -2831,11 +2831,12 @@ export function ComposerPanel({
                 </button>
               ) : null}
 
-              <ContextUsageRing contextUsage={contextUsage} />
-              <SessionStatsTrigger
-                sessionStats={sessionStats}
-                isMobile={platform.isMobile || platform.isNativeMobile}
-              />
+              <div
+                className={`composer-session-stats-control${platform.isMobile || platform.isNativeMobile ? " is-mobile" : ""}`}
+              >
+                <ContextUsageRing contextUsage={contextUsage} sessionStats={sessionStats} />
+                <SessionStatsSummary sessionStats={sessionStats} />
+              </div>
               <SessionTaskProgressButton
                 provider={taskProvider}
                 messages={taskMessages}
@@ -3162,7 +3163,7 @@ function ForkDropIcon() {
   );
 }
 
-type SessionStatsDisplayMetric = ProviderSessionStatMetricDto | "cacheHitRate";
+type SessionStatsDisplayMetric = ProviderSessionStatMetricDto;
 
 interface SessionStatsGroup {
   key: "tokens" | "activity" | "duration" | "cost";
@@ -3176,168 +3177,30 @@ interface SessionStatsGroup {
 }
 
 interface SessionStatsSummaryItem {
-  key: "turns" | "inputTokens" | "outputTokens" | "cacheHitRate";
+  key: "turns" | "inputTokens" | "outputTokens";
   text: string;
 }
 
-function SessionStatsTrigger({
-  sessionStats,
-  isMobile
+function SessionStatsSummary({
+  sessionStats
 }: {
   sessionStats: ProviderSessionStatsDto | null;
-  isMobile: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
-  const tooltipId = useId();
-  const groups = useMemo(() => buildSessionStatsGroups(sessionStats), [sessionStats]);
   const summaryItems = useMemo(() => buildSessionStatsSummary(sessionStats), [sessionStats]);
 
-  const updateTooltipStyle = useCallback(() => {
-    const trigger = triggerRef.current;
-
-    if (!trigger || typeof window === "undefined") {
-      return;
-    }
-
-    const rect = trigger.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const edgePadding = 12;
-    const gap = 10;
-    const width = Math.min(336, Math.max(252, viewportWidth - edgePadding * 2));
-    const left = Math.min(
-      Math.max(edgePadding, rect.left + rect.width / 2 - width / 2),
-      Math.max(edgePadding, viewportWidth - width - edgePadding)
-    );
-    const spaceAbove = rect.top - edgePadding;
-    const shouldPlaceAbove = spaceAbove >= 180 || spaceAbove >= viewportHeight - rect.bottom - edgePadding;
-
-    setTooltipStyle({
-      position: "fixed",
-      left,
-      width,
-      maxWidth: viewportWidth - edgePadding * 2,
-      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
-      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-
-      if (!triggerRef.current?.contains(target) && !tooltipRef.current?.contains(target)) {
-        setOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
-    window.addEventListener("resize", updateTooltipStyle);
-    window.addEventListener("scroll", updateTooltipStyle, true);
-    updateTooltipStyle();
-
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
-      window.removeEventListener("resize", updateTooltipStyle);
-      window.removeEventListener("scroll", updateTooltipStyle, true);
-    };
-  }, [open, updateTooltipStyle]);
-
-  if (groups.length === 0 && summaryItems.length === 0) {
+  if (summaryItems.length === 0) {
     return null;
   }
 
   return (
-    <>
-      <div className={`composer-session-stats-control${isMobile ? " is-mobile" : ""}`}>
-        {summaryItems.length > 0 ? (
-          <div
-            className="composer-session-stats-summary"
-          >
-            {summaryItems.map((item, index) => (
-              <span className="composer-session-stats-summary-item" key={item.key}>
-                {index > 0 ? <span className="composer-session-stats-summary-divider" aria-hidden="true">|</span> : null}
-                <span>{item.text}</span>
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        <button
-          ref={triggerRef}
-          type="button"
-          className="composer-session-stats-trigger"
-          aria-label={t("conversation.sessionStatsTitle")}
-          aria-expanded={open}
-          aria-describedby={open ? tooltipId : undefined}
-          title={t("conversation.sessionStatsMore")}
-          onClick={() => setOpen((current) => !current)}
-        >
-          <span className="composer-session-stats-icon composer-session-stats-mobile-icon" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-          <span className="composer-session-stats-more-icon" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-        </button>
-      </div>
-
-      {open && tooltipStyle && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              ref={tooltipRef}
-              id={tooltipId}
-              className="composer-context-tooltip composer-session-stats-tooltip"
-              style={tooltipStyle}
-              role="tooltip"
-            >
-              <div className="composer-context-tooltip-title">
-                {t("conversation.sessionStatsTitle")}
-              </div>
-              <div className="composer-session-stats-groups">
-                {groups.map((group) => (
-                  <section className="composer-session-stats-group" key={group.key}>
-                    <div className="composer-session-stats-group-title">{group.title}</div>
-                    {group.items.map((item) => (
-                      <div className="composer-session-stats-row" key={item.metric}>
-                        <div className="composer-session-stats-row-value">
-                          <span>{item.label}</span>
-                          <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
-                        </div>
-                        <div className="composer-session-stats-row-meta">
-                          {item.derived
-                            ? t("conversation.sessionStatsDerivedCacheHitRate")
-                            : `${formatSessionStatsSource(item.value.source)} · ${formatSessionStatsSemantic(item.value.semantic)} · ${formatSessionStatsWatermark(item.value.watermark)}`}
-                        </div>
-                      </div>
-                    ))}
-                  </section>
-                ))}
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-    </>
+    <div className="composer-session-stats-summary">
+      {summaryItems.map((item, index) => (
+        <span className="composer-session-stats-summary-item" key={item.key}>
+          {index > 0 ? <span className="composer-session-stats-summary-divider" aria-hidden="true">|</span> : null}
+          <span>{item.text}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -3401,9 +3264,9 @@ function buildSessionStatsGroups(sessionStats: ProviderSessionStatsDto | null): 
     return items.length > 0 ? [{ key: definition.key, title: definition.title, items }] : [];
   });
 
-  const cacheHitRate = buildCacheHitRateValue(sessionStats);
+  const cacheHitRate = sessionStats?.metrics.cacheHitRate;
 
-  if (cacheHitRate) {
+  if (isSessionStatValueAvailable(cacheHitRate)) {
     const tokenGroup = groups.find((group) => group.key === "tokens");
 
     if (tokenGroup) {
@@ -3424,7 +3287,6 @@ function buildSessionStatsSummary(sessionStats: ProviderSessionStatsDto | null):
   const turns = sessionStats?.metrics.turns;
   const inputTokens = sessionStats?.metrics.inputTokens;
   const outputTokens = sessionStats?.metrics.outputTokens;
-  const cacheHitRate = buildCacheHitRateValue(sessionStats);
 
   if (isSessionStatValueAvailable(turns)) {
     summary.push({
@@ -3451,40 +3313,7 @@ function buildSessionStatsSummary(sessionStats: ProviderSessionStatsDto | null):
     });
   }
 
-  if (cacheHitRate) {
-    summary.push({
-      key: "cacheHitRate",
-      text: t("conversation.sessionStatsSummaryCacheHitRate", {
-        value: formatSessionStatValue("cacheHitRate", cacheHitRate.value)
-      })
-    });
-  }
-
   return summary;
-}
-
-function buildCacheHitRateValue(
-  sessionStats: ProviderSessionStatsDto | null
-): NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]> | null {
-  const inputTokens = sessionStats?.metrics.inputTokens;
-  const cacheReadTokens = sessionStats?.metrics.cacheReadTokens;
-
-  if (!isSessionStatValueAvailable(inputTokens) || !isSessionStatValueAvailable(cacheReadTokens)) {
-    return null;
-  }
-
-  const totalInputTokens = inputTokens.value + cacheReadTokens.value;
-
-  if (totalInputTokens <= 0) {
-    return null;
-  }
-
-  return {
-    value: cacheReadTokens.value / totalInputTokens * 100,
-    source: cacheReadTokens.source,
-    semantic: cacheReadTokens.semantic,
-    watermark: cacheReadTokens.watermark
-  };
 }
 
 function isSessionStatValueAvailable(
@@ -3518,12 +3347,10 @@ function formatSessionStatValue(metric: SessionStatsDisplayMetric, value: number
 }
 
 function formatCompactTokenCount(value: number): string {
-  const formatted = new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(undefined, {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(value);
-
-  return `${formatted} ${t("conversation.sessionStatsTokenUnit")}`;
 }
 
 function formatSessionStatsSource(value: ProviderSessionStatValueDto["source"]): string {
@@ -3534,6 +3361,8 @@ function formatSessionStatsSource(value: ProviderSessionStatValueDto["source"]):
       return t("conversation.sessionStatsSourceSessionStore");
     case "provider-history-log":
       return t("conversation.sessionStatsSourceHistoryLog");
+    case "derived-provider-metrics":
+      return t("conversation.sessionStatsSourceDerived");
   }
 
   return "";
@@ -3547,6 +3376,8 @@ function formatSessionStatsSemantic(value: ProviderSessionStatValueDto["semantic
       return t("conversation.sessionStatsSemanticFinalEvents");
     case "latest-snapshot":
       return t("conversation.sessionStatsSemanticLatestSnapshot");
+    case "derived-ratio":
+      return t("conversation.sessionStatsSemanticDerivedRatio");
   }
 
   return "";
@@ -3574,19 +3405,41 @@ function formatSessionStatsWatermark(
   return label.replace("{value}", formatted);
 }
 
-function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | null }) {
+function ContextUsageRing({
+  contextUsage,
+  sessionStats
+}: {
+  contextUsage: ContextUsageDto | null;
+  sessionStats: ProviderSessionStatsDto | null;
+}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
   const tooltipId = useId();
+  const sessionStatsGroups = useMemo(() => buildSessionStatsGroups(sessionStats), [sessionStats]);
+  const hasSessionStats = sessionStatsGroups.length > 0;
   const usagePercent = contextUsage ? Math.round(contextUsage.usageRatio * 100) : null;
   const progress = contextUsage ? Math.max(0, Math.min(contextUsage.usageRatio, 1)) : 0;
+  const cacheHitRate = sessionStats?.metrics.cacheHitRate;
+  const cacheHitRatePercent = isSessionStatValueAvailable(cacheHitRate)
+    ? Math.max(0, Math.min(cacheHitRate.value, 100))
+    : null;
+  const cacheHitRateProgress = cacheHitRatePercent === null ? null : cacheHitRatePercent / 100;
+  const cacheHitRateClassName = getCacheHitRateStateClassName(cacheHitRatePercent);
+  const cacheHitRateLabel = cacheHitRatePercent === null
+    ? null
+    : t("conversation.sessionStatsSummaryCacheHitRate", {
+      value: formatSessionStatValue("cacheHitRate", cacheHitRatePercent)
+    });
   const stateClassName = getContextUsageStateClassName(progress);
   const sourceText = contextUsage ? formatContextWindowSource(contextUsage.contextWindowSource) : null;
-  const label = contextUsage
+  const contextUsageLabel = contextUsage
     ? `${t("conversation.contextUsageTitle")} ${usagePercent}%`
-    : t("conversation.contextUsageUnavailable");
+    : hasSessionStats
+      ? t("conversation.sessionStatsTitle")
+      : t("conversation.contextUsageUnavailable");
+  const label = cacheHitRateLabel ? `${contextUsageLabel}，${cacheHitRateLabel}` : contextUsageLabel;
 
   const updateTooltipStyle = useCallback(() => {
     const trigger = triggerRef.current;
@@ -3600,14 +3453,17 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
     const viewportHeight = window.innerHeight;
     const edgePadding = 12;
     const gap = 10;
-    const width = Math.min(240, Math.max(188, viewportWidth - edgePadding * 2));
+    const width = Math.min(
+      hasSessionStats ? 336 : 240,
+      Math.max(hasSessionStats ? 252 : 188, viewportWidth - edgePadding * 2)
+    );
     const left = Math.min(
       Math.max(edgePadding, rect.left + rect.width / 2 - width / 2),
       Math.max(edgePadding, viewportWidth - width - edgePadding)
     );
     const spaceAbove = rect.top - edgePadding;
     const spaceBelow = viewportHeight - rect.bottom - edgePadding;
-    const shouldPlaceAbove = spaceAbove >= 140 || spaceAbove >= spaceBelow;
+    const shouldPlaceAbove = spaceAbove >= (hasSessionStats ? 180 : 140) || spaceAbove >= spaceBelow;
 
     setTooltipStyle({
       position: "fixed",
@@ -3617,7 +3473,7 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
       top: shouldPlaceAbove ? undefined : rect.bottom + gap,
       bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
     });
-  }, []);
+  }, [hasSessionStats]);
 
   useEffect(() => {
     if (!open) {
@@ -3657,30 +3513,37 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-context-ring ${stateClassName}`}
+        className={`composer-context-ring ${stateClassName}${usagePercent === null && hasSessionStats ? " is-stats-only" : ""}${cacheHitRateProgress === null ? "" : ` has-cache-hit-rate ${cacheHitRateClassName}`}`}
         style={
           {
-            "--context-usage-progress": `${progress}`
+            "--context-usage-progress": `${progress}`,
+            ...(cacheHitRateProgress === null ? {} : { "--cache-hit-rate-progress": `${cacheHitRateProgress}` })
           } as CSSProperties
         }
         aria-label={label}
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
         onClick={() => setOpen((current) => !current)}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
       >
-        <span className="composer-context-ring-value">
-          {usagePercent === null ? (
-            "--"
-          ) : (
-            <>
-              <span>{usagePercent}</span>
-              <span className="composer-context-ring-suffix">%</span>
-            </>
-          )}
+        <span className="composer-context-ring-visual" aria-hidden="true">
+          <span className="composer-context-ring-cache">
+            <span className="composer-context-ring-value">
+              {usagePercent === null ? (
+                hasSessionStats ? (
+                  <span className="composer-context-ring-stats-icon">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                ) : "--"
+              ) : (
+                <>
+                  <span>{usagePercent}</span>
+                  <span className="composer-context-ring-suffix">%</span>
+                </>
+              )}
+            </span>
+          </span>
         </span>
       </button>
 
@@ -3689,7 +3552,7 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
             <div
               ref={tooltipRef}
               id={tooltipId}
-              className="composer-context-tooltip"
+              className={`composer-context-tooltip${hasSessionStats ? " has-session-stats" : ""}${contextUsage ? " has-context-usage" : ""}`}
               style={tooltipStyle}
               role="tooltip"
             >
@@ -3719,11 +3582,38 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
                     </div>
                   ) : null}
                 </>
-              ) : (
+              ) : !hasSessionStats ? (
                 <div className="composer-context-tooltip-line">
                   {t("conversation.contextUsageUnavailable")}
                 </div>
-              )}
+              ) : null}
+              {hasSessionStats ? (
+                <section className="composer-context-tooltip-session-stats">
+                  <div className="composer-context-tooltip-title">
+                    {t("conversation.sessionStatsTitle")}
+                  </div>
+                  <div className="composer-session-stats-groups">
+                    {sessionStatsGroups.map((group) => (
+                      <section className="composer-session-stats-group" key={group.key}>
+                        <div className="composer-session-stats-group-title">{group.title}</div>
+                        {group.items.map((item) => (
+                          <div className="composer-session-stats-row" key={item.metric}>
+                            <div className="composer-session-stats-row-value">
+                              <span>{item.label}</span>
+                              <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
+                            </div>
+                            <div className="composer-session-stats-row-meta">
+                              {item.derived
+                                ? t("conversation.sessionStatsDerivedCacheHitRate")
+                                : `${formatSessionStatsSource(item.value.source)} · ${formatSessionStatsSemantic(item.value.semantic)} · ${formatSessionStatsWatermark(item.value.watermark)}`}
+                            </div>
+                          </div>
+                        ))}
+                      </section>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
             </div>,
             document.body
           )
@@ -3742,6 +3632,18 @@ function getContextUsageStateClassName(progress: number): string {
   }
 
   return "is-normal";
+}
+
+function getCacheHitRateStateClassName(cacheHitRatePercent: number | null): string {
+  if (cacheHitRatePercent === null || cacheHitRatePercent < 80) {
+    return "is-cache-low";
+  }
+
+  if (cacheHitRatePercent < 90) {
+    return "is-cache-medium";
+  }
+
+  return "is-cache-high";
 }
 
 function normalizeModelReasoningLevel(value?: string | null): ReasoningLevel | null {

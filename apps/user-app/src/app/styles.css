@@ -7999,6 +7999,9 @@ textarea:focus-visible {
 .composer-context-ring {
   --context-usage-progress: 0;
   --context-usage-tone: color-mix(in srgb, var(--accent) 76%, #0f766e 24%);
+  --context-usage-track: color-mix(in srgb, var(--border-primary) 70%, transparent);
+  --cache-hit-rate-progress: 0;
+  --cache-hit-rate-tone: #eab308;
   position: relative;
   flex: 0 0 auto;
   width: 28px;
@@ -8009,9 +8012,7 @@ textarea:focus-visible {
   border-radius: 50%;
   padding: 0;
   border: none;
-  background:
-    radial-gradient(circle at center, var(--bg-surface) 62%, transparent 63%),
-    conic-gradient(var(--context-usage-tone) calc(var(--context-usage-progress) * 1turn), color-mix(in srgb, var(--border-primary) 70%, transparent) 0);
+  background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 78%, transparent);
   color: var(--text-secondary);
   cursor: pointer;
@@ -8020,6 +8021,52 @@ textarea:focus-visible {
     box-shadow 160ms ease,
     color 160ms ease;
   isolation: isolate;
+}
+
+.composer-context-ring-visual {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    var(--context-usage-tone) calc(var(--context-usage-progress) * 1turn),
+    var(--context-usage-track) 0
+  );
+}
+
+.composer-context-ring-cache {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: inherit;
+  background: var(--bg-surface);
+}
+
+.composer-context-ring.has-cache-hit-rate .composer-context-ring-cache {
+  background: conic-gradient(
+    var(--cache-hit-rate-tone) calc(var(--cache-hit-rate-progress) * 1turn),
+    color-mix(in srgb, var(--cache-hit-rate-tone) 20%, var(--border-primary)) 0
+  );
+}
+
+.composer-context-ring.is-cache-low {
+  --cache-hit-rate-tone: #eab308;
+}
+
+.composer-context-ring.is-cache-medium {
+  --cache-hit-rate-tone: #22c55e;
+}
+
+.composer-context-ring.is-cache-high {
+  --cache-hit-rate-tone: #15803d;
 }
 
 .composer-context-ring:hover,
@@ -8041,9 +8088,15 @@ textarea:focus-visible {
 }
 
 .composer-context-ring-value {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   display: inline-flex;
   align-items: baseline;
+  justify-content: center;
   gap: 0.5px;
+  border-radius: inherit;
+  background: var(--bg-surface);
   font-size: 8px;
   line-height: 1;
   font-weight: 700;
@@ -8057,6 +8110,43 @@ textarea:focus-visible {
   font-size: 5.5px;
   line-height: 1;
   color: var(--text-tertiary);
+}
+
+.composer-context-ring.is-stats-only {
+  --context-usage-track: transparent;
+  --context-usage-tone: transparent;
+}
+
+.composer-context-ring.is-stats-only .composer-context-ring-visual {
+  padding: 0;
+  background: var(--bg-surface);
+}
+
+.composer-context-ring-stats-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: end;
+  justify-content: center;
+  gap: 2px;
+}
+
+.composer-context-ring-stats-icon > span {
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.composer-context-ring-stats-icon > span:nth-child(1) {
+  height: 5px;
+}
+
+.composer-context-ring-stats-icon > span:nth-child(2) {
+  height: 8px;
+}
+
+.composer-context-ring-stats-icon > span:nth-child(3) {
+  height: 11px;
 }
 
 .composer-context-tooltip {
@@ -8097,6 +8187,23 @@ textarea:focus-visible {
   font-size: 11px;
   line-height: 1.35;
   color: var(--text-secondary);
+}
+
+.composer-context-tooltip.has-session-stats {
+  max-height: min(54vh, 440px);
+  overflow-y: auto;
+}
+
+.composer-context-tooltip-session-stats {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
+.composer-context-tooltip:not(.has-context-usage) .composer-context-tooltip-session-stats {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .composer-session-stats-control {
@@ -8143,81 +8250,6 @@ textarea:focus-visible {
 .composer-session-stats-summary-divider {
   color: var(--conversation-chip-muted-text);
   font-weight: 500;
-}
-
-.composer-session-stats-trigger {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    color 160ms ease;
-}
-
-.composer-session-stats-trigger:hover,
-.composer-session-stats-trigger:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-primary));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
-  color: var(--accent);
-  outline: none;
-}
-
-.composer-session-stats-icon {
-  width: 13px;
-  height: 13px;
-  display: inline-flex;
-  align-items: end;
-  justify-content: center;
-  gap: 2px;
-}
-
-.composer-session-stats-icon > span {
-  width: 3px;
-  border-radius: 1px;
-  background: currentColor;
-}
-
-.composer-session-stats-icon > span:nth-child(1) {
-  height: 5px;
-}
-
-.composer-session-stats-icon > span:nth-child(2) {
-  height: 9px;
-}
-
-.composer-session-stats-icon > span:nth-child(3) {
-  height: 12px;
-}
-
-.composer-session-stats-more-icon {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: 14px;
-  height: 14px;
-}
-
-.composer-session-stats-more-icon > span {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.composer-session-stats-tooltip {
-  max-height: min(54vh, 440px);
-  overflow-y: auto;
 }
 
 .composer-session-stats-groups {
@@ -8273,25 +8305,9 @@ textarea:focus-visible {
   .composer-session-stats-summary {
     display: inline-flex;
   }
-
-  .composer-session-stats-mobile-icon {
-    display: none;
-  }
-
-  .composer-session-stats-more-icon {
-    display: inline-flex;
-  }
 }
 
 .composer-session-stats-control.is-mobile .composer-session-stats-summary {
-  display: none;
-}
-
-.composer-session-stats-control.is-mobile .composer-session-stats-mobile-icon {
-  display: inline-flex;
-}
-
-.composer-session-stats-control.is-mobile .composer-session-stats-more-icon {
   display: none;
 }
 
