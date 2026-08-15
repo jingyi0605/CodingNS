@@ -1612,6 +1612,31 @@ export interface ProviderSessionStatValueDto {
     coverage: "complete";
     pricingProfileId?: string;
     priceBookVersion?: string;
+    breakdown?: Array<{
+      provider: ProviderId;
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      costUsd: number;
+    }>;
+    priceBook?: Array<{
+      provider: ProviderId;
+      model: string;
+      inputUsdPerToken: number;
+      outputUsdPerToken: number;
+      cacheReadUsdPerToken?: number;
+      cacheWriteUsdPerToken?: number;
+    }>;
+    exchangeRate?: {
+      from: "USD";
+      to: "CNY";
+      rate: number;
+      version: string;
+      source: "application-fixed";
+    };
   };
   watermark: {
     kind: "source-sequence" | "source-timestamp" | "captured-at";

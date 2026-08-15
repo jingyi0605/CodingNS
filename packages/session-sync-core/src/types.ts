@@ -154,11 +154,45 @@ export interface ProviderSessionStatValue {
   pricing?: ProviderSessionCostProvenance;
 }
 
+/** 一条已核验用量按模型聚合后的费用明细。 */
+export interface ProviderSessionCostBreakdown {
+  provider: ProviderId;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+/** 费用计算实际使用的单条价格。单位是 USD/token。 */
+export interface ProviderSessionCostPrice {
+  provider: ProviderId;
+  model: string;
+  inputUsdPerToken: number;
+  outputUsdPerToken: number;
+  cacheReadUsdPerToken?: number;
+  cacheWriteUsdPerToken?: number;
+}
+
+/** 费用详情中使用的展示汇率。它不是实时汇率。 */
+export interface ProviderSessionCostExchangeRate {
+  from: "USD";
+  to: "CNY";
+  rate: number;
+  version: string;
+  source: "application-fixed";
+}
+
 export interface ProviderSessionCostProvenance {
   kind: "provider-native" | "catalog-estimate";
   coverage: "complete";
   pricingProfileId?: string;
   priceBookVersion?: string;
+  breakdown?: readonly ProviderSessionCostBreakdown[];
+  priceBook?: readonly ProviderSessionCostPrice[];
+  exchangeRate?: ProviderSessionCostExchangeRate;
 }
 
 export interface ProviderSessionBillingContext {

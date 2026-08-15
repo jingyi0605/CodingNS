@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createPortal } from "react-dom";
 
-import { ModalList, ModalListItem } from "../../../components/ModalAtoms";
+import {
+  ModalActions,
+  ModalList,
+  ModalListItem,
+  ModalSection
+} from "../../../components/ModalAtoms";
+import { DesktopModal } from "../../../components/DesktopModal";
 import { MobileSheet } from "../../../components/MobileSheet";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
@@ -3174,6 +3180,11 @@ interface SessionStatsItem {
   value: SessionStatsMetricValue;
 }
 
+type SessionCostPricing = NonNullable<SessionStatsMetricValue["pricing"]>;
+type SessionCostBreakdown = NonNullable<SessionCostPricing["breakdown"]>[number];
+type SessionCostPrice = NonNullable<SessionCostPricing["priceBook"]>[number];
+type SessionCostExchangeRate = NonNullable<SessionCostPricing["exchangeRate"]>;
+
 interface SessionStatsSummaryItem {
   key: "turns" | "inputTokens" | "outputTokens";
   text: string;
@@ -3424,13 +3435,17 @@ function SessionStatsIndicators({
   sessionStats: ProviderSessionStatsDto | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [costDetailsOpen, setCostDetailsOpen] = useState(false);
   const [activeIndicator, setActiveIndicator] = useState<SessionStatsIndicator>("context");
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const cacheTriggerRef = useRef<HTMLButtonElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
   const tooltipId = useId();
+  const platform = usePlatform();
+  const isMobile = platform.isMobile || platform.isNativeMobile;
   const sessionStatsItems = useMemo(() => buildSessionStatsItems(sessionStats), [sessionStats]);
+  const costMetric = sessionStats?.metrics.costUsd ?? null;
   const cacheHitRate = sessionStats?.metrics.cacheHitRate;
   const cacheHitRateValue = isSessionStatValueAvailable(cacheHitRate) ? cacheHitRate : null;
   const hasCacheHitRate = cacheHitRateValue !== null;
@@ -3676,9 +3691,24 @@ function SessionStatsIndicators({
                   <div className="composer-session-stats-grid">
                     {sessionStatsItems.map((item) => (
                       <div className="composer-session-stats-row" data-metric={item.metric} key={item.metric}>
-                        <div className="composer-session-stats-row-value">
+                      <div className="composer-session-stats-row-value">
                           <span>{item.label}</span>
                           <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
+                          {item.metric === "costUsd" ? (
+                            <button
+                              type="button"
+                              className="composer-session-cost-info-button"
+                              aria-label={t("conversation.sessionStatsCostDetailsAction")}
+                              title={t("conversation.sessionStatsCostDetailsAction")}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={() => {
+                                setOpen(false);
+                                setCostDetailsOpen(true);
+                              }}
+                            >
+                              <SessionCostInfoIcon />
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ))}
@@ -3689,7 +3719,269 @@ function SessionStatsIndicators({
             document.body
           )
         : null}
+      {costMetric ? (
+        <SessionCostDetailsModal
+          open={costDetailsOpen}
+          isMobile={isMobile}
+          metric={costMetric}
+          onClose={() => setCostDetailsOpen(false)}
+        />
+      ) : null}
     </>
+  );
+}
+
+function SessionCostDetailsModal({
+  open,
+  isMobile,
+  metric,
+  onClose
+}: {
+  open: boolean;
+  isMobile: boolean;
+  metric: SessionStatsMetricValue;
+  onClose: () => void;
+}) {
+  const [priceBookOpen, setPriceBookOpen] = useState(false);
+  const pricing = metric.pricing;
+  const breakdown = pricing?.breakdown ?? [];
+  const priceBook = pricing?.priceBook ?? [];
+
+  useEffect(() => {
+    if (!open) {
+      setPriceBookOpen(false);
+    }
+  }, [open]);
+
+  const footer = (
+    <ModalActions stack={isMobile}>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={priceBook.length === 0}
+        onClick={() => setPriceBookOpen((current) => !current)}
+      >
+        {priceBookOpen
+          ? t("conversation.sessionStatsCostHidePriceBook")
+          : t("conversation.sessionStatsCostViewPriceBook")}
+      </button>
+      <button type="button" className="primary-button" onClick={onClose}>
+        {t("common.close")}
+      </button>
+    </ModalActions>
+  );
+
+  const body = (
+    <SessionCostDetailsBody
+      metric={metric}
+      pricing={pricing}
+      breakdown={breakdown}
+      priceBook={priceBook}
+      showPriceBook={priceBookOpen}
+    />
+  );
+
+  if (isMobile) {
+    return (
+      <MobileSheet
+        open={open}
+        title={t("conversation.sessionStatsCostDetailsTitle")}
+        description={t("conversation.sessionStatsCostDetailsDescription")}
+        height="three-quarter"
+        kind="form"
+        showHandle
+        showCancelButton={false}
+        bodyClassName="composer-session-cost-modal-body"
+        footer={footer}
+        onClose={onClose}
+      >
+        {body}
+      </MobileSheet>
+    );
+  }
+
+  return (
+    <DesktopModal
+      open={open}
+      title={t("conversation.sessionStatsCostDetailsTitle")}
+      description={t("conversation.sessionStatsCostDetailsDescription")}
+      size="regular"
+      layout="form"
+      bodyClassName="composer-session-cost-modal-body"
+      footer={footer}
+      onClose={onClose}
+    >
+      {body}
+    </DesktopModal>
+  );
+}
+
+function SessionCostDetailsBody({
+  metric,
+  pricing,
+  breakdown,
+  priceBook,
+  showPriceBook
+}: {
+  metric: SessionStatsMetricValue;
+  pricing: SessionCostPricing | undefined;
+  breakdown: readonly SessionCostBreakdown[];
+  priceBook: readonly SessionCostPrice[];
+  showPriceBook: boolean;
+}) {
+  const exchangeRate = pricing?.exchangeRate;
+  const cnyValue = exchangeRate && Number.isFinite(exchangeRate.rate)
+    ? metric.value * exchangeRate.rate
+    : null;
+
+  return (
+    <>
+      <ModalSection
+        heading={t("conversation.sessionStatsCostModelsTitle")}
+        description={t("conversation.sessionStatsCostModelsDescription")}
+      >
+        {breakdown.length > 0 ? (
+          <ModalList className="composer-session-cost-model-list">
+            {breakdown.map((item) => (
+              <ModalListItem
+                key={`${item.provider}:${item.model}`}
+                label={`${getProviderDisplayName(item.provider)} · ${item.model}`}
+                description={formatSessionCostTokenBreakdown(item)}
+                trailing={<strong>{formatUsdAmount(item.costUsd)}</strong>}
+              />
+            ))}
+          </ModalList>
+        ) : (
+          <p className="composer-session-cost-empty">
+            {pricing?.kind === "provider-native"
+              ? t("conversation.sessionStatsCostNativeBreakdownUnavailable")
+              : t("conversation.sessionStatsCostBreakdownUnavailable")}
+          </p>
+        )}
+      </ModalSection>
+
+      <ModalSection
+        heading={t("conversation.sessionStatsCostConversionTitle")}
+        description={t("conversation.sessionStatsCostConversionDescription")}
+      >
+        <div className="composer-session-cost-conversion">
+          <div>
+            <span>{t("conversation.sessionStatsCostUsdLabel")}</span>
+            <strong>{formatUsdAmount(metric.value)}</strong>
+          </div>
+          <div>
+            <span>{t("conversation.sessionStatsCostCnyLabel")}</span>
+            <strong>{cnyValue === null ? "--" : formatCnyAmount(cnyValue)}</strong>
+          </div>
+        </div>
+        {exchangeRate ? (
+          <p className="composer-session-cost-rate">
+            {t("conversation.sessionStatsCostExchangeRate", {
+              rate: exchangeRate.rate.toFixed(2),
+              version: exchangeRate.version
+            })}
+          </p>
+        ) : null}
+      </ModalSection>
+
+      {showPriceBook ? (
+        <ModalSection
+          heading={t("conversation.sessionStatsCostPriceBookTitle")}
+          description={t("conversation.sessionStatsCostPriceBookDescription", {
+            version: pricing?.priceBookVersion ?? "--"
+          })}
+        >
+          {priceBook.length > 0 ? (
+            <ModalList className="composer-session-cost-price-list">
+              {priceBook.map((entry) => (
+                <ModalListItem
+                  key={`${entry.provider}:${entry.model}`}
+                  label={`${getProviderDisplayName(entry.provider)} · ${entry.model}`}
+                  description={formatSessionPriceDescription(entry)}
+                />
+              ))}
+            </ModalList>
+          ) : (
+            <p className="composer-session-cost-empty">
+              {t("conversation.sessionStatsCostPriceBookUnavailable")}
+            </p>
+          )}
+        </ModalSection>
+      ) : null}
+    </>
+  );
+}
+
+function formatSessionCostTokenBreakdown(item: SessionCostBreakdown): string {
+  return [
+    t("conversation.sessionStatsCostInputTokens", { value: formatTokenCount(item.inputTokens) }),
+    t("conversation.sessionStatsCostOutputTokens", { value: formatTokenCount(item.outputTokens) }),
+    item.reasoningTokens > 0
+      ? t("conversation.sessionStatsCostReasoningTokens", { value: formatTokenCount(item.reasoningTokens) })
+      : null,
+    item.cacheReadTokens > 0
+      ? t("conversation.sessionStatsCostCacheReadTokens", { value: formatTokenCount(item.cacheReadTokens) })
+      : null,
+    item.cacheWriteTokens > 0
+      ? t("conversation.sessionStatsCostCacheWriteTokens", { value: formatTokenCount(item.cacheWriteTokens) })
+      : null
+  ].filter(Boolean).join(" · ");
+}
+
+function formatSessionPriceDescription(entry: SessionCostPrice): string {
+  const prices = [
+    t("conversation.sessionStatsCostInputPrice", {
+      value: formatUsdAmount(entry.inputUsdPerToken * 1_000_000)
+    }),
+    t("conversation.sessionStatsCostOutputPrice", {
+      value: formatUsdAmount(entry.outputUsdPerToken * 1_000_000)
+    })
+  ];
+
+  if (entry.cacheReadUsdPerToken !== undefined) {
+    prices.push(t("conversation.sessionStatsCostCacheReadPrice", {
+      value: formatUsdAmount(entry.cacheReadUsdPerToken * 1_000_000)
+    }));
+  }
+
+  if (entry.cacheWriteUsdPerToken !== undefined) {
+    prices.push(t("conversation.sessionStatsCostCacheWritePrice", {
+      value: formatUsdAmount(entry.cacheWriteUsdPerToken * 1_000_000)
+    }));
+  }
+
+  return prices.join(" · ");
+}
+
+function formatUsdAmount(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 6
+  }).format(value);
+}
+
+function formatCnyAmount(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 4
+  }).format(value);
+}
+
+function SessionCostInfoIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.35" />
+      <path
+        d="M8 6.05H8.01M7.25 7.65H8V10.15H8.75"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
+      />
+    </svg>
   );
 }
 

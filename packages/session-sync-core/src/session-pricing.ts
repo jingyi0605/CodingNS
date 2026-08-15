@@ -1,4 +1,7 @@
 import type {
+  ProviderSessionCostBreakdown,
+  ProviderSessionCostExchangeRate,
+  ProviderSessionCostPrice,
   ProviderId,
   ProviderSessionBillingContext,
   ProviderSessionStatValue,
@@ -7,6 +10,9 @@ import type {
 } from "./types.js";
 
 export const DEFAULT_PROVIDER_PRICE_BOOK_VERSION = "2026-08-16";
+/** 仅用于费用详情的本地展示换算，不参与 USD 费用计算。 */
+export const DEFAULT_USD_TO_CNY_RATE = 7.2;
+export const DEFAULT_USD_TO_CNY_RATE_VERSION = DEFAULT_PROVIDER_PRICE_BOOK_VERSION;
 
 export interface ProviderPriceBookEntry {
   provider: ProviderId;
@@ -21,6 +27,14 @@ export interface ProviderPriceBook {
   version: string;
   entries: readonly ProviderPriceBookEntry[];
 }
+
+export const DEFAULT_PROVIDER_COST_EXCHANGE_RATE: ProviderSessionCostExchangeRate = {
+  from: "USD",
+  to: "CNY",
+  rate: DEFAULT_USD_TO_CNY_RATE,
+  version: DEFAULT_USD_TO_CNY_RATE_VERSION,
+  source: "application-fixed"
+};
 
 /**
  * 运行时只读的价格表。它是估算候选，不代表订阅、代理或折扣账单。
@@ -99,7 +113,10 @@ export function addProviderNativeCostMetric(
     watermark,
     pricing: {
       kind: "provider-native",
-      coverage: "complete"
+      coverage: "complete",
+      priceBookVersion: DEFAULT_PROVIDER_PRICE_BOOK_VERSION,
+      priceBook: buildPriceBookSnapshot(DEFAULT_PROVIDER_PRICE_BOOK),
+      exchangeRate: DEFAULT_PROVIDER_COST_EXCHANGE_RATE
     }
   };
 }
@@ -156,9 +173,90 @@ export function addCatalogCostMetric(
       kind: "catalog-estimate",
       coverage: "complete",
       pricingProfileId: billing.pricingProfileId,
-      priceBookVersion: billing.priceBookVersion
+      priceBookVersion: billing.priceBookVersion,
+      breakdown: buildCostBreakdown(lines, priceBook),
+      priceBook: buildPriceBookSnapshot(priceBook),
+      exchangeRate: DEFAULT_PROVIDER_COST_EXCHANGE_RATE
     }
   };
+}
+
+function buildCostBreakdown(
+  lines: readonly VerifiedUsageLine[],
+  priceBook: ProviderPriceBook
+): ProviderSessionCostBreakdown[] {
+  const breakdownByKey = new Map<string, ProviderSessionCostBreakdown>();
+
+  for (const line of lines) {
+    const entry = findPriceBookEntry(priceBook, line.provider, line.model);
+    const cost = entry ? calculateUsageLineCost(line, entry) : null;
+
+    if (!entry || cost === null) {
+      continue;
+    }
+
+    const inputTokens = nonNegativeInteger(line.inputTokens);
+    const outputTokens = nonNegativeInteger(line.outputTokens);
+    const reasoningTokens = nonNegativeInteger(line.reasoningTokens ?? 0);
+    const cacheReadTokens = nonNegativeInteger(line.cacheReadTokens ?? 0);
+    const cacheWriteTokens = nonNegativeInteger(line.cacheWriteTokens ?? 0);
+
+    if (
+      inputTokens === null
+      || outputTokens === null
+      || reasoningTokens === null
+      || cacheReadTokens === null
+      || cacheWriteTokens === null
+    ) {
+      continue;
+    }
+
+    const model = line.model.trim();
+    const key = `${line.provider}\u0000${model}`;
+    const current = breakdownByKey.get(key);
+
+    if (current) {
+      current.inputTokens += inputTokens;
+      current.outputTokens += outputTokens;
+      current.reasoningTokens += reasoningTokens;
+      current.cacheReadTokens += cacheReadTokens;
+      current.cacheWriteTokens += cacheWriteTokens;
+      current.costUsd += cost;
+      continue;
+    }
+
+    breakdownByKey.set(key, {
+      provider: line.provider,
+      model,
+      inputTokens,
+      outputTokens,
+      reasoningTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      costUsd: cost
+    });
+  }
+
+  return [...breakdownByKey.values()];
+}
+
+function toCostPrice(entry: ProviderPriceBookEntry): ProviderSessionCostPrice {
+  return {
+    provider: entry.provider,
+    model: entry.model,
+    inputUsdPerToken: entry.inputUsdPerToken,
+    outputUsdPerToken: entry.outputUsdPerToken,
+    ...(entry.cacheReadUsdPerToken === undefined
+      ? {}
+      : { cacheReadUsdPerToken: entry.cacheReadUsdPerToken }),
+    ...(entry.cacheWriteUsdPerToken === undefined
+      ? {}
+      : { cacheWriteUsdPerToken: entry.cacheWriteUsdPerToken })
+  };
+}
+
+function buildPriceBookSnapshot(priceBook: ProviderPriceBook): ProviderSessionCostPrice[] {
+  return priceBook.entries.map(toCostPrice);
 }
 
 export function calculateUsageLineCost(
