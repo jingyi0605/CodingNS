@@ -131,7 +131,17 @@ export class DeepSeekHarnessRuntimeAdapter implements ProviderRuntimeAdapter {
       rawStoreRef,
       completed,
       interrupt: async () => { await client.cancel(providerSessionId!); settle(); },
-      submitDuringRun: async (options) => { await client.prompt(providerSessionId!, await buildPromptContent(options, request.workspacePath), resolvePromptMode(options)); },
+      submitDuringRun: async (options) => {
+        if (settled) {
+          throw new Error("SESSION_NOT_RUNNING");
+        }
+
+        await client.prompt(
+          providerSessionId!,
+          await buildPromptContent(options, request.workspacePath),
+          resolvePromptMode(options)
+        );
+      },
       isAlive: () => !settled
     };
   }

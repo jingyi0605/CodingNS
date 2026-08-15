@@ -122,6 +122,112 @@ describe("DeepSeek Harness Web API", () => {
     expect(seen).toEqual([1, 2]);
   });
 
+  it("event bridge 在已有 mux/history 水位上保留原始模型、usage 和 turn/end", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const bridge = new DeepSeekHarnessEventBridge({ taskManager: createTaskManager(), client });
+    const raw: Array<{ type: string; sequence: number; data: Record<string, unknown> }> = [];
+    const watcher = await bridge.watch("harness-raw", (event) => {
+      if (event.type !== "raw") {
+        return;
+      }
+
+      const record = event.event as { type?: string; data?: Record<string, unknown> };
+      raw.push({
+        type: record.type ?? "",
+        sequence: event.sequence,
+        data: record.data ?? {}
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-raw",
+      event: {
+        type: "request/header",
+        seq: 1,
+        data: { turn: 1, step: 2, model: "deepseek-v4-pro" }
+      }
+    });
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-raw",
+      event: {
+        type: "assistant/message",
+        seq: 2,
+        data: {
+          turn: 1,
+          step: 2,
+          message: {
+            model: "deepseek-v4-pro",
+            usage: { inputTokens: 100, outputTokens: 20 }
+          }
+        }
+      }
+    });
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-raw",
+      event: {
+        type: "turn/end",
+        seq: 3,
+        data: { turn: 1, reason: { kind: "completed" } }
+      }
+    });
+    await waitForMessageCount(raw, 3);
+    watcher.close();
+    await bridge.close();
+
+    expect(raw).toEqual([
+      { type: "request/header", sequence: 1, data: { turn: 1, step: 2, model: "deepseek-v4-pro" } },
+      {
+        type: "assistant/message",
+        sequence: 2,
+        data: {
+          turn: 1,
+          step: 2,
+          message: {
+            model: "deepseek-v4-pro",
+            usage: { inputTokens: 100, outputTokens: 20 }
+          }
+        }
+      },
+      { type: "turn/end", sequence: 3, data: { turn: 1, reason: { kind: "completed" } } }
+    ]);
+  });
+
+  it("不会把 question/resolved 当成新的问题请求", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const bridge = new DeepSeekHarnessEventBridge({ taskManager: createTaskManager(), client });
+    const interactionEvents: Array<{ type: string; payload: unknown }> = [];
+    const watcher = await bridge.watch("harness-question-events", (event) => {
+      if (event.type === "question") {
+        interactionEvents.push({ type: event.type, payload: event.payload });
+      }
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fake.emitMux({
+      type: "question/requested",
+      sessionId: "harness-question-events",
+      questions: [{ id: "mode", question: "选择模式", options: [{ label: "快速" }] }]
+    }, "question-rpc-1");
+    fake.emitMux({
+      type: "question/resolved",
+      sessionId: "harness-question-events",
+      questionRpcId: "question-rpc-1",
+      outcome: "answered"
+    }, "question-resolved-frame");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    watcher.close();
+    await bridge.close();
+
+    expect(interactionEvents).toHaveLength(1);
+    expect(interactionEvents[0]?.payload).toMatchObject({ type: "question/requested" });
+  });
+
   it("忽略没有正文的助手状态事件，避免产生空白对话项", async () => {
     fake = await createDeepSeekHarnessFakeServer();
     const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
@@ -339,6 +445,53 @@ describe("DeepSeek Harness Web API", () => {
     });
     expect(events).toContainEqual(expect.objectContaining({ type: "message", message: expect.objectContaining({ content: "模型已完成" }) }));
     expect(events).toContainEqual(expect.objectContaining({ type: "complete", status: "completed" }));
+  });
+
+  it("上一轮已结束时不会沿用旧句柄提交下一轮，避免漏建下行订阅", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const adapter = new DeepSeekHarnessRuntimeAdapter(async () => client, createTaskManager());
+    const events: Array<Parameters<ProviderRuntimeEventSink["emit"]>[0]> = [];
+    const sink: ProviderRuntimeEventSink = {
+      emit: async (event) => { events.push(event); },
+      updateSessionBinding: vi.fn()
+    };
+    const request: ProviderRuntimeRunRequest = {
+      sessionId: "codingns-two-turns",
+      workspaceId: "workspace-1",
+      workspacePath: "C:\\workspace",
+      provider: "deepseek-harness",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "第一轮",
+        clientRequestId: null,
+        model: "deepseek-official:deepseek-v4-pro",
+        reasoningLevel: "off",
+        permissionMode: "ask",
+        providerPrompt: null,
+        attachments: []
+      }
+    };
+    let turn = 0;
+    fake.setPromptHandler((sessionId) => {
+      turn += 1;
+      const sequence = (turn - 1) * 2 + 1;
+      fake?.emitMux({ type: "session/event", sessionId, event: { type: "assistant/message", seq: sequence, data: { turn, text: `第 ${turn} 轮回复` } } });
+      fake?.emitMux({ type: "session/event", sessionId, event: { type: "turn/end", seq: sequence + 1, data: { turn, reason: { kind: "completed" } } } });
+      fake?.emitHost({ type: "host/session-status", sessionId, running: false });
+    });
+
+    const first = await adapter.startSession(request, sink);
+    await expect(first.completed).resolves.toBeUndefined();
+    await expect(first.submitDuringRun!(request.options)).rejects.toThrow("SESSION_NOT_RUNNING");
+
+    const second = await adapter.continueSession({ ...request, providerSessionId: first.providerSessionId }, sink);
+    await expect(second.completed).resolves.toBeUndefined();
+
+    expect(turn).toBe(2);
+    expect(events).toContainEqual(expect.objectContaining({ type: "message", message: expect.objectContaining({ content: "第 1 轮回复" }) }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "message", message: expect.objectContaining({ content: "第 2 轮回复" }) }));
   });
 
   it("不会把 Harness 的 running=false 误判为成功", async () => {

@@ -263,10 +263,11 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       }
 
       const toastTitle = getPermissionRequestToastTitle(request.kind);
+      const notificationBody = request.summary?.trim() || request.title;
       showToast({
         id: `${input.permissionToastIdPrefix ?? "permission-request"}-${request.id}`,
         title: toastTitle,
-        description: request.title,
+        description: notificationBody,
         tone: "warning",
         durationMs: 8_000,
         action:
@@ -281,7 +282,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
       });
       void platform.bridge.showNotification(
         toastTitle,
-        request.title
+        notificationBody
       );
     }
   }, [

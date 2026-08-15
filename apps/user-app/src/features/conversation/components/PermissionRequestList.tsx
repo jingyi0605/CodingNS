@@ -256,7 +256,10 @@ export function PermissionRequestCard({
             type="button"
             className={resolvePermissionActionClassName(action.tone)}
             disabled={
-              replyingRequestId === request.id || (action.value === "submit" && disableSubmit)
+              replyingRequestId === request.id
+              || (request.kind === "user_input"
+                && (action.value === "submit" || action.value === "answer")
+                && disableSubmit)
             }
             onClick={() => {
               const mergedAnswers = mergeQuestionAnswers(answers, otherAnswers);

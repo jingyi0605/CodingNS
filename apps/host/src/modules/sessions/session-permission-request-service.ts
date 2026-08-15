@@ -126,6 +126,7 @@ interface SessionPermissionRequestInternalRecord extends SessionPermissionReques
     | {
         kind: "deepseek-harness";
         requestType: "approval" | "question";
+        approvalId: string | null;
         respond: (result: { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }) => Promise<void>;
       };
 }
@@ -199,7 +200,6 @@ interface CodexCommandActionRecord {
 }
 
 const CLAUDE_PRE_TOOL_USE_TIMEOUT_MS = 90_000;
-const CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS = 600_000;
 const CLAUDE_PLAN_APPROVAL_TIMEOUT_MS = 600_000;
 const OPENCODE_RECONNECT_DELAY_MS = 1_500;
 
@@ -378,7 +378,15 @@ export class SessionPermissionRequestService {
       const action = normalizeText(input.action);
       const accepted = action !== "deny" && action !== "reject" && action !== "cancel";
       await request.source.respond(accepted
-        ? { ok: true, value: request.source.requestType === "question" ? { answers: input.answers ?? {} } : { outcome: "allow" } }
+        ? {
+            ok: true,
+            value: request.source.requestType === "question"
+              ? buildDeepSeekHarnessQuestionResponse(request, input.answers ?? {})
+              : buildDeepSeekHarnessApprovalResponse({
+                  providerSessionId: request.providerSessionId,
+                  approvalId: request.source.approvalId ?? request.requestKey
+                }, "allowed-once")
+          }
         : { ok: false, error: { code: "cancelled", message: "用户拒绝了请求" } });
       return await this.markResolved(request, accepted ? "approved" : "declined");
     }
@@ -443,6 +451,9 @@ export class SessionPermissionRequestService {
       source: {
         kind: "deepseek-harness",
         requestType: input.type,
+        approvalId: input.type === "approval"
+          ? normalizeText(payload.approvalId) ?? input.rpcId
+          : null,
         respond: input.respond
       }
     };
@@ -597,10 +608,13 @@ export class SessionPermissionRequestService {
     let resolvedByTimeout = false;
 
     const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
-      const timer = setTimeout(() => {
-        resolvedByTimeout = true;
-        resolve({ action: "ask" });
-      }, resolveClaudeBlockingRequestTimeoutMs(normalized.kind));
+      const timeoutMs = resolveClaudeBlockingRequestTimeoutMs(normalized.kind);
+      const timer = timeoutMs === null
+        ? null
+        : setTimeout(() => {
+            resolvedByTimeout = true;
+            resolve({ action: "ask" });
+          }, timeoutMs);
       const record: SessionPermissionRequestInternalRecord = {
         ...normalized,
         source: {
@@ -900,10 +914,7 @@ export class SessionPermissionRequestService {
     let resolvedByTimeout = false;
 
     const decision = await new Promise<ClaudePreToolUseDecision>((resolve) => {
-      const timer = setTimeout(() => {
-        resolvedByTimeout = true;
-        resolve({ action: "deny" });
-      }, CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS);
+      const timer = null;
       const record: SessionPermissionRequestInternalRecord = {
         ...normalized,
         source: {
@@ -2601,9 +2612,9 @@ export function buildClaudeAskUserQuestionAnswers(
 
 export function resolveClaudeBlockingRequestTimeoutMs(
   kind: SessionPermissionRequestKind
-): number {
+): number | null {
   if (kind === "user_input") {
-    return CLAUDE_ASK_USER_QUESTION_TIMEOUT_MS;
+    return null;
   }
 
   if (kind === "plan_approval") {
@@ -2611,6 +2622,42 @@ export function resolveClaudeBlockingRequestTimeoutMs(
   }
 
   return CLAUDE_PRE_TOOL_USE_TIMEOUT_MS;
+}
+
+export function buildDeepSeekHarnessQuestionResponse(
+  request: Pick<SessionPermissionRequestInternalRecord, "providerSessionId" | "questions">,
+  answers: Record<string, string[]>
+): { sessionId: string; answer: { answers: Array<{ id: string; selected: string[]; custom?: string }> } } {
+  return {
+    sessionId: request.providerSessionId,
+    answer: {
+      answers: request.questions.map((question) => {
+        const values = Array.isArray(answers[question.id])
+          ? answers[question.id].map((value) => normalizeText(value)).filter((value): value is string => Boolean(value))
+          : [];
+        const optionLabels = new Set(question.options.map((option) => option.label));
+        const selected = values.filter((value) => optionLabels.has(value));
+        const custom = values.find((value) => !optionLabels.has(value));
+
+        return {
+          id: question.id,
+          selected,
+          ...(custom ? { custom } : {})
+        };
+      })
+    }
+  };
+}
+
+export function buildDeepSeekHarnessApprovalResponse(
+  request: { providerSessionId: string; approvalId: string },
+  outcome: "allowed-once" | "rejected"
+): { sessionId: string; approvalId: string; outcome: "allowed-once" | "rejected" } {
+  return {
+    sessionId: request.providerSessionId,
+    approvalId: request.approvalId,
+    outcome
+  };
 }
 
 function readClaudeAllowedPrompts(

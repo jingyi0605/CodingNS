@@ -164,11 +164,11 @@ export class DeepSeekHarnessEventBridge {
       }
       return;
     }
-    if (sessionId && typeof payload.type === "string" && ["approval/requested", "approval/resolved"].includes(payload.type)) {
+    if (sessionId && payload.type === "approval/requested") {
       this.emit(sessionId, { type: "approval", sessionId, rpcId: envelope.rpcId, payload });
       return;
     }
-    if (sessionId && typeof payload.type === "string" && ["question/requested", "question/resolved"].includes(payload.type)) {
+    if (sessionId && payload.type === "question/requested") {
       this.emit(sessionId, { type: "question", sessionId, rpcId: envelope.rpcId, payload });
       return;
     }

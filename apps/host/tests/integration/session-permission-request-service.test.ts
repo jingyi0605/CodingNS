@@ -5,6 +5,8 @@ import {
 
 import {
   buildClaudeAskUserQuestionAnswers,
+  buildDeepSeekHarnessApprovalResponse,
+  buildDeepSeekHarnessQuestionResponse,
   normalizeClaudeElicitationRequest,
   normalizeClaudePreToolUseRequest,
   normalizeCodexServerRequest,
@@ -216,10 +218,67 @@ describe("session-permission-request-service normalizers", () => {
     expect(request.actions.map((action) => action.value)).toEqual(["submit"]);
   });
 
-  it("Claude 问题回答和计划审批的超时时间至少保留 600 秒", () => {
-    expect(resolveClaudeBlockingRequestTimeoutMs("user_input")).toBe(600_000);
+  it("问题回答不设置超时，但计划审批和普通权限仍保留原有超时", () => {
+    expect(resolveClaudeBlockingRequestTimeoutMs("user_input")).toBeNull();
     expect(resolveClaudeBlockingRequestTimeoutMs("plan_approval")).toBe(600_000);
     expect(resolveClaudeBlockingRequestTimeoutMs("command")).toBe(90_000);
+  });
+
+  it("DeepSeek Harness 问题回复符合 /api/respond 的批量答案协议", () => {
+    expect(buildDeepSeekHarnessQuestionResponse(
+      {
+        providerSessionId: "harness-session-1",
+        questions: [
+          {
+            id: "mode",
+            header: "方式",
+            question: "选择工作方式",
+            allowOther: true,
+            secret: false,
+            multiSelect: false,
+            options: [
+              { label: "原型", description: null },
+              { label: "设计", description: null }
+            ]
+          },
+          {
+            id: "targets",
+            header: "目标",
+            question: "选择目标",
+            allowOther: false,
+            secret: false,
+            multiSelect: true,
+            options: [
+              { label: "代码", description: null },
+              { label: "文档", description: null }
+            ]
+          }
+        ]
+      },
+      {
+        mode: ["其他方式"],
+        targets: ["代码", "文档"]
+      }
+    )).toEqual({
+      sessionId: "harness-session-1",
+      answer: {
+        answers: [
+          { id: "mode", selected: [], custom: "其他方式" },
+          { id: "targets", selected: ["代码", "文档"] }
+        ]
+      }
+    });
+  });
+
+  it("DeepSeek Harness 审批回复携带会话和审批 ID", () => {
+    expect(buildDeepSeekHarnessApprovalResponse({
+      providerSessionId: "harness-session-2",
+      approvalId: "approval-1"
+    }, "allowed-once")).toEqual({
+      sessionId: "harness-session-2",
+      approvalId: "approval-1",
+      outcome: "allowed-once"
+    });
   });
 
   it("会按 Claude AskUserQuestion 协议把答案转成问题文本键", () => {

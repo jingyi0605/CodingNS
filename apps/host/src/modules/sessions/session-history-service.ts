@@ -4434,13 +4434,16 @@ export class SessionHistoryService {
 
     const binding = this.sessionBindingRepository.findBySessionId(sessionId);
 
-    if (!binding || binding.provider !== "codex") {
+    if (
+      !binding
+      || (binding.provider !== "codex" && binding.provider !== "deepseek-harness")
+    ) {
       if (previousDebugState && isTerminalDebugEnabled()) {
         logTerminalDebug("session.history.delta_resumed", {
           sessionId,
           userId,
           provider: binding?.provider ?? null,
-          reason: "provider_not_codex"
+          reason: "provider_not_runtime_stream"
         });
       }
       this.streamingDeltaSuppressionDebugState.delete(sessionId);

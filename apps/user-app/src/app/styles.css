@@ -31486,23 +31486,19 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .permission-request-card-user_input {
-  border-color: color-mix(in srgb, #d97706 18%, var(--permission-panel-border));
-  background:
-    linear-gradient(180deg, rgba(255, 248, 234, 0.98), rgba(255, 244, 223, 0.94)),
-    color-mix(in srgb, var(--permission-panel-surface) 88%, #fff6e7 12%);
+  border-color: color-mix(in srgb, var(--warning, var(--accent)) 24%, var(--permission-panel-border));
+  background: color-mix(in srgb, var(--permission-panel-surface) 96%, var(--warning, var(--accent)) 4%);
   box-shadow:
-    0 10px 24px rgba(217, 119, 6, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    0 10px 24px color-mix(in srgb, var(--warning, var(--accent)) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .permission-request-card-plan_approval {
-  border-color: color-mix(in srgb, #2563eb 16%, var(--permission-panel-border));
-  background:
-    linear-gradient(180deg, rgba(238, 246, 255, 0.98), rgba(230, 241, 255, 0.94)),
-    color-mix(in srgb, var(--permission-panel-surface) 88%, #eef6ff 12%);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--permission-panel-border));
+  background: color-mix(in srgb, var(--permission-panel-surface) 96%, var(--accent) 4%);
   box-shadow:
-    0 10px 24px rgba(37, 99, 235, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    0 10px 24px color-mix(in srgb, var(--accent) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .permission-request-card-inline {
@@ -31575,13 +31571,13 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .permission-request-card-user_input .permission-request-kind {
-  background: color-mix(in srgb, #f59e0b 16%, white 84%);
-  color: #a16207;
+  background: color-mix(in srgb, var(--warning, var(--accent)) 14%, var(--permission-panel-surface));
+  color: color-mix(in srgb, var(--warning, var(--accent)) 78%, var(--text-primary));
 }
 
 .permission-request-card-plan_approval .permission-request-kind {
-  background: color-mix(in srgb, #60a5fa 16%, white 84%);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--accent) 14%, var(--permission-panel-surface));
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
 }
 
 .permission-request-card-body {
@@ -31760,6 +31756,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
   min-height: 52px;
   height: 100%;
   font-size: 12px;
@@ -31791,7 +31788,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     0 0 0 0 transparent;
 }
 
-.permission-request-question-option input {
+.permission-request-question-option > input {
   margin: 2px 0 0;
   width: 15px;
   height: 15px;
@@ -31809,25 +31806,25 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     transform var(--transition-fast);
 }
 
-.permission-request-question-option input[type="radio"] {
+.permission-request-question-option > input[type="radio"] {
   border-radius: 999px;
 }
 
-.permission-request-question-option input[type="checkbox"] {
+.permission-request-question-option > input[type="checkbox"] {
   border-radius: 5px;
 }
 
-.permission-request-question-option input:hover {
+.permission-request-question-option > input:hover {
   border-color: color-mix(in srgb, var(--accent) 10%, var(--permission-panel-border));
 }
 
-.permission-request-question-option input:focus-visible {
+.permission-request-question-option > input:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.permission-request-question-option input[type="radio"]::after,
-.permission-request-question-option input[type="checkbox"]::after {
+.permission-request-question-option > input[type="radio"]::after,
+.permission-request-question-option > input[type="checkbox"]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -31839,43 +31836,45 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
     transform var(--transition-fast);
 }
 
-.permission-request-question-option input[type="radio"]::after {
+.permission-request-question-option > input[type="radio"]::after {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 56%, white 44%);
+  background: color-mix(in srgb, var(--accent) 56%, var(--text-primary) 44%);
 }
 
-.permission-request-question-option input[type="checkbox"]::after {
+.permission-request-question-option > input[type="checkbox"]::after {
   width: 8px;
   height: 5px;
-  border-left: 1.5px solid color-mix(in srgb, var(--accent) 54%, white 46%);
-  border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 54%, white 46%);
+  border-left: 1.5px solid color-mix(in srgb, var(--accent) 54%, var(--text-primary) 46%);
+  border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 54%, var(--text-primary) 46%);
   transform: translateY(-1px) rotate(-45deg) scale(0.7);
   transform-origin: center;
 }
 
-.permission-request-question-option input:checked {
+.permission-request-question-option > input:checked {
   border-color: color-mix(in srgb, var(--accent) 16%, var(--permission-panel-border));
   background: color-mix(in srgb, var(--accent) 4%, var(--permission-panel-surface));
 }
 
-.permission-request-question-option input:checked::after {
+.permission-request-question-option > input:checked::after {
   opacity: 1;
 }
 
-.permission-request-question-option input[type="radio"]:checked::after {
+.permission-request-question-option > input[type="radio"]:checked::after {
   transform: scale(1);
 }
 
-.permission-request-question-option input[type="checkbox"]:checked::after {
+.permission-request-question-option > input[type="checkbox"]:checked::after {
   transform: translateY(-1px) rotate(-45deg) scale(1);
 }
 
 .permission-request-question-option span {
   display: grid;
+  flex: 1 1 auto;
   gap: 2px;
   align-content: start;
+  min-width: 0;
   min-height: 100%;
 }
 
@@ -31894,12 +31893,18 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .permission-request-question-option-other span {
-  width: 100%;
+  width: auto;
 }
 
 .permission-request-question-other-input {
+  display: block;
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 30px;
+  height: auto;
+  flex: none;
   padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--permission-panel-border) 30%, transparent);
@@ -31916,7 +31921,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .permission-request-question-other-input:focus {
   outline: none;
   border-color: var(--permission-panel-border-strong);
-  background: color-mix(in srgb, var(--permission-panel-option-selected) 92%, white 8%);
+  background: color-mix(in srgb, var(--permission-panel-option-selected) 92%, var(--text-primary) 8%);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent),
     0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
