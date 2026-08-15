@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import WebSocket from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createWsServer } from "../src/ws/ws-server.js";
+import { __internal__, createWsServer } from "../src/ws/ws-server.js";
 
 const activeClosers: Array<() => Promise<void> | void> = [];
 
@@ -63,6 +63,71 @@ afterEach(async () => {
 });
 
 describe("ws-server 会话订阅确认", () => {
+  it("流式消息不会触发整份工作台快照广播", () => {
+    expect(
+      __internal__.shouldBroadcastWorkbenchSnapshot({
+        type: "session.runtime_message"
+      } as never)
+    ).toBe(false);
+    expect(
+      __internal__.shouldBroadcastWorkbenchSnapshot({
+        type: "session.runtime_status"
+      } as never)
+    ).toBe(true);
+  });
+
+  it("正文流式更新和工具输出不会反复触发工作台快照", () => {
+    const signatures = new Map<string, string>();
+    const baseMessage = {
+      messageId: "assistant-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      role: "assistant",
+      kind: "text",
+      content: "第一段",
+      toolCall: null,
+      timestamp: "2026-08-15T08:00:00.000Z",
+      sequence: 1,
+      rawRef: "raw://assistant-1"
+    };
+
+    expect(__internal__.shouldBroadcastWorkbenchSnapshot({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      messages: [baseMessage]
+    } as never, signatures)).toBe(true);
+    expect(__internal__.shouldBroadcastWorkbenchSnapshot({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-2",
+      messages: [{ ...baseMessage, content: "第一段继续追加" }]
+    } as never, signatures)).toBe(false);
+    expect(__internal__.shouldBroadcastWorkbenchSnapshot({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-3",
+      messages: [{
+        ...baseMessage,
+        messageId: "tool-result-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "工具输出"
+      }]
+    } as never, signatures)).toBe(false);
+    expect(__internal__.shouldBroadcastWorkbenchSnapshot({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-4",
+      messages: [{
+        ...baseMessage,
+        messageId: "assistant-2",
+        content: "下一条回复",
+        sequence: 2
+      }]
+    } as never, signatures)).toBe(true);
+  });
+
   it("只有订阅真正建好后才发送 session.subscribed，避免紧跟着 load_older 时误报未订阅", async () => {
     const server = createServer();
     activeClosers.push(() => new Promise<void>((resolve, reject) => {

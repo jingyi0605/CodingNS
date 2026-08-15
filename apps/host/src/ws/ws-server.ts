@@ -224,6 +224,7 @@ export function createWsServer(
       );
 
       const seenMessages = new Map<string, SeenMessageEntry>();
+      const workbenchSummarySignatures = new Map<string, string>();
       const forwardEnvelopeWithMetric = async (
         envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope
       ): Promise<ForwardEnvelopeMetric | null> => {
@@ -242,15 +243,7 @@ export function createWsServer(
         const sendMetric = sendSerializedPayload(client, payload);
         let workbenchBroadcastMs = 0;
 
-        if (
-          deduped.type === "session.backfill" ||
-          deduped.type === "session.delta" ||
-          deduped.type === "session.activity" ||
-          deduped.type === "session.runtime_message" ||
-          deduped.type === "session.runtime_status" ||
-          deduped.type === "session.runtime_error" ||
-          deduped.type === "session.interrupted"
-        ) {
+        if (shouldBroadcastWorkbenchSnapshot(deduped, workbenchSummarySignatures)) {
           const workbenchBroadcastStartedAt = Date.now();
           await workbenchWsHub.broadcastSnapshot(authContext.user.userId);
           workbenchBroadcastMs = Date.now() - workbenchBroadcastStartedAt;
@@ -502,6 +495,65 @@ function dedupeEnvelopeMessages(
   };
 }
 
+function shouldBroadcastWorkbenchSnapshot(
+  envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope,
+  summarySignatures?: Map<string, string>
+): boolean {
+  if (
+    envelope.type === "session.activity"
+    || envelope.type === "session.runtime_status"
+    || envelope.type === "session.runtime_error"
+    || envelope.type === "session.interrupted"
+  ) {
+    return true;
+  }
+
+  if (
+    envelope.type === "session.runtime_message"
+    || envelope.type === "session.history_older"
+    || envelope.type === "session.permission_request"
+    || envelope.type === "session.permission_request_resolved"
+  ) {
+    return false;
+  }
+
+  if (!summarySignatures) {
+    return true;
+  }
+
+  const nextSignature = buildWorkbenchSessionSummarySignature(envelope);
+
+  if (!nextSignature) {
+    return false;
+  }
+
+  const previousSignature = summarySignatures.get(envelope.sessionId);
+  summarySignatures.set(envelope.sessionId, nextSignature);
+  return previousSignature !== nextSignature;
+}
+
+function buildWorkbenchSessionSummarySignature(
+  envelope: Pick<SessionHistoryEnvelope, "sessionId" | "messages">
+): string | null {
+  const summaryMessage = [...envelope.messages]
+    .reverse()
+    .find((message) => (
+      (message.role === "user" || message.role === "assistant")
+      && message.kind === "text"
+    ));
+
+  if (!summaryMessage) {
+    return null;
+  }
+
+  return [
+    summaryMessage.messageId,
+    summaryMessage.timestamp,
+    summaryMessage.role,
+    summaryMessage.kind
+  ].join(":");
+}
+
 function shouldForwardMessage(
   message: SessionHistoryEnvelope["messages"][number],
   source: "history" | "runtime",
@@ -706,5 +758,6 @@ export const __internal__ = {
   buildMessageSignature,
   buildSeenMessageEntry,
   isOlderMessageVersion,
+  shouldBroadcastWorkbenchSnapshot,
   shouldForwardMessage
 };
