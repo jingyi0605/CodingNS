@@ -257,8 +257,41 @@ fn get_platform_info() -> PlatformInfo {
 
 #[tauri::command]
 fn show_notification(title: String, body: String) -> Result<(), String> {
-    println!("[desktop-notification] {title}: {body}");
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        // Tauri WebView 的 Notification API 在 macOS 上不一定接入系统通知中心，
+        // 这里直接调用系统自带 osascript，确保后台问题能出现在 macOS 通知中心。
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            escape_applescript_string(&body),
+            escape_applescript_string(&title)
+        );
+        let output = std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", script.as_str()])
+            .output()
+            .map_err(|error| format!("启动 macOS 通知失败: {error}"))?;
+
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("[desktop-notification] {title}: {body}");
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn escape_applescript_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
 }
 
 #[tauri::command]

@@ -487,13 +487,15 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
   }
 
   async showNotification(title: string, body: string): Promise<DesktopBridgeResult> {
-    const systemResult = await showSystemNotification(title, body);
+    // 桌面端优先走 Tauri 原生桥，确保 macOS 通知中心真正收到通知；
+    // 原生桥不可用时再退回 Web Notification，避免只在页面内显示。
+    const nativeResult = await invokeDesktopCommand<void>("show_notification", { title, body });
 
-    if (systemResult.ok) {
-      return systemResult;
+    if (nativeResult.ok) {
+      return nativeResult;
     }
 
-    return invokeDesktopCommand("show_notification", { title, body });
+    return showSystemNotification(title, body);
   }
 
   writeClipboardText(text: string): Promise<DesktopBridgeResult> {
