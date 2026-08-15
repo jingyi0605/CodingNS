@@ -4,6 +4,7 @@ import {
   SESSION_PROVIDER_PICKER_IDS,
   createDraftCapabilities,
   getDraftTitle,
+  getProviderDisplayName,
   getProviderIcon,
   shouldPersistReasoningLevel,
   shouldFoldRulesMessages,
@@ -22,6 +23,8 @@ describe("provider-ui", () => {
   it("会把 DeepSeek Harness 暴露为会话创建入口", () => {
     expect(SESSION_PROVIDER_PICKER_IDS.includes("deepseek-harness")).toBe(true);
     expect(getDraftTitle("deepseek-harness")).toContain("DeepSeek Harness");
+    expect(getProviderDisplayName("deepseek-harness")).toBe("DSH");
+    expect(getProviderDisplayName("deepseek-harness", "full")).toBe("DeepSeek Harness");
     expect(shouldPersistReasoningLevel("deepseek-harness")).toBe(true);
     expect(createDraftCapabilities("deepseek-harness").supportsSessionDelete).toBe(true);
   });

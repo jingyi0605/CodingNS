@@ -2257,9 +2257,9 @@ Approval policy: ask.`, "dsh-runtime-context"),
     expect(document.querySelectorAll(".thinking-message-row")).toHaveLength(1);
   });
 
-  it("DeepSeek Harness 的思考和正式回复会按消息类型分开渲染", () => {
+  it("DeepSeek Harness 的思考和正式回复会按消息类型分开渲染", async () => {
     const thinking = {
-      ...createAssistantThinkingMessage("先分析用户的请求。", "harness-thinking-1"),
+      ...createAssistantThinkingMessage("先分析用户的请求。\n第二行继续展开细节。", "harness-thinking-1"),
       sequence: 9,
       rawRef: "harness://session-1/message/turn-1-step-1/part/thinking-0?part=0"
     };
@@ -2279,8 +2279,84 @@ Approval policy: ask.`, "dsh-runtime-context"),
     );
 
     expect(screen.getByText(t("conversation.thinkingLabel"))).toBeInTheDocument();
-    expect(screen.getByText("先分析用户的请求。").closest(".thinking-message-text")).not.toBeNull();
+    expect(screen.getByText("先分析用户的请求。")).toHaveClass("thinking-message-preview");
+    expect(screen.queryByText("第二行继续展开细节。")).not.toBeInTheDocument();
     expect(screen.getByText("这是正式回复。").closest(".thinking-message-text")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.thinkingExpandAction") }));
+
+    expect(document.querySelector(".thinking-message-text"))
+      .toHaveTextContent("先分析用户的请求。");
+    expect(document.querySelector(".thinking-message-text"))
+      .toHaveTextContent("第二行继续展开细节。");
+  });
+
+  it("DeepSeek Harness 运行中的折叠思考会显示动态进行状态", async () => {
+    const thinking = createAssistantThinkingMessage(
+      "正在梳理当前会话的上下文。\n后续内容仍在生成。",
+      "harness-active-thinking-1"
+    );
+    const runningSessionSummary = {
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "deepseek-harness" as const,
+      providerSessionId: "raw-1",
+      rawStoreRef: "deepseek-harness://raw-1",
+      title: "DSH 思考中",
+      messageCount: 1,
+      lastMessageAt: thinking.timestamp,
+      createdAt: thinking.timestamp,
+      updatedAt: thinking.timestamp,
+      syncStatus: "idle" as const,
+      syncCursor: "cursor-1",
+      lastSyncAt: thinking.timestamp,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running" as const,
+      activitySource: "runtime" as const,
+      activityResolutionSource: "authoritative_runtime" as const,
+      lastEventAt: thinking.timestamp,
+      completedAt: null,
+      lastSeenAt: thinking.timestamp,
+      activityState: "running" as const
+    };
+
+    const { rerender } = render(
+      <MessageTimeline
+        messages={[thinking]}
+        historyState="ready"
+        provider="deepseek-harness"
+        sessionSummary={runningSessionSummary}
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: t("conversation.thinkingExpandAction") });
+
+    expect(toggle).toHaveClass("thinking-message-toggle-active");
+    expect(document.querySelector(".thinking-message-row-active")).not.toBeNull();
+    expect(document.querySelector(".thinking-message-progress-dots")).not.toBeNull();
+    expect(screen.getByText("正在梳理当前会话的上下文。")).toHaveClass("thinking-message-preview-active");
+
+    rerender(
+      <MessageTimeline
+        messages={[thinking]}
+        historyState="ready"
+        provider="deepseek-harness"
+        sessionSummary={{
+          ...runningSessionSummary,
+          runningState: "completed",
+          activityState: "idle"
+        }}
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(toggle).not.toHaveClass("thinking-message-toggle-active");
+    expect(document.querySelector(".thinking-message-progress-dots")).toBeNull();
+    expect(document.querySelector(".thinking-message-row-active")).toBeNull();
+    expect(screen.getByText("正在梳理当前会话的上下文。")).not.toHaveClass("thinking-message-preview-active");
   });
 
   it("运行中的 thinking 占位只保留动态文字类名", () => {

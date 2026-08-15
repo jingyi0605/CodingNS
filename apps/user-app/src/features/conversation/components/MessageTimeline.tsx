@@ -47,6 +47,7 @@ import {
 } from "../apply-patch-preview";
 import {
   parseMessageRichContent,
+  type ParsedMessageRichContent,
   type StructuredQuestionPrompt
 } from "../message-rich-content";
 import {
@@ -69,6 +70,7 @@ import {
   findConversationTimelineRuntimeThinkingLabel,
   type ConversationTimelineSourceItem
 } from "../timeline-source-items";
+import { isSessionRunning } from "../session-activity-display";
 
 import type {
   AttachmentPayload,
@@ -118,8 +120,42 @@ const DEFAULT_USER_MESSAGE_ACTION_STATE: MessageActionState = {
   canFork: false
 };
 
+const EMPTY_PARSED_MESSAGE_RICH_CONTENT: ParsedMessageRichContent = {
+  text: "",
+  inlineImages: [],
+  structuredQuestions: null
+};
+const MAX_THINKING_PREVIEW_LENGTH = 280;
+
 function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
+}
+
+function getThinkingFirstLine(value: string): string {
+  let lineStart = 0;
+  let firstLine = "";
+
+  while (lineStart <= value.length) {
+    const lineEnd = value.indexOf("\n", lineStart);
+    const line = value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd).trim();
+
+    if (line) {
+      firstLine = line;
+      break;
+    }
+
+    if (lineEnd === -1) {
+      break;
+    }
+
+    lineStart = lineEnd + 1;
+  }
+
+  if (firstLine.length <= MAX_THINKING_PREVIEW_LENGTH) {
+    return firstLine;
+  }
+
+  return `${firstLine.slice(0, MAX_THINKING_PREVIEW_LENGTH - 1)}…`;
 }
 
 type SessionErrorSummarySegment =
@@ -5259,6 +5295,7 @@ function RulesMessageCard({
 function MessageItem({
   message,
   provider,
+  thinkingInProgress = false,
   interruptedSource = null,
   foldedPromptKind = null,
   actionState,
@@ -5270,6 +5307,7 @@ function MessageItem({
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
+  thinkingInProgress?: boolean;
   interruptedSource?: SessionInterruptSource | null;
   foldedPromptKind?: FoldedPromptKind | null;
   actionState: MessageActionState;
@@ -5282,6 +5320,7 @@ function MessageItem({
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const turnAborted =
     provider === "codex" && message.kind === "text"
       ? parseTurnAbortedMessage(message.content)
@@ -5295,7 +5334,20 @@ function MessageItem({
       : looksLikeSkillContextMessage(provider, message.content)
         ? "skill_context"
         : null);
-  const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
+  const canCollapseThinking = isThinking && provider === "deepseek-harness" && !exportMode;
+  const collapsedThinkingInProgress = canCollapseThinking && thinkingInProgress && !thinkingExpanded;
+  const shouldRenderThinkingContent = !canCollapseThinking || thinkingExpanded || exportMode;
+  const thinkingPreview = canCollapseThinking && !thinkingExpanded
+    ? getThinkingFirstLine(message.content)
+    : "";
+  const richContent = useMemo(
+    () => (
+      shouldRenderThinkingContent
+        ? parseMessageRichContent(message.content)
+        : EMPTY_PARSED_MESSAGE_RICH_CONTENT
+    ),
+    [message.content, shouldRenderThinkingContent]
+  );
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;
   const structuredQuestions = richContent.structuredQuestions;
@@ -5478,31 +5530,76 @@ function MessageItem({
   if (isThinking) {
     return (
       <article
-        className="message-item assistant-message thinking-message-row"
+        className={`message-item assistant-message thinking-message-row${
+          collapsedThinkingInProgress ? " thinking-message-row-active" : ""
+        }`}
         data-message-id={message.id}
       >
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="thinking-message-content">
-          <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
-          <MessageAttachments
-            sessionId={message.sessionId}
-            attachments={message.attachments}
-            attachmentPayloads={message.attachmentPayloads}
-            inlineImages={inlineImages}
-          />
-          {visibleContent && (
-            <MessageMarkdownBody
-              content={visibleContent}
-              className="message-text message-content markdown-content thinking-message-text"
-              exportMode={exportMode}
-            />
+          {!canCollapseThinking ? (
+            <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
+          ) : (
+            <button
+              type="button"
+              className={`thinking-message-toggle${
+                collapsedThinkingInProgress ? " thinking-message-toggle-active" : ""
+              }`}
+              aria-expanded={thinkingExpanded}
+              aria-label={t(
+                thinkingExpanded
+                  ? "conversation.thinkingCollapseAction"
+                  : "conversation.thinkingExpandAction"
+              )}
+              title={t(
+                thinkingExpanded
+                  ? "conversation.thinkingCollapseAction"
+                  : "conversation.thinkingExpandAction"
+              )}
+              onClick={() => setThinkingExpanded((current) => !current)}
+            >
+              <span className="thinking-message-label">{t("conversation.thinkingLabel")}</span>
+              {collapsedThinkingInProgress ? (
+                <span className="thinking-message-progress-dots" aria-hidden="true">
+                  <span>.</span>
+                  <span>.</span>
+                  <span>.</span>
+                </span>
+              ) : null}
+            </button>
           )}
-          <MessageMetadataBar
-            text={visibleContent}
-            canCopy={actionState.canCopy}
-            canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
-            onFork={onForkMessage ? () => onForkMessage(message) : null}
-          />
+          {thinkingPreview ? (
+            <div
+              className={`thinking-message-text thinking-message-preview${
+                collapsedThinkingInProgress ? " thinking-message-preview-active" : ""
+              }`}
+            >
+              {thinkingPreview}
+            </div>
+          ) : null}
+          {shouldRenderThinkingContent ? (
+            <>
+              <MessageAttachments
+                sessionId={message.sessionId}
+                attachments={message.attachments}
+                attachmentPayloads={message.attachmentPayloads}
+                inlineImages={inlineImages}
+              />
+              {visibleContent && (
+                <MessageMarkdownBody
+                  content={visibleContent}
+                  className="message-text message-content markdown-content thinking-message-text"
+                  exportMode={exportMode}
+                />
+              )}
+              <MessageMetadataBar
+                text={visibleContent}
+                canCopy={actionState.canCopy}
+                canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+                onFork={onForkMessage ? () => onForkMessage(message) : null}
+              />
+            </>
+          ) : null}
         </div>
       </article>
     );
@@ -5568,6 +5665,7 @@ function MessageItem({
 const MemoizedMessageItem = memo(MessageItem, (previous, next) => {
   return previous.message === next.message
     && previous.provider === next.provider
+    && previous.thinkingInProgress === next.thinkingInProgress
     && previous.interruptedSource === next.interruptedSource
     && previous.foldedPromptKind === next.foldedPromptKind
     && previous.actionState === next.actionState
@@ -5715,7 +5813,7 @@ function StructuredQuestionCard({
                     );
                   })}
                   {question.allowOther ? (
-                    <label className="permission-request-question-option permission-request-question-option-other">
+                    <label className="permission-request-question-option permission-request-question-option-other single-column">
                       <input
                         type="radio"
                         name={`${messageId}:${question.id}`}
@@ -6162,6 +6260,17 @@ export function MessageTimeline({
   const visibleMessages = timelineViewModel.visibleMessages;
   const renderItems = timelineViewModel.renderItems;
   const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
+  const activeThinkingMessageId = useMemo(() => {
+    if (provider !== "deepseek-harness" || !isSessionRunning(sessionSummary)) {
+      return null;
+    }
+
+    const lastMessage = visibleMessages.at(-1);
+
+    return lastMessage?.role === "assistant" && lastMessage.kind === "thinking"
+      ? lastMessage.id
+      : null;
+  }, [provider, sessionSummary, visibleMessages]);
   const actionStateByMessageId = useStableMessageActionStates(
     timelineViewModel.actionStateByMessageId
   );
@@ -7086,6 +7195,7 @@ export function MessageTimeline({
         onForkMessage={onForkMessage}
         interruptedSource={interruptedSource}
         assistantAvatar={assistantAvatar}
+        thinkingInProgress={item.message.id === activeThinkingMessageId}
         onSubmitStructuredQuestion={onSubmitStructuredQuestion}
       />
     );

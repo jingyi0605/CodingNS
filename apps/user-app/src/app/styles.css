@@ -10350,6 +10350,18 @@ textarea:focus-visible {
   }
 }
 
+@keyframes thinking-message-dot-pulse {
+  0%,
+  20% {
+    opacity: 0.28;
+  }
+
+  45%,
+  100% {
+    opacity: 1;
+  }
+}
+
 .thinking-message-row {
   align-items: flex-start;
 }
@@ -10375,6 +10387,74 @@ textarea:focus-visible {
   word-break: break-word;
 }
 
+.thinking-message-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.thinking-message-toggle .thinking-message-label {
+  margin-bottom: 0;
+}
+
+.thinking-message-toggle-active .thinking-message-label,
+.thinking-message-preview-active {
+  animation: thinking-text-breathe 1.35s ease-in-out infinite;
+}
+
+.thinking-message-progress-dots {
+  display: inline-flex;
+  flex: 0 0 3ch;
+  width: 3ch;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  letter-spacing: 0;
+}
+
+.thinking-message-progress-dots > span {
+  flex: 0 0 1ch;
+  animation: thinking-message-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.thinking-message-progress-dots > span:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.thinking-message-progress-dots > span:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+.thinking-message-toggle::after {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--text-tertiary);
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 140ms ease, color 140ms ease;
+}
+
+.thinking-message-toggle[aria-expanded="true"]::after {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+.thinking-message-toggle:hover .thinking-message-label,
+.thinking-message-toggle:focus-visible .thinking-message-label,
+.thinking-message-toggle:hover::after,
+.thinking-message-toggle:focus-visible::after {
+  color: var(--text-secondary);
+}
+
 .thinking-message-text {
   min-width: 0;
   max-width: 100%;
@@ -10384,7 +10464,13 @@ textarea:focus-visible {
   font-style: italic;
   overflow-wrap: anywhere;
   word-break: break-word;
-  animation: thinking-text-breathe 1.8s ease-in-out infinite;
+}
+
+.thinking-message-preview {
+  margin: -2px 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thinking-message-text :where(p, li, blockquote, strong, em, a, span) {
@@ -10438,7 +10524,6 @@ textarea:focus-visible {
 }
 
 @supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .thinking-message-label,
   .thinking-status-text {
     background-image: linear-gradient(
       90deg,
@@ -30572,9 +30657,12 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
   .mobile-tool-git-panel .git-mobile-section-action::before,
   .mobile-tool-git-panel .git-mobile-section-action::after,
   .thinking-message-label,
+  .thinking-message-toggle-active .thinking-message-label,
   .thinking-message-text,
   .thinking-status-text,
-  .thinking-status-dots {
+  .thinking-status-dots,
+  .thinking-message-progress-dots,
+  .thinking-message-progress-dots > span {
     transition: none;
     animation: none;
   }
@@ -31624,7 +31712,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .permission-request-block-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-muted, #758295);
+  color: var(--text-tertiary, var(--text-secondary, #5f6b7a));
 }
 
 .permission-request-block {
@@ -31713,7 +31801,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .permission-request-permission-grid span {
   font-size: 12px;
   font-weight: 700;
-  color: var(--text-muted, #758295);
+  color: var(--text-tertiary, var(--text-secondary, #5f6b7a));
 }
 
 .permission-request-permission-grid p {
@@ -31742,7 +31830,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 .permission-request-question-header {
   font-size: 11px;
   font-weight: 700;
-  color: var(--text-muted, #758295);
+  color: var(--text-tertiary, var(--text-secondary, #5f6b7a));
 }
 
 .permission-request-question-options {
@@ -31879,7 +31967,7 @@ body[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-title
 }
 
 .permission-request-question-option small {
-  color: color-mix(in srgb, var(--text-secondary, #5f6b7a) 92%, var(--text-muted, #758295) 8%);
+  color: color-mix(in srgb, var(--text-secondary, #5f6b7a) 92%, var(--text-tertiary, #758295) 8%);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
