@@ -133,3 +133,77 @@
   - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx` 与 `apps/user-app/src/app/styles.css`。
   - 明确不做：不启动开发服务器，不新增页面、后台任务或持久化数据。
   - 最小验证：ComposerPanel 定向测试 `64/64`、`pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`、`pnpm --dir apps/user-app exec vite build` 和 `git diff --check` 通过；未启动开发服务器或进行浏览器截图验证。
+
+## 阶段 12：模型归因与费用统计
+
+- [x] 12.1 扩展会话统计契约和新会话收费策略
+  - 状态：COMPLETED
+  - 这一步做什么：在既有 `ProviderSessionStats` 中定义目录费用的语义、来源和价格版本元数据；为新建 session binding 固定收费策略 ID、价格表版本和启用时间。
+  - 做完以后能看到什么：新会话可以区分原生成本和目录估算；旧会话没有收费策略，因此费用字段自然缺失。
+  - 依赖什么：阶段 1 的统计契约和现有 `session_bindings` 创建流程。
+  - 主要修改：`packages/session-sync-core/src/types.ts`、`session-pricing.ts`、Host `session_bindings` schema/migration/repository、runtime DTO 与 user-app API 类型。
+  - 这一步明确不做什么：不新建费用账本表，不回填旧会话，不在运行时下载价格表。
+  - 最小验证：`session-billing.test.ts` 通过 2 项；新数据库能保存收费起点/profile/价格表版本，旧数据库迁移后的收费字段保持为空。
+
+- [x] 12.2 在同一次统计折叠中计算目录费用
+  - 状态：COMPLETED
+  - 这一步做什么：在 `session-stats.ts` 定义内部模型调用 usage 行和本地版本化价格表折叠器；token、缓存率和费用由同一次 Provider 读取产出。
+  - 做完以后能看到什么：没有 `readCost`，一次 `readSessionStats()` 即可给出完整覆盖时的 `costUsd`。
+  - 依赖什么：12.1 的收费策略和价格表版本契约。
+  - 主要修改：`packages/session-sync-core/src/session-pricing.ts`、`session-stats.ts` 与各 adapter 的既有 `readSessionStats()`。
+  - 这一步明确不做什么：不创建轮询、后台任务、独立订阅、外部 HTTP 查价或第二次扫描源日志。
+  - 最小验证：价格折叠测试 6 项和 core 费用测试 6 项通过；覆盖输入/输出/缓存桶、profile/版本不匹配、缺模型或未完成 usage 时隐藏费用；runtime 单次读取测试通过。
+
+- [x] 12.3 补齐 Claude、Legna、Codex、Gemini 和 OpenCode 的调用归因
+  - 状态：COMPLETED
+  - 这一步做什么：在现有 usage 去重逻辑中保留实际模型和调用键；Codex 对新会话累计快照建立基线并按 turn 差值归因；OpenCode 保持原生成本优先。
+  - 做完以后能看到什么：具备完整模型、usage 和收费策略的调用能进入同一统计折叠；订阅、代理、并发 Codex turn 或字段缺失时费用隐藏。
+  - 依赖什么：12.2 的统一折叠器。
+  - 主要改哪些文件：`claude-code.ts`、`legna-code.ts`、`codex.ts`、`gemini.ts`、`opencode.ts` 及各自 fixture 测试。
+  - 这一步明确不做什么：不按当前选中模型回填历史，不把 OpenCode 原生 `cost` 重算成目录价格，不为 Kimi 增加猜测逻辑。
+  - 最小验证：Claude、Legna、Codex、Gemini、OpenCode 定向回归共 107 项通过；新增费用 fixture 覆盖最终消息 last-wins、Codex 基线/模型/终态与并发 turn、Gemini 重写、OpenCode 原生 cost 优先。
+
+- [x] 12.4 补齐 DeepSeek Harness 的原始事件归因
+  - 状态：COMPLETED
+  - 这一步做什么：让现有 Harness adapter 和 event bridge 保留原始 route、`(turn, step)`、usage 与 `turn/end`，在已有 mux/history reconcile 中折叠费用输入。
+  - 做完以后能看到什么：Harness 不再只靠累计 projection；每个完成 step 能带真实模型和最终 token 参与统计，多个 step 正确汇总到同一 turn。
+  - 依赖什么：12.2 的统一折叠器，以及当前 Harness sidecar 协议版本固定。
+  - 主要改哪些文件：`packages/session-sync-core/src/providers/deepseek-harness.ts`、Host 的 `deepseek-harness-event-bridge.ts`、provider adapter 和定向 fake-server fixture。
+  - 这一步明确不做什么：不从 projection 反推逐轮 token，不新增 sidecar、mux 订阅或后台扫描。
+  - 最小验证：Harness core 定向测试 19 项、Host Web API/bridge 集成测试 13 项通过；同一次 history 响应折叠 `(turn, step)`、模型、最终 usage 和 `turn/end`，bridge 在已有 mux/history 水位转发原始事件，不新增订阅。
+
+- [x] 12.5 复用现有 runtime 与统计详情展示费用
+  - 状态：COMPLETED
+  - 这一步做什么：将新增费用来源元数据透传到既有 `sessionStats` DTO；继续在 Composer 的会话统计详情中显示 `costUsd`，只在完整可用时渲染。
+  - 做完以后能看到什么：页面没有新入口、没有常驻逐轮费用列表；原生成本和目录估算都通过现有统计详情查看，缺失时完全隐藏。
+  - 依赖什么：12.1 至 12.4 至少有一个 Provider 能稳定输出费用。
+  - 主要改哪些文件：Host runtime DTO、`apps/user-app/src/features/conversation/api/conversation-api.ts`、`ComposerPanel.tsx`、i18n 与对应测试。
+  - 这一步明确不做什么：不创建费用页面、独立接口或每次 runtime 返回全量调用账本。
+  - 最小验证：Host runtime 定向测试 74 项、ComposerPanel 定向测试 67 项通过；原生费用和目录估算均复用现有详情入口，缺少 `costUsd` 时费用行隐藏。
+
+- [x] 12.6 进行最小必要回归和性能验证
+  - 状态：COMPLETED
+  - 这一步做什么：运行本次变更直接相关的 core、Host、user-app 测试，并证明费用计算没有额外 Provider 读取、轮询或订阅。
+  - 做完以后能看到什么：每个可支持 Provider 的费用边界有 fixture 覆盖，Kimi 与未知收费路由明确不计费。
+  - 依赖什么：12.1 至 12.5。
+  - 主要改哪些文件：测试文件、必要的 fixture 和本任务状态。
+  - 这一步明确不做什么：不把全量测试当默认验证，不启动开发服务器，不把未验证的真实供应商账单写成通过。
+  - 最小验证：`pnpm --dir packages/session-sync-core build`、Provider 定向回归 107 项、费用/Harness core 30 项、Host binding/runtime/SQLite/bridge 定向测试（2 + 74 + 22 + 13 项）、ComposerPanel 67 项、Host `tsc --noEmit -p tsconfig.json`、user-app `tsc --noEmit -p tsconfig.json`、`pnpm check:sqlite-runtime` 和 `git diff --check` 均通过。未启动开发服务器，未做浏览器 E2E 或真实 Provider 账单核对。
+
+- [x] 12.7 修复真实 Harness 事件中的模型归因
+  - 状态：COMPLETED
+  - 这一步做了什么：根据 DSH `0.1.0-rc.5` 的真实 history 形状读取 `request/header.data.header.config.model` 和 `assistant/message.data.message.source.model`；usage 只有在同一 turn 存在可识别 `turn/end` 终态时才进入费用折叠，中断/失败但已有最终 usage 的调用仍保留实际用量。
+  - 做完以后能看到什么：启用收费策略的新 Harness 会话不会因为模型藏在 `message.source` 而丢失费用；没有模型、usage 或终态的调用仍然隐藏总费用。
+  - 依赖什么：12.2、12.4 的既有费用折叠和 Harness history 读取。
+  - 主要修改：`packages/session-sync-core/src/providers/deepseek-harness.ts`、`packages/session-sync-core/tests/session-provider-cost.test.mjs`。
+  - 这一步明确不做什么：不回填旧会话收费元数据，不修改全局安装产物，不新增 Provider 读取或费用接口。
+  - 最小验证：session-sync-core 编译通过；真实事件形状费用回归 7 项通过；回放当前 Harness history 能输出目录估算费用；未启动开发服务器。
+
+- [x] 12.8 为价格表命中的新会话启用默认收费策略
+  - 状态：COMPLETED
+  - 这一步做了什么：当新会话的选中模型（允许带 provider 前缀或代理路由前缀）能命中当前 Provider 的本地价格表时，在既有 `session_bindings` 中固定 `direct-api`、启用时间和价格表版本；未知模型仍不自动打开目录估算。
+  - 做完以后能看到什么：只要模型名称有明确价格表条目，新会话就能进入现有费用折叠；费用仍只在同一次 `readSessionStats()` 里生成。
+  - 依赖什么：12.1、12.2、12.4、12.7，以及新会话已有的 selected model 和价格表匹配。
+  - 主要修改：`packages/session-sync-core/src/session-pricing.ts`、`apps/host/src/modules/sessions/session-live-runtime-service.ts` 与对应 Host 测试。
+  - 这一步明确不做什么：不回填当前已存在的空收费 binding，不为未命中价格表的模型猜测价格，不新增费用接口或后台任务。
+  - 最小验证：session-sync-core 编译通过；Host `session-live-runtime-service` 定向测试覆盖价格表命中和未知模型；`git diff --check` 通过。
