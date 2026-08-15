@@ -467,3 +467,5 @@
 - 核心包适配器测试：`pnpm --filter @codingns/session-sync-core exec vitest run tests/deepseek-harness-provider.test.mjs` 通过，2 项测试全部通过。
 - SQLite 规则：`pnpm check:sqlite-runtime` 通过；`git diff --cached --check` 通过。
 - 当前 pnpm 10.7.1 不兼容仓库里遗留的 `pnpm --dir` 传参形式，Host 默认测试包装器会在启动子进程时返回 `spawn EINVAL`。本轮已先构建核心包，再通过 Host 的 `test:all` 脚本精确执行专项测试；这不影响测试结论。
+- 2026-08-15 会话刷新状态恢复：`session.list.running=false` 只表示运行停止，不再直接当作成功。Host 刷新历史会读取 Harness 最后一条 `turn/end` 作为权威终态，分别写回 `completed`、`failed`、`interrupted`，并在成功或中断时清除遗留的 `SUBSCRIBE_FAILED`、`PROVIDER_READ_FAILED`；历史分页只使用 Harness sequence cursor。已验证：`pnpm --dir packages/session-sync-core build`、核心适配器测试 11/11、Host DSH 运行时测试 11/11、状态恢复测试 10/10、Host 类型检查和 `git diff --check` 均通过。
+- 2026-08-15 运行时终态实时收敛：`ActiveRunRegistry` 的监听器按队列异步投递，`ProviderRuntimeService` 现在会在正常完成、运行异常和启动异常时先等待该会话已排队的监听器写完，再释放 active run。这样 Harness 的 `turn/end` 终态会立刻落库，不会继续显示旧的红色失败指示器直到下一轮刷新。已验证：核心包构建通过；运行时服务测试 6/6（含“队列被前一事件占住时完成态仍会投递”回归）；Host DSH 专项测试 11/11；会话运行时集成测试 70/70。
