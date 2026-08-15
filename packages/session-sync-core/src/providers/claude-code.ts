@@ -29,6 +29,7 @@ import type {
   ProviderModelOption,
   ProviderRealtimeEvent,
   ProviderSessionStats,
+  ProviderSessionStatsReadOptions,
   ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -38,6 +39,11 @@ import type {
   StartSessionResult
 } from "../types.js";
 import { addDerivedCacheHitRate } from "../session-stats.js";
+import {
+  addCatalogCostMetric,
+  filterUsageLinesByBillingStart,
+  type VerifiedUsageLine
+} from "../session-pricing.js";
 import {
   appendJsonLine,
   createRawRef,
@@ -750,7 +756,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
   async readSessionStats(
     _providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
     statSync(rawStoreRef);
     const records = readJsonLines(rawStoreRef).map((record) => record.data);
@@ -791,6 +798,25 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     addDerivedCacheHitRate(metrics, {
       denominator: ["inputTokens", "cacheReadTokens", "cacheWriteTokens"]
     });
+
+    const usageLines = [...snapshots.values()].map((snapshot) =>
+      buildClaudeUsageLine(this.providerId, snapshot)
+    );
+    const billingLines = filterUsageLinesByBillingStart(usageLines, options?.billing);
+    const latestTimestamp = usageLines
+      .map((line) => line.timestamp)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+
+    if (latestTimestamp) {
+      addCatalogCostMetric(
+        metrics,
+        billingLines,
+        options,
+        { kind: "source-timestamp", value: latestTimestamp }
+      );
+    }
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }
@@ -1837,6 +1863,30 @@ function extractClaudeUsageSnapshot(record: Record<string, unknown>): {
     timestamp: nested.timestamp ?? record.timestamp,
     model: message.model,
     recordModel: nested.model ?? record.model
+  };
+}
+
+function buildClaudeUsageLine(
+  provider: ProviderId,
+  snapshot: NonNullable<ReturnType<typeof extractClaudeUsageSnapshot>>
+): VerifiedUsageLine {
+  const inputTokens = readNonNegativeInteger(snapshot.usage.input_tokens);
+  const outputTokens = readNonNegativeInteger(snapshot.usage.output_tokens);
+  const cacheReadTokens = readNonNegativeInteger(snapshot.usage.cache_read_input_tokens);
+  const cacheWriteTokens = readNonNegativeInteger(snapshot.usage.cache_creation_input_tokens);
+  const model = ensureText(snapshot.model ?? snapshot.recordModel).trim();
+  const timestamp = safeDate(snapshot.timestamp, "");
+
+  return {
+    key: snapshot.messageId ?? `assistant:${timestamp}`,
+    provider,
+    model,
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    cacheReadTokens: cacheReadTokens ?? 0,
+    cacheWriteTokens: cacheWriteTokens ?? 0,
+    completed: Boolean(model && timestamp && inputTokens !== null && outputTokens !== null),
+    timestamp
   };
 }
 

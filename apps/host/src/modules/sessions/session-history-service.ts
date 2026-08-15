@@ -406,6 +406,8 @@ export class SessionHistoryService {
   private readonly sessionDiscoveryDiagnosticsRepository: SessionDiscoveryDiagnosticsRepository;
   private readonly providerSessionDeleteCli: ProviderSessionDeleteCli;
   private readonly claudeCodeHomeDir: string;
+  private readonly sessionBillingProfileId: string | null;
+  private readonly sessionBillingPriceBookVersion: string;
   private readonly claudeModelOptionsService: ClaudeModelOptionsService;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
@@ -507,6 +509,8 @@ export class SessionHistoryService {
       })
     };
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
+    this.sessionBillingProfileId = config.sessionBillingProfileId;
+    this.sessionBillingPriceBookVersion = config.sessionBillingPriceBookVersion;
     this.claudeModelOptionsService = claudeModelOptionsService ?? new ClaudeModelOptionsService();
     this.providerSessionDiscoveryConfig = {
       claudeCodeHomeDir: config.claudeCodeHomeDir,
@@ -1558,7 +1562,16 @@ export class SessionHistoryService {
       return await this.sessionSyncService.readSessionStats(
         binding.provider,
         binding.providerSessionId,
-        binding.rawStoreRef
+        binding.rawStoreRef,
+        binding.billingStartedAt && binding.pricingProfileId && binding.priceBookVersion
+          ? {
+              billing: {
+                billingStartedAt: binding.billingStartedAt,
+                pricingProfileId: binding.pricingProfileId,
+                priceBookVersion: binding.priceBookVersion
+              }
+            }
+          : undefined
       );
     } catch (error) {
       throw mapSessionProviderError(error);
@@ -1693,6 +1706,7 @@ export class SessionHistoryService {
           providerPresetId: providerBinding.providerPresetId,
           runtimeHomeDir: providerBinding.runtimeHomeDir,
           selectedModel: null,
+          ...this.buildNewSessionBillingMetadata(timestamp),
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -1816,6 +1830,7 @@ export class SessionHistoryService {
           providerPresetId: binding.providerPresetId,
           runtimeHomeDir: binding.runtimeHomeDir,
           selectedModel: null,
+          ...this.buildNewSessionBillingMetadata(timestamp),
           createdAt: timestamp,
           updatedAt: timestamp
         });
@@ -2014,6 +2029,26 @@ export class SessionHistoryService {
       providerConfigMode: input.providerConfigMode ?? undefined,
       providerPresetId: input.providerPresetId ?? null
     });
+  }
+
+  private buildNewSessionBillingMetadata(createdAt: string): {
+    billingStartedAt: string | null;
+    pricingProfileId: string | null;
+    priceBookVersion: string | null;
+  } {
+    if (!this.sessionBillingProfileId) {
+      return {
+        billingStartedAt: null,
+        pricingProfileId: null,
+        priceBookVersion: null
+      };
+    }
+
+    return {
+      billingStartedAt: createdAt,
+      pricingProfileId: this.sessionBillingProfileId,
+      priceBookVersion: this.sessionBillingPriceBookVersion
+    };
   }
 
   private resolveComposerSettingsBinding(
@@ -5500,6 +5535,7 @@ export class SessionHistoryService {
         providerPresetId: sourceBinding.providerPresetId,
         runtimeHomeDir: sourceBinding.runtimeHomeDir,
         selectedModel: sourceBinding.selectedModel ?? null,
+        ...this.buildNewSessionBillingMetadata(input.timestamp),
         createdAt: sourceBinding.createdAt,
         updatedAt: input.timestamp
       });

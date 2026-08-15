@@ -35,6 +35,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureSessionProviderSchema(db);
   ensureSessionBindingUserSchema(db);
   ensureSessionBindingPresetSchema(db);
+  ensureSessionBindingBillingSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionAttachmentSchema(db);
   ensureSessionIndexArchiveColumn(db);
@@ -2486,6 +2487,29 @@ function ensureSessionBindingPresetSchema(db: BetterSqliteDatabase): void {
 
   if (!columnNames.has("selected_model")) {
     db.exec("ALTER TABLE session_bindings ADD COLUMN selected_model TEXT");
+  }
+}
+
+function ensureSessionBindingBillingSchema(db: BetterSqliteDatabase): void {
+  const columns = db
+    .prepare("PRAGMA table_info(session_bindings)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  if (!columnNames.has("billing_started_at")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN billing_started_at TEXT");
+  }
+
+  if (!columnNames.has("pricing_profile_id")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN pricing_profile_id TEXT");
+  }
+
+  if (!columnNames.has("price_book_version")) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN price_book_version TEXT");
   }
 }
 

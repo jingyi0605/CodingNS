@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./registry.js";
 export * from "./services.js";
+export * from "./session-pricing.js";
 export * from "./runtime/types.js";
 export * from "./runtime/active-run-registry.js";
 export * from "./runtime/provider-runtime-service.js";

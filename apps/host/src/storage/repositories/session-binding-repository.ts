@@ -22,6 +22,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
          updated_at
        FROM session_bindings
@@ -39,6 +42,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
          updated_at
        FROM session_bindings
@@ -57,6 +63,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
          updated_at
        FROM session_bindings
@@ -75,6 +84,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
          updated_at
        FROM session_bindings
@@ -93,9 +105,12 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          user_id = COALESCE(excluded.user_id, session_bindings.user_id),
          workspace_id = excluded.workspace_id,
@@ -106,6 +121,9 @@ export class SessionBindingRepository {
          provider_preset_id = excluded.provider_preset_id,
          runtime_home_dir = excluded.runtime_home_dir,
          selected_model = excluded.selected_model,
+         billing_started_at = COALESCE(excluded.billing_started_at, session_bindings.billing_started_at),
+         pricing_profile_id = COALESCE(excluded.pricing_profile_id, session_bindings.pricing_profile_id),
+         price_book_version = COALESCE(excluded.price_book_version, session_bindings.price_book_version),
          updated_at = excluded.updated_at`
     );
   }
@@ -130,6 +148,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
            updated_at
          FROM session_bindings
@@ -167,6 +188,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
            updated_at
          FROM session_bindings
@@ -205,6 +229,9 @@ export class SessionBindingRepository {
          provider_preset_id,
          runtime_home_dir,
          selected_model,
+         billing_started_at,
+         pricing_profile_id,
+         price_book_version,
          created_at,
            updated_at
          FROM session_bindings
@@ -230,6 +257,9 @@ export class SessionBindingRepository {
         record.providerPresetId,
         record.runtimeHomeDir,
         record.selectedModel ?? null,
+        record.billingStartedAt ?? null,
+        record.pricingProfileId ?? null,
+        record.priceBookVersion ?? null,
         record.createdAt,
         record.updatedAt
       );
@@ -247,6 +277,9 @@ interface SessionBindingRow {
   provider_preset_id: string | null;
   runtime_home_dir: string | null;
   selected_model: string | null;
+  billing_started_at: string | null;
+  pricing_profile_id: string | null;
+  price_book_version: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -263,6 +296,9 @@ function mapSessionBindingRow(row: SessionBindingRow): SessionBinding {
     providerPresetId: row.provider_preset_id,
     runtimeHomeDir: row.runtime_home_dir,
     selectedModel: row.selected_model,
+    billingStartedAt: row.billing_started_at,
+    pricingProfileId: row.pricing_profile_id,
+    priceBookVersion: row.price_book_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

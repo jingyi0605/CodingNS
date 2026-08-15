@@ -15,6 +15,7 @@ import type {
   ProviderRealtimeEvent,
   ProviderSessionActivityObservation,
   ProviderSessionStats,
+  ProviderSessionStatsReadOptions,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -23,6 +24,11 @@ import type {
   StartSessionResult
 } from "../types.js";
 import { addDerivedCacheHitRate } from "../session-stats.js";
+import {
+  addCatalogCostMetric,
+  filterUsageLinesByBillingStart,
+  type VerifiedUsageLine
+} from "../session-pricing.js";
 import { deleteDeepSeekHarnessSessionFiles } from "./deepseek-harness-session-store.js";
 import { ensureText, extractTextBlocks, messageIdFromStableKey, nextTimestamp } from "./utils.js";
 
@@ -183,11 +189,15 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
 
   async readSessionStats(
     providerSessionId: string,
-    _rawStoreRef: string
+    _rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
-    // Harness 在 history 尾页直接携带 Host 折叠过的 projection。这里绝不重新扫 event，
-    // 否则会把被 compaction 的历史和流式边界重新解释一遍。
-    const { projections, values } = await this.readHistoryProjections(providerSessionId);
+    // 累计指标继续读取原生 projection。只有启用计费的新会话才让同一次 history
+    // 响应携带原始事件，用于按 (turn, step) 折叠模型和最终 usage。
+    const { projections, values, events } = await this.readHistoryProjections(
+      providerSessionId,
+      Boolean(options?.billing)
+    );
     const sessionStats = asRecord(values.sessionStats);
     const tokenUsage = asRecord(values.tokenUsage);
     const capturedAt = nextTimestamp();
@@ -205,14 +215,45 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     addHarnessProjectionMetric(metrics, "ttftSteps", sessionStats.ttftSteps, watermark);
     addHarnessProjectionMetric(metrics, "decodeMs", sessionStats.decodeMs, watermark);
     addHarnessProjectionMetric(metrics, "decodeTokens", sessionStats.decodeTokens, watermark);
-    addHarnessProjectionMetric(metrics, "inputTokens", tokenUsage.uncachedInputTokens, watermark);
+    const uncachedInputTokens = readNonNegativeNumber(tokenUsage.uncachedInputTokens);
+    const cacheReadTokens = readNonNegativeNumber(tokenUsage.cacheReadTokens);
+    const cacheWriteTokens = readNonNegativeNumber(tokenUsage.cacheWriteTokens);
+
+    addHarnessProjectionMetric(metrics, "uncachedInputTokens", uncachedInputTokens, watermark);
+    if (uncachedInputTokens !== null && cacheReadTokens !== null && cacheWriteTokens !== null) {
+      addHarnessProjectionMetric(
+        metrics,
+        "inputTokens",
+        uncachedInputTokens + cacheReadTokens + cacheWriteTokens,
+        watermark
+      );
+    } else {
+      // 旧版 projection 可能没有完整的三个输入桶，继续保留未缓存输入作为兼容值。
+      addHarnessProjectionMetric(
+        metrics,
+        "inputTokens",
+        tokenUsage.inputTokens ?? tokenUsage.uncachedInputTokens,
+        watermark
+      );
+    }
     addHarnessProjectionMetric(metrics, "outputTokens", tokenUsage.outputTokens, watermark);
-    addHarnessProjectionMetric(metrics, "cacheReadTokens", tokenUsage.cacheReadTokens, watermark);
-    addHarnessProjectionMetric(metrics, "cacheWriteTokens", tokenUsage.cacheWriteTokens, watermark);
+    addHarnessProjectionMetric(metrics, "cacheReadTokens", cacheReadTokens, watermark);
+    addHarnessProjectionMetric(metrics, "cacheWriteTokens", cacheWriteTokens, watermark);
     // Harness 明确把三类 token 作为互不重叠的计费输入桶。
     addDerivedCacheHitRate(metrics, {
-      denominator: ["inputTokens", "cacheReadTokens", "cacheWriteTokens"]
+      denominator: ["uncachedInputTokens", "cacheReadTokens", "cacheWriteTokens"]
     });
+
+    const usageLines = buildHarnessUsageLines(events);
+    const billingLines = filterUsageLinesByBillingStart(usageLines, options?.billing);
+    const latestEvent = events
+      .map((event, index) => readHarnessEntry(event, index))
+      .sort((left, right) => left.sequence - right.sequence)
+      .at(-1);
+    const costWatermark = latestEvent
+      ? { kind: "source-sequence" as const, value: String(latestEvent.sequence) }
+      : watermark;
+    addCatalogCostMetric(metrics, billingLines, options, costWatermark);
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }
@@ -439,19 +480,21 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     throw new Error("HARNESS_CAPABILITY_UNSUPPORTED");
   }
 
-  private async readHistoryProjections(providerSessionId: string): Promise<{
+  private async readHistoryProjections(providerSessionId: string, includeEvents = false): Promise<{
     projections: Record<string, unknown>;
     values: Record<string, unknown>;
+    events: unknown[];
   }> {
-    const response = await this.options.transport.call<{ projections?: unknown }>("session.history", {
+    const response = await this.options.transport.call<{ projections?: unknown; events?: unknown[] }>("session.history", {
       sessionId: providerSessionId,
-      maxMessages: 1
+      maxMessages: includeEvents ? 1000 : 1
     });
     const projections = asRecord(response.projections);
 
     return {
       projections,
-      values: asRecord(projections.values)
+      values: asRecord(projections.values),
+      events: includeEvents ? response.events ?? [] : []
     };
   }
 
@@ -1099,6 +1142,221 @@ function readPositiveNumber(value: unknown): number | null {
 
 function clampHarnessContextUsage(promptTokens: number, contextWindow: number): number {
   return Math.max(0, Math.min(promptTokens / contextWindow, 1));
+}
+
+interface HarnessUsageCandidate {
+  turn: string;
+  step: string;
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  timestamp: string;
+  sequence: number;
+}
+
+function buildHarnessUsageLines(events: readonly unknown[]): VerifiedUsageLine[] {
+  const usageByTrack = new Map<string, HarnessUsageCandidate>();
+  const modelByTrack = new Map<string, string>();
+  const latestModelBySession = { value: "" };
+  const terminalStateByTurn = new Map<string, {
+    state: DeepSeekHarnessTurnEndActivity["runningState"];
+    sequence: number;
+  }>();
+
+  for (let index = 0; index < events.length; index += 1) {
+    const entry = readHarnessEntry(events[index], index);
+    const turn = normalizeHarnessTrackPart(
+      entry.data.turn ?? entry.data.turnId ?? entry.data.turn_id,
+      ""
+    );
+    const step = normalizeHarnessTrackPart(
+      entry.data.step ?? entry.data.stepId ?? entry.data.step_id,
+      "default"
+    );
+    const model = resolveHarnessEventModel(entry.data);
+
+    if (model) {
+      latestModelBySession.value = model;
+    }
+
+    if (entry.type === "turn/end" && turn) {
+      const terminal = parseHarnessTurnEndActivity(entry.event, entry.sequence);
+      const previous = terminalStateByTurn.get(turn);
+
+      if (terminal && (!previous || terminal.sequence >= previous.sequence)) {
+        terminalStateByTurn.set(turn, {
+          state: terminal.runningState,
+          sequence: terminal.sequence
+        });
+      }
+    }
+
+    if (!turn) {
+      continue;
+    }
+
+    const trackKey = `${turn}:${step}`;
+
+    if (model) {
+      modelByTrack.set(trackKey, model);
+    }
+
+    const usage = resolveHarnessEventUsage(entry.data);
+
+    if (!usage) {
+      continue;
+    }
+
+    usageByTrack.set(trackKey, {
+      turn,
+      step,
+      model: model || modelByTrack.get(trackKey) || latestModelBySession.value,
+      ...usage,
+      timestamp: entry.timestamp,
+      sequence: entry.sequence
+    });
+  }
+
+  return [...usageByTrack.values()].map((candidate) => ({
+    key: `${candidate.turn}:${candidate.step}`,
+    turnKey: candidate.turn,
+    provider: "deepseek-harness",
+    model: candidate.model || modelByTrack.get(`${candidate.turn}:${candidate.step}`) || latestModelBySession.value,
+    inputTokens: candidate.inputTokens ?? 0,
+    outputTokens: candidate.outputTokens ?? 0,
+    reasoningTokens: candidate.reasoningTokens ?? 0,
+    cacheReadTokens: candidate.cacheReadTokens ?? 0,
+    cacheWriteTokens: candidate.cacheWriteTokens ?? 0,
+    inputIncludesCacheRead: false,
+    completed: Boolean(
+      (candidate.model || modelByTrack.get(`${candidate.turn}:${candidate.step}`) || latestModelBySession.value)
+      && candidate.timestamp
+      && candidate.inputTokens !== null
+      && candidate.outputTokens !== null
+      // `assistant/message.usage` 是 provider 已经结算的 step 用量；用户中断或
+      // provider 失败也可能产生可计费用量。只要存在可识别的 turn/end 终态，就
+      // 认为这条 usage 已经封口，未知终态仍然拒绝计费。
+      && terminalStateByTurn.has(candidate.turn)
+    ),
+    timestamp: candidate.timestamp
+  }));
+}
+
+function resolveHarnessEventModel(data: Record<string, unknown>): string {
+  const request = asRecord(data.request);
+  const header = asRecord(data.header);
+  const context = asRecord(data.context);
+  const message = asRecord(data.message);
+  const chunk = asRecord(data.chunk);
+  const source = asRecord(data.source);
+  const requestHeader = asRecord(request.header);
+  const requestContext = asRecord(request.context);
+  const requestConfig = asRecord(request.config);
+  const headerConfig = asRecord(header.config);
+  const messageSource = asRecord(message.source);
+  const chunkSource = asRecord(chunk.source);
+  return ensureText(
+    data.model
+    ?? data.modelId
+    ?? data.model_id
+    ?? source.model
+    ?? source.modelId
+    ?? source.model_id
+    ?? request.model
+    ?? request.modelId
+    ?? request.model_id
+    ?? requestHeader.model
+    ?? requestHeader.modelId
+    ?? requestHeader.model_id
+    ?? requestContext.model
+    ?? requestContext.modelId
+    ?? requestContext.model_id
+    ?? requestConfig.model
+    ?? requestConfig.modelId
+    ?? requestConfig.model_id
+    ?? header.model
+    ?? header.modelId
+    ?? header.model_id
+    ?? headerConfig.model
+    ?? headerConfig.modelId
+    ?? headerConfig.model_id
+    ?? context.model
+    ?? context.modelId
+    ?? context.model_id
+    ?? message.model
+    ?? message.modelId
+    ?? message.model_id
+    ?? messageSource.model
+    ?? messageSource.modelId
+    ?? messageSource.model_id
+    ?? chunk.model
+    ?? chunk.modelId
+    ?? chunk.model_id
+    ?? chunkSource.model
+    ?? chunkSource.modelId
+    ?? chunkSource.model_id
+  ).trim();
+}
+
+function resolveHarnessEventUsage(data: Record<string, unknown>): Omit<HarnessUsageCandidate, "turn" | "step" | "model" | "timestamp" | "sequence"> | null {
+  const message = asRecord(data.message);
+  const chunk = asRecord(data.chunk);
+  const candidates = [
+    asRecord(data.usage),
+    asRecord(data.tokenUsage),
+    asRecord(data.token_usage),
+    asRecord(data.tokens),
+    asRecord(message.usage),
+    asRecord(message.tokens),
+    asRecord(chunk.usage),
+    asRecord(chunk.tokens)
+  ];
+  const usage = candidates.find((candidate) => Object.keys(candidate).length > 0);
+
+  if (!usage) {
+    return null;
+  }
+
+  const inputTokens = readHarnessUsageNumber(usage, [
+    "uncachedInputTokens",
+    "uncached_input_tokens",
+    "inputTokens",
+    "input_tokens",
+    "promptTokens",
+    "prompt_tokens"
+  ]);
+  const outputTokens = readHarnessUsageNumber(usage, [
+    "outputTokens",
+    "output_tokens",
+    "completionTokens",
+    "completion_tokens"
+  ]);
+
+  if (inputTokens === null && outputTokens === null) {
+    return null;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    reasoningTokens: readHarnessUsageNumber(usage, ["reasoningTokens", "reasoning_tokens", "thoughts", "thinking"]),
+    cacheReadTokens: readHarnessUsageNumber(usage, ["cacheReadTokens", "cache_read_tokens", "cachedInputTokens", "cached_input_tokens"]),
+    cacheWriteTokens: readHarnessUsageNumber(usage, ["cacheWriteTokens", "cache_write_tokens", "cacheCreationInputTokens", "cache_creation_input_tokens"])
+  };
+}
+
+function readHarnessUsageNumber(record: Record<string, unknown>, fields: readonly string[]): number | null {
+  for (const field of fields) {
+    const value = readNonNegativeNumber(record[field]);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function addHarnessProjectionMetric(

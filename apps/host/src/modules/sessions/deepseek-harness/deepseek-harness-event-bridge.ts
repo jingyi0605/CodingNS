@@ -15,6 +15,7 @@ import { parseHarnessDownlink, type HarnessServerRequest } from "./deepseek-harn
 
 export type DeepSeekHarnessBridgeEvent =
   | { type: "message"; sessionId: string; message: NormalizedMessage; sequence: number; rpcId: string }
+  | { type: "raw"; sessionId: string; event: unknown; sequence: number; rpcId: string }
   | { type: "status"; sessionId: string; running: boolean; rpcId: string }
   | {
       type: "terminal";

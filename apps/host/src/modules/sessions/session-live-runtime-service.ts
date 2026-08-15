@@ -10,6 +10,7 @@ import {
   type ContextUsageSnapshot,
   CodexRuntimeAdapter,
   GeminiRuntimeAdapter,
+  inferProviderSessionBillingProfile,
   type InRunInputMode,
   type NormalizedMessage,
   KimiRuntimeAdapter,
@@ -1084,9 +1085,10 @@ export class SessionLiveRuntimeService {
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
     // 允许旧的轻量测试替身和外部集成尚未实现新方法；统计永远不能阻断 runtime。
-    const sessionStats = (
-      await this.sessionHistoryService.getSessionStats?.(sessionId).catch(() => null)
-    ) ?? null;
+    const sessionStatsPromise = this.sessionHistoryService.getSessionStats?.(sessionId);
+    const sessionStats = sessionStatsPromise
+      ? await sessionStatsPromise.catch(() => null)
+      : null;
     const requestedPermissionMode = this.resolveRequestedPermissionMode(sessionId);
     const permissionStatus = buildSessionRuntimePermissionStatus({
       provider: session.provider,
@@ -2760,6 +2762,15 @@ export class SessionLiveRuntimeService {
     const snapshot = this.buildBindingSnapshot(sessionId, provider, null, null);
     const timestamp = nowIso();
     const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const pricingProfileId = this.config.sessionBillingProfileId
+      ?? inferProviderSessionBillingProfile(provider, selectedModel);
+    const newBillingMetadata = !existingBinding && pricingProfileId
+      ? {
+          billingStartedAt: timestamp,
+          pricingProfileId,
+          priceBookVersion: this.config.sessionBillingPriceBookVersion
+        }
+      : {};
 
     this.sessionBindingRepository.upsert({
       sessionId,
@@ -2772,6 +2783,7 @@ export class SessionLiveRuntimeService {
       providerPresetId: providerBinding?.providerPresetId ?? existingBinding?.providerPresetId ?? null,
       runtimeHomeDir: providerBinding?.runtimeHomeDir ?? existingBinding?.runtimeHomeDir ?? null,
       selectedModel: selectedModel ?? existingBinding?.selectedModel ?? null,
+      ...newBillingMetadata,
       createdAt: existingBinding?.createdAt ?? timestamp,
       updatedAt: timestamp
     });

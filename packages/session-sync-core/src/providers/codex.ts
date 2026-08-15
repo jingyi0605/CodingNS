@@ -29,6 +29,7 @@ import type {
   ProviderSessionActivityObservation,
   ProviderSessionDiscovery,
   ProviderSessionStats,
+  ProviderSessionStatsReadOptions,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -37,6 +38,11 @@ import type {
   StartSessionResult
 } from "../types.js";
 import { addDerivedCacheHitRate } from "../session-stats.js";
+import {
+  addCatalogCostMetric,
+  filterUsageLinesByBillingStart,
+  type VerifiedUsageLine
+} from "../session-pricing.js";
 import {
   appendJsonLine,
   createRawRef,
@@ -1492,20 +1498,67 @@ export class CodexAdapter implements ProviderAdapter {
 
   async readSessionStats(
     providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
     const records = readJsonLines(resolvedStoreRef);
     const capturedAt = nextTimestamp();
     let latestTotal: Record<string, unknown> | null = null;
     let latestTimestamp = capturedAt;
+    const tokenSnapshots: CodexTokenUsageSnapshot[] = [];
+    const turnModels = new Map<string, string>();
+    const completedTurns = new Set<string>();
+    const activeTurns = new Set<string>();
+    let hasConcurrentTurns = false;
+    let currentTurnId = "";
 
     for (const record of records) {
-      if (ensureText(record.data.type).trim() !== "event_msg") {
+      const recordType = ensureText(record.data.type).trim();
+      const payload = record.data.payload as Record<string, unknown> | undefined;
+
+      if (recordType === "turn_context" || ensureText(payload?.type).trim() === "turn_context") {
+        const turnId = ensureText(payload?.turn_id ?? payload?.turnId).trim();
+        const model = ensureText(payload?.model ?? payload?.model_id).trim();
+
+        if (turnId) {
+          if (activeTurns.size > 0 && !activeTurns.has(turnId)) {
+            hasConcurrentTurns = true;
+          }
+          activeTurns.add(turnId);
+          currentTurnId = turnId;
+        }
+
+        if (turnId && model) {
+          turnModels.set(turnId, model);
+        }
         continue;
       }
 
-      const payload = record.data.payload as Record<string, unknown> | undefined;
+      if (recordType !== "event_msg") {
+        continue;
+      }
+
+      if (ensureText(payload?.type).trim() === "task_complete"
+        || ensureText(payload?.type).trim() === "turn_complete"
+        || ensureText(payload?.type).trim() === "turn_end") {
+        const turnId = ensureText(payload?.turn_id ?? payload?.turnId).trim();
+        if (turnId) {
+          completedTurns.add(turnId);
+          activeTurns.delete(turnId);
+        }
+      }
+
+      if (ensureText(payload?.type).trim() === "task_started") {
+        const turnId = ensureText(payload?.turn_id ?? payload?.turnId).trim();
+        if (turnId) {
+          if (activeTurns.size > 0 && !activeTurns.has(turnId)) {
+            hasConcurrentTurns = true;
+          }
+          activeTurns.add(turnId);
+          currentTurnId = turnId;
+        }
+      }
 
       if (ensureText(payload?.type).trim() !== "token_count") {
         continue;
@@ -1526,6 +1579,20 @@ export class CodexAdapter implements ProviderAdapter {
       // 绝不能像普通事件那样累加。
       latestTotal = totalRecord;
       latestTimestamp = safeDate(record.data.timestamp, capturedAt);
+      tokenSnapshots.push({
+        total: totalRecord,
+        timestamp: safeDate(record.data.timestamp, ""),
+        turnId: ensureText(
+          (payload?.info as Record<string, unknown> | undefined)?.turn_id
+          ?? (payload?.info as Record<string, unknown> | undefined)?.turnId
+          ?? payload?.turn_id
+          ?? payload?.turnId
+        ).trim() || currentTurnId,
+        model: ensureText(
+          (payload?.info as Record<string, unknown> | undefined)?.model
+          ?? (payload?.info as Record<string, unknown> | undefined)?.model_id
+        ).trim()
+      });
     }
 
     if (!latestTotal) {
@@ -1555,6 +1622,17 @@ export class CodexAdapter implements ProviderAdapter {
       denominator: ["inputTokens"],
       rejectIfPositive: ["cacheWriteTokens"]
     });
+
+    const usageLines = buildCodexUsageLines(
+      providerSessionId,
+      tokenSnapshots,
+      turnModels,
+      completedTurns,
+      hasConcurrentTurns,
+      options
+    );
+    const billingLines = filterUsageLinesByBillingStart(usageLines, options?.billing);
+    addCatalogCostMetric(metrics, billingLines, options, watermark);
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }
@@ -4140,6 +4218,178 @@ function readNonNegativeInteger(value: unknown): number | null {
   }
 
   return null;
+}
+
+interface CodexTokenUsageSnapshot {
+  total: Record<string, unknown>;
+  timestamp: string;
+  turnId: string;
+  model: string;
+}
+
+function buildCodexUsageLines(
+  providerSessionId: string,
+  snapshots: readonly CodexTokenUsageSnapshot[],
+  turnModels: ReadonlyMap<string, string>,
+  completedTurns: ReadonlySet<string>,
+  hasConcurrentTurns: boolean,
+  options: ProviderSessionStatsReadOptions | undefined
+): VerifiedUsageLine[] {
+  const billing = options?.billing;
+
+  if (!billing || snapshots.length === 0) {
+    return [];
+  }
+
+  const baseline = [...snapshots]
+    .filter((snapshot) => snapshot.timestamp && snapshot.timestamp < billing.billingStartedAt)
+    .at(-1);
+  const active = snapshots.filter(
+    (snapshot) => snapshot.timestamp && snapshot.timestamp >= billing.billingStartedAt
+  );
+
+  if (!baseline || active.length === 0) {
+    return [];
+  }
+
+  // 累计快照在并发 turn 之间无法可靠拆分。任何一条这样的会话都必须隐藏
+  // 目录费用，不能把差值硬塞给最后看到的 turn。
+  if (hasConcurrentTurns) {
+    return [{
+      key: `${providerSessionId}:concurrent-turns`,
+      provider: "codex",
+      model: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      completed: false,
+      timestamp: ""
+    }];
+  }
+
+  const lines: VerifiedUsageLine[] = [];
+  let previous = baseline.total;
+  let currentTurnId = "";
+  let currentModel = "";
+  let currentDelta: Record<string, number> = {};
+  let currentTimestamp = "";
+  let currentIndex = 0;
+
+  const flush = () => {
+    if (!currentTurnId) {
+      return false;
+    }
+
+    const model = currentModel || turnModels.get(currentTurnId) || "";
+    const inputTokens = currentDelta.input_tokens;
+    const outputTokens = currentDelta.output_tokens;
+
+    lines.push({
+      key: `${providerSessionId}:${currentTurnId}:${currentIndex}`,
+      turnKey: currentTurnId,
+      provider: "codex",
+      model,
+      inputTokens: inputTokens ?? 0,
+      outputTokens: outputTokens ?? 0,
+      reasoningTokens: currentDelta.reasoning_output_tokens ?? currentDelta.reasoning_tokens ?? 0,
+      cacheReadTokens: currentDelta.cached_input_tokens ?? 0,
+      cacheWriteTokens: currentDelta.cache_write_tokens ?? 0,
+      inputIncludesCacheRead: true,
+      completed: Boolean(
+        model
+        && currentTimestamp
+        && inputTokens !== undefined
+        && outputTokens !== undefined
+        && completedTurns.has(currentTurnId)
+      ),
+      timestamp: currentTimestamp
+    });
+    currentIndex += 1;
+    currentTurnId = "";
+    currentModel = "";
+    currentDelta = {};
+    currentTimestamp = "";
+    return true;
+  };
+
+  for (const snapshot of active) {
+    const turnId = snapshot.turnId;
+    const delta = diffCodexUsage(previous, snapshot.total);
+
+    if (!delta || !turnId) {
+      return [{
+        key: `${providerSessionId}:invalid:${snapshot.timestamp}`,
+        provider: "codex",
+        model: snapshot.model,
+        inputTokens: 0,
+        outputTokens: 0,
+        completed: false,
+        timestamp: snapshot.timestamp
+      }];
+    }
+
+    if (currentTurnId && turnId !== currentTurnId) {
+      flush();
+    }
+
+    currentTurnId = turnId;
+    currentModel = snapshot.model || turnModels.get(turnId) || currentModel;
+    currentTimestamp = snapshot.timestamp;
+    currentDelta = addCodexUsageDelta(currentDelta, delta);
+    previous = snapshot.total;
+
+    if (completedTurns.has(turnId)) {
+      flush();
+    }
+  }
+
+  flush();
+  return lines;
+}
+
+function diffCodexUsage(
+  previous: Record<string, unknown>,
+  current: Record<string, unknown>
+): Record<string, number> | null {
+  const keys = new Set([
+    "input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "reasoning_tokens",
+    "cached_input_tokens",
+    "cache_write_tokens",
+    "total_tokens"
+  ]);
+  const delta: Record<string, number> = {};
+
+  for (const key of keys) {
+    const next = readNonNegativeInteger(current[key]);
+    const previousValue = readNonNegativeInteger(previous[key]) ?? 0;
+
+    if (next === null) {
+      continue;
+    }
+
+    if (next < previousValue) {
+      return null;
+    }
+
+    delta[key] = next - previousValue;
+  }
+
+  return delta;
+}
+
+function addCodexUsageDelta(
+  current: Record<string, number>,
+  delta: Record<string, number>
+): Record<string, number> {
+  const next = { ...current };
+
+  for (const [key, value] of Object.entries(delta)) {
+    next[key] = (next[key] ?? 0) + value;
+  }
+
+  return next;
 }
 
 function addCodexSessionMetric(

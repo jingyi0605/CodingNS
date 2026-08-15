@@ -27,6 +27,7 @@ import type {
   StartSessionResult
 } from "../types.js";
 import { addDerivedCacheHitRate } from "../session-stats.js";
+import { addProviderNativeCostMetric } from "../session-pricing.js";
 import {
   ensureText,
   nextTimestamp,
@@ -312,7 +313,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
   async readSessionStats(
     providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    _options?: import("../types.js").ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
     const sessionId = this.resolveSessionId(providerSessionId, rawStoreRef);
     // OpenCode 在 session 表维护了替换式累计值。读取这一行才是其权威口径，
@@ -341,7 +343,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
       : { kind: "captured-at" as const, value: capturedAt };
     const metrics: ProviderSessionStats["metrics"] = {};
 
-    addOpenCodeSessionMetric(metrics, "costUsd", row.cost, watermark);
+    const nativeCost = readNonNegativeSessionNumber(row.cost);
+    if (nativeCost !== null) {
+      addProviderNativeCostMetric(metrics, nativeCost, watermark);
+    }
     addOpenCodeSessionMetric(metrics, "inputTokens", row.tokens_input, watermark);
     addOpenCodeSessionMetric(metrics, "outputTokens", row.tokens_output, watermark);
     addOpenCodeSessionMetric(metrics, "reasoningTokens", row.tokens_reasoning, watermark);

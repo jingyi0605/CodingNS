@@ -515,6 +515,8 @@ describe("DeepSeekHarnessAdapter", () => {
       semantic: "cumulative",
       watermark: { kind: "source-sequence", value: "88" }
     });
+    expect(stats?.metrics.inputTokens?.value).toBe(1250);
+    expect(stats?.metrics.uncachedInputTokens?.value).toBe(1000);
     expect(stats?.metrics.toolMs?.value).toBe(0);
     expect(stats?.metrics.cacheWriteTokens?.value).toBe(50);
     expect(stats?.metrics.cacheHitRate).toMatchObject({

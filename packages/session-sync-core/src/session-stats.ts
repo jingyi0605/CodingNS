@@ -6,7 +6,7 @@ import type {
 
 type CacheHitRateBucket = Extract<
   ProviderSessionStatMetric,
-  "inputTokens" | "cacheReadTokens" | "cacheWriteTokens"
+  "inputTokens" | "uncachedInputTokens" | "cacheReadTokens" | "cacheWriteTokens"
 >;
 
 interface DerivedCacheHitRateOptions {

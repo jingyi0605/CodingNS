@@ -103,6 +103,7 @@ export interface ContextUsageSnapshot {
  */
 export type ProviderSessionStatMetric =
   | "inputTokens"
+  | "uncachedInputTokens"
   | "outputTokens"
   | "reasoningTokens"
   | "cacheReadTokens"
@@ -131,7 +132,8 @@ export type ProviderSessionStatSemantic =
   | "cumulative"
   | "sum-of-final-events"
   | "latest-snapshot"
-  | "derived-ratio";
+  | "derived-ratio"
+  | "priced-final-events";
 
 /**
  * 指标所覆盖的原始数据水位。
@@ -149,6 +151,24 @@ export interface ProviderSessionStatValue {
   source: ProviderSessionStatSource;
   semantic: ProviderSessionStatSemantic;
   watermark: ProviderSessionStatWatermark;
+  pricing?: ProviderSessionCostProvenance;
+}
+
+export interface ProviderSessionCostProvenance {
+  kind: "provider-native" | "catalog-estimate";
+  coverage: "complete";
+  pricingProfileId?: string;
+  priceBookVersion?: string;
+}
+
+export interface ProviderSessionBillingContext {
+  billingStartedAt: string;
+  pricingProfileId: string;
+  priceBookVersion: string;
+}
+
+export interface ProviderSessionStatsReadOptions {
+  billing?: ProviderSessionBillingContext;
 }
 
 /**
@@ -400,7 +420,8 @@ export interface ProviderAdapter {
   ): Promise<ContextUsageSnapshot | null>;
   readSessionStats?(
     providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_PROVIDER_PRICE_BOOK_VERSION } from "@codingns/session-sync-core";
 import { OpenCodeBaseUrlResolver } from "./opencode-base-url-resolver.js";
 
 export interface HostConfig {
@@ -45,6 +46,8 @@ export interface HostConfig {
   deepseekHarnessCliPath: string;
   deepseekHarnessHomeDir: string;
   deepseekHarnessBindHost: "127.0.0.1" | "0.0.0.0";
+  sessionBillingProfileId: string | null;
+  sessionBillingPriceBookVersion: string;
   chromeExecutablePath: string;
   edgeExecutablePath: string;
   doctCliPath: string;
@@ -220,6 +223,13 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     deepseekHarnessCliPath,
     deepseekHarnessHomeDir,
     deepseekHarnessBindHost,
+    sessionBillingProfileId:
+      overrides.sessionBillingProfileId
+      ?? normalizeOptionalText(process.env.CODINGNS_SESSION_BILLING_PROFILE),
+    sessionBillingPriceBookVersion:
+      overrides.sessionBillingPriceBookVersion
+      ?? normalizeOptionalText(process.env.CODINGNS_SESSION_PRICE_BOOK_VERSION)
+      ?? DEFAULT_PROVIDER_PRICE_BOOK_VERSION,
     chromeExecutablePath:
       overrides.chromeExecutablePath ??
       process.env.CODINGNS_CHROME_EXECUTABLE_PATH ??

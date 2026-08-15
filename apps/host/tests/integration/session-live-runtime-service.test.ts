@@ -22,6 +22,7 @@ function createService(
     refreshRuntimeFallbackSession: vi.fn(),
     getSessionCapabilities: vi.fn(),
     getSessionContextUsage: vi.fn(),
+    getSessionStats: vi.fn(),
     getBindingOrThrow: vi.fn(),
     findLatestUserMessage: vi.fn(),
     readAllTextHistoryMessages: vi.fn(),
@@ -365,6 +366,150 @@ describe("SessionLiveRuntimeService", () => {
       effectiveApprovalPolicy: "never",
       source: "codingns-override"
     });
+  });
+
+  it("getSessionRuntime 在同一次请求中只读取一次会话统计", async () => {
+    const { service, sessionHistoryService } = createService({
+      sessionBillingProfileId: "direct-api",
+      sessionBillingPriceBookVersion: "2026-08-16"
+    });
+    const session = {
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      runningState: "completed",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    };
+
+    sessionHistoryService.getSession.mockReturnValue(session);
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue(session);
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({ inRunInputMode: "none" });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+    sessionHistoryService.getSessionStats.mockResolvedValue({
+      provider: "codex",
+      capturedAt: "2026-08-16T00:00:02.000Z",
+      metrics: {
+        costUsd: {
+          value: 0.01,
+          source: "derived-provider-metrics",
+          semantic: "priced-final-events",
+          pricing: {
+            kind: "catalog-estimate",
+            coverage: "complete",
+            pricingProfileId: "direct-api",
+            priceBookVersion: "2026-08-16"
+          },
+          watermark: { kind: "source-timestamp", value: "2026-08-16T00:00:02.000Z" }
+        }
+      }
+    });
+
+    const runtime = await service.getSessionRuntime("session-1", "user-1");
+
+    expect(sessionHistoryService.getSessionStats).toHaveBeenCalledTimes(1);
+    expect(runtime.sessionStats?.metrics.costUsd?.pricing).toMatchObject({
+      kind: "catalog-estimate",
+      priceBookVersion: "2026-08-16"
+    });
+  });
+
+  it("新建 pending binding 时固定收费策略和启用时间", () => {
+    useFakeNow("2026-08-16T00:00:01.000Z");
+    const { service, sessionBindingRepository } = createService({
+      sessionBillingProfileId: "direct-api",
+      sessionBillingPriceBookVersion: "2026-08-16"
+    });
+    sessionBindingRepository.findBySessionId.mockReturnValue(null);
+
+    (service as any).ensurePendingSessionBinding(
+      "session-new",
+      "workspace-1",
+      "user-1",
+      "codex",
+      {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null
+      },
+      "gpt-5.3-codex"
+    );
+
+    expect(sessionBindingRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-new",
+      billingStartedAt: "2026-08-16T00:00:01.000Z",
+      pricingProfileId: "direct-api",
+      priceBookVersion: "2026-08-16"
+    }));
+  });
+
+  it("选中模型命中价格表时会自动固定直连收费策略", () => {
+    useFakeNow("2026-08-16T00:00:01.000Z");
+    const { service, sessionBindingRepository } = createService({
+      sessionBillingProfileId: null,
+      sessionBillingPriceBookVersion: "2026-08-16"
+    });
+    sessionBindingRepository.findBySessionId.mockReturnValue(null);
+
+    (service as any).ensurePendingSessionBinding(
+      "session-deepseek-new",
+      "workspace-1",
+      "user-1",
+      "deepseek-harness",
+      {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null
+      },
+      "deepseek-official:deepseek-v4-flash"
+    );
+
+    expect(sessionBindingRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-deepseek-new",
+      billingStartedAt: "2026-08-16T00:00:01.000Z",
+      pricingProfileId: "direct-api",
+      priceBookVersion: "2026-08-16"
+    }));
+
+    (service as any).ensurePendingSessionBinding(
+      "session-deepseek-matched-route",
+      "workspace-1",
+      "user-1",
+      "deepseek-harness",
+      {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null
+      },
+      "proxy-route:deepseek-v4-flash"
+    );
+
+    expect(sessionBindingRepository.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "session-deepseek-matched-route",
+      billingStartedAt: "2026-08-16T00:00:01.000Z",
+      pricingProfileId: "direct-api",
+      priceBookVersion: "2026-08-16"
+    }));
+
+    (service as any).ensurePendingSessionBinding(
+      "session-deepseek-unknown",
+      "workspace-1",
+      "user-1",
+      "deepseek-harness",
+      {
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null
+      },
+      "proxy-route:unknown-model"
+    );
+
+    expect(sessionBindingRepository.upsert).toHaveBeenLastCalledWith(expect.not.objectContaining({
+      billingStartedAt: expect.any(String),
+      pricingProfileId: expect.any(String),
+      priceBookVersion: expect.any(String)
+    }));
   });
 
   it("Claude active run 存在时切换 preset 会直接拒绝，且不会污染会话 binding", async () => {

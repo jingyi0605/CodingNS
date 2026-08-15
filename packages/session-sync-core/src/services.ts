@@ -10,6 +10,7 @@ import type {
   ProviderDiscoveryDiagnostic,
   ProviderCapabilities,
   ProviderArchiveUpdateResult,
+  ProviderSessionStatsReadOptions,
   ProviderSessionActivityObservation,
   ProviderSessionDiscovery,
   ProviderRealtimeEvent,
@@ -321,9 +322,10 @@ export class SessionSyncService {
   async readSessionStats(
     providerId: string,
     providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
-    return this.registry.get(providerId).readSessionStats?.(providerSessionId, rawStoreRef) ?? null;
+    return this.registry.get(providerId).readSessionStats?.(providerSessionId, rawStoreRef, options) ?? null;
   }
 }
 

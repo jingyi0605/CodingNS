@@ -16,6 +16,7 @@ import type {
   ProviderRealtimeEvent,
   ProviderSessionDiscovery,
   ProviderSessionStats,
+  ProviderSessionStatsReadOptions,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -24,6 +25,11 @@ import type {
   StartSessionResult
 } from "../types.js";
 import { addDerivedCacheHitRate } from "../session-stats.js";
+import {
+  addCatalogCostMetric,
+  filterUsageLinesByBillingStart,
+  type VerifiedUsageLine
+} from "../session-pricing.js";
 import { buildApplyPatchFromStructuredFileTool } from "../patch-builder.js";
 import {
   ensureText,
@@ -445,7 +451,8 @@ export class GeminiAdapter implements ProviderAdapter {
 
   async readSessionStats(
     providerSessionId: string,
-    rawStoreRef: string
+    rawStoreRef: string,
+    options?: ProviderSessionStatsReadOptions
   ): Promise<ProviderSessionStats | null> {
     const parsedChat = this.readParsedChatBySessionId(
       this.resolveProviderSessionId(providerSessionId, rawStoreRef),
@@ -454,6 +461,7 @@ export class GeminiAdapter implements ProviderAdapter {
     const source = readGeminiParsedChatSource(parsedChat.sourceFilePath).record;
     const usageByMessageId = new Map<string, Record<string, unknown>>();
     const timestampByMessageId = new Map<string, string>();
+    const modelByMessageId = new Map<string, string>();
 
     for (const node of readMessageNodes(source)) {
       const record = toRecord(node);
@@ -470,6 +478,12 @@ export class GeminiAdapter implements ProviderAdapter {
         messageId,
         resolveStringField(record, ["timestamp", "time", "updatedAt", "updated_at"]) || ""
       );
+      modelByMessageId.set(
+        messageId,
+        resolveStringField(record, ["model", "modelId", "model_id"])
+          || resolveStringField(toRecord(record.message), ["model", "modelId", "model_id"])
+          || ""
+      );
     }
 
     if (usageByMessageId.size === 0) {
@@ -478,7 +492,8 @@ export class GeminiAdapter implements ProviderAdapter {
 
     const snapshots = [...usageByMessageId.entries()].map(([messageId, tokens]) => ({
       tokens,
-      timestamp: timestampByMessageId.get(messageId) || null
+      timestamp: timestampByMessageId.get(messageId) || null,
+      model: modelByMessageId.get(messageId) || ""
     }));
     const metrics: ProviderSessionStats["metrics"] = {};
     addGeminiUsageMetric(metrics, "inputTokens", snapshots, ["input", "inputTokens", "input_tokens"]);
@@ -489,6 +504,23 @@ export class GeminiAdapter implements ProviderAdapter {
     addGeminiUsageMetric(metrics, "totalTokens", snapshots, ["total", "totalTokens", "total_tokens"]);
     // Gemini promptTokenCount 包含 cachedContentTokenCount，缓存读取是输入的子集。
     addDerivedCacheHitRate(metrics, { denominator: ["inputTokens"] });
+
+    const usageLines = snapshots.map((snapshot, index) => buildGeminiUsageLine(snapshot, index));
+    const billingLines = filterUsageLinesByBillingStart(usageLines, options?.billing);
+    const latestTimestamp = snapshots
+      .map((snapshot) => snapshot.timestamp?.trim() ?? "")
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+
+    if (latestTimestamp) {
+      addCatalogCostMetric(
+        metrics,
+        billingLines,
+        options,
+        { kind: "source-timestamp", value: latestTimestamp }
+      );
+    }
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt: nextTimestamp(), metrics }
@@ -917,6 +949,42 @@ export class GeminiAdapter implements ProviderAdapter {
 
     return normalizedWorkspacePath === targetPath;
   }
+}
+
+function buildGeminiUsageLine(
+  snapshot: {
+    tokens: Record<string, unknown>;
+    timestamp: string | null;
+    model: string;
+  },
+  index: number
+): VerifiedUsageLine {
+  const inputTokens = firstGeminiNumber(
+    ["input", "inputTokens", "input_tokens"].map((field) => snapshot.tokens[field]).find((value) => value !== undefined)
+  );
+  const outputTokens = firstGeminiNumber(
+    ["output", "outputTokens", "output_tokens"].map((field) => snapshot.tokens[field]).find((value) => value !== undefined)
+  );
+  const cacheReadTokens = firstGeminiNumber(
+    ["cached", "cacheRead", "cache_read"].map((field) => snapshot.tokens[field]).find((value) => value !== undefined)
+  );
+  const reasoningTokens = firstGeminiNumber(
+    ["thoughts", "thinking", "reasoning"].map((field) => snapshot.tokens[field]).find((value) => value !== undefined)
+  );
+  const timestamp = snapshot.timestamp?.trim() ?? "";
+
+  return {
+    key: `gemini:${index}:${timestamp}`,
+    provider: "gemini",
+    model: snapshot.model,
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    reasoningTokens: reasoningTokens ?? 0,
+    cacheReadTokens: cacheReadTokens ?? 0,
+    inputIncludesCacheRead: true,
+    completed: Boolean(snapshot.model && timestamp && inputTokens !== null && outputTokens !== null),
+    timestamp
+  };
 }
 
 function parseGeminiRawStoreRef(rawStoreRef: string): string | null {

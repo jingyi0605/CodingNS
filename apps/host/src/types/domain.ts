@@ -729,6 +729,9 @@ export interface SessionBinding {
   providerPresetId: string | null;
   runtimeHomeDir: string | null;
   selectedModel?: string | null;
+  billingStartedAt?: string | null;
+  pricingProfileId?: string | null;
+  priceBookVersion?: string | null;
   createdAt: string;
   updatedAt: string;
 }
