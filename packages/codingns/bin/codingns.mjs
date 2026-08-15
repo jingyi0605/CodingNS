@@ -30,7 +30,8 @@ const PROVIDER_SESSION_DELETE_PROVIDERS = new Set([
   "codex",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "deepseek-harness"
 ]);
 
 const [command, ...argv] = process.argv.slice(2);
@@ -1429,6 +1430,27 @@ async function runProviderSessionsCommand(argv) {
         fail(
           `provider-sessions delete 仅支持 ${[...PROVIDER_SESSION_DELETE_PROVIDERS].join(", ")}`
         );
+      }
+
+      const { deleteDeepSeekHarnessSessionFiles } = await import("@codingns/session-sync-core");
+
+      if (provider === "deepseek-harness") {
+        try {
+          deleteDeepSeekHarnessSessionFiles(providerSessionId);
+        } catch (error) {
+          console.error(
+            JSON.stringify(normalizeProviderSessionDeleteFailure(error), null, 2)
+          );
+          process.exit(1);
+        }
+
+        await printAssistantResponse({
+          ok: true,
+          provider,
+          providerSessionId,
+          rawStoreRef
+        });
+        return;
       }
 
       const { SessionSyncService, ProviderRegistry } = await import("@codingns/session-sync-core");
@@ -3398,13 +3420,13 @@ codingns provider-sessions delete
   直接删除底层 provider 会话，不经过项目会话索引。适合给 Host 或脚本层做真实删除调用。
 
 用法：
-  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi|deepseek-harness> --provider-session-id <id> --raw-store-ref <ref>
 `.trim();
     default:
       return `
 codingns provider-sessions 用法：
 
-  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi> --provider-session-id <id> --raw-store-ref <ref>
+  codingns provider-sessions delete --provider <claude-code|legna-code|codex|opencode|gemini|kimi|deepseek-harness> --provider-session-id <id> --raw-store-ref <ref>
 
 环境变量：
 
