@@ -183,6 +183,16 @@ export class DeepSeekHarnessEventBridge {
     this.cursors.set(sessionId, sequence);
 
     const terminal = parseHarnessTurnEndActivity(entry, fallbackSequence);
+    // 原始事件和归一化消息共用同一条 mux/history 水位。统计 adapter 可以在一次
+    // history 响应中折叠模型、usage 与 turn/end；runtime listener 也不会丢掉
+    // route、(turn, step) 等后续审计所需的原始字段。
+    this.emit(sessionId, {
+      type: "raw",
+      sessionId,
+      event: entry,
+      sequence,
+      rpcId
+    });
     const messages = this.getStreamMapper(sessionId).map(entry, sequence);
     if (isHarnessAssistantChunk(entry)) {
       this.queueStreamingMessages(sessionId, messages, rpcId);
