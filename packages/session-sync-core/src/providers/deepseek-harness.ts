@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  ContextUsageSnapshot,
   DetectSessionsOptions,
   ForkSessionOptions,
   ForkSessionResult,
@@ -186,12 +187,7 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
   ): Promise<ProviderSessionStats | null> {
     // Harness 在 history 尾页直接携带 Host 折叠过的 projection。这里绝不重新扫 event，
     // 否则会把被 compaction 的历史和流式边界重新解释一遍。
-    const response = await this.options.transport.call<{ projections?: unknown }>("session.history", {
-      sessionId: providerSessionId,
-      maxMessages: 1
-    });
-    const projections = asRecord(response.projections);
-    const values = asRecord(projections.values);
+    const { projections, values } = await this.readHistoryProjections(providerSessionId);
     const sessionStats = asRecord(values.sessionStats);
     const tokenUsage = asRecord(values.tokenUsage);
     const capturedAt = nextTimestamp();
@@ -221,6 +217,34 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }
       : null;
+  }
+
+  async readContextUsage(
+    providerSessionId: string,
+    _rawStoreRef: string
+  ): Promise<ContextUsageSnapshot | null> {
+    const { values } = await this.readHistoryProjections(providerSessionId);
+    const contextPressure = asRecord(values.contextPressure);
+    // `projectedTokens` 是 Harness 为下一次请求推进后的上下文压力。它包含 provider
+    // usage 锚点后的表层增量，正是原生 ContextMeter 用于显示占用率的值。
+    const promptTokens = readNonNegativeNumber(contextPressure.projectedTokens);
+    const contextWindow = readPositiveNumber(contextPressure.contextWindow);
+
+    if (promptTokens === null || contextWindow === null) {
+      return null;
+    }
+
+    return {
+      provider: this.providerId,
+      promptTokens,
+      contextWindow,
+      usageRatio: clampHarnessContextUsage(promptTokens, contextWindow),
+      source: "provider-runtime",
+      contextWindowSource: "provider-runtime",
+      modelId: null,
+      capturedAt: nextTimestamp(),
+      isEstimated: true
+    };
   }
 
   subscribeSession(providerSessionId: string, rawStoreRef: string, cursor: string | null, _limit: number, onEvent: (event: ProviderRealtimeEvent) => Promise<void> | void): ProviderSubscription {
@@ -413,6 +437,22 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
 
   async updateSessionArchiveState(_providerSessionId: string, _rawStoreRef: string, _isArchived: boolean): Promise<ProviderArchiveUpdateResult> {
     throw new Error("HARNESS_CAPABILITY_UNSUPPORTED");
+  }
+
+  private async readHistoryProjections(providerSessionId: string): Promise<{
+    projections: Record<string, unknown>;
+    values: Record<string, unknown>;
+  }> {
+    const response = await this.options.transport.call<{ projections?: unknown }>("session.history", {
+      sessionId: providerSessionId,
+      maxMessages: 1
+    });
+    const projections = asRecord(response.projections);
+
+    return {
+      projections,
+      values: asRecord(projections.values)
+    };
   }
 
   getProviderCapabilities(): ProviderCapabilities {
@@ -1051,6 +1091,16 @@ function readNonNegativeNumber(value: unknown): number | null {
 
   return null;
 }
+
+function readPositiveNumber(value: unknown): number | null {
+  const parsed = readNonNegativeNumber(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function clampHarnessContextUsage(promptTokens: number, contextWindow: number): number {
+  return Math.max(0, Math.min(promptTokens / contextWindow, 1));
+}
+
 function addHarnessProjectionMetric(
   metrics: ProviderSessionStats["metrics"],
   metric: keyof ProviderSessionStats["metrics"],

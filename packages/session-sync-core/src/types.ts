@@ -82,8 +82,10 @@ export type ContextUsageSource =
 export interface ContextUsageSnapshot {
   provider: ProviderId;
   promptTokens: number;
-  uncachedInputTokens: number;
-  cachedInputTokens: number;
+  /** 当前请求的输入桶；Provider 未提供可验证拆分时保持缺失，不能伪造 0。 */
+  uncachedInputTokens?: number;
+  /** 当前请求的缓存输入桶；Provider 未提供可验证拆分时保持缺失，不能伪造 0。 */
+  cachedInputTokens?: number;
   contextWindow: number;
   usageRatio: number;
   source: ContextUsageSource;

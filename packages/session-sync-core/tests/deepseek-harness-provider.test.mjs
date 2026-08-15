@@ -492,6 +492,11 @@ describe("DeepSeekHarnessAdapter", () => {
                   outputTokens: 80,
                   cacheReadTokens: 200,
                   cacheWriteTokens: 50
+                },
+                contextPressure: {
+                  pressureTokens: 9500,
+                  projectedTokens: 9818,
+                  contextWindow: 1_000_000
                 }
               }
             }
@@ -502,6 +507,7 @@ describe("DeepSeekHarnessAdapter", () => {
     });
 
     const stats = await adapter.readSessionStats("h1", "harness://v/h1");
+    const contextUsage = await adapter.readContextUsage("h1", "harness://v/h1");
 
     expect(stats?.metrics.turns).toMatchObject({
       value: 2,
@@ -517,5 +523,35 @@ describe("DeepSeekHarnessAdapter", () => {
       semantic: "derived-ratio",
       watermark: { kind: "source-sequence", value: "88" }
     });
+    expect(contextUsage).toMatchObject({
+      provider: "deepseek-harness",
+      promptTokens: 9818,
+      contextWindow: 1_000_000,
+      usageRatio: 0.009818,
+      source: "provider-runtime",
+      contextWindowSource: "provider-runtime",
+      modelId: null,
+      isEstimated: true
+    });
+    expect(contextUsage).not.toHaveProperty("uncachedInputTokens");
+    expect(contextUsage).not.toHaveProperty("cachedInputTokens");
+  });
+
+  it.each([
+    ["缺少下一请求压力", { contextWindow: 1_000_000 }],
+    ["缺少上下文上限", { projectedTokens: 9818 }],
+    ["上下文上限为零", { projectedTokens: 9818, contextWindow: 0 }]
+  ])("原生 contextPressure %s 时不伪造上下文占用", async (_caseName, contextPressure) => {
+    const adapter = new DeepSeekHarnessAdapter({
+      transport: {
+        call: async (method) => {
+          if (method !== "session.history") throw new Error(`unexpected method: ${method}`);
+          return { events: [], projections: { values: { contextPressure } } };
+        },
+        subscribe: () => ({ close() {} })
+      }
+    });
+
+    await expect(adapter.readContextUsage("h1", "harness://v/h1")).resolves.toBeNull();
   });
 });

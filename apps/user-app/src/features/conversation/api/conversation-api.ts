@@ -1557,8 +1557,8 @@ export interface SessionQueueItemDto {
 export interface ContextUsageDto {
   provider: ProviderId;
   promptTokens: number;
-  uncachedInputTokens: number;
-  cachedInputTokens: number;
+  uncachedInputTokens?: number;
+  cachedInputTokens?: number;
   contextWindow: number;
   usageRatio: number;
   source: "provider-log" | "provider-runtime" | "provider-config" | "model-map";
