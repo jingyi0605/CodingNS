@@ -17,6 +17,7 @@ import type {
   ProviderDiscoveryDiagnostic,
   ProviderId,
   ProviderRealtimeEvent,
+  ProviderSessionStats,
   ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -97,6 +98,16 @@ interface SessionTitleRow {
 
 interface SessionExistsRow {
   session_exists?: unknown;
+}
+
+interface SessionStatsRow {
+  time_updated?: unknown;
+  cost?: unknown;
+  tokens_input?: unknown;
+  tokens_output?: unknown;
+  tokens_reasoning?: unknown;
+  tokens_cache_read?: unknown;
+  tokens_cache_write?: unknown;
 }
 
 interface PartHistoryRow {
@@ -296,6 +307,49 @@ export class OpenCodeAdapter implements ProviderAdapter {
     const serverMessages = await this.tryReadSessionMessagesFromServer(sessionId);
     const messages = serverMessages ?? this.readSessionMessagesFromSqlite(sessionId);
     return sliceHistory(messages, cursor, limit, direction);
+  }
+
+  async readSessionStats(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    const sessionId = this.resolveSessionId(providerSessionId, rawStoreRef);
+    // OpenCode 在 session 表维护了替换式累计值。读取这一行才是其权威口径，
+    // 扫 message/part 后自行相加会重复处理已经被 OpenCode 订正过的 usage。
+    const row = this.withReadonlyDb((db) => db.prepare(
+      `SELECT
+         time_updated,
+         cost,
+         tokens_input,
+         tokens_output,
+         tokens_reasoning,
+         tokens_cache_read,
+         tokens_cache_write
+       FROM session
+       WHERE id = ?`
+    ).get(sessionId) as SessionStatsRow | undefined);
+
+    if (!row) {
+      return null;
+    }
+
+    const capturedAt = nextTimestamp();
+    const updatedAt = toIsoTimestamp(firstValidNumber(row.time_updated), null);
+    const watermark = updatedAt
+      ? { kind: "source-timestamp" as const, value: updatedAt }
+      : { kind: "captured-at" as const, value: capturedAt };
+    const metrics: ProviderSessionStats["metrics"] = {};
+
+    addOpenCodeSessionMetric(metrics, "costUsd", row.cost, watermark);
+    addOpenCodeSessionMetric(metrics, "inputTokens", row.tokens_input, watermark);
+    addOpenCodeSessionMetric(metrics, "outputTokens", row.tokens_output, watermark);
+    addOpenCodeSessionMetric(metrics, "reasoningTokens", row.tokens_reasoning, watermark);
+    addOpenCodeSessionMetric(metrics, "cacheReadTokens", row.tokens_cache_read, watermark);
+    addOpenCodeSessionMetric(metrics, "cacheWriteTokens", row.tokens_cache_write, watermark);
+
+    return Object.keys(metrics).length > 0
+      ? { provider: this.providerId, capturedAt, metrics }
+      : null;
   }
 
   subscribeSession(
@@ -1677,6 +1731,39 @@ export class OpenCodeAdapter implements ProviderAdapter {
 function ensureNullableText(value: unknown): string | null {
   const normalized = ensureText(value).trim();
   return normalized || null;
+}
+
+function addOpenCodeSessionMetric(
+  metrics: ProviderSessionStats["metrics"],
+  metric: keyof ProviderSessionStats["metrics"],
+  rawValue: unknown,
+  watermark: { kind: "source-timestamp" | "captured-at"; value: string }
+): void {
+  const value = readNonNegativeSessionNumber(rawValue);
+
+  if (value === null) {
+    return;
+  }
+
+  metrics[metric] = {
+    value,
+    source: "provider-session-store",
+    semantic: "cumulative",
+    watermark
+  };
+}
+
+function readNonNegativeSessionNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  return null;
 }
 
 function resolveOpenCodeMessageTitle(message: Pick<NormalizedMessage, "role" | "kind" | "content">): string | null {

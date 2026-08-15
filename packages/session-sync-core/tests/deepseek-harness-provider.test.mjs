@@ -466,4 +466,50 @@ describe("DeepSeekHarnessAdapter", () => {
     ]);
     expect(messages[0]?.messageId).not.toBe(messages[1]?.messageId);
   });
+
+  it("直接转发 Harness history 尾页的原生统计 projection", async () => {
+    const adapter = new DeepSeekHarnessAdapter({
+      transport: {
+        call: async (method) => {
+          if (method !== "session.history") throw new Error(`unexpected method: ${method}`);
+          return {
+            events: [],
+            projections: {
+              asOfSeq: 88,
+              values: {
+                sessionStats: {
+                  turns: 2,
+                  steps: 3,
+                  llmMs: 1200,
+                  toolMs: 0,
+                  ttftMs: 180,
+                  ttftSteps: 2,
+                  decodeMs: 700,
+                  decodeTokens: 42
+                },
+                tokenUsage: {
+                  uncachedInputTokens: 1000,
+                  outputTokens: 80,
+                  cacheReadTokens: 200,
+                  cacheWriteTokens: 0
+                }
+              }
+            }
+          };
+        },
+        subscribe: () => ({ close() {} })
+      }
+    });
+
+    const stats = await adapter.readSessionStats("h1", "harness://v/h1");
+
+    expect(stats?.metrics.turns).toMatchObject({
+      value: 2,
+      source: "provider-projection",
+      semantic: "cumulative",
+      watermark: { kind: "source-sequence", value: "88" }
+    });
+    expect(stats?.metrics.toolMs?.value).toBe(0);
+    expect(stats?.metrics.cacheWriteTokens?.value).toBe(0);
+  });
 });

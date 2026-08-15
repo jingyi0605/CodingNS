@@ -28,6 +28,7 @@ import type {
   ProviderId,
   ProviderModelOption,
   ProviderRealtimeEvent,
+  ProviderSessionStats,
   ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -744,6 +745,51 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     }
 
     return null;
+  }
+
+  async readSessionStats(
+    _providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    statSync(rawStoreRef);
+    const records = readJsonLines(rawStoreRef).map((record) => record.data);
+    const snapshots = new Map<string, NonNullable<ReturnType<typeof extractClaudeUsageSnapshot>>>();
+
+    for (const record of records) {
+      const snapshot = extractClaudeUsageSnapshot(record);
+
+      if (!snapshot?.messageId) {
+        continue;
+      }
+
+      // progress 和最终 assistant 记录可能描述同一条消息，最终出现的 usage 覆盖前者。
+      snapshots.set(snapshot.messageId, snapshot);
+    }
+
+    if (snapshots.size === 0) {
+      return null;
+    }
+
+    const capturedAt = nextTimestamp();
+    const metrics: ProviderSessionStats["metrics"] = {};
+    addClaudeUsageMetric(metrics, "inputTokens", [...snapshots.values()], "input_tokens");
+    addClaudeUsageMetric(
+      metrics,
+      "cacheWriteTokens",
+      [...snapshots.values()],
+      "cache_creation_input_tokens"
+    );
+    addClaudeUsageMetric(
+      metrics,
+      "cacheReadTokens",
+      [...snapshots.values()],
+      "cache_read_input_tokens"
+    );
+    addClaudeUsageMetric(metrics, "outputTokens", [...snapshots.values()], "output_tokens");
+
+    return Object.keys(metrics).length > 0
+      ? { provider: this.providerId, capturedAt, metrics }
+      : null;
   }
 
   private resolveClaudeTitle(records: Array<Record<string, unknown>>): string {
@@ -1739,6 +1785,7 @@ function extractClaudeDebugMessageText(content: unknown): string {
 }
 
 function extractClaudeUsageSnapshot(record: Record<string, unknown>): {
+  messageId: string | null;
   usage: Record<string, unknown>;
   timestamp: unknown;
   model: unknown;
@@ -1752,6 +1799,7 @@ function extractClaudeUsageSnapshot(record: Record<string, unknown>): {
 
     if (Object.keys(usage).length > 0) {
       return {
+        messageId: ensureText(message.id ?? record.uuid ?? record.id).trim() || null,
         usage,
         timestamp: record.timestamp,
         model: message.model,
@@ -1779,10 +1827,55 @@ function extractClaudeUsageSnapshot(record: Record<string, unknown>): {
   }
 
   return {
+    messageId: ensureText(message.id ?? nested.uuid ?? nested.id ?? record.uuid ?? record.id).trim() || null,
     usage,
     timestamp: nested.timestamp ?? record.timestamp,
     model: message.model,
     recordModel: nested.model ?? record.model
+  };
+}
+
+function addClaudeUsageMetric(
+  metrics: ProviderSessionStats["metrics"],
+  metric: keyof ProviderSessionStats["metrics"],
+  snapshots: Array<NonNullable<ReturnType<typeof extractClaudeUsageSnapshot>>>,
+  field: string
+): void {
+  let total = 0;
+  let hasValue = false;
+  let complete = true;
+  let latestTimestamp = "";
+
+  for (const snapshot of snapshots) {
+    const value = readNonNegativeInteger(snapshot.usage[field]);
+
+    if (value === null) {
+      complete = false;
+      continue;
+    }
+
+    total += value;
+    hasValue = true;
+    const timestamp = safeDate(snapshot.timestamp, "");
+
+    if (timestamp > latestTimestamp) {
+      latestTimestamp = timestamp;
+    }
+  }
+
+  // 一个最终 assistant usage 缺字段，就不能把该字段冒充为完整的会话累计值。
+  if (!hasValue || !complete) {
+    return;
+  }
+
+  const capturedAt = nextTimestamp();
+  metrics[metric] = {
+    value: total,
+    source: "provider-history-log",
+    semantic: "sum-of-final-events",
+    watermark: latestTimestamp
+      ? { kind: "source-timestamp", value: latestTimestamp }
+      : { kind: "captured-at", value: capturedAt }
   };
 }
 

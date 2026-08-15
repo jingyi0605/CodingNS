@@ -15,6 +15,7 @@ import type {
   ProviderId,
   ProviderRealtimeEvent,
   ProviderSessionDiscovery,
+  ProviderSessionStats,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -72,6 +73,7 @@ interface GeminiParsedChat {
   messages: NormalizedMessage[];
   sourceMtimeMs: number;
   sourceSizeBytes: number;
+  sourceFilePath: string;
 }
 
 interface GeminiParsedChatCacheEntry {
@@ -440,6 +442,56 @@ export class GeminiAdapter implements ProviderAdapter {
     return this.getProviderCapabilities();
   }
 
+  async readSessionStats(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    const parsedChat = this.readParsedChatBySessionId(
+      this.resolveProviderSessionId(providerSessionId, rawStoreRef),
+      resolveGeminiScopedHomeDir(rawStoreRef)
+    );
+    const source = readGeminiParsedChatSource(parsedChat.sourceFilePath).record;
+    const usageByMessageId = new Map<string, Record<string, unknown>>();
+    const timestampByMessageId = new Map<string, string>();
+
+    for (const node of readMessageNodes(source)) {
+      const record = toRecord(node);
+      const messageId = resolveStringField(record, ["id", "messageId", "message_id"]);
+      const tokens = maybeRecord(record.tokens) ?? maybeRecord(toRecord(record.message).tokens) ?? {};
+
+      if (!messageId || Object.keys(tokens).length === 0) {
+        continue;
+      }
+
+      // Gemini 会为同一条消息追加修订记录；Map 的最后一次写入就是原生最终值。
+      usageByMessageId.set(messageId, tokens);
+      timestampByMessageId.set(
+        messageId,
+        resolveStringField(record, ["timestamp", "time", "updatedAt", "updated_at"]) || ""
+      );
+    }
+
+    if (usageByMessageId.size === 0) {
+      return null;
+    }
+
+    const snapshots = [...usageByMessageId.entries()].map(([messageId, tokens]) => ({
+      tokens,
+      timestamp: timestampByMessageId.get(messageId) || null
+    }));
+    const metrics: ProviderSessionStats["metrics"] = {};
+    addGeminiUsageMetric(metrics, "inputTokens", snapshots, ["input", "inputTokens", "input_tokens"]);
+    addGeminiUsageMetric(metrics, "outputTokens", snapshots, ["output", "outputTokens", "output_tokens"]);
+    addGeminiUsageMetric(metrics, "cacheReadTokens", snapshots, ["cached", "cacheRead", "cache_read"]);
+    addGeminiUsageMetric(metrics, "reasoningTokens", snapshots, ["thoughts", "thinking", "reasoning"]);
+    addGeminiUsageMetric(metrics, "toolTokens", snapshots, ["tool", "toolTokens", "tool_tokens"]);
+    addGeminiUsageMetric(metrics, "totalTokens", snapshots, ["total", "totalTokens", "total_tokens"]);
+
+    return Object.keys(metrics).length > 0
+      ? { provider: this.providerId, capturedAt: nextTimestamp(), metrics }
+      : null;
+  }
+
   private readSessionHistorySync(
     providerSessionId: string,
     rawStoreRef: string,
@@ -792,7 +844,8 @@ export class GeminiAdapter implements ProviderAdapter {
       lastMessageAt,
       messages,
       sourceMtimeMs: stats.mtimeMs,
-      sourceSizeBytes: stats.size
+      sourceSizeBytes: stats.size,
+      sourceFilePath: filePath
     };
   }
 
@@ -1366,6 +1419,48 @@ function firstGeminiNumber(...values: unknown[]): number | null {
   }
 
   return null;
+}
+
+function addGeminiUsageMetric(
+  metrics: ProviderSessionStats["metrics"],
+  metric: keyof ProviderSessionStats["metrics"],
+  snapshots: Array<{ tokens: Record<string, unknown>; timestamp: string | null }>,
+  fields: string[]
+): void {
+  let total = 0;
+  let complete = true;
+  let latestTimestamp = "";
+
+  for (const snapshot of snapshots) {
+    const rawValue = fields.map((field) => snapshot.tokens[field]).find((value) => value !== undefined);
+    const value = firstGeminiNumber(rawValue);
+
+    if (value === null || value < 0) {
+      complete = false;
+      continue;
+    }
+
+    total += value;
+    const timestamp = snapshot.timestamp?.trim() ?? "";
+
+    if (timestamp > latestTimestamp) {
+      latestTimestamp = timestamp;
+    }
+  }
+
+  if (!complete) {
+    return;
+  }
+
+  const capturedAt = nextTimestamp();
+  metrics[metric] = {
+    value: total,
+    source: "provider-history-log",
+    semantic: "sum-of-final-events",
+    watermark: latestTimestamp
+      ? { kind: "source-timestamp", value: latestTimestamp }
+      : { kind: "captured-at", value: capturedAt }
+  };
 }
 
 function readMessageDescriptors(

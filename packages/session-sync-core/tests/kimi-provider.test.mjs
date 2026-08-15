@@ -315,6 +315,14 @@ test("KimiAdapter capability 会声明单轮命令模式与阶段限制", () => 
   );
 });
 
+test("KimiAdapter 在没有稳定 usage 协议前不提供会话统计", async () => {
+  const adapter = new KimiAdapter({ homeDir: "/tmp/.kimi" });
+
+  await assert.doesNotReject(async () => {
+    assert.equal(await adapter.readSessionStats("kimi-session-1", "kimi://session/kimi-session-1"), null);
+  });
+});
+
 test("KimiAdapter discovery 第二轮会复用 mtime/size 摘要缓存", async () => {
   const fixture = createKimiFixture();
 

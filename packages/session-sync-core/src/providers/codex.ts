@@ -17,6 +17,7 @@ import type {
   ProviderRealtimeEvent,
   ProviderSessionActivityObservation,
   ProviderSessionDiscovery,
+  ProviderSessionStats,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -1246,6 +1247,71 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     return null;
+  }
+
+  async readSessionStats(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const records = readJsonLines(resolvedStoreRef);
+    const capturedAt = nextTimestamp();
+    let latestTotal: Record<string, unknown> | null = null;
+    let latestTimestamp = capturedAt;
+
+    for (const record of records) {
+      if (ensureText(record.data.type).trim() !== "event_msg") {
+        continue;
+      }
+
+      const payload = record.data.payload as Record<string, unknown> | undefined;
+
+      if (ensureText(payload?.type).trim() !== "token_count") {
+        continue;
+      }
+
+      const total = payload?.info && typeof payload.info === "object"
+        ? (payload.info as Record<string, unknown>).total_token_usage
+        : null;
+      const totalRecord = total && typeof total === "object" && !Array.isArray(total)
+        ? total as Record<string, unknown>
+        : null;
+
+      if (!totalRecord || Object.keys(totalRecord).length === 0) {
+        continue;
+      }
+
+      // total_token_usage 本身是累计快照；同一快照重复出现时只保留最后一条，
+      // 绝不能像普通事件那样累加。
+      latestTotal = totalRecord;
+      latestTimestamp = safeDate(record.data.timestamp, capturedAt);
+    }
+
+    if (!latestTotal) {
+      return null;
+    }
+
+    const metrics: ProviderSessionStats["metrics"] = {};
+    const watermark = {
+      kind: latestTimestamp === capturedAt ? "captured-at" as const : "source-timestamp" as const,
+      value: latestTimestamp
+    };
+
+    addCodexSessionMetric(metrics, "inputTokens", latestTotal.input_tokens, watermark);
+    addCodexSessionMetric(metrics, "outputTokens", latestTotal.output_tokens, watermark);
+    addCodexSessionMetric(
+      metrics,
+      "reasoningTokens",
+      latestTotal.reasoning_output_tokens ?? latestTotal.reasoning_tokens,
+      watermark
+    );
+    addCodexSessionMetric(metrics, "cacheReadTokens", latestTotal.cached_input_tokens, watermark);
+    addCodexSessionMetric(metrics, "cacheWriteTokens", latestTotal.cache_write_tokens, watermark);
+    addCodexSessionMetric(metrics, "totalTokens", latestTotal.total_tokens, watermark);
+
+    return Object.keys(metrics).length > 0
+      ? { provider: this.providerId, capturedAt, metrics }
+      : null;
   }
 
   private readThreadMetadataIndex(): Map<string, CodexThreadMetadata> {
@@ -3421,6 +3487,26 @@ function readNonNegativeInteger(value: unknown): number | null {
   }
 
   return null;
+}
+
+function addCodexSessionMetric(
+  metrics: ProviderSessionStats["metrics"],
+  metric: keyof ProviderSessionStats["metrics"],
+  rawValue: unknown,
+  watermark: { kind: "source-timestamp" | "captured-at"; value: string }
+): void {
+  const value = readNonNegativeInteger(rawValue);
+
+  if (value === null) {
+    return;
+  }
+
+  metrics[metric] = {
+    value,
+    source: "provider-history-log",
+    semantic: "latest-snapshot",
+    watermark
+  };
 }
 
 function readFiniteNumber(value: unknown): number | null {

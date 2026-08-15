@@ -1104,6 +1104,73 @@ test("ClaudeCodeAdapter 会读取 assistant usage 作为压缩后的真实上下
   }
 });
 
+test("ClaudeCodeAdapter 会按消息 ID 折叠 progress 与最终 usage", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-session-stats-"));
+  const rawStoreRef = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "progress",
+          timestamp: "2026-03-26T02:00:00.000Z",
+          data: {
+            message: {
+              type: "assistant",
+              message: {
+                id: "assistant-1",
+                usage: {
+                  input_tokens: 10,
+                  cache_creation_input_tokens: 1,
+                  cache_read_input_tokens: 2,
+                  output_tokens: 3
+                }
+              }
+            }
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-03-26T02:00:01.000Z",
+          message: {
+            id: "assistant-1",
+            usage: {
+              input_tokens: 20,
+              cache_creation_input_tokens: 2,
+              cache_read_input_tokens: 4,
+              output_tokens: 6
+            }
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-03-26T02:00:02.000Z",
+          message: {
+            id: "assistant-2",
+            usage: {
+              input_tokens: 5,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              output_tokens: 1
+            }
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const stats = await new ClaudeCodeAdapter({ homeDir: tempDir }).readSessionStats("session-1", rawStoreRef);
+
+    assert.equal(stats?.metrics.inputTokens?.value, 25);
+    assert.equal(stats?.metrics.outputTokens?.value, 7);
+    assert.equal(stats?.metrics.cacheReadTokens?.value, 4);
+    assert.equal(stats?.metrics.inputTokens?.semantic, "sum-of-final-events");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 会话级 fork 会复制 transcript 并重写新的 sessionId", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-fork-session-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

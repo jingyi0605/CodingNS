@@ -42,6 +42,42 @@ test("OpenCodeAdapter 能按 workspace 发现会话并返回稳定 rawStoreRef",
   }
 });
 
+test("OpenCodeAdapter 读取 session 表的原生累计统计", async () => {
+  const fixture = createOpenCodeFixture();
+
+  try {
+    const db = new DatabaseSync(fixture.dbPath);
+    db.exec(`
+      ALTER TABLE session ADD COLUMN cost REAL NOT NULL DEFAULT 0;
+      ALTER TABLE session ADD COLUMN tokens_input INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE session ADD COLUMN tokens_output INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE session ADD COLUMN tokens_reasoning INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE session ADD COLUMN tokens_cache_read INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE session ADD COLUMN tokens_cache_write INTEGER NOT NULL DEFAULT 0;
+    `);
+    db.prepare(
+      `UPDATE session
+       SET cost = ?, tokens_input = ?, tokens_output = ?, tokens_reasoning = ?,
+           tokens_cache_read = ?, tokens_cache_write = ?
+       WHERE id = ?`
+    ).run(0.125, 1200, 300, 45, 80, 0, "ses_demo");
+    db.close();
+
+    const stats = await new OpenCodeAdapter({ dbPath: fixture.dbPath }).readSessionStats(
+      "ses_demo",
+      "opencode://session/ses_demo"
+    );
+
+    assert.equal(stats?.metrics.costUsd?.value, 0.125);
+    assert.equal(stats?.metrics.inputTokens?.value, 1200);
+    assert.equal(stats?.metrics.cacheWriteTokens?.value, 0);
+    assert.equal(stats?.metrics.outputTokens?.semantic, "cumulative");
+    assert.equal(stats?.metrics.outputTokens?.source, "provider-session-store");
+  } finally {
+    fixture.dispose();
+  }
+});
+
 test("OpenCodeAdapter 旧消息发送路径在非 default permissionMode 下也只会沿用 OpenCode 当前配置", async (context) => {
   const originalFetch = globalThis.fetch;
   const requests = [];

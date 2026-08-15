@@ -93,6 +93,71 @@ export interface ContextUsageSnapshot {
   isEstimated: boolean;
 }
 
+/**
+ * Provider 原生会话统计的指标名。
+ *
+ * 统计是稀疏数据：某个 key 不存在，表示该 Provider 没有提供可信的累计值，
+ * 不能由调用方补成 0。
+ */
+export type ProviderSessionStatMetric =
+  | "inputTokens"
+  | "outputTokens"
+  | "reasoningTokens"
+  | "cacheReadTokens"
+  | "cacheWriteTokens"
+  | "toolTokens"
+  | "totalTokens"
+  | "turns"
+  | "steps"
+  | "llmMs"
+  | "toolMs"
+  | "ttftMs"
+  | "ttftSteps"
+  | "decodeMs"
+  | "decodeTokens"
+  | "costUsd";
+
+export type ProviderSessionStatSource =
+  | "provider-projection"
+  | "provider-session-store"
+  | "provider-history-log";
+
+/** 说明当前数字是原生累计、最终事件求和，还是一条累计快照。 */
+export type ProviderSessionStatSemantic =
+  | "cumulative"
+  | "sum-of-final-events"
+  | "latest-snapshot";
+
+/**
+ * 指标所覆盖的原始数据水位。
+ *
+ * `captured-at` 只用于 Provider 没有暴露原始序号或时间的 projection；它明确表示
+ * 本次读取时看到的完整投影，而不是伪造一条 Provider 事件时间。
+ */
+export interface ProviderSessionStatWatermark {
+  kind: "source-sequence" | "source-timestamp" | "captured-at";
+  value: string;
+}
+
+export interface ProviderSessionStatValue {
+  value: number;
+  source: ProviderSessionStatSource;
+  semantic: ProviderSessionStatSemantic;
+  watermark: ProviderSessionStatWatermark;
+}
+
+/**
+ * 单个 Provider 对整个会话提供的统计。
+ *
+ * 它刻意不复用 ContextUsageSnapshot：ContextUsageSnapshot 是下一次请求的上下文
+ * 占用，而这里是已发生的会话累计数据。
+ */
+export interface ProviderSessionStats {
+  provider: ProviderId;
+  capturedAt: string;
+  metrics: Partial<Record<ProviderSessionStatMetric, ProviderSessionStatValue>>;
+}
+
 export interface ProviderSessionSummary {
   provider: ProviderId;
   providerSessionId: string;
@@ -302,6 +367,10 @@ export interface ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string
   ): Promise<ContextUsageSnapshot | null>;
+  readSessionStats?(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;
 }

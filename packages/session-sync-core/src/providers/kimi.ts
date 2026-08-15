@@ -428,6 +428,11 @@ export class KimiAdapter implements ProviderAdapter {
     return null;
   }
 
+  // Kimi 目前没有稳定的 usage 协议或可验证的累计持久化字段，不能从文本猜数。
+  async readSessionStats(): Promise<null> {
+    return null;
+  }
+
   private resolveSessionFiles(providerSessionId: string, rawStoreRef: string): KimiSessionFiles {
     const sessionIdFromStoreRef = parseKimiSessionIdFromRawStoreRef(rawStoreRef);
     const sessionId =

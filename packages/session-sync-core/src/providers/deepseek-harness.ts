@@ -13,6 +13,7 @@ import type {
   ProviderModelOption,
   ProviderRealtimeEvent,
   ProviderSessionActivityObservation,
+  ProviderSessionStats,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -176,6 +177,45 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
         : null,
       total: messages.length
     };
+  }
+
+  async readSessionStats(
+    providerSessionId: string,
+    _rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    // Harness 在 history 尾页直接携带 Host 折叠过的 projection。这里绝不重新扫 event，
+    // 否则会把被 compaction 的历史和流式边界重新解释一遍。
+    const response = await this.options.transport.call<{ projections?: unknown }>("session.history", {
+      sessionId: providerSessionId,
+      maxMessages: 1
+    });
+    const projections = asRecord(response.projections);
+    const values = asRecord(projections.values);
+    const sessionStats = asRecord(values.sessionStats);
+    const tokenUsage = asRecord(values.tokenUsage);
+    const capturedAt = nextTimestamp();
+    const asOfSequence = readNonNegativeNumber(projections.asOfSeq);
+    const watermark = asOfSequence === null
+      ? { kind: "captured-at" as const, value: capturedAt }
+      : { kind: "source-sequence" as const, value: String(asOfSequence) };
+    const metrics: ProviderSessionStats["metrics"] = {};
+
+    addHarnessProjectionMetric(metrics, "turns", sessionStats.turns, watermark);
+    addHarnessProjectionMetric(metrics, "steps", sessionStats.steps, watermark);
+    addHarnessProjectionMetric(metrics, "llmMs", sessionStats.llmMs, watermark);
+    addHarnessProjectionMetric(metrics, "toolMs", sessionStats.toolMs, watermark);
+    addHarnessProjectionMetric(metrics, "ttftMs", sessionStats.ttftMs, watermark);
+    addHarnessProjectionMetric(metrics, "ttftSteps", sessionStats.ttftSteps, watermark);
+    addHarnessProjectionMetric(metrics, "decodeMs", sessionStats.decodeMs, watermark);
+    addHarnessProjectionMetric(metrics, "decodeTokens", sessionStats.decodeTokens, watermark);
+    addHarnessProjectionMetric(metrics, "inputTokens", tokenUsage.uncachedInputTokens, watermark);
+    addHarnessProjectionMetric(metrics, "outputTokens", tokenUsage.outputTokens, watermark);
+    addHarnessProjectionMetric(metrics, "cacheReadTokens", tokenUsage.cacheReadTokens, watermark);
+    addHarnessProjectionMetric(metrics, "cacheWriteTokens", tokenUsage.cacheWriteTokens, watermark);
+
+    return Object.keys(metrics).length > 0
+      ? { provider: this.providerId, capturedAt, metrics }
+      : null;
   }
 
   subscribeSession(providerSessionId: string, rawStoreRef: string, cursor: string | null, _limit: number, onEvent: (event: ProviderRealtimeEvent) => Promise<void> | void): ProviderSubscription {
@@ -994,6 +1034,37 @@ function parseHarnessModelOptions(input: unknown): ProviderModelOption[] {
 }
 function createAcceptedMessage(providerSessionId: string, content: string, timestamp: string): NormalizedMessage { const messageId = randomUUID(); return { messageId, provider: "deepseek-harness", providerSessionId, role: "user", kind: "text", content, toolCall: null, timestamp, sequence: Number.MAX_SAFE_INTEGER, rawRef: `synthetic://deepseek-harness/${providerSessionId}/${messageId}` }; }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function readNonNegativeNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  return null;
+}
+function addHarnessProjectionMetric(
+  metrics: ProviderSessionStats["metrics"],
+  metric: keyof ProviderSessionStats["metrics"],
+  rawValue: unknown,
+  watermark: { kind: "source-sequence" | "captured-at"; value: string }
+): void {
+  const value = readNonNegativeNumber(rawValue);
+
+  if (value === null) {
+    return;
+  }
+
+  metrics[metric] = {
+    value,
+    source: "provider-projection",
+    semantic: "cumulative",
+    watermark
+  };
+}
 function normalizePath(value: string): string { return value.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase(); }
 function normalizeOptionalTimestamp(value: unknown): string | null {
   if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) {

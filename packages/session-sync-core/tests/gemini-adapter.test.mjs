@@ -104,6 +104,52 @@ test("GeminiAdapter 会合并 CLI 与本地 chats 发现结果，并按工作区
   }
 });
 
+test("GeminiAdapter 对重写的同一消息 usage 采用最后一次值", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-session-stats-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const chatFile = join(homeDir, "tmp", "hash", "chats", "session-1.json");
+
+  try {
+    mkdirSync(join(homeDir, "tmp", "hash", "chats"), { recursive: true });
+    writeFileSync(
+      chatFile,
+      JSON.stringify({
+        sessionId: "session-1",
+        workspacePath: "/workspace/demo",
+        messages: [
+          {
+            id: "assistant-1",
+            type: "gemini",
+            timestamp: "2026-04-25T10:00:00.000Z",
+            content: "partial",
+            tokens: { input: 10, output: 1, cached: 0, thoughts: 0, tool: 0, total: 11 }
+          },
+          {
+            id: "assistant-1",
+            type: "gemini",
+            timestamp: "2026-04-25T10:00:01.000Z",
+            content: "final",
+            tokens: { input: 20, output: 2, cached: 3, thoughts: 4, tool: 5, total: 34 }
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const stats = await new GeminiAdapter({ homeDir, listSessions: async () => [] }).readSessionStats(
+      "session-1",
+      "gemini://session/session-1"
+    );
+
+    assert.equal(stats?.metrics.inputTokens?.value, 20);
+    assert.equal(stats?.metrics.totalTokens?.value, 34);
+    assert.equal(stats?.metrics.toolTokens?.value, 5);
+    assert.equal(stats?.metrics.inputTokens?.semantic, "sum-of-final-events");
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("GeminiAdapter capability 浼氬０鏄庡彲鍚姩 runtime 涓斾笉鏀寔闄勪欢", () => {
   const adapter = new GeminiAdapter({
     homeDir: "/tmp/gemini-home"

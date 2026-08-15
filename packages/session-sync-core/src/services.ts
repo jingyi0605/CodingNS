@@ -12,6 +12,7 @@ import type {
   ProviderSessionActivityObservation,
   ProviderSessionDiscovery,
   ProviderRealtimeEvent,
+  ProviderSessionStats,
   ProviderSubscription,
   ResumeSessionResult,
   SendMessageResult,
@@ -277,6 +278,14 @@ export class SessionSyncService {
     rawStoreRef: string
   ): Promise<ContextUsageSnapshot | null> {
     return this.registry.get(providerId).readContextUsage?.(providerSessionId, rawStoreRef) ?? null;
+  }
+
+  async readSessionStats(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionStats | null> {
+    return this.registry.get(providerId).readSessionStats?.(providerSessionId, rawStoreRef) ?? null;
   }
 }
 

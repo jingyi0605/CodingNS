@@ -883,6 +883,59 @@ test("CodexAdapter 会读取最近一轮 token_count 作为真实上下文占用
   }
 });
 
+test("CodexAdapter 将 total_token_usage 作为最新累计快照，不重复累加", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-session-stats-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { input_tokens: 400, output_tokens: 40 }
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { input_tokens: 400, output_tokens: 40 }
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { input_tokens: 900, output_tokens: 90 }
+            }
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const stats = await new CodexAdapter({ homeDir: tempDir }).readSessionStats("session-1", sessionFile);
+
+    assert.equal(stats?.metrics.inputTokens?.value, 900);
+    assert.equal(stats?.metrics.outputTokens?.value, 90);
+    assert.equal(stats?.metrics.inputTokens?.semantic, "latest-snapshot");
+    assert.equal(stats?.metrics.inputTokens?.watermark.value, "2026-03-26T00:00:02.000Z");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread_name", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-priority-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
