@@ -190,17 +190,31 @@ describe("SkillManagerService.scanSkills", () => {
         directoryPath: null,
         managedSkillId: "skill-missing-1"
       },
-      {
-        targetCli: "opencode",
-        rootDir: missingOpenCodeRoot,
-        code: "SKILL_TARGET_ROOT_MISSING",
-        detail: "目标 skill 根目录不存在",
-        directoryName: null,
-        directoryPath: null,
-        managedSkillId: null
-      }
     ]);
     expect(result.scannedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("目标 skill 根目录尚未创建时按空目录处理", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-empty-target-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const missingTargetRoot = path.join(tempDir, "dsh-home", "skills");
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [createAdapter("deepseek-harness", missingTargetRoot)]
+    );
+
+    const result = service.scanSkills();
+
+    database.close();
+
+    expect(result).toMatchObject({
+      managed: [],
+      unmanaged: [],
+      conflicted: [],
+      diagnostics: []
+    });
   });
 
   it("按目标过滤扫描，并在目标不受支持时直接拒绝", () => {

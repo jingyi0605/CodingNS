@@ -64,7 +64,13 @@ function normalizeProviderToSkillTarget(provider: string | null | undefined): st
     return null;
   }
 
-  if (normalized === "claude-code" || normalized === "codex" || normalized === "gemini" || normalized === "opencode") {
+  if (
+    normalized === "claude-code"
+    || normalized === "codex"
+    || normalized === "gemini"
+    || normalized === "opencode"
+    || normalized === "deepseek-harness"
+  ) {
     return normalized;
   }
 

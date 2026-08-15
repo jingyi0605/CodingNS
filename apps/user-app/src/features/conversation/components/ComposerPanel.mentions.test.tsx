@@ -176,7 +176,7 @@ function createDeferred<T>() {
 function createCapabilities(options?: {
   supportsAttachments?: boolean;
   supportsInterrupt?: boolean;
-  provider?: "codex" | "claude-code" | "opencode";
+  provider?: "codex" | "claude-code" | "opencode" | "deepseek-harness";
   modelOptions?: Array<{
     id: string;
     name: string;
@@ -407,6 +407,31 @@ describe("ComposerPanel mentions", () => {
     });
     expect(screen.getByLabelText(t("conversation.mentionSelectedListLabel"))).toBeInTheDocument();
     expect(screen.getByText("workspace-helper-skill").closest(".composer-selected-mention-chip")).not.toBeNull();
+  });
+
+  it("DeepSeek Harness 会话的 @ 搜索会限定到 DeepSeek Skill 目标", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "deepseek-harness" })}
+        workspaceId="workspace-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "@"
+      }
+    });
+
+    await waitFor(() => {
+      expect(mockSearchComposerMentionItems).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "deepseek-harness"
+        })
+      );
+    });
   });
 
   it("输入 @ 后会立刻打开面板并显示加载中", async () => {

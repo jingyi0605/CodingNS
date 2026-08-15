@@ -1381,11 +1381,10 @@ function scanSkillTargetDirectory(targetLocation: { targetCli: SkillTargetCli; r
   diagnostics: SkillScanDiagnostic[];
 } {
   if (!fs.existsSync(targetLocation.rootDir)) {
+    // 新目标尚未同步任何 Skill 时目录不会落盘，首次同步会自动创建它。
     return {
       directories: [],
-      diagnostics: [
-        createDiagnostic(targetLocation, "SKILL_TARGET_ROOT_MISSING", "目标 skill 根目录不存在")
-      ]
+      diagnostics: []
     };
   }
 

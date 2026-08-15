@@ -794,6 +794,120 @@ describe("sqlite 启动引导", () => {
     client.close();
   });
 
+  it("可以把旧版 skill_target_bindings 平滑升级并保留已有绑定", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-skill-target-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE managed_skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory_name TEXT NOT NULL UNIQUE,
+        source_type TEXT NOT NULL CHECK (source_type IN ('builtin', 'local-import', 'managed-copy')),
+        source_path TEXT,
+        content_hash TEXT NOT NULL,
+        managed_state TEXT NOT NULL CHECK (managed_state IN ('active', 'conflicted', 'missing')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO managed_skills (
+        id,
+        name,
+        directory_name,
+        source_type,
+        source_path,
+        content_hash,
+        managed_state,
+        created_at,
+        updated_at
+      ) VALUES (
+        'skill-legacy-binding',
+        'Legacy Binding Skill',
+        'legacy-binding-skill',
+        'local-import',
+        '/tmp/legacy-binding-skill',
+        'hash-legacy-binding',
+        'active',
+        '2026-04-18T08:00:00.000Z',
+        '2026-04-18T08:00:00.000Z'
+      );
+
+      CREATE TABLE skill_target_bindings (
+        skill_id TEXT NOT NULL,
+        target_cli TEXT NOT NULL CHECK (target_cli IN ('codex', 'claude-code', 'gemini', 'opencode')),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        sync_status TEXT NOT NULL CHECK (sync_status IN ('synced', 'pending', 'failed', 'conflicted')),
+        last_synced_at TEXT,
+        last_error_code TEXT,
+        last_error_detail TEXT,
+        PRIMARY KEY (skill_id, target_cli),
+        FOREIGN KEY (skill_id) REFERENCES managed_skills(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_skill_target_bindings_target_cli
+        ON skill_target_bindings(target_cli, sync_status, enabled);
+
+      INSERT INTO skill_target_bindings (
+        skill_id,
+        target_cli,
+        enabled,
+        sync_status,
+        last_synced_at,
+        last_error_code,
+        last_error_detail
+      ) VALUES
+        ('skill-legacy-binding', 'codex', 1, 'synced', '2026-04-18T08:01:00.000Z', NULL, NULL),
+        ('skill-legacy-binding', 'opencode', 0, 'pending', NULL, NULL, NULL);
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const table = client.db
+      .prepare(
+        `SELECT sql
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'skill_target_bindings'`
+      )
+      .get() as { sql: string } | undefined;
+    const rows = client.db
+      .prepare(
+        `SELECT target_cli, enabled, sync_status
+         FROM skill_target_bindings
+         WHERE skill_id = ?
+         ORDER BY target_cli`
+      )
+      .all("skill-legacy-binding") as Array<{
+      target_cli: string;
+      enabled: number;
+      sync_status: string;
+    }>;
+
+    expect(table?.sql).toContain("deepseek-harness");
+    expect(rows).toEqual([
+      { target_cli: "codex", enabled: 1, sync_status: "synced" },
+      { target_cli: "opencode", enabled: 0, sync_status: "pending" }
+    ]);
+    expect(() =>
+      client.db
+        .prepare(
+          `INSERT INTO skill_target_bindings (
+             skill_id,
+             target_cli,
+             enabled,
+             sync_status
+           ) VALUES (?, ?, ?, ?)`
+        )
+        .run("skill-legacy-binding", "deepseek-harness", 1, "pending")
+    ).not.toThrow();
+
+    client.close();
+  });
+
   it("可以给旧 session_indices 平滑补上子 Agent 关系列", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-index-bootstrap-"));
     tempDirs.push(tempDir);

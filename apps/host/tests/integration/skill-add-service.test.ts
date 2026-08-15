@@ -8,7 +8,10 @@ import {
   SkillManagerService,
   computeSkillDirectoryHash
 } from "../../src/modules/skills/skill-manager-service.js";
-import type { SkillTargetAdapter } from "../../src/modules/skills/skill-target-adapter.js";
+import {
+  DeepSeekHarnessSkillTargetAdapter,
+  type SkillTargetAdapter
+} from "../../src/modules/skills/skill-target-adapter.js";
 import { ManagedSkillRepository } from "../../src/storage/repositories/managed-skill-repository.js";
 import { SkillTargetBindingRepository } from "../../src/storage/repositories/skill-target-binding-repository.js";
 import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
@@ -99,6 +102,50 @@ describe("SkillManagerService.addManagedSkill", () => {
     expect(existsSync(path.join(codexRoot, "team-helper", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(geminiRoot, "team-helper"))).toBe(false);
     expect(readFileSync(path.join(codexRoot, "team-helper", "SKILL.md"), "utf8")).toContain("Team Helper");
+  });
+
+  it("首次同步到 DeepSeek Harness 时会创建尚未落盘的技能根目录", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-deepseek-skill-add-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const ssotRootDir = path.join(tempDir, "skill-ssot");
+    const sourceRoot = path.join(tempDir, "sources");
+    const dshHomeDir = path.join(tempDir, "dsh-home");
+
+    mkdirSync(sourceRoot, { recursive: true });
+    const sourcePath = createSkillDirectory(sourceRoot, "deepseek-helper", {
+      "SKILL.md": "# DeepSeek Helper\n\n这是 DeepSeek Harness 的首个 skill。"
+    });
+    const service = new SkillManagerService(
+      new ManagedSkillRepository(database.db),
+      new SkillTargetBindingRepository(database.db),
+      [new DeepSeekHarnessSkillTargetAdapter({ deepseekHarnessHomeDir: dshHomeDir })],
+      {
+        ssotRootDir,
+        now: () => "2026-08-15T06:00:00.000Z",
+        createId: () => "skill-deepseek-helper"
+      }
+    );
+
+    const result = service.addManagedSkill({
+      sourcePath,
+      targetCli: ["deepseek-harness"],
+      sourceType: "local-import"
+    });
+
+    database.close();
+
+    expect(result.targetResults).toEqual([
+      {
+        targetCli: "deepseek-harness",
+        targetDir: path.join(dshHomeDir, "skills", "deepseek-helper"),
+        syncStatus: "synced",
+        lastSyncedAt: "2026-08-15T06:00:00.000Z",
+        errorCode: null,
+        errorDetail: null
+      }
+    ]);
+    expect(existsSync(path.join(dshHomeDir, "skills", "deepseek-helper", "SKILL.md"))).toBe(true);
   });
 
   it("遇到目标目录同名不同内容时会标记冲突，但不会覆盖其他目标", () => {
