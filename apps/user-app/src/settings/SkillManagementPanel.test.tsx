@@ -96,6 +96,7 @@ describe("SkillManagementPanel", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: t("settings.skillCreateAction") }));
 
     const createDialog = await screen.findByRole("dialog", { name: t("settings.skillCreateModalTitle") });
+    expect(within(createDialog).getByRole("checkbox", { name: t("settings.skillTargetDeepSeekHarness") })).toBeInTheDocument();
     const uploadInput = createDialog.querySelector('input[type="file"]');
     expect(uploadInput).not.toBeNull();
 
@@ -455,24 +456,28 @@ function createProviderCatalogResponse(
     claudeEnabled?: boolean;
     geminiEnabled?: boolean;
     opencodeEnabled?: boolean;
+    deepseekHarnessEnabled?: boolean;
   } = {}
 ) {
   return [
     createProviderCatalogEntry("codex", overrides.codexEnabled ?? true),
     createProviderCatalogEntry("claude-code", overrides.claudeEnabled ?? true),
     createProviderCatalogEntry("gemini", overrides.geminiEnabled ?? true),
-    createProviderCatalogEntry("opencode", overrides.opencodeEnabled ?? true)
+    createProviderCatalogEntry("opencode", overrides.opencodeEnabled ?? true),
+    createProviderCatalogEntry("deepseek-harness", overrides.deepseekHarnessEnabled ?? true)
   ];
 }
 
-function createProviderCatalogEntry(provider: "codex" | "claude-code" | "gemini" | "opencode", enabled: boolean) {
+function createProviderCatalogEntry(provider: "codex" | "claude-code" | "gemini" | "opencode" | "deepseek-harness", enabled: boolean) {
   return {
     provider,
     displayName:
       provider === "claude-code"
         ? "Claude Code"
-        : provider === "opencode"
+      : provider === "opencode"
           ? "OpenCode"
+          : provider === "deepseek-harness"
+            ? "DeepSeek Harness"
           : provider === "gemini"
             ? "Gemini"
             : "Codex",

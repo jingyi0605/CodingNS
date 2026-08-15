@@ -43,6 +43,7 @@ export interface HostConfig {
   codexCliPath: string;
   legnaCodeCliPath: string;
   deepseekHarnessCliPath: string;
+  deepseekHarnessHomeDir: string;
   deepseekHarnessBindHost: "127.0.0.1" | "0.0.0.0";
   chromeExecutablePath: string;
   edgeExecutablePath: string;
@@ -125,6 +126,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     normalizeOptionalText(
       overrides.deepseekHarnessCliPath ?? process.env.CODINGNS_DEEPSEEK_HARNESS_COMMAND
     ) ?? "dsh";
+  const deepseekHarnessHomeDir =
+    overrides.deepseekHarnessHomeDir
+    ?? normalizeOptionalText(process.env.DSH_HOME)
+    ?? path.join(homeDir, ".dsh");
   const deepseekHarnessBindHost = resolveDeepSeekHarnessBindHost(
     overrides.deepseekHarnessBindHost ?? process.env.CODINGNS_DEEPSEEK_HARNESS_HOST
   );
@@ -213,6 +218,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     codexCliPath,
     legnaCodeCliPath,
     deepseekHarnessCliPath,
+    deepseekHarnessHomeDir,
     deepseekHarnessBindHost,
     chromeExecutablePath:
       overrides.chromeExecutablePath ??

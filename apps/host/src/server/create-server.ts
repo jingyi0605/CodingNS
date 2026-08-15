@@ -518,7 +518,8 @@ export function createServer(config: HostConfig) {
   const deepSeekHarnessSidecarManager = new DeepSeekHarnessSidecarManager({
     taskManager,
     commandPath: config.deepseekHarnessCliPath,
-    bindHost: config.deepseekHarnessBindHost
+    bindHost: config.deepseekHarnessBindHost,
+    env: { DSH_HOME: config.deepseekHarnessHomeDir }
   });
   const deepSeekHarnessRuntimeAdapter = new DeepSeekHarnessRuntimeAdapter(
     () => deepSeekHarnessSidecarManager.createClient(),
@@ -841,7 +842,12 @@ export function createServer(config: HostConfig) {
     repositories.sessionMessageOriginRepository,
     repositories.sessionForkRepository,
     {
-      additionalAdapters: [new DeepSeekHarnessProviderAdapter(deepSeekHarnessSidecarManager)]
+      additionalAdapters: [
+        new DeepSeekHarnessProviderAdapter(
+          deepSeekHarnessSidecarManager,
+          config.deepseekHarnessHomeDir
+        )
+      ]
     },
     taskManager,
     repositories.parallelSessionGroupRepository,
@@ -1008,7 +1014,12 @@ export function createServer(config: HostConfig) {
     config,
     repositories.providerControlRepository,
     providerRuntimeStateService,
-    [new DeepSeekHarnessProviderAdapter(deepSeekHarnessSidecarManager)]
+    [
+      new DeepSeekHarnessProviderAdapter(
+        deepSeekHarnessSidecarManager,
+        config.deepseekHarnessHomeDir
+      )
+    ]
   );
   runtimeObservabilityService = new RuntimeObservabilityService(
     () => sessionHistoryService.observeBackgroundTaskMetrics(),

@@ -63,7 +63,13 @@ interface AssistantRuntimeItemView {
   usageTag: "assistant-only" | "workspace-session";
 }
 
-const SKILL_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code", "gemini", "opencode"];
+const SKILL_TARGET_OPTIONS: readonly SkillTargetCli[] = [
+  "codex",
+  "claude-code",
+  "gemini",
+  "opencode",
+  "deepseek-harness"
+];
 const ASSISTANT_UPLOAD_TARGET_OPTIONS: readonly SkillTargetCli[] = ["codex", "claude-code"];
 const SKILL_SCOPE_OPTIONS: readonly SkillScope[] = ["workspace", "assistant"];
 const SKILL_UPLOAD_SOURCE_OPTIONS: readonly SkillUploadSourceMode[] = ["file", "paste"];
@@ -1031,6 +1037,8 @@ function resolveTargetCliLabel(targetCli: SkillTargetCli): string {
       return t("settings.skillTargetGemini");
     case "opencode":
       return t("settings.skillTargetOpenCode");
+    case "deepseek-harness":
+      return t("settings.skillTargetDeepSeekHarness");
     default:
       return t("settings.skillTargetCodex");
   }
@@ -1061,7 +1069,8 @@ function createDefaultUploadTargets(
     codex: firstSelectableTarget === "codex",
     "claude-code": firstSelectableTarget === "claude-code",
     gemini: firstSelectableTarget === "gemini",
-    opencode: firstSelectableTarget === "opencode"
+    opencode: firstSelectableTarget === "opencode",
+    "deepseek-harness": firstSelectableTarget === "deepseek-harness"
   };
 }
 
@@ -1108,6 +1117,8 @@ function resolveSkillTargetCli(provider: ProviderCatalogEntryDto["provider"]): S
       return "gemini";
     case "opencode":
       return "opencode";
+    case "deepseek-harness":
+      return "deepseek-harness";
     default:
       return null;
   }

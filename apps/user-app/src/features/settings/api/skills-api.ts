@@ -1,6 +1,6 @@
 import { httpClient } from "../../../network/http-client";
 
-export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode";
+export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode" | "deepseek-harness";
 export type SkillScope = "workspace" | "assistant";
 
 export interface ManagedSkillDto {

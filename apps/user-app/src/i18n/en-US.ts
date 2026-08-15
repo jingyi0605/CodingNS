@@ -1053,6 +1053,7 @@ export const enUS = {
     skillTargetClaudeCode: "Claude Code",
     skillTargetGemini: "Gemini",
     skillTargetOpenCode: "OpenCode",
+    skillTargetDeepSeekHarness: "DeepSeek Harness",
     skillBindingPending: "Preparing",
     skillBindingSynced: "Available",
     skillBindingFailed: "Unavailable",

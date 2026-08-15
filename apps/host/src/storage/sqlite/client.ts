@@ -101,6 +101,7 @@ function ensurePreSchemaCompatibility(db: BetterSqliteDatabase): void {
   ensureButlerOwnershipPreSchemaCompatibility(db);
   ensureUserTeableFormBindingsPreSchemaCompatibility(db);
   ensureManagedSkillScopeSchema(db);
+  ensureSkillTargetBindingsSchema(db);
   ensureAuthTokenCallerKindSchema(db);
 }
 
@@ -1928,6 +1929,78 @@ function ensureManagedSkillScopeSchema(db: BetterSqliteDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_managed_skills_state
       ON managed_skills(scope, managed_state, updated_at DESC);
+  `);
+}
+
+function ensureSkillTargetBindingsSchema(db: BetterSqliteDatabase): void {
+  if (!tableExists(db, "skill_target_bindings")) {
+    return;
+  }
+
+  const tableSqlRow = db
+    .prepare(
+      `SELECT sql
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'skill_target_bindings'`
+    )
+    .get() as { sql: string | null } | undefined;
+
+  if (tableSqlRow?.sql?.includes("'deepseek-harness'")) {
+    return;
+  }
+
+  db.exec("DROP INDEX IF EXISTS idx_skill_target_bindings_target_cli");
+  db.exec("PRAGMA foreign_keys = OFF");
+
+  try {
+    db.exec("BEGIN");
+    db.exec(`
+      CREATE TABLE skill_target_bindings__next (
+        skill_id TEXT NOT NULL,
+        target_cli TEXT NOT NULL CHECK (target_cli IN ('codex', 'claude-code', 'gemini', 'opencode', 'deepseek-harness')),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        sync_status TEXT NOT NULL CHECK (sync_status IN ('synced', 'pending', 'failed', 'conflicted')),
+        last_synced_at TEXT,
+        last_error_code TEXT,
+        last_error_detail TEXT,
+        PRIMARY KEY (skill_id, target_cli),
+        FOREIGN KEY (skill_id) REFERENCES managed_skills(id) ON DELETE CASCADE
+      );
+    `);
+    db.exec(`
+      INSERT INTO skill_target_bindings__next (
+        skill_id,
+        target_cli,
+        enabled,
+        sync_status,
+        last_synced_at,
+        last_error_code,
+        last_error_detail
+      )
+      SELECT
+        skill_id,
+        target_cli,
+        enabled,
+        sync_status,
+        last_synced_at,
+        last_error_code,
+        last_error_detail
+      FROM skill_target_bindings;
+    `);
+    db.exec("DROP TABLE skill_target_bindings");
+    db.exec("ALTER TABLE skill_target_bindings__next RENAME TO skill_target_bindings");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
+      ON skill_target_bindings(target_cli, sync_status, enabled);
   `);
 }
 

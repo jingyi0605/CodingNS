@@ -2228,7 +2228,7 @@ CREATE INDEX IF NOT EXISTS idx_managed_skills_state
 
 CREATE TABLE IF NOT EXISTS skill_target_bindings (
   skill_id TEXT NOT NULL,
-  target_cli TEXT NOT NULL CHECK (target_cli IN ('codex', 'claude-code', 'gemini', 'opencode')),
+  target_cli TEXT NOT NULL CHECK (target_cli IN ('codex', 'claude-code', 'gemini', 'opencode', 'deepseek-harness')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   sync_status TEXT NOT NULL CHECK (sync_status IN ('synced', 'pending', 'failed', 'conflicted')),
   last_synced_at TEXT,

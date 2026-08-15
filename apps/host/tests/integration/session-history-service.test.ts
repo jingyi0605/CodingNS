@@ -421,6 +421,7 @@ function createService(overrides?: {
     codexCliPath: "codex",
     legnaCodeCliPath: "legna",
     deepseekHarnessCliPath: "deepseek-harness",
+    deepseekHarnessHomeDir: "/tmp/dsh",
     deepseekHarnessBindHost: "127.0.0.1",
     chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     edgeExecutablePath: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",

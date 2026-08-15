@@ -52,14 +52,25 @@ export class OpenCodeSkillTargetAdapter implements SkillTargetAdapter {
   }
 }
 
+export class DeepSeekHarnessSkillTargetAdapter implements SkillTargetAdapter {
+  readonly targetCli = "deepseek-harness" as const;
+
+  constructor(private readonly config: Pick<HostConfig, "deepseekHarnessHomeDir">) {}
+
+  resolveRootDir(): string {
+    return path.resolve(this.config.deepseekHarnessHomeDir, "skills");
+  }
+}
+
 export function createDefaultSkillTargetAdapters(
-  config: Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir">
+  config: Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir" | "deepseekHarnessHomeDir">
 ): SkillTargetAdapter[] {
   return [
     new ClaudeCodeSkillTargetAdapter(config),
     new CodexSkillTargetAdapter(config),
     new GeminiSkillTargetAdapter(config),
-    new OpenCodeSkillTargetAdapter()
+    new OpenCodeSkillTargetAdapter(),
+    new DeepSeekHarnessSkillTargetAdapter(config)
   ];
 }
 

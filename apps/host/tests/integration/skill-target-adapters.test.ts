@@ -6,6 +6,7 @@ import type { HostConfig } from "../../src/config/env.js";
 import {
   ClaudeCodeSkillTargetAdapter,
   CodexSkillTargetAdapter,
+  DeepSeekHarnessSkillTargetAdapter,
   GeminiSkillTargetAdapter,
   OpenCodeSkillTargetAdapter,
   createDefaultSkillTargetAdapters,
@@ -13,12 +14,13 @@ import {
 } from "../../src/modules/skills/skill-target-adapter.js";
 
 describe("SkillTargetAdapter", () => {
-  it("会把 Claude、Codex、Gemini 的 skill 根目录解析到各自 home 下", () => {
+  it("会把 Claude、Codex、Gemini、DeepSeek Harness 的 skill 根目录解析到各自 home 下", () => {
     const config = {
       claudeCodeHomeDir: "/tmp/claude-home",
       codexHomeDir: "/tmp/codex-home",
-      geminiHomeDir: "/tmp/gemini-home"
-    } satisfies Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir">;
+      geminiHomeDir: "/tmp/gemini-home",
+      deepseekHarnessHomeDir: "/tmp/dsh-home"
+    } satisfies Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir" | "deepseekHarnessHomeDir">;
 
     expect(new ClaudeCodeSkillTargetAdapter(config).resolveRootDir()).toBe(
       path.resolve("/tmp/claude-home", "skills")
@@ -29,19 +31,27 @@ describe("SkillTargetAdapter", () => {
     expect(new GeminiSkillTargetAdapter(config).resolveRootDir()).toBe(
       path.resolve("/tmp/gemini-home", "skills")
     );
+    expect(new DeepSeekHarnessSkillTargetAdapter(config).resolveRootDir()).toBe(
+      path.resolve("/tmp/dsh-home", "skills")
+    );
   });
 
   it("默认适配器集合允许按目标 CLI 获取 skill 根目录", () => {
     const config = {
       claudeCodeHomeDir: "/tmp/claude-home",
       codexHomeDir: "/tmp/codex-home",
-      geminiHomeDir: "/tmp/gemini-home"
-    } satisfies Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir">;
+      geminiHomeDir: "/tmp/gemini-home",
+      deepseekHarnessHomeDir: "/tmp/dsh-home"
+    } satisfies Pick<HostConfig, "claudeCodeHomeDir" | "codexHomeDir" | "geminiHomeDir" | "deepseekHarnessHomeDir">;
     const adapters = createDefaultSkillTargetAdapters(config);
 
     expect(resolveSkillTargetLocation(adapters, "codex")).toEqual({
       targetCli: "codex",
       rootDir: path.resolve("/tmp/codex-home", "skills")
+    });
+    expect(resolveSkillTargetLocation(adapters, "deepseek-harness")).toEqual({
+      targetCli: "deepseek-harness",
+      rootDir: path.resolve("/tmp/dsh-home", "skills")
     });
   });
 

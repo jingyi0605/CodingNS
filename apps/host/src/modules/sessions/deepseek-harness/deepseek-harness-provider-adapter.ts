@@ -11,10 +11,14 @@ import { DeepSeekHarnessSidecarManager } from "./deepseek-harness-sidecar-manage
 
 /** ProviderAdapter 的 Host 外壳：只有真正访问 Harness 时才拉起 sidecar。 */
 export class DeepSeekHarnessProviderAdapter extends DeepSeekHarnessAdapter implements ProviderAdapter {
-  constructor(private readonly sidecarManager: DeepSeekHarnessSidecarManager) {
+  constructor(
+    private readonly sidecarManager: DeepSeekHarnessSidecarManager,
+    dshHomeDir?: string
+  ) {
     super({
       transport: new LazyHarnessTransport(sidecarManager),
-      harnessVersion: "0.1.0-rc.5"
+      harnessVersion: "0.1.0-rc.5",
+      dshHomeDir
     });
   }
 }

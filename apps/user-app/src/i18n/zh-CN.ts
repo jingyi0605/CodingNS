@@ -958,6 +958,7 @@ export const zhCN = {
     skillTargetClaudeCode: "Claude Code",
     skillTargetGemini: "Gemini",
     skillTargetOpenCode: "OpenCode",
+    skillTargetDeepSeekHarness: "DeepSeek Harness",
     skillBindingPending: "准备中",
     skillBindingSynced: "可用",
     skillBindingFailed: "暂不可用",

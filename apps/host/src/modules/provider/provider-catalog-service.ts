@@ -30,8 +30,19 @@ const STREAMING_OUTPUT_PROVIDER_IDS = new Set<ProviderId>([
   "deepseek-harness"
 ]);
 const ASSISTANT_SERVICE_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code"]);
-const SKILL_TARGET_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code", "gemini", "opencode"]);
-const RECONSTRUCTED_FORK_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude-code", "opencode"]);
+const SKILL_TARGET_PROVIDER_IDS = new Set<ProviderId>([
+  "codex",
+  "claude-code",
+  "gemini",
+  "opencode",
+  "deepseek-harness"
+]);
+const RECONSTRUCTED_FORK_PROVIDER_IDS = new Set<ProviderId>([
+  "codex",
+  "claude-code",
+  "opencode",
+  "deepseek-harness"
+]);
 
 export interface ProviderCatalogEntryDto {
   provider: ProviderId;
