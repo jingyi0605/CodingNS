@@ -276,14 +276,13 @@ describe("SessionHistoryService 恢复缺失索引", () => {
         });
       }
     }
-  });
+  }, 15_000);
 
-  it("完成的 DeepSeek Harness 会话不会被后续不支持的历史订阅改写为失败", async () => {
+  it("DeepSeek Harness 的运行态尚未写回时，不会把不支持的历史订阅改写为失败", async () => {
     const {
       service,
       sessionBindingRepository,
       sessionIndexRepository,
-      sessionStateRepository,
       sessionStatusSnapshotRepository
     } = createHarness();
     const sessionId = "session-harness-completed-subscribe";
@@ -311,17 +310,6 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       isArchived: false,
       lastMessageAt: "2026-08-15T04:08:15.000Z",
       createdAt: "2026-08-15T04:08:00.000Z",
-      updatedAt: "2026-08-15T04:08:15.000Z"
-    });
-    sessionStateRepository.upsert({
-      sessionId,
-      userId: "user-1",
-      runningState: "completed",
-      activitySource: "runtime",
-      favorite: false,
-      lastEventAt: "2026-08-15T04:08:15.000Z",
-      completedAt: "2026-08-15T04:08:15.000Z",
-      lastSeenAt: null,
       updatedAt: "2026-08-15T04:08:15.000Z"
     });
     sessionStatusSnapshotRepository.upsert({

@@ -2210,7 +2210,7 @@ export class SessionHistoryService {
         });
       }
     } catch (error) {
-      if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor, error)) {
+      if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, error)) {
         this.clearDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor);
         return { close() {} };
       }
@@ -2242,7 +2242,7 @@ export class SessionHistoryService {
           currentCursor = nextCursor;
         })
         .catch((error) => {
-          if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor, error)) {
+          if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, error)) {
             closed = true;
             clearInterval(timer);
             this.clearDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor);
@@ -5981,28 +5981,17 @@ export class SessionHistoryService {
 
   private shouldSuppressDeepSeekHarnessSubscriptionFailure(
     sessionId: string,
-    cursor: string | null,
     error: unknown
   ): boolean {
-    if (cursor === null || !isProviderNotSupportedError(error)) {
+    if (!isProviderNotSupportedError(error)) {
       return false;
     }
 
     const resolvedSessionId = this.resolveCanonicalSessionId(sessionId);
     const binding = this.sessionBindingRepository.findBySessionId(resolvedSessionId);
 
-    if (!binding || binding.provider !== "deepseek-harness" || !binding.userId) {
-      return false;
-    }
-
-    const state = this.sessionStateRepository.findBySessionAndUser(resolvedSessionId, binding.userId);
-
-    return state?.activitySource === "runtime" && (
-      state.runningState === "starting"
-      || state.runningState === "running"
-      || state.runningState === "completed"
-      || state.runningState === "interrupted"
-    );
+    // DSH 的运行态由 runtime 事件驱动。历史适配器暂不可用不能被误判成模型执行失败。
+    return binding?.provider === "deepseek-harness";
   }
 
   private clearDeepSeekHarnessSubscriptionFailure(sessionId: string, cursor: string | null): void {
