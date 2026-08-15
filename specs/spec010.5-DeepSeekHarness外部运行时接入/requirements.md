@@ -18,6 +18,7 @@ CodingNS 已经有统一的会话、运行时、权限和消息事件接口。De
 - **Harness 适配器**：CodingNS 内部负责调用 Harness HTTP/WebSocket 接口并转换为 CodingNS 标准模型的模块。
 - **外部会话**：以 Harness 会话为执行权威源、由 CodingNS 保存绑定关系和展示投影的会话。
 - **标准能力**：CodingNS 现有会话创建、发送、历史、运行状态、工具事件、权限、附件和中断等对外能力。
+- **Harness Skill 目录**：由 `DSH_HOME/skills` 指定的 Skill 根目录；未配置 `DSH_HOME` 时使用 `~/.dsh/skills`。
 
 ## 范围说明
 
@@ -28,6 +29,8 @@ CodingNS 已经有统一的会话、运行时、权限和消息事件接口。De
 - 会话创建、发送、实时输出、历史读取、中断、队列、附件、工具事件和权限请求。
 - Harness 事件到 CodingNS 标准消息和运行时事件的转换。
 - WebSocket 断线后的历史恢复、去重和重新订阅。
+- DeepSeek 会话内的原生 Fork，以及其他 Provider 会话分叉到 DeepSeek 时的历史文本重建。
+- 把受管理 Skill 同步到 Harness Skill 目录，并让 DeepSeek 会话的 `@` 搜索只检索该目标的 Skill。
 - 能力矩阵中对已支持、部分支持和不支持能力的明确声明。
 
 ### Out of Scope
@@ -35,7 +38,8 @@ CodingNS 已经有统一的会话、运行时、权限和消息事件接口。De
 - 直接合并 Harness Cordis 插件源码到 CodingNS。
 - 让浏览器或远程客户端直接访问 Harness Web API。
 - 把 Harness 的 Web API 宣称为稳定公共标准协议。
-- 首版实现 Harness 当前没有明确对应物的收藏、删除、Changed Files、Diff、Session Share 和跨 Provider Fork。
+- 首版实现 Harness 当前没有明确对应物的收藏、删除、Changed Files、Diff 和 Session Share。
+- 把其他 Provider 的原始会话对象或私有日志原样复制为 Harness 会话；跨 Provider 到 DeepSeek 仅重建可见的文本历史。
 - 修改 Harness 本身或为 Harness 增加新的业务接口。
 
 ## 需求
@@ -62,6 +66,7 @@ CodingNS 已经有统一的会话、运行时、权限和消息事件接口。De
 3. WHEN 用户读取会话历史 THEN System SHALL 将 Harness `session.history` 转换为 CodingNS `NormalizedMessage`，并保留可追溯的原始事件引用。
 4. WHEN 用户中断运行或处理队列消息 THEN System SHALL 分别映射到 Harness 的 `session.cancel`、`session.updateQueue` 和 `mode=queue/steer`。
 5. WHEN Harness 返回不支持、会话不存在或模型不可用 THEN System SHALL 映射为 CodingNS 可识别的错误，而不是返回通用成功响应。
+6. WHEN 用户从 DeepSeek 会话或其中一条消息创建分支 THEN System SHALL 调用 Harness `session.fork`；WHEN 用户把其他 Provider 的会话分叉到 DeepSeek THEN System SHALL 只将选中范围内可见的用户和助手文本重建为新会话的初始 prompt，不伪造原生跨 Provider 复制。
 
 ### 需求 3：实时事件和断线恢复
 
@@ -121,6 +126,17 @@ CodingNS 已经有统一的会话、运行时、权限和消息事件接口。De
 3. WHEN WebSocket 连接连续失败 THEN System SHALL 使用统一的后台任务/重试策略，不能为每个会话私自创建无限重试定时器。
 4. WHEN 适配器无法恢复外部会话 THEN System SHALL 保留 CodingNS 绑定和最后一次错误，不能静默删除用户会话。
 5. WHEN 禁用或移除 Harness Provider THEN System SHALL 停止新会话和新任务，但保留已有绑定和诊断记录，便于恢复或迁移。
+
+### 需求 8：Skill 目录和会话引用
+
+**用户故事：** 作为 CodingNS 用户，我希望为 DeepSeek Harness 管理并在会话中引用 Skill，以便不必绕过统一的 Skill 管理界面手工维护另一份目录。
+
+#### 验收标准
+
+1. WHEN 用户把受管理 Skill 同步到 `deepseek-harness` 目标 THEN System SHALL 写入 `DSH_HOME/skills`；未配置 `DSH_HOME` 时目录为 `~/.dsh/skills`。首次同步前根目录可以不存在，System SHALL 将其作为空态并在同步时创建。
+2. WHEN Host 启动 Harness sidecar THEN System SHALL 将相同的 `DSH_HOME` 传给子进程，确保运行时读取的目录与 Skill 管理目录一致。
+3. WHEN 旧数据库升级到支持 DeepSeek Skill 目标的版本 THEN System SHALL 保留既有 Skill 绑定，并允许 `deepseek-harness` 作为新的目标值。
+4. WHEN 当前会话 Provider 为 `deepseek-harness` THEN System SHALL 让 Composer 的 `@` 搜索限定在 DeepSeek Skill 目标，不能混入其他 CLI 的 Skill。
 
 ## 非功能需求
 

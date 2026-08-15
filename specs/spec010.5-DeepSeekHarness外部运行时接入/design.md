@@ -174,7 +174,7 @@ Harness 在 CodingNS 中以 `deepseek-harness` Provider 路由出现，但这个
 | `supportsTokenUsage` | `false` | 首版不依赖事件中不稳定的 usage 字段 |
 | `supportsAttachments` | `true` | 受图片大小和模型能力限制 |
 | `supportsPermissionPrompt` | `true` | approval/question + respond |
-| `supportsSessionFork` | `true` | 仅已完成 turn 的 Fork |
+| `supportsSessionFork` | `true` | DeepSeek 内部调用原生 Fork；其他 Provider 分叉到 DeepSeek 时重建可见文本 |
 | `supportsSessionDelete` | `false` | Harness Web API 无公开删除接口 |
 | `supportsSessionDiff` | `false` | 无 changed-files/diff 接口 |
 | `supportsSessionShare` | `false` | 无分享接口 |
@@ -229,7 +229,7 @@ Harness 在 CodingNS 中以 `deepseek-harness` Provider 路由出现，但这个
 | `/api/sessions/:id/queue` | `session.prompt(mode=queue)` |
 | `/api/sessions/:id/interrupt` | `session.cancel` |
 | `/api/sessions/:id/messages` GET/历史服务 | `session.history` |
-| `/api/sessions/:id/forks` | `session.fork`，仅支持完成 turn 语义 |
+| `/api/sessions/:id/forks` | DeepSeek 源会话调用 `session.fork`，仅支持完成 turn；其他 Provider 以可见文本历史创建新的 DeepSeek 会话 |
 | `/api/sessions/:id/permission-requests/:requestId/reply` | `/api/respond` |
 | `/api/sessions/:id/attachments/...` | `session.attachment` |
 | `/ws` 的 session subscribe | 由 EventBridge 转成 CodingNS `session.*` envelope |
@@ -243,6 +243,15 @@ Harness 在 CodingNS 中以 `deepseek-harness` Provider 路由出现，但这个
 - `resumeSession` 首版实现为能力拒绝，或只做已绑定会话的重新校验；不得把“能读历史”冒充“已恢复 Agent”。
 - `deleteSession`、收藏、Diff 和分享保持不支持状态。
 - `DeepSeekHarnessRuntimeAdapter` 只负责实时执行和事件桥接；不要在适配器内部新增第二套消息持久化、私有队列或全局重试器。
+- 会话内 Fork 使用 Harness 的 `session.fork`。消息级 Fork 先把 CodingNS 消息 ID 反查为 Harness `seq`；新会话的继承消息数按完整 turn 映射后的标准消息数计算，不能直接拿 event seq 冒充消息数。
+- 当目标 Provider 是 `deepseek-harness`、源会话来自其他 Provider 时，复用已有重建流程：只串联用户和助手的可见文本作为首条 prompt。它不是原生历史复制，不传递源 Provider 的私有事件、附件、工具状态或权限状态。
+
+#### 3.4.1 Skill 目标目录
+
+- `DeepSeekHarnessSkillTargetAdapter` 的目标名固定为 `deepseek-harness`，根目录为 `DSH_HOME/skills`；未设置时 `DSH_HOME` 默认为 `~/.dsh`。首次同步前目录可以不存在，扫描把它当作空目录；复制首个 Skill 时再递归创建。
+- Host 启动 `dsh web` 时传入同一个 `DSH_HOME`，Skill 管理、`@` 搜索和 Harness 运行时始终指向同一份文件。
+- `skill_target_bindings.target_cli` 的 SQLite 约束包含 `deepseek-harness`。迁移重建约束表时必须保留所有已有行并恢复索引。
+- Composer 根据当前会话 Provider 映射 Skill 目标；DeepSeek 会话只能查询 `deepseek-harness`，不从 Codex、Claude、Gemini 或 OpenCode 目标借用结果。
 
 ## 4. 数据与状态模型
 
@@ -380,10 +389,14 @@ CodingNS session binding 是访问控制入口；Harness session 是 Agent 执�
 - 能力矩阵和不支持能力映射。
 - workspace 路径规范化、符号链接越界和用户绑定校验。
 - sidecar 状态机和进程所有权判断。
+- DeepSeek 会话级和消息级 Fork 的 `session.fork` 参数、继承消息计数和消息 ID 到 `seq` 反查。
+- 其他 Provider 到 DeepSeek 的文本重建，以及 Skill 目标目录、SQLite 升级和 Composer `@` 目标过滤。
 
 ### 7.2 集成测试
 
 - 使用 fake Harness HTTP server 验证 session.create/history/prompt/fork/cancel/respond。
+- 验证 DeepSeek 原生 Fork 与其他 Provider 分叉到 DeepSeek 的文本重建不会混入锚点后的消息。
+- 验证旧版 `skill_target_bindings` 可以升级且保留绑定，DeepSeek Skill 根目录与 sidecar 的 `DSH_HOME` 一致。
 - 使用 fake WebSocket server 验证 mux/host frame、malformed frame、approval/question 和重连。
 - 验证 TaskManager 对 `harness.sidecar.health`、`harness.session.reconcile` 的去重、超时和观测记录。
 - 验证现有 CodingNS session routes、runtime routes 和 `/ws` 收到转换后的标准结果。
@@ -407,6 +420,7 @@ CodingNS session binding 是访问控制入口；Harness session 是 Agent 执�
 | `requirements.md` 需求 5 | `design.md` §3.2.2、§3.3.3、§5.3 | 用户隔离和路径边界测试 |
 | `requirements.md` 需求 6 | `design.md` §3.2.4、§3.3.4、§6.4 | capability snapshot 和不支持能力测试 |
 | `requirements.md` 需求 7 | `design.md` §5.1、§5.2、§6.5 | 错误映射、日志字段和 Provider 隔离测试 |
+| `requirements.md` 需求 8 | `design.md` §3.4.1 | Skill 目标、SQLite 升级和 Composer mention 测试 |
 
 ## 8. 风险与待确认项
 

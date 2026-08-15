@@ -173,7 +173,7 @@
     - `apps/host/src/modules/sessions/deepseek-harness/deepseek-harness-message-mapper.ts`
     - Provider registry 和 capability catalog 注册位置
     - ProviderAdapter 单元和会话历史集成测试
-  - 这一步先不做什么：不实现实时运行、不实现跨 Provider Fork、不实现删除和收藏。
+  - 这一步先不做什么：不实现实时运行，不在这里做跨 Provider 的原生历史复制，不实现删除和收藏；其他 Provider 到 DeepSeek 的文本重建由 3.2 处理。
   - 怎么算完成：
     1. `detectSessions` 只返回当前用户和工作区可见的 Harness 会话。
     2. `readSessionHistory` 能把 Harness cursor/seq 转成 CodingNS HistoryPage。
@@ -291,13 +291,13 @@
     - 实现提交 ID：92ff90da80f1282ea12b71d335e8aaf8cf5cb53c
     - 实现提交信息：功能：spec010.5-接入DeepSeek Harness本机运行时；
 
-### 3.2 接入 Fork、模型、Subagent 和受限归档
+### 3.2 接入 Fork、Skill、模型、Subagent 和受限归档
 
-- [x] 3.2 接入 Fork、模型、Subagent 和受限归档
+- [x] 3.2 接入 Fork、Skill、模型、Subagent 和受限归档
   - 状态：DONE
-  - 业务解释：把 Harness 已经提供但语义有边界的高级能力接入，同时把限制直接告诉用户。
-  - 这一步到底做什么：接入 session.fork、session.models/selectModel、subagent RPC，并按实际条件决定是否映射 workspace archive。
-  - 做完你能看到什么：用户可以在支持的范围内 Fork、切换 Harness 模型、查看 Subagent；不支持的跨 Provider Fork 会被拒绝。
+  - 业务解释：把 Harness 已经提供的 Fork 接进来，并让 Skill 管理与实际运行时读取同一份目录；边界也要说清，不能假装不同 Provider 能原生复制会话。
+  - 这一步到底做什么：接入 `session.fork`、消息 ID 到 Harness `seq` 的定位、其他 Provider 到 DeepSeek 的文本重建、`DSH_HOME/skills` Skill 目标、session.models/selectModel、subagent RPC，并按实际条件决定是否映射 workspace archive。
+  - 做完你能看到什么：DeepSeek 会话可以从会话或消息创建原生分支；其他 Provider 会话可以把选中范围内的文本历史带到新的 DeepSeek 会话；Skill 管理页可以同步 DeepSeek Skill，DeepSeek 会话中的 `@` 搜索只显示这一目标的 Skill。
   - 先依赖什么：3.1
   - 开始前先看：
     - `requirements.md` 需求 2、需求 6
@@ -308,21 +308,23 @@
     - `packages/session-sync-core/src/providers/deepseek-harness.ts`
     - `apps/host/src/modules/sessions/deepseek-harness/`
     - Provider catalog/capability 返回模块
-    - 相关前端 Provider 列表和能力提示（如确有需要）
-  - 这一步先不做什么：不把 Harness 的模型目录冒充 CodingNS 全局模型目录，不实现收藏、删除、Diff、Share。
+    - `apps/host/src/modules/skills/skill-target-adapter.ts`、Skill SQLite 迁移和 sidecar 启动环境
+    - Composer `@` 搜索与相关前端 Provider 列表和能力提示
+  - 这一步先不做什么：不把 Harness 的模型目录冒充 CodingNS 全局模型目录，不复制其他 Provider 的私有事件、工具、附件或权限状态，不实现收藏、删除、Diff、Share。
   - 怎么算完成：
-    1. Fork 明确只接受 Harness 已完成 turn 的语义。
-    2. 模型切换只影响 Harness 会话内部，不覆盖 CodingNS 其他 Provider 配置。
-    3. Subagent 访问经过 user/session binding 校验。
+    1. DeepSeek 会话和消息 Fork 都调用 `session.fork`；消息级 Fork 使用 Harness `seq`，继承消息数按实际标准消息数记录。
+    2. 其他 Provider 分叉到 DeepSeek 时只重建选中范围的可见用户和助手文本，锚点后的消息不能进入首条 prompt。
+    3. `deepseek-harness` Skill 目标写入 `DSH_HOME/skills`，sidecar 接收相同 `DSH_HOME`；没有 Skill 时目录按空态处理，首次同步自动创建，旧数据库升级后保留已有 Skill 绑定。
+    4. 模型切换只影响 Harness 会话内部，不覆盖 CodingNS 其他 Provider 配置；Subagent 访问经过 user/session binding 校验。
   - 怎么验证：
-    - Fork、模型切换、Subagent capability 集成测试。
-    - 如修改 user-app，执行对应组件单测和人工走查。
-  - 对应需求：`requirements.md` 需求 2、需求 6
-  - 对应设计：`design.md` §3.2.4、§3.3.5、§3.4、§8.2
+    - Fork、模型切换、Subagent capability 集成测试，以及其他 Provider 到 DeepSeek 的历史重建测试。
+    - Skill 目标适配器、SQLite Bootstrap 和 Composer mention 组件测试。
+  - 对应需求：`requirements.md` 需求 2、需求 6、需求 8
+  - 对应设计：`design.md` §3.2.4、§3.3.5、§3.4、§3.4.1、§8.2
   - 任务结果：
     - 验证结论：通过，详见文末“统一验证记录”。
-    - 实现提交 ID：92ff90da80f1282ea12b71d335e8aaf8cf5cb53c
-    - 实现提交信息：功能：spec010.5-接入DeepSeek Harness本机运行时；
+    - 实现提交 ID：92ff90da80f1282ea12b71d335e8aaf8cf5cb53c、4419c011588fc9e11c112f01ef3828b1dcc9dc10、4ba18a9263eaa5e8f9693a23fc62dc758fcc5246
+    - 实现提交信息：功能：spec010.5-接入DeepSeek Harness本机运行时；功能：spec010.5-补齐DeepSeek Harness能力配置；功能：spec010.5-完善DeepSeek Harness会话分叉；
 
 ### 3.3 补齐 Provider 可见性和错误提示
 
