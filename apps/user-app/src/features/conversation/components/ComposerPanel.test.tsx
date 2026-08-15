@@ -1075,6 +1075,85 @@ describe("ComposerPanel", () => {
     });
   });
 
+  it("按计费输入总量、未缓存输入和平均首 token 展示 DeepSeek 统计", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "deepseek-harness",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 5_887_173,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            uncachedInputTokens: {
+              value: 63_429,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            outputTokens: {
+              value: 76_908,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            llmMs: {
+              value: 620_925,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            toolMs: {
+              value: 116_585,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            ttftMs: {
+              value: 68_748,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            ttftSteps: {
+              value: 76,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            },
+            decodeMs: {
+              value: 552_177,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "88" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(container.querySelector(".composer-context-ring")!);
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.querySelector('[data-metric="inputTokens"] strong')).toHaveTextContent(
+      "5,887,173"
+    );
+    expect(tooltip).toHaveTextContent("5.9M");
+    expect(tooltip.querySelector('[data-metric="uncachedInputTokens"] strong')).toHaveTextContent(
+      "63,429"
+    );
+    expect(tooltip).toHaveTextContent("10 分 21 秒");
+    expect(tooltip).toHaveTextContent("1 分 57 秒");
+    expect(tooltip).toHaveTextContent("0.9 秒");
+    expect(tooltip).toHaveTextContent("9 分 12 秒");
+  });
+
   it("只显示 Provider 真实提供的会话统计字段，并保留明确的零值", () => {
     render(
       <ComposerPanel
@@ -1112,6 +1191,44 @@ describe("ComposerPanel", () => {
     expect(tooltip).toHaveTextContent("3");
     expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
     expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsCost"));
+  });
+
+  it.each([
+    ["原生费用", "provider-session-store", "cumulative", "provider-native"] as const,
+    ["目录估算", "derived-provider-metrics", "priced-final-events", "catalog-estimate"] as const
+  ])("会在既有统计详情中显示%s", (_label, source, semantic, kind) => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "opencode",
+          capturedAt: "2026-08-16T00:00:02.000Z",
+          metrics: {
+            costUsd: {
+              value: 0.125,
+              source,
+              semantic,
+              pricing: {
+                kind,
+                coverage: "complete",
+                ...(kind === "catalog-estimate"
+                  ? { pricingProfileId: "direct-api", priceBookVersion: "2026-08-16" }
+                  : {})
+              },
+              watermark: { kind: "source-timestamp", value: "2026-08-16T00:00:02.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(container.querySelector(".composer-context-ring")!);
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsCost"));
+    expect(tooltip.querySelector('[data-metric="costUsd"] strong')).toHaveTextContent("$0.125");
   });
 
   it("桌面摘要只显示核心指标，缓存命中率由独立圆环和详情显示", () => {

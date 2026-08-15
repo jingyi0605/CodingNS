@@ -3208,6 +3208,7 @@ function buildSessionStatsItems(sessionStats: ProviderSessionStatsDto | null): S
     label: string;
   }> = [
     { metric: "inputTokens", label: t("conversation.sessionStatsInputTokens") },
+    { metric: "uncachedInputTokens", label: t("conversation.sessionStatsUncachedInputTokens") },
     { metric: "outputTokens", label: t("conversation.sessionStatsOutputTokens") },
     { metric: "reasoningTokens", label: t("conversation.sessionStatsReasoningTokens") },
     { metric: "cacheReadTokens", label: t("conversation.sessionStatsCacheReadTokens") },
@@ -3230,6 +3231,22 @@ function buildSessionStatsItems(sessionStats: ProviderSessionStatsDto | null): S
 
     if (!value || !Number.isFinite(value.value) || value.value < 0) {
       return [];
+    }
+
+    if (item.metric === "ttftMs") {
+      const ttftSteps = sessionStats?.metrics.ttftSteps;
+
+      if (!isSessionStatValueAvailable(ttftSteps) || ttftSteps.value <= 0) {
+        return [];
+      }
+
+      return [{
+        ...item,
+        value: {
+          ...value,
+          value: value.value / ttftSteps.value
+        }
+      }];
     }
 
     return [{ ...item, value }];
@@ -3293,18 +3310,56 @@ function formatSessionStatValue(metric: SessionStatsDisplayMetric, value: number
     }).format(value);
   }
 
+  if (metric === "inputTokens") {
+    return t("conversation.sessionStatsInputTokensValue", {
+      exact: formatTokenCount(value),
+      compact: formatCompactTokenCount(value)
+    });
+  }
+
   if (metric.endsWith("Ms")) {
-    return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)} ${t("conversation.sessionStatsSeconds")}`;
+    return formatSessionDuration(value);
   }
 
   return formatTokenCount(value);
 }
 
 function formatCompactTokenCount(value: number): string {
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(value);
+}
+
+function formatSessionDuration(valueMs: number): string {
+  const totalSeconds = Math.max(0, valueMs / 1000);
+
+  if (totalSeconds < 59.5) {
+    const seconds = totalSeconds < 10
+      ? totalSeconds.toFixed(1)
+      : String(Math.round(totalSeconds));
+    return `${seconds} ${t("conversation.sessionStatsSeconds")}`;
+  }
+
+  const roundedSeconds = Math.round(totalSeconds);
+  const hours = Math.floor(roundedSeconds / 3600);
+  const minutes = Math.floor((roundedSeconds % 3600) / 60);
+  const seconds = roundedSeconds % 60;
+  const parts: string[] = [];
+
+  if (hours > 0) {
+    parts.push(`${hours} ${t("conversation.sessionStatsHours")}`);
+  }
+
+  if (minutes > 0) {
+    parts.push(`${minutes} ${t("conversation.sessionStatsMinutes")}`);
+  }
+
+  if (seconds > 0 || parts.length === 0) {
+    parts.push(`${seconds} ${t("conversation.sessionStatsSeconds")}`);
+  }
+
+  return parts.join(" ");
 }
 
 function formatSessionStatsSource(value: ProviderSessionStatValueDto["source"]): string {

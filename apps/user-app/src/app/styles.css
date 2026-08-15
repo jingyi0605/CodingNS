@@ -8532,6 +8532,10 @@ textarea:focus-visible {
   color: var(--text-primary);
 }
 
+.composer-session-stats-row[data-metric="inputTokens"] strong {
+  max-width: 100%;
+}
+
 .composer-session-stats-row[data-metric="inputTokens"] strong,
 .composer-session-stats-row[data-metric="turns"] strong,
 .composer-session-stats-row[data-metric="steps"] strong {
@@ -8543,10 +8547,15 @@ textarea:focus-visible {
   color: #14b8a6;
 }
 
-.composer-session-stats-row[data-metric="reasoningTokens"] strong,
-.composer-session-stats-row[data-metric="llmMs"] strong,
-.composer-session-stats-row[data-metric="decodeMs"] strong {
+.composer-session-stats-row[data-metric="reasoningTokens"] strong {
   color: #d97706;
+}
+
+.composer-session-stats-row[data-metric="llmMs"] strong,
+.composer-session-stats-row[data-metric="toolMs"] strong,
+.composer-session-stats-row[data-metric="ttftMs"] strong,
+.composer-session-stats-row[data-metric="decodeMs"] strong {
+  color: var(--text-primary);
 }
 
 .composer-session-stats-row[data-metric="cacheReadTokens"] strong,

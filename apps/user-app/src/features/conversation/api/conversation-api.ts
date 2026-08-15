@@ -1570,6 +1570,7 @@ export interface ContextUsageDto {
 
 export type ProviderSessionStatMetricDto =
   | "inputTokens"
+  | "uncachedInputTokens"
   | "outputTokens"
   | "reasoningTokens"
   | "cacheReadTokens"
@@ -1600,7 +1601,18 @@ export interface ProviderSessionStatValueDto {
     | "provider-session-store"
     | "provider-history-log"
     | "derived-provider-metrics";
-  semantic: "cumulative" | "sum-of-final-events" | "latest-snapshot" | "derived-ratio";
+  semantic:
+    | "cumulative"
+    | "sum-of-final-events"
+    | "latest-snapshot"
+    | "derived-ratio"
+    | "priced-final-events";
+  pricing?: {
+    kind: "provider-native" | "catalog-estimate";
+    coverage: "complete";
+    pricingProfileId?: string;
+    priceBookVersion?: string;
+  };
   watermark: {
     kind: "source-sequence" | "source-timestamp" | "captured-at";
     value: string;
