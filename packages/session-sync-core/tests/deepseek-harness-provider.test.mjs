@@ -491,7 +491,7 @@ describe("DeepSeekHarnessAdapter", () => {
                   uncachedInputTokens: 1000,
                   outputTokens: 80,
                   cacheReadTokens: 200,
-                  cacheWriteTokens: 0
+                  cacheWriteTokens: 50
                 }
               }
             }
@@ -510,6 +510,12 @@ describe("DeepSeekHarnessAdapter", () => {
       watermark: { kind: "source-sequence", value: "88" }
     });
     expect(stats?.metrics.toolMs?.value).toBe(0);
-    expect(stats?.metrics.cacheWriteTokens?.value).toBe(0);
+    expect(stats?.metrics.cacheWriteTokens?.value).toBe(50);
+    expect(stats?.metrics.cacheHitRate).toMatchObject({
+      value: 16,
+      source: "derived-provider-metrics",
+      semantic: "derived-ratio",
+      watermark: { kind: "source-sequence", value: "88" }
+    });
   });
 });

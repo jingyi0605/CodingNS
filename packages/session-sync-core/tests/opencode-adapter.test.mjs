@@ -60,7 +60,7 @@ test("OpenCodeAdapter 读取 session 表的原生累计统计", async () => {
        SET cost = ?, tokens_input = ?, tokens_output = ?, tokens_reasoning = ?,
            tokens_cache_read = ?, tokens_cache_write = ?
        WHERE id = ?`
-    ).run(0.125, 1200, 300, 45, 80, 0, "ses_demo");
+    ).run(0.125, 1200, 300, 45, 80, 20, "ses_demo");
     db.close();
 
     const stats = await new OpenCodeAdapter({ dbPath: fixture.dbPath }).readSessionStats(
@@ -70,7 +70,9 @@ test("OpenCodeAdapter 读取 session 表的原生累计统计", async () => {
 
     assert.equal(stats?.metrics.costUsd?.value, 0.125);
     assert.equal(stats?.metrics.inputTokens?.value, 1200);
-    assert.equal(stats?.metrics.cacheWriteTokens?.value, 0);
+    assert.equal(stats?.metrics.cacheWriteTokens?.value, 20);
+    assert.ok(Math.abs((stats?.metrics.cacheHitRate?.value ?? 0) - 80 / 1300 * 100) < 0.000001);
+    assert.equal(stats?.metrics.cacheHitRate?.source, "derived-provider-metrics");
     assert.equal(stats?.metrics.outputTokens?.semantic, "cumulative");
     assert.equal(stats?.metrics.outputTokens?.source, "provider-session-store");
   } finally {

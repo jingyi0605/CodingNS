@@ -897,7 +897,7 @@ test("CodexAdapter 将 total_token_usage 作为最新累计快照，不重复累
           payload: {
             type: "token_count",
             info: {
-              total_token_usage: { input_tokens: 400, output_tokens: 40 }
+              total_token_usage: { input_tokens: 400, cached_input_tokens: 320, output_tokens: 40 }
             }
           }
         }),
@@ -907,7 +907,7 @@ test("CodexAdapter 将 total_token_usage 作为最新累计快照，不重复累
           payload: {
             type: "token_count",
             info: {
-              total_token_usage: { input_tokens: 400, output_tokens: 40 }
+              total_token_usage: { input_tokens: 400, cached_input_tokens: 320, output_tokens: 40 }
             }
           }
         }),
@@ -917,7 +917,7 @@ test("CodexAdapter 将 total_token_usage 作为最新累计快照，不重复累
           payload: {
             type: "token_count",
             info: {
-              total_token_usage: { input_tokens: 900, output_tokens: 90 }
+              total_token_usage: { input_tokens: 900, cached_input_tokens: 720, output_tokens: 90 }
             }
           }
         })
@@ -929,8 +929,42 @@ test("CodexAdapter 将 total_token_usage 作为最新累计快照，不重复累
 
     assert.equal(stats?.metrics.inputTokens?.value, 900);
     assert.equal(stats?.metrics.outputTokens?.value, 90);
+    assert.equal(stats?.metrics.cacheHitRate?.value, 80);
     assert.equal(stats?.metrics.inputTokens?.semantic, "latest-snapshot");
     assert.equal(stats?.metrics.inputTokens?.watermark.value, "2026-03-26T00:00:02.000Z");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 在 cache_write_tokens 非零时不猜测缓存命中率", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-session-stats-cache-write-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      JSON.stringify({
+        timestamp: "2026-03-26T00:00:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 800,
+              cache_write_tokens: 10,
+              output_tokens: 100
+            }
+          }
+        }
+      }),
+      "utf8"
+    );
+
+    const stats = await new CodexAdapter({ homeDir: tempDir }).readSessionStats("session-1", sessionFile);
+
+    assert.equal(stats?.metrics.cacheHitRate, undefined);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

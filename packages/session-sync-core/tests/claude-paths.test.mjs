@@ -1164,7 +1164,10 @@ test("ClaudeCodeAdapter 会按消息 ID 折叠 progress 与最终 usage", async 
 
     assert.equal(stats?.metrics.inputTokens?.value, 25);
     assert.equal(stats?.metrics.outputTokens?.value, 7);
+    assert.equal(stats?.metrics.cacheWriteTokens?.value, 2);
     assert.equal(stats?.metrics.cacheReadTokens?.value, 4);
+    assert.ok(Math.abs((stats?.metrics.cacheHitRate?.value ?? 0) - 4 / 31 * 100) < 0.000001);
+    assert.equal(stats?.metrics.cacheHitRate?.source, "derived-provider-metrics");
     assert.equal(stats?.metrics.inputTokens?.semantic, "sum-of-final-events");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

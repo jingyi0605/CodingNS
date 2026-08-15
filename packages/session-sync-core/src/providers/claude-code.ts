@@ -37,6 +37,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { addDerivedCacheHitRate } from "../session-stats.js";
 import {
   appendJsonLine,
   createRawRef,
@@ -786,6 +787,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       "cache_read_input_tokens"
     );
     addClaudeUsageMetric(metrics, "outputTokens", [...snapshots.values()], "output_tokens");
+    // Anthropic usage 的 input、cache creation、cache read 是互不重叠的输入桶。
+    addDerivedCacheHitRate(metrics, {
+      denominator: ["inputTokens", "cacheReadTokens", "cacheWriteTokens"]
+    });
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }

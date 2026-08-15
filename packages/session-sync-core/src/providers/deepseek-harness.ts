@@ -21,6 +21,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { addDerivedCacheHitRate } from "../session-stats.js";
 import { deleteDeepSeekHarnessSessionFiles } from "./deepseek-harness-session-store.js";
 import { ensureText, extractTextBlocks, messageIdFromStableKey, nextTimestamp } from "./utils.js";
 
@@ -212,6 +213,10 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     addHarnessProjectionMetric(metrics, "outputTokens", tokenUsage.outputTokens, watermark);
     addHarnessProjectionMetric(metrics, "cacheReadTokens", tokenUsage.cacheReadTokens, watermark);
     addHarnessProjectionMetric(metrics, "cacheWriteTokens", tokenUsage.cacheWriteTokens, watermark);
+    // Harness 明确把三类 token 作为互不重叠的计费输入桶。
+    addDerivedCacheHitRate(metrics, {
+      denominator: ["inputTokens", "cacheReadTokens", "cacheWriteTokens"]
+    });
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }

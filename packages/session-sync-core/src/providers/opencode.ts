@@ -26,6 +26,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { addDerivedCacheHitRate } from "../session-stats.js";
 import {
   ensureText,
   nextTimestamp,
@@ -346,6 +347,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
     addOpenCodeSessionMetric(metrics, "reasoningTokens", row.tokens_reasoning, watermark);
     addOpenCodeSessionMetric(metrics, "cacheReadTokens", row.tokens_cache_read, watermark);
     addOpenCodeSessionMetric(metrics, "cacheWriteTokens", row.tokens_cache_write, watermark);
+    // OpenCode session 表把 input、cache read、cache write 分别累计，三项共同构成输入总量。
+    addDerivedCacheHitRate(metrics, {
+      denominator: ["inputTokens", "cacheReadTokens", "cacheWriteTokens"]
+    });
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }

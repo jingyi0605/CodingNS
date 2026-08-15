@@ -105,6 +105,7 @@ export type ProviderSessionStatMetric =
   | "reasoningTokens"
   | "cacheReadTokens"
   | "cacheWriteTokens"
+  | "cacheHitRate"
   | "toolTokens"
   | "totalTokens"
   | "turns"
@@ -120,13 +121,15 @@ export type ProviderSessionStatMetric =
 export type ProviderSessionStatSource =
   | "provider-projection"
   | "provider-session-store"
-  | "provider-history-log";
+  | "provider-history-log"
+  | "derived-provider-metrics";
 
 /** 说明当前数字是原生累计、最终事件求和，还是一条累计快照。 */
 export type ProviderSessionStatSemantic =
   | "cumulative"
   | "sum-of-final-events"
-  | "latest-snapshot";
+  | "latest-snapshot"
+  | "derived-ratio";
 
 /**
  * 指标所覆盖的原始数据水位。

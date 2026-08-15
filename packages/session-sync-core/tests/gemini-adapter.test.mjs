@@ -144,6 +144,8 @@ test("GeminiAdapter 对重写的同一消息 usage 采用最后一次值", async
     assert.equal(stats?.metrics.inputTokens?.value, 20);
     assert.equal(stats?.metrics.totalTokens?.value, 34);
     assert.equal(stats?.metrics.toolTokens?.value, 5);
+    assert.equal(stats?.metrics.cacheHitRate?.value, 15);
+    assert.equal(stats?.metrics.cacheHitRate?.source, "derived-provider-metrics");
     assert.equal(stats?.metrics.inputTokens?.semantic, "sum-of-final-events");
   } finally {
     rmSync(rootDir, { recursive: true, force: true });

@@ -1574,6 +1574,7 @@ export type ProviderSessionStatMetricDto =
   | "reasoningTokens"
   | "cacheReadTokens"
   | "cacheWriteTokens"
+  | "cacheHitRate"
   | "toolTokens"
   | "totalTokens"
   | "turns"
@@ -1594,8 +1595,12 @@ export interface ProviderSessionStatsDto {
 
 export interface ProviderSessionStatValueDto {
   value: number;
-  source: "provider-projection" | "provider-session-store" | "provider-history-log";
-  semantic: "cumulative" | "sum-of-final-events" | "latest-snapshot";
+  source:
+    | "provider-projection"
+    | "provider-session-store"
+    | "provider-history-log"
+    | "derived-provider-metrics";
+  semantic: "cumulative" | "sum-of-final-events" | "latest-snapshot" | "derived-ratio";
   watermark: {
     kind: "source-sequence" | "source-timestamp" | "captured-at";
     value: string;

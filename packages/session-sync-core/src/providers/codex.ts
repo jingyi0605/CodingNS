@@ -25,6 +25,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { addDerivedCacheHitRate } from "../session-stats.js";
 import {
   appendJsonLine,
   createRawRef,
@@ -1308,6 +1309,12 @@ export class CodexAdapter implements ProviderAdapter {
     addCodexSessionMetric(metrics, "cacheReadTokens", latestTotal.cached_input_tokens, watermark);
     addCodexSessionMetric(metrics, "cacheWriteTokens", latestTotal.cache_write_tokens, watermark);
     addCodexSessionMetric(metrics, "totalTokens", latestTotal.total_tokens, watermark);
+    // Codex 的 cached_input_tokens 是 input_tokens 的子集，不应再次加入分母。
+    // cache_write_tokens 的关系尚无稳定协议；出现正值时不输出猜测出来的比例。
+    addDerivedCacheHitRate(metrics, {
+      denominator: ["inputTokens"],
+      rejectIfPositive: ["cacheWriteTokens"]
+    });
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt, metrics }

@@ -23,6 +23,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { addDerivedCacheHitRate } from "../session-stats.js";
 import { buildApplyPatchFromStructuredFileTool } from "../patch-builder.js";
 import {
   ensureText,
@@ -486,6 +487,8 @@ export class GeminiAdapter implements ProviderAdapter {
     addGeminiUsageMetric(metrics, "reasoningTokens", snapshots, ["thoughts", "thinking", "reasoning"]);
     addGeminiUsageMetric(metrics, "toolTokens", snapshots, ["tool", "toolTokens", "tool_tokens"]);
     addGeminiUsageMetric(metrics, "totalTokens", snapshots, ["total", "totalTokens", "total_tokens"]);
+    // Gemini promptTokenCount 包含 cachedContentTokenCount，缓存读取是输入的子集。
+    addDerivedCacheHitRate(metrics, { denominator: ["inputTokens"] });
 
     return Object.keys(metrics).length > 0
       ? { provider: this.providerId, capturedAt: nextTimestamp(), metrics }

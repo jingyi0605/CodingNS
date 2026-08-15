@@ -116,3 +116,36 @@ test("LegnaCodeAdapter 会优先发现工作区 .legna/sessions 下的会话", a
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("LegnaCodeAdapter 复用 Claude 的缓存命中率口径", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-legna-session-stats-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-25T12:00:00.000Z",
+        message: {
+          id: "assistant-1",
+          usage: {
+            input_tokens: 40,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 40,
+            output_tokens: 5
+          }
+        }
+      }),
+      "utf8"
+    );
+
+    const adapter = new LegnaCodeAdapter({ homeDir: join(tempDir, ".legna-home") });
+    const stats = await adapter.readSessionStats("session-1", sessionFile);
+
+    assert.equal(stats?.provider, "legna-code");
+    assert.equal(stats?.metrics.cacheHitRate?.value, 40);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
