@@ -75,3 +75,61 @@
   - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx` 与 `apps/user-app/src/app/styles.css`。
   - 明确不做：不修改任何 Provider 的缓存率计算、上下文占用计算或详情弹层内容。
   - 最小验证：ComposerPanel 定向测试 `60/60` 通过，user-app build 通过，`git diff --check` 通过。
+
+## 阶段 7：拆分圆环并重排统计详情
+
+- [x] 7.1 用独立圆环和可视化详情表达统计
+  - 状态：COMPLETED
+  - 这一步做了什么：把缓存率从上下文圆环内层拆成右侧独立圆环；两个圆环都能打开同一份详情。详情改为上下文进度条、缓存率刻度和按类型着色的指标网格。
+  - 做完能看到什么：上下文和缓存率不再挤在一个圆环里；缓存率有 80、90 阈值刻度；重复的数据来源、语义和更新时间不再在每一行重复显示。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx`、`apps/user-app/src/app/styles.css` 与 i18n。
+  - 明确不做：不修改 Provider 统计读取、缓存率算法、上下文计算或移动端单入口规则。
+  - 最小验证：ComposerPanel 定向测试 `60/60` 通过，user-app build 通过，`git diff --check` 通过。
+
+## 阶段 8：细化缓存率刻度和指标层级
+
+- [x] 8.1 补齐四档缓存率颜色并移除冗余标签
+  - 状态：COMPLETED
+  - 这一步做了什么：缓存率刻度改为红、黄、浅绿、深绿四档渐变，增加 40% 阈值；圆环数字改为居中；默认 Token 分组不再显示标题和来源标签。
+  - 做完能看到什么：低缓存率会明确显示红色，40/80/90/100 刻度可读；两个圆环的百分比在视觉中心；会话统计首先呈现输入、输出、推理等数字。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx`、`apps/user-app/src/app/styles.css` 与 Spec。
+  - 明确不做：不修改 Provider 统计读取、缓存率算法、上下文计算或移动端单入口规则。
+  - 最小验证：ComposerPanel 定向测试 `62/62` 通过，user-app build 通过，`git diff --check` 通过。
+
+## 阶段 9：明确缓存率色轴读数
+
+- [x] 9.1 使用连续渐变并标出当前缓存率
+  - 状态：COMPLETED
+  - 这一步做了什么：将原本接近硬切换的四档色轴改为连续渐变，并在缓存率的准确位置加入随当前色档变化、带轮廓的针形指示器。
+  - 做完能看到什么：色轴从红、黄、浅绿到深绿自然过渡，用户可直接看出当前数值落在哪个位置，指针颜色也与该档位一致。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx`、`apps/user-app/src/app/styles.css` 与 Spec。
+  - 明确不做：不修改 Provider 统计读取、缓存率算法、上下文计算或移动端单入口规则。
+  - 最小验证：ComposerPanel 定向测试 `62/62` 通过，user-app build 通过，`git diff --check` 通过。
+
+## 阶段 10：接入 Harness 原生上下文占用
+
+- [x] 10.1 读取 contextPressure 并接入现有圆环
+  - 状态：COMPLETED
+  - 这一步做了什么：Harness adapter 从 history 尾页 projection 读取 `contextPressure.projectedTokens` 和 `contextWindow`，直接交给既有 `contextUsage` runtime 通路；当前输入缓存桶没有原生拆分时保持缺失。
+  - 做完能看到什么：具备原生压力和窗口上限的 Harness 会话会显示上下文圆环、进度条、已用量和上限；没有这两个字段的会话继续隐藏，缓存明细也不会出现伪造的 0。
+  - 主要修改：`packages/session-sync-core/src/providers/deepseek-harness.ts`、上下文 DTO、Composer 与对应测试。
+  - 明确不做：不从累计 token、文本或旧会话状态反推当前请求的缓存桶，不改其他 Provider 的上下文计算。
+  - 最小验证：核心包构建通过；Harness adapter 测试 `19/19`、ComposerPanel 定向测试 `63/63`、Host 类型检查、user-app build 和 `git diff --check` 均通过。
+
+## 阶段 11：压缩统计详情并按视口自适应展开
+
+- [x] 11.1 移除冗余上下文标签和统计组标题
+  - 状态：COMPLETED
+  - 这一步做了什么：删除上下文占用中的来源、估算和缓存明细标签；把原本的 Token、会话活动、耗时、费用分组收敛为一个固定顺序的指标列表，只保留“会话统计”总标题。
+  - 做完能看到什么：详情不再显示“会话活动”“耗时”等内部标题，指标以连续双列键值行呈现，缺失字段仍保持隐藏。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx`、i18n 与 `apps/user-app/src/app/styles.css`。
+  - 明确不做：不改变 Provider 统计、缓存命中率算法或 Harness 上下文数据的读取语义。
+  - 最小验证：ComposerPanel 定向测试覆盖无来源标签和无分组标题场景。
+
+- [x] 11.2 按入口可用高度定位详情弹层
+  - 状态：COMPLETED
+  - 这一步做了什么：弹层根据入口上方和下方的真实可用高度选择位置，并将该高度写入 `maxHeight`；上方定位时以入口为下边界向上扩展。屏幕本身不足时保留可滚动访问。
+  - 做完能看到什么：常规桌面窗口不再被固定 `520px` 高度裁切，窗口过矮时内容仍能滚动查看。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`ComposerPanel.test.tsx` 与 `apps/user-app/src/app/styles.css`。
+  - 明确不做：不启动开发服务器，不新增页面、后台任务或持久化数据。
+  - 最小验证：ComposerPanel 定向测试 `64/64`、`pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`、`pnpm --dir apps/user-app exec vite build` 和 `git diff --check` 通过；未启动开发服务器或进行浏览器截图验证。
