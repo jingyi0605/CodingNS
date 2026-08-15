@@ -1,5 +1,15 @@
 import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync
+} from "node:fs";
 import crypto from "node:crypto";
 
 import type {
@@ -10,6 +20,7 @@ import type {
   HistoryDirection,
   HistoryPage,
   NormalizedMessage,
+  SessionHistoryDeltaReadResult,
   ProviderAdapter,
   ProviderCapabilities,
   ProviderDiscoveryDiagnostic,
@@ -37,6 +48,7 @@ import {
   messageIdFromStableKey,
   nextTimestamp,
   normalizeWorkspacePath,
+  parseJsonLinesFromText,
   readFirstNonEmptyLine,
   readJsonLines,
   readTrailingJsonLines,
@@ -59,6 +71,9 @@ interface CodexAdapterOptions {
 const CODEX_DISCOVERY_RECENT_FILE_LIMIT = 24;
 const CODEX_DISCOVERY_RECENT_DIRECTORY_LIMIT = 12;
 const CODEX_DISCOVERY_ARCHIVED_FILE_LIMIT = 8;
+const CODEX_INCREMENTAL_HISTORY_MAX_READ_BYTES = 2 * 1024 * 1024;
+const CODEX_INCREMENTAL_HISTORY_TAIL_MAX_BYTES = 128 * 1024;
+const CODEX_INCREMENTAL_HISTORY_MAX_PENDING_BYTES = 512 * 1024;
 
 export interface CodexForkTransport {
   initialize(): Promise<void>;
@@ -105,7 +120,47 @@ interface CodexHistoryCacheEntry {
   providerSessionId: string;
   mtimeMs: number;
   size: number;
+  fileIdentity: string;
   messages: NormalizedMessage[];
+  entries: CodexMessageEntry[];
+  tailRecords: RawJsonLine[];
+  tailWindowBytes: number;
+  byteOffset: number;
+  nextLineNumber: number;
+  pendingBytes: Buffer;
+  canIncrementallyAppend: boolean;
+  parsedRecordCount: number;
+  parserState: CodexMessageParserState;
+}
+
+interface CodexMessageEntry {
+  source: CodexMessageSource;
+  dedupeKey: string;
+  lineNumber: number;
+  message: NormalizedMessage;
+}
+
+interface CodexMessageParseResult {
+  entries: CodexMessageEntry[];
+  changedMessageIds: Set<string>;
+  changedEntryIndexes: Set<number>;
+  addedEntryIndexes: number[];
+  parserState: CodexMessageParserState;
+}
+
+interface CodexMessageParserState {
+  messageIndexesByKey: Map<string, number[]>;
+  toolNameById: Map<string, string>;
+  toolInputById: Map<string, string>;
+  toolEntryIndexById: Map<string, number>;
+}
+
+interface CodexAppendedRecordsReadResult {
+  records: RawJsonLine[];
+  byteOffset: number;
+  nextLineNumber: number;
+  pendingBytes: Buffer;
+  bytesRead: number;
 }
 
 interface CodexSessionSummaryCacheEntry {
@@ -562,6 +617,191 @@ export class CodexAdapter implements ProviderAdapter {
 
     const messages = this.getParsedMessages(resolvedStoreRef, providerSessionId);
     return sliceHistory(messages, cursor, limit, direction);
+  }
+
+  async readSessionHistoryDelta(
+    providerSessionId: string,
+    rawStoreRef: string,
+    cursor: string | null,
+    limit: number,
+    direction: HistoryDirection = "forward"
+  ): Promise<SessionHistoryDeltaReadResult> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+
+    if (!existsSync(resolvedStoreRef)) {
+      return {
+        messages: [],
+        cursor,
+        nextCursor: null,
+        total: 0,
+        mode: "reset_required",
+        bytesRead: 0,
+        recordsParsed: 0,
+        tailWindowBytes: 0
+      };
+    }
+
+    const stats = statSync(resolvedStoreRef);
+    const cached = this.historyCache.get(resolvedStoreRef);
+
+    if (!cached || cached.providerSessionId !== providerSessionId) {
+      const rebuilt = this.getParsedHistory(resolvedStoreRef, providerSessionId);
+      const page = sliceHistory(rebuilt.messages, cursor, limit, direction);
+
+      return {
+        ...page,
+        mode: "seed",
+        bytesRead: stats.size,
+        recordsParsed: rebuilt.parsedRecordCount,
+        tailWindowBytes: 0
+      };
+    }
+
+    if (cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      this.touchHistoryCache(resolvedStoreRef, cached);
+      return buildCodexIncrementalHistoryPage({
+        messages: cached.messages,
+        changedMessageIds: new Set(),
+        mode: "unchanged",
+        bytesRead: 0,
+        recordsParsed: 0,
+        tailWindowBytes: 0
+      });
+    }
+
+    const appendedBytes = stats.size - cached.byteOffset;
+    const requiresReset =
+      buildCodexFileIdentity(stats) !== cached.fileIdentity
+      || stats.size < cached.size
+      || (stats.size === cached.size && stats.mtimeMs !== cached.mtimeMs)
+      || appendedBytes < 0
+      || !cached.canIncrementallyAppend
+      || appendedBytes > CODEX_INCREMENTAL_HISTORY_MAX_READ_BYTES;
+
+    if (requiresReset) {
+      const rebuilt = this.rebuildParsedHistory(resolvedStoreRef, providerSessionId);
+      const page = sliceHistory(rebuilt.messages, cursor, limit, direction);
+
+      return {
+        ...page,
+        mode: "reset_required",
+        bytesRead: stats.size,
+        recordsParsed: rebuilt.parsedRecordCount,
+        tailWindowBytes: 0
+      };
+    }
+
+    const appended = readCodexAppendedRecords(
+      resolvedStoreRef,
+      cached.byteOffset,
+      cached.nextLineNumber,
+      cached.pendingBytes
+    );
+
+    if (
+      appended.pendingBytes.length > CODEX_INCREMENTAL_HISTORY_MAX_PENDING_BYTES
+      || requiresCodexIncrementalRebuild(appended.records)
+    ) {
+      const rebuilt = this.rebuildParsedHistory(resolvedStoreRef, providerSessionId);
+      const page = sliceHistory(rebuilt.messages, cursor, limit, direction);
+
+      return {
+        ...page,
+        mode: "reset_required",
+        bytesRead: stats.size,
+        recordsParsed: rebuilt.parsedRecordCount,
+        tailWindowBytes: 0
+      };
+    }
+
+    if (appended.records.length === 0) {
+      const nextCache: CodexHistoryCacheEntry = {
+        ...cached,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        byteOffset: appended.byteOffset,
+        nextLineNumber: appended.nextLineNumber,
+        pendingBytes: appended.pendingBytes,
+        canIncrementallyAppend:
+          appended.pendingBytes.length <= CODEX_INCREMENTAL_HISTORY_MAX_PENDING_BYTES
+      };
+      this.touchHistoryCache(resolvedStoreRef, nextCache);
+      return buildCodexIncrementalHistoryPage({
+        messages: nextCache.messages,
+        changedMessageIds: new Set(),
+        mode: "unchanged",
+        bytesRead: appended.bytesRead,
+        recordsParsed: 0,
+        tailWindowBytes: 0
+      });
+    }
+
+    const replayRecords = trimCodexHistoryTailRecords([
+      ...cached.tailRecords,
+      ...appended.records
+    ]);
+    const parsed = this.parseMessagesFromEntriesResult(
+      resolvedStoreRef,
+      replayRecords,
+      providerSessionId,
+      {
+        incrementalState: {
+          entries: cached.entries,
+          parserState: cached.parserState
+        },
+        applyGlobalFilters: false
+      }
+    );
+    const nextEntries = parsed.entries;
+    const nextMessages = cached.messages;
+
+    for (const entryIndex of parsed.changedEntryIndexes) {
+      const entry = nextEntries[entryIndex];
+
+      if (entry) {
+        nextMessages[entryIndex] = entry.message;
+      }
+    }
+
+    for (const entryIndex of parsed.addedEntryIndexes) {
+      const entry = nextEntries[entryIndex];
+
+      if (entry) {
+        nextMessages[entryIndex] = entry.message;
+      }
+    }
+
+    nextMessages.length = nextEntries.length;
+    const nextTailRecords = trimCodexHistoryTailRecords([
+      ...cached.tailRecords,
+      ...appended.records
+    ]);
+    const nextCache: CodexHistoryCacheEntry = {
+      ...cached,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      messages: nextMessages,
+      entries: nextEntries,
+      tailRecords: nextTailRecords,
+      tailWindowBytes: measureCodexHistoryRecords(nextTailRecords),
+      byteOffset: appended.byteOffset,
+      nextLineNumber: appended.nextLineNumber,
+      pendingBytes: appended.pendingBytes,
+      canIncrementallyAppend:
+        appended.pendingBytes.length <= CODEX_INCREMENTAL_HISTORY_MAX_PENDING_BYTES,
+      parsedRecordCount: cached.parsedRecordCount + appended.records.length,
+      parserState: parsed.parserState
+    };
+    this.touchHistoryCache(resolvedStoreRef, nextCache);
+
+    return buildCodexIncrementalHistoryPage({
+      messages: nextCache.messages,
+      changedMessageIds: parsed.changedMessageIds,
+      mode: cached.tailRecords.length > 0 ? "tail_reconcile" : "append",
+      bytesRead: appended.bytesRead,
+      recordsParsed: replayRecords.length,
+      tailWindowBytes: measureCodexHistoryRecords(cached.tailRecords)
+    });
   }
 
   async readRecentSessionHistory(
@@ -1952,6 +2192,14 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   private getParsedMessages(filePath: string, providerSessionId: string): NormalizedMessage[] {
+    return this.getParsedHistory(filePath, providerSessionId).messages;
+  }
+
+  /**
+   * 全量读取只允许发生在首个 checkpoint 或明确恢复场景。
+   * 普通订阅追加必须走 readSessionHistoryDelta 的 byteOffset 路径。
+   */
+  private getParsedHistory(filePath: string, providerSessionId: string): CodexHistoryCacheEntry {
     const stats = statSync(filePath);
     const cached = this.historyCache.get(filePath);
 
@@ -1960,21 +2208,44 @@ export class CodexAdapter implements ProviderAdapter {
       && cached.providerSessionId === providerSessionId
       && cached.mtimeMs === stats.mtimeMs
       && cached.size === stats.size
+      && cached.fileIdentity === buildCodexFileIdentity(stats)
     ) {
       this.touchHistoryCache(filePath, cached);
-      return cached.messages;
+      return cached;
     }
 
-    const records = readJsonLines(filePath);
-    const messages = this.parseMessagesFromEntries(filePath, records, providerSessionId);
-    this.touchHistoryCache(filePath, {
+    const initial = readCodexHistorySeedRecords(filePath);
+    const parsed = this.parseMessagesFromEntriesResult(
+      filePath,
+      initial.records,
+      providerSessionId
+    );
+    const tailRecords = trimCodexHistoryTailRecords(initial.records);
+    const entry: CodexHistoryCacheEntry = {
       filePath,
       providerSessionId,
       mtimeMs: stats.mtimeMs,
       size: stats.size,
-      messages
-    });
-    return messages;
+      fileIdentity: buildCodexFileIdentity(stats),
+      messages: parsed.entries.map((item) => item.message),
+      entries: parsed.entries,
+      tailRecords,
+      tailWindowBytes: measureCodexHistoryRecords(tailRecords),
+      byteOffset: initial.byteOffset,
+      nextLineNumber: initial.nextLineNumber,
+      pendingBytes: initial.pendingBytes,
+      canIncrementallyAppend:
+        initial.pendingBytes.length <= CODEX_INCREMENTAL_HISTORY_MAX_PENDING_BYTES,
+      parsedRecordCount: initial.records.length,
+      parserState: parsed.parserState
+    };
+    this.touchHistoryCache(filePath, entry);
+    return entry;
+  }
+
+  private rebuildParsedHistory(filePath: string, providerSessionId: string): CodexHistoryCacheEntry {
+    this.historyCache.delete(filePath);
+    return this.getParsedHistory(filePath, providerSessionId);
   }
 
   private touchHistoryCache(filePath: string, entry: CodexHistoryCacheEntry): void {
@@ -2482,19 +2753,71 @@ export class CodexAdapter implements ProviderAdapter {
     records: Array<Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>,
     providerSessionId: string
   ): NormalizedMessage[] {
-    const effectiveRecords = filterRolledBackCodexRecords(
-      filterInheritedCodexSubagentRecords(records, providerSessionId)
-    );
-    const messages: Array<{
-      source: CodexMessageSource;
-      dedupeKey: string;
-      message: NormalizedMessage;
-    }> = [];
-    const messageIndexesByKey = new Map<string, number[]>();
-    const toolNameById = new Map<string, string>();
-    const toolInputById = new Map<string, string>();
+    return this.parseMessagesFromEntriesResult(filePath, records, providerSessionId).entries
+      .map((entry) => entry.message);
+  }
+
+  private parseMessagesFromEntriesResult(
+    filePath: string,
+    records: Array<Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>,
+    providerSessionId: string,
+    options: {
+      initialEntries?: CodexMessageEntry[];
+      incrementalState?: {
+        entries: CodexMessageEntry[];
+        parserState: CodexMessageParserState;
+      };
+      applyGlobalFilters?: boolean;
+    } = {}
+  ): CodexMessageParseResult {
+    const effectiveRecords =
+      options.applyGlobalFilters === false
+        ? records
+        : filterRolledBackCodexRecords(
+          filterInheritedCodexSubagentRecords(records, providerSessionId)
+        );
+    const incrementalState = options.incrementalState;
+    const messages = incrementalState
+      ? incrementalState.entries
+      : (options.initialEntries ?? []).map((entry) => ({
+        ...entry,
+        message: { ...entry.message }
+      }));
+    const initialEntryCount = messages.length;
+    const parserState = incrementalState?.parserState ?? createCodexMessageParserState();
+    const {
+      messageIndexesByKey,
+      toolNameById,
+      toolInputById,
+      toolEntryIndexById
+    } = parserState;
     const commandPatchByCallId = collectCodexCommandPatchesByCallId(effectiveRecords, filePath);
-    let sequence = 0;
+    const changedMessageIds = new Set<string>();
+    const changedEntryIndexes = new Set<number>();
+    const addedEntryIndexes: number[] = [];
+    let sequence = messages.length;
+    let currentLineNumber = 0;
+
+    if (!incrementalState) {
+      for (let index = 0; index < messages.length; index += 1) {
+        const entry = messages[index];
+
+        if (!entry) {
+          continue;
+        }
+
+        const candidateIndexes = messageIndexesByKey.get(entry.dedupeKey) ?? [];
+        messageIndexesByKey.set(entry.dedupeKey, [...candidateIndexes, index]);
+
+        if (entry.message.kind !== "tool_call" || !entry.message.toolCall) {
+          continue;
+        }
+
+        toolNameById.set(entry.message.toolCall.callId, entry.message.toolCall.name);
+        toolInputById.set(entry.message.toolCall.callId, entry.message.toolCall.input);
+        toolEntryIndexById.set(entry.message.toolCall.callId, index);
+      }
+    }
 
     const pushMessage = (
       source: CodexMessageSource,
@@ -2507,6 +2830,10 @@ export class CodexAdapter implements ProviderAdapter {
         const existingIndex = candidateIndexes[index];
         const existing = messages[existingIndex];
 
+        if (!existing) {
+          continue;
+        }
+
         if (!isEquivalentCodexMessage(existing.message, message)) {
           continue;
         }
@@ -2517,40 +2844,121 @@ export class CodexAdapter implements ProviderAdapter {
           message,
           source
         );
+        const mergedMessage =
+          existingIndex < initialEntryCount
+            ? {
+                ...mergedEquivalent.message,
+                // 尾部窗口外的旧消息已经交给客户端。等价 response_item 晚到时，
+                // 不能把它的 key 换掉，否则 delta 协议没有删除旧 key 的能力。
+                messageId: existing.message.messageId,
+                rawRef: existing.message.rawRef
+              }
+            : mergedEquivalent.message;
 
         if (
           mergedEquivalent.source !== existing.source
-          || mergedEquivalent.message.messageId !== existing.message.messageId
-          || mergedEquivalent.message.rawRef !== existing.message.rawRef
-          || mergedEquivalent.message.timestamp !== existing.message.timestamp
-          || JSON.stringify(mergedEquivalent.message.toolCall) !== JSON.stringify(existing.message.toolCall)
+          || mergedMessage.messageId !== existing.message.messageId
+          || mergedMessage.rawRef !== existing.message.rawRef
+          || mergedMessage.timestamp !== existing.message.timestamp
+          || JSON.stringify(mergedMessage.toolCall) !== JSON.stringify(existing.message.toolCall)
         ) {
-          messages[existingIndex] = {
+          const nextEntry: CodexMessageEntry = {
             source: mergedEquivalent.source,
-            dedupeKey: buildCodexMessageDedupeKey(mergedEquivalent.message),
+            dedupeKey: buildCodexMessageDedupeKey(mergedMessage),
+            lineNumber: currentLineNumber,
             message: {
-              ...mergedEquivalent.message,
+              ...mergedMessage,
               sequence: existing.message.sequence
             }
           };
+          messages[existingIndex] = nextEntry;
+          if (existing.dedupeKey !== nextEntry.dedupeKey) {
+            removeCodexMessageIndex(messageIndexesByKey, existing.dedupeKey, existingIndex);
+          }
+          const nextIndexes = messageIndexesByKey.get(nextEntry.dedupeKey) ?? [];
+          messageIndexesByKey.set(nextEntry.dedupeKey, [...nextIndexes, existingIndex]);
+          if (nextEntry.message.kind === "tool_call" && nextEntry.message.toolCall) {
+            toolNameById.set(nextEntry.message.toolCall.callId, nextEntry.message.toolCall.name);
+            toolInputById.set(nextEntry.message.toolCall.callId, nextEntry.message.toolCall.input);
+            toolEntryIndexById.set(nextEntry.message.toolCall.callId, existingIndex);
+          }
+          changedEntryIndexes.add(existingIndex);
+          changedMessageIds.add(existing.message.messageId);
+          changedMessageIds.add(nextEntry.message.messageId);
         }
 
         return;
       }
 
       sequence += 1;
-      messageIndexesByKey.set(dedupeKey, [...candidateIndexes, messages.length]);
-      messages.push({
+      const nextEntryIndex = messages.length;
+      messageIndexesByKey.set(dedupeKey, [...candidateIndexes, nextEntryIndex]);
+      const nextEntry: CodexMessageEntry = {
         source,
         dedupeKey,
+        lineNumber: currentLineNumber,
         message: {
           ...message,
           sequence
         }
-      });
+      };
+      messages.push(nextEntry);
+      if (nextEntry.message.kind === "tool_call" && nextEntry.message.toolCall) {
+        toolNameById.set(nextEntry.message.toolCall.callId, nextEntry.message.toolCall.name);
+        toolInputById.set(nextEntry.message.toolCall.callId, nextEntry.message.toolCall.input);
+        toolEntryIndexById.set(nextEntry.message.toolCall.callId, nextEntryIndex);
+      }
+      addedEntryIndexes.push(nextEntryIndex);
+      changedEntryIndexes.add(nextEntryIndex);
+      changedMessageIds.add(message.messageId);
+    };
+
+    const promoteToolCallToApplyPatch = (callId: string, input: string) => {
+      const index = toolEntryIndexById.get(callId);
+      const entry = index === undefined ? undefined : messages[index];
+      const toolCall = entry?.message.toolCall;
+
+      if (
+        index === undefined
+        || !entry
+        || entry.message.kind !== "tool_call"
+        || toolCall?.callId !== callId
+      ) {
+        return;
+      }
+
+      if (toolCall.name === "apply_patch" && toolCall.input === input) {
+        return;
+      }
+
+      const nextMessage: NormalizedMessage = {
+        ...entry.message,
+        content: input,
+        toolCall: {
+          ...toolCall,
+          name: "apply_patch",
+          input
+        }
+      };
+      const nextEntry: CodexMessageEntry = {
+        ...entry,
+        dedupeKey: buildCodexMessageDedupeKey(nextMessage),
+        message: nextMessage
+      };
+      messages[index] = nextEntry;
+      if (entry.dedupeKey !== nextEntry.dedupeKey) {
+        removeCodexMessageIndex(messageIndexesByKey, entry.dedupeKey, index);
+      }
+      const nextIndexes = messageIndexesByKey.get(nextEntry.dedupeKey) ?? [];
+      messageIndexesByKey.set(nextEntry.dedupeKey, [...nextIndexes, index]);
+      toolNameById.set(callId, "apply_patch");
+      toolInputById.set(callId, input);
+      changedEntryIndexes.add(index);
+      changedMessageIds.add(nextMessage.messageId);
     };
 
     effectiveRecords.forEach(({ lineNumber, partIndex, data: record }) => {
+      currentLineNumber = lineNumber;
       const rawRef = createRawRef(this.providerId, filePath, lineNumber, partIndex || undefined);
 
       if (record.type === "event_msg") {
@@ -2718,6 +3126,10 @@ export class CodexAdapter implements ProviderAdapter {
           const input = resolveCodexCommandPatchResultInput(outputPatch, toolInputById.get(callId));
           const resultState = resolveToolResultState(payload, output);
 
+          if (outputPatch) {
+            promoteToolCallToApplyPatch(callId, input);
+          }
+
           pushMessage("response_item", {
             messageId: resolveCodexParsedMessageId({
               providerSessionId,
@@ -2776,7 +3188,13 @@ export class CodexAdapter implements ProviderAdapter {
       }
     });
 
-    return messages.map((entry) => entry.message);
+    return {
+      entries: messages,
+      changedMessageIds,
+      changedEntryIndexes,
+      addedEntryIndexes,
+      parserState
+    };
   }
 }
 
@@ -3094,6 +3512,234 @@ function shouldKeepCodexRecordBeforeSubagentBoundary<T extends Pick<RawJsonLine,
   const metaId = ensureText(payload.id).trim();
 
   return metaId === threadId;
+}
+
+function buildCodexFileIdentity(stats: NonNullable<ReturnType<typeof statSync>>): string {
+  return `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
+}
+
+function createCodexMessageParserState(): CodexMessageParserState {
+  return {
+    messageIndexesByKey: new Map(),
+    toolNameById: new Map(),
+    toolInputById: new Map(),
+    toolEntryIndexById: new Map()
+  };
+}
+
+function removeCodexMessageIndex(
+  messageIndexesByKey: Map<string, number[]>,
+  dedupeKey: string,
+  entryIndex: number
+): void {
+  const indexes = messageIndexesByKey.get(dedupeKey);
+
+  if (!indexes) {
+    return;
+  }
+
+  const nextIndexes = indexes.filter((index) => index !== entryIndex);
+
+  if (nextIndexes.length === 0) {
+    messageIndexesByKey.delete(dedupeKey);
+    return;
+  }
+
+  messageIndexesByKey.set(dedupeKey, nextIndexes);
+}
+
+/**
+ * 首次建立 checkpoint 时读取完整文件。末尾未换行的完整 JSON 会先展示，
+ * 同时保留原始字节，下一次追加换行时由尾部重放去重。
+ */
+function readCodexHistorySeedRecords(filePath: string): CodexAppendedRecordsReadResult {
+  const content = readFileSync(filePath);
+  const lastNewlineIndex = content.lastIndexOf(0x0a);
+  const completedLength = lastNewlineIndex >= 0 ? lastNewlineIndex + 1 : 0;
+  const completed = content.subarray(0, completedLength);
+  const trailing = content.subarray(completedLength);
+  const completedLineCount = countCodexNewlines(completed);
+  const records =
+    completed.length > 0
+      ? parseJsonLinesFromText(filePath, completed.toString("utf8"), 1)
+      : [];
+
+  if (trailing.length > 0 && isCompleteCodexJsonRecord(trailing)) {
+    records.push(
+      ...parseJsonLinesFromText(filePath, trailing.toString("utf8"), completedLineCount + 1)
+    );
+  }
+
+  return {
+    records,
+    byteOffset: content.length,
+    nextLineNumber: completedLineCount + 1,
+    pendingBytes: Buffer.from(trailing),
+    bytesRead: content.length
+  };
+}
+
+/**
+ * 普通追加只读取 checkpoint 之后的字节。pendingBytes 是上一次末尾没有换行的
+ * 物理行，必须与新字节拼接后再解析，否则会把半行错误地当成一条消息。
+ */
+function readCodexAppendedRecords(
+  filePath: string,
+  byteOffset: number,
+  nextLineNumber: number,
+  pendingBytes: Buffer
+): CodexAppendedRecordsReadResult {
+  const stats = statSync(filePath);
+  const bytesToRead = Math.max(0, stats.size - byteOffset);
+
+  if (bytesToRead === 0) {
+    return {
+      records: [],
+      byteOffset,
+      nextLineNumber,
+      pendingBytes,
+      bytesRead: 0
+    };
+  }
+
+  const fd = openSync(filePath, "r");
+
+  try {
+    const appendedBuffer = Buffer.alloc(bytesToRead);
+    const bytesRead = readSync(fd, appendedBuffer, 0, bytesToRead, byteOffset);
+    const appended = appendedBuffer.subarray(0, Math.max(0, bytesRead));
+    const combined = pendingBytes.length > 0
+      ? Buffer.concat([pendingBytes, appended])
+      : appended;
+    const lastNewlineIndex = combined.lastIndexOf(0x0a);
+
+    if (lastNewlineIndex < 0) {
+      return {
+        records: [],
+        byteOffset: byteOffset + bytesRead,
+        nextLineNumber,
+        pendingBytes: combined,
+        bytesRead
+      };
+    }
+
+    const completed = combined.subarray(0, lastNewlineIndex + 1);
+    const nextPendingBytes = combined.subarray(lastNewlineIndex + 1);
+    const completedLineCount = countCodexNewlines(completed);
+
+    return {
+      records: parseJsonLinesFromText(filePath, completed.toString("utf8"), nextLineNumber),
+      byteOffset: byteOffset + bytesRead,
+      nextLineNumber: nextLineNumber + completedLineCount,
+      pendingBytes: Buffer.from(nextPendingBytes),
+      bytesRead
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function isCompleteCodexJsonRecord(value: Buffer): boolean {
+  const text = value.toString("utf8").trim();
+
+  if (!text) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function countCodexNewlines(value: Buffer): number {
+  let count = 0;
+
+  for (const byte of value) {
+    if (byte === 0x0a) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function trimCodexHistoryTailRecords(records: RawJsonLine[]): RawJsonLine[] {
+  const tail: RawJsonLine[] = [];
+  let bytes = 0;
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+
+    if (!record) {
+      continue;
+    }
+
+    const recordBytes = Buffer.byteLength(record.raw, "utf8") + 1;
+
+    if (tail.length > 0 && bytes + recordBytes > CODEX_INCREMENTAL_HISTORY_TAIL_MAX_BYTES) {
+      break;
+    }
+
+    tail.unshift(record);
+    bytes += recordBytes;
+  }
+
+  return tail;
+}
+
+function measureCodexHistoryRecords(records: RawJsonLine[]): number {
+  return records.reduce(
+    (total, record) => total + Buffer.byteLength(record.raw, "utf8") + 1,
+    0
+  );
+}
+
+function requiresCodexIncrementalRebuild(records: RawJsonLine[]): boolean {
+  return records.some((record) => {
+    if (record.data.type === "session_meta") {
+      return true;
+    }
+
+    if (record.data.type !== "event_msg") {
+      return false;
+    }
+
+    const payload = (record.data.payload ?? {}) as Record<string, unknown>;
+    return ensureText(payload.type).trim() === "thread_rolled_back";
+  });
+}
+
+function buildCodexIncrementalHistoryPage(input: {
+  messages: NormalizedMessage[];
+  changedMessageIds: Set<string>;
+  mode: SessionHistoryDeltaReadResult["mode"];
+  bytesRead: number;
+  recordsParsed: number;
+  tailWindowBytes: number;
+}): SessionHistoryDeltaReadResult {
+  const seenMessageIds = new Set<string>();
+  const messages = input.messages.filter((message) => {
+    if (!input.changedMessageIds.has(message.messageId) || seenMessageIds.has(message.messageId)) {
+      return false;
+    }
+
+    seenMessageIds.add(message.messageId);
+    return true;
+  });
+
+  return {
+    messages,
+    cursor: encodeCursor(input.messages.length),
+    nextCursor: null,
+    total: input.messages.length,
+    mode: input.mode,
+    bytesRead: input.bytesRead,
+    recordsParsed: input.recordsParsed,
+    tailWindowBytes: input.tailWindowBytes
+  };
 }
 
 function buildRecentHistoryPage(

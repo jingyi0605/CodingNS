@@ -6,6 +6,7 @@ import type {
   ForkSessionResult,
   HistoryDirection,
   HistoryPage,
+  SessionHistoryDeltaReadResult,
   ProviderDiscoveryDiagnostic,
   ProviderCapabilities,
   ProviderArchiveUpdateResult,
@@ -135,6 +136,43 @@ export class SessionSyncService {
     return this.registry
       .get(providerId)
       .readSessionHistory(providerSessionId, rawStoreRef, cursor, limit, direction);
+  }
+
+  async readHistoryDelta(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string,
+    cursor: string | null,
+    limit: number,
+    direction: HistoryDirection = "forward"
+  ): Promise<SessionHistoryDeltaReadResult> {
+    const provider = this.registry.get(providerId);
+
+    if (provider.readSessionHistoryDelta) {
+      return await provider.readSessionHistoryDelta(
+        providerSessionId,
+        rawStoreRef,
+        cursor,
+        limit,
+        direction
+      );
+    }
+
+    const page = await provider.readSessionHistory(
+      providerSessionId,
+      rawStoreRef,
+      cursor,
+      limit,
+      direction
+    );
+
+    return {
+      ...page,
+      mode: "reset_required",
+      bytesRead: 0,
+      recordsParsed: 0,
+      tailWindowBytes: 0
+    };
   }
 
   async readSessionActivity(

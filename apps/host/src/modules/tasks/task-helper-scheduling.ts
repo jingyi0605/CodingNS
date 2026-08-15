@@ -1,7 +1,8 @@
 import type { TaskHelperProcessHandlerName } from "./task-helper-process-handlers.js";
 
 const TASK_HELPER_HANDLER_CONCURRENCY: Partial<Record<TaskHelperProcessHandlerName, number>> = {
-  "session.workspace_discovery": 2
+  "session.workspace_discovery": 2,
+  "session.history_delta_read": 1
 };
 
 const SERIAL_AFFAIRS_HANDLERS = new Set<TaskHelperProcessHandlerName>([

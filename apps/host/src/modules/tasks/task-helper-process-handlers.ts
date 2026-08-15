@@ -1,7 +1,15 @@
-import type { ProviderSessionDiscovery, ProviderSessionSummary } from "@codingns/session-sync-core";
+import type {
+  HistoryDirection,
+  ProviderSessionDiscovery,
+  ProviderSessionSummary
+} from "@codingns/session-sync-core";
 
 import type { ProviderSessionDiscoveryHelperConfig } from "../provider/provider-discovery-helper-client.js";
-import { discoverWorkspaceSessionsInRuntime } from "../provider/provider-discovery-runtime.js";
+import {
+  discoverWorkspaceSessionsInRuntime,
+  readSessionHistoryInRuntime,
+  type SessionHistoryReadInRuntimeResult
+} from "../provider/provider-discovery-runtime.js";
 import { runAffairsIndexerCommand, type AffairsIndexerCommandName, type AffairsIndexerCommandResult } from "../affairs-indexer/internal-command-runner.js";
 import type { TerminalTemplateRuntimeStatus } from "../../types/domain.js";
 import { discoverTemplateRuntimeStatuses } from "../terminal/template-port-runtime.js";
@@ -36,6 +44,20 @@ interface TaskHelperProcessHandlerMap {
     },
     signal?: AbortSignal
   ) => ProviderSessionDiscovery | Promise<ProviderSessionDiscovery>;
+  "session.history_delta_read": (
+    input: {
+      rootDir: string;
+      config: ProviderSessionDiscoveryHelperConfig;
+      provider: string;
+      providerSessionId: string;
+      rawStoreRef: string;
+      cursor: string | null;
+      limit: number;
+      direction: HistoryDirection;
+      readMode: "page" | "delta";
+    },
+    signal?: AbortSignal
+  ) => SessionHistoryReadInRuntimeResult | Promise<SessionHistoryReadInRuntimeResult>;
   "affairs.library_apply_config": (
     input: { rootDir: string; reason?: string; __taskMeta?: HelperTaskMetaPayload },
     signal?: AbortSignal
@@ -74,6 +96,26 @@ const TASK_HELPER_PROCESS_HANDLERS: TaskHelperProcessHandlerMap = {
       enabledProviders,
       signal
     ),
+  "session.history_delta_read": ({
+    config,
+    provider,
+    providerSessionId,
+    rawStoreRef,
+    cursor,
+    limit,
+    direction,
+    readMode
+  }, signal) =>
+    readSessionHistoryInRuntime({
+      config,
+      provider,
+      providerSessionId,
+      rawStoreRef,
+      cursor,
+      limit,
+      direction,
+      readMode
+    }, signal),
   "affairs.library_apply_config": ({ rootDir, reason, __taskMeta }, signal) =>
     runAffairsIndexerCommand(
       rootDir,

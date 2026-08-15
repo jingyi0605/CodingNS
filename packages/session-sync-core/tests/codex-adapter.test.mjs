@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -199,6 +200,196 @@ test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异�
         }
       ]
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 对长 JSONL 追加只读取新增字节，并只返回变化消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-delta-long-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const providerSessionId = "session-delta-long";
+
+  function createMessageRecord(id, content, offset) {
+    return JSON.stringify({
+      timestamp: new Date(Date.UTC(2026, 7, 15, 8, 0, offset)).toISOString(),
+      type: "response_item",
+      payload: {
+        id,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: content }]
+      }
+    });
+  }
+
+  try {
+    const history = Array.from({ length: 350 }, (_, index) =>
+      createMessageRecord(`history-${index}`, `历史消息 ${index} ${"x".repeat(900)}`, index)
+    );
+    writeFileSync(sessionFile, `${history.join("\n")}\n`, "utf8");
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const seed = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+    const cacheBeforeAppend = adapter.historyCache.get(sessionFile);
+
+    assert.equal(seed.mode, "seed");
+    assert.equal(seed.total, history.length);
+    assert.ok(cacheBeforeAppend);
+
+    const appended = [
+      createMessageRecord("delta-1", "第一条新增消息", 351),
+      createMessageRecord("delta-2", "第二条新增消息", 352)
+    ].join("\n").concat("\n");
+    appendFileSync(sessionFile, appended, "utf8");
+
+    const delta = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, seed.cursor, 50);
+
+    assert.equal(delta.mode, "tail_reconcile");
+    assert.equal(delta.bytesRead, Buffer.byteLength(appended, "utf8"));
+    assert.ok(delta.bytesRead < statSync(sessionFile).size / 50);
+    assert.ok(delta.recordsParsed < 200);
+    assert.equal(delta.total, history.length + 2);
+    assert.deepEqual(
+      delta.messages.map((message) => message.content),
+      ["第一条新增消息", "第二条新增消息"]
+    );
+    const cacheAfterAppend = adapter.historyCache.get(sessionFile);
+
+    assert.equal(cacheAfterAppend.entries, cacheBeforeAppend.entries);
+    assert.equal(cacheAfterAppend.messages, cacheBeforeAppend.messages);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 增量 reader 会复用已缓存的工具调用上下文", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-delta-tool-context-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const providerSessionId = "session-delta-tool-context";
+
+  try {
+    const toolCall = JSON.stringify({
+      timestamp: "2026-08-15T08:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec",
+        call_id: "tool-1",
+        arguments: "{\"cmd\":\"pwd\"}"
+      }
+    });
+    writeFileSync(sessionFile, `${toolCall}\n`, "utf8");
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    const toolResult = JSON.stringify({
+      timestamp: "2026-08-15T08:00:01.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "tool-1",
+        output: "/workspace"
+      }
+    }).concat("\n");
+    appendFileSync(sessionFile, toolResult, "utf8");
+
+    const delta = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+    const result = delta.messages.find((message) => message.kind === "tool_result");
+
+    assert.ok(result);
+    assert.equal(result.toolCall?.name, "exec");
+    assert.equal(result.toolCall?.input, "{\"cmd\":\"pwd\"}");
+    assert.equal(result.toolCall?.output, "/workspace");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会保留半行，直到 JSONL 记录补全后才发送 delta", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-delta-partial-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const providerSessionId = "session-delta-partial";
+  const initial = JSON.stringify({
+    timestamp: "2026-08-15T08:00:00.000Z",
+    type: "response_item",
+    payload: {
+      id: "initial",
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "初始消息" }]
+    }
+  });
+  const pending = JSON.stringify({
+    timestamp: "2026-08-15T08:00:01.000Z",
+    type: "response_item",
+    payload: {
+      id: "completed",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "补全后的消息" }]
+    }
+  });
+
+  try {
+    writeFileSync(sessionFile, `${initial}\n`, "utf8");
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    const splitAt = Math.floor(pending.length / 2);
+    appendFileSync(sessionFile, pending.slice(0, splitAt), "utf8");
+    const partial = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    assert.equal(partial.mode, "unchanged");
+    assert.deepEqual(partial.messages, []);
+
+    appendFileSync(sessionFile, `${pending.slice(splitAt)}\n`, "utf8");
+    const completed = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    assert.equal(completed.total, 2);
+    assert.deepEqual(completed.messages.map((message) => message.content), ["补全后的消息"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 在 JSONL 截断后返回明确恢复模式", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-delta-reset-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+  const providerSessionId = "session-delta-reset";
+  const first = JSON.stringify({
+    timestamp: "2026-08-15T08:00:00.000Z",
+    type: "response_item",
+    payload: {
+      id: "first",
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "第一条" }]
+    }
+  });
+  const second = JSON.stringify({
+    timestamp: "2026-08-15T08:00:01.000Z",
+    type: "response_item",
+    payload: {
+      id: "second",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "第二条" }]
+    }
+  });
+
+  try {
+    writeFileSync(sessionFile, `${first}\n${second}\n`, "utf8");
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    writeFileSync(sessionFile, `${first}\n`, "utf8");
+    const reset = await adapter.readSessionHistoryDelta(providerSessionId, sessionFile, null, 50);
+
+    assert.equal(reset.mode, "reset_required");
+    assert.equal(reset.total, 1);
+    assert.deepEqual(reset.messages.map((message) => message.content), ["第一条"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

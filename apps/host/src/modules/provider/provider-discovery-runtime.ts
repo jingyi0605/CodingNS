@@ -7,6 +7,9 @@ import {
   OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
+  type HistoryDirection,
+  type HistoryPage,
+  type SessionHistoryDeltaReadResult,
   type ProviderSessionDiscovery,
   type ProviderSessionSummary
 } from "@codingns/session-sync-core";
@@ -38,6 +41,16 @@ const sessionTitleCache = new Map<string, {
   title: string;
 }>();
 const sessionTitleInflight = new Map<string, Promise<string>>();
+
+export type SessionHistoryReadInRuntimeResult =
+  | {
+      readMode: "page";
+      page: HistoryPage;
+    }
+  | {
+      readMode: "delta";
+      delta: SessionHistoryDeltaReadResult;
+    };
 
 export async function discoverWorkspaceSessionsInRuntime(
   config: ProviderSessionDiscoveryHelperConfig,
@@ -132,6 +145,55 @@ export async function readSessionTitleInRuntime(
 
   sessionTitleInflight.set(runtimeKey, promise);
   return await raceWithAbortSignal(promise, signal);
+}
+
+/**
+ * 会话正文读取只在 task helper 内执行。Host 只保留小结果的合并、鉴权和投递，
+ * 避免长 JSONL 的同步 readFileSync 和 JSON.parse 堵住 WebSocket 事件循环。
+ */
+export async function readSessionHistoryInRuntime(input: {
+  config: ProviderSessionDiscoveryHelperConfig;
+  provider: string;
+  providerSessionId: string;
+  rawStoreRef: string;
+  cursor: string | null;
+  limit: number;
+  direction: HistoryDirection;
+  readMode: "page" | "delta";
+}, signal?: AbortSignal): Promise<SessionHistoryReadInRuntimeResult> {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("session history helper aborted");
+  }
+
+  const service = getWorkspaceDiscoveryService(input.config, [input.provider]);
+
+  if (input.readMode === "delta") {
+    const delta = await service.readHistoryDelta(
+      input.provider,
+      input.providerSessionId,
+      input.rawStoreRef,
+      input.cursor,
+      input.limit,
+      input.direction
+    );
+    return {
+      readMode: "delta",
+      delta
+    };
+  }
+
+  const page = await service.readHistory(
+    input.provider,
+    input.providerSessionId,
+    input.rawStoreRef,
+    input.cursor,
+    input.limit,
+    input.direction
+  );
+  return {
+    readMode: "page",
+    page
+  };
 }
 
 function getWorkspaceDiscoveryService(

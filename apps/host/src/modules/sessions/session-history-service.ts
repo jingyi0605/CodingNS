@@ -27,6 +27,7 @@ import {
   type ProviderSessionDiscovery,
   type ProviderSessionStats,
   type ProviderSubscription,
+  type SessionHistoryDeltaReadResult,
   type SendMessageResult
 } from "@codingns/session-sync-core";
 
@@ -74,6 +75,7 @@ import {
 } from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
+import { SessionHistorySourceCoordinator } from "./session-history-source-coordinator.js";
 import { buildSessionTitleFromContent, normalizeRuntimePromptTitle } from "./session-title-utils.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
@@ -101,7 +103,11 @@ import {
   getSharedProviderDiscoveryHelperClient,
   type ProviderSessionDiscoveryHelperConfig
 } from "../provider/provider-discovery-helper-client.js";
-import { discoverWorkspaceSessionsInRuntime } from "../provider/provider-discovery-runtime.js";
+import {
+  discoverWorkspaceSessionsInRuntime,
+  readSessionHistoryInRuntime,
+  type SessionHistoryReadInRuntimeResult
+} from "../provider/provider-discovery-runtime.js";
 import {
   applyProviderDisabledState,
   createProviderCapabilityBlockedError
@@ -246,6 +252,18 @@ interface SessionSourceIndexRepairScope {
   rawStoreRefs: Set<string>;
 }
 
+interface SessionHistoryReadTaskInput {
+  rootDir: string;
+  config: ProviderSessionDiscoveryHelperConfig;
+  provider: string;
+  providerSessionId: string;
+  rawStoreRef: string;
+  cursor: string | null;
+  limit: number;
+  direction: HistoryDirection;
+  readMode: "page" | "delta";
+}
+
 export interface SessionSourceIndexRepairRequest {
   workspaceId: string;
   userId: string;
@@ -293,6 +311,21 @@ interface CodexDirtyBindingRepairState {
 interface DeliveredHistoryMessageState {
   readonly signaturesByMessageId: Map<string, string>;
   lastMutableTailRefreshAtMs: number;
+}
+
+interface CodexHistorySourceSubscriber {
+  sessionId: string;
+  userId: string | null;
+  limit: number;
+  deliveredMessages: DeliveredHistoryMessageState;
+  onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void;
+}
+
+interface CodexHistorySourceState {
+  sessionId: string;
+  binding: SessionBinding;
+  subscribers: Map<string, CodexHistorySourceSubscriber>;
+  refreshRequestedDuringRun: boolean;
 }
 
 interface PendingSessionAliasDescriptor {
@@ -401,6 +434,8 @@ export class SessionHistoryService {
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
   private readonly codexDirtyBindingRepairStates = new Map<string, CodexDirtyBindingRepairState>();
   private readonly streamingDeltaSuppressionDebugState = new Map<string, string>();
+  private readonly codexHistorySourceStates = new Map<string, CodexHistorySourceState>();
+  private readonly sessionHistorySourceCoordinator: SessionHistorySourceCoordinator;
   private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
   private readonly sessionTitleChangedObservers = new Set<SessionTitleChangedObserver>();
   private readonly sessionDeletedObservers = new Set<SessionDeletedObserver>();
@@ -449,6 +484,11 @@ export class SessionHistoryService {
     this.providerSessionDeleteCli =
       adapterOverrides.providerSessionDeleteCli ?? new CodingnsProviderSessionDeleteCli(config);
     this.taskManager = taskManager;
+    this.sessionHistorySourceCoordinator = new SessionHistorySourceCoordinator({
+      onRefreshRequested: (sourceKey) => {
+        this.requestCodexHistorySourceRefresh(sourceKey);
+      }
+    });
     this.parallelSessionGroupRepository = parallelSessionGroupRepository;
     this.parallelSessionMemberRepository = parallelSessionMemberRepository;
     this.sessionIsolatedWorkspaceRepository = sessionIsolatedWorkspaceRepository;
@@ -701,6 +741,37 @@ export class SessionHistoryService {
             enabledProviders,
             context.signal
           )
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.sessionHistoryDeltaRead)) {
+      this.taskManager.register<SessionHistoryReadTaskInput, SessionHistoryReadInRuntimeResult>({
+        taskType: HOST_TASK_TYPES.sessionHistoryDeltaRead,
+        executionLane: "helper_process",
+        concurrency: 4,
+        timeoutMs: 30_000,
+        queueWaitTimeoutMs: 15_000,
+        helperProcessHandler: "session.history_delta_read",
+        run: async ({
+          config,
+          provider,
+          providerSessionId,
+          rawStoreRef,
+          cursor,
+          limit,
+          direction,
+          readMode
+        }, context) =>
+          await readSessionHistoryInRuntime({
+            config,
+            provider,
+            providerSessionId,
+            rawStoreRef,
+            cursor,
+            limit,
+            direction,
+            readMode
+          }, context.signal)
       });
     }
 
@@ -2239,6 +2310,19 @@ export class SessionHistoryService {
       throw mapSessionProviderError(error);
     }
 
+    const binding = this.getBindingOrThrow(sessionId);
+
+    if (binding.provider === "codex") {
+      return this.subscribeCodexHistorySource({
+        sessionId,
+        userId,
+        limit: safeLimit,
+        binding,
+        deliveredMessages,
+        onEnvelope
+      });
+    }
+
     const timer = setInterval(() => {
       if (closed || polling) {
         return;
@@ -3239,23 +3323,32 @@ export class SessionHistoryService {
       };
     }
 
-    const historyTask =
-      direction === "backward" && cursor === null && typeof knownTotalMessageCount === "number"
-        ? this.sessionSyncService.readRecentHistory(
-            provider,
-            providerSessionId,
-            rawStoreRef,
-            knownTotalMessageCount,
-            limit
-          )
-        : this.sessionSyncService.readHistory(
-            provider,
+    const historyTask: Promise<HistoryPage> =
+      provider === "codex"
+        ? this.readCodexHistoryPageInHelper(
+            sessionId,
             providerSessionId,
             rawStoreRef,
             cursor,
             limit,
             direction
-          );
+          )
+        : direction === "backward" && cursor === null && typeof knownTotalMessageCount === "number"
+          ? this.sessionSyncService.readRecentHistory(
+              provider,
+              providerSessionId,
+              rawStoreRef,
+              knownTotalMessageCount,
+              limit
+            )
+          : this.sessionSyncService.readHistory(
+              provider,
+              providerSessionId,
+              rawStoreRef,
+              cursor,
+              limit,
+              direction
+            );
 
     return historyTask
       .then(async (page) => {
@@ -3302,6 +3395,278 @@ export class SessionHistoryService {
 
         throw mapSessionProviderError(error);
       });
+  }
+
+  private async readCodexHistoryPageInHelper(
+    sessionId: string,
+    providerSessionId: string,
+    rawStoreRef: string,
+    cursor: string | null,
+    limit: number,
+    direction: HistoryDirection
+  ): Promise<HistoryPage> {
+    const result = await this.enqueueCodexHistoryRead({
+      sessionId,
+      provider: "codex",
+      providerSessionId,
+      rawStoreRef,
+      cursor,
+      limit,
+      direction,
+      readMode: "page"
+    });
+
+    if (result.readMode !== "page") {
+      throw new Error("session history helper 返回了错误的历史页类型");
+    }
+
+    return result.page;
+  }
+
+  private async readCodexHistoryDeltaInHelper(
+    sessionId: string,
+    binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">,
+    limit: number
+  ): Promise<SessionHistoryDeltaReadResult> {
+    const result = await this.enqueueCodexHistoryRead({
+      sessionId,
+      provider: binding.provider,
+      providerSessionId: binding.providerSessionId,
+      rawStoreRef: binding.rawStoreRef,
+      cursor: null,
+      limit,
+      // 文件截断或 helper 重启时返回最近一页，避免把旧 cursor 当成完整真相。
+      direction: "backward",
+      readMode: "delta"
+    });
+
+    if (result.readMode !== "delta") {
+      throw new Error("session history helper 返回了错误的增量类型");
+    }
+
+    return result.delta;
+  }
+
+  private subscribeCodexHistorySource(input: {
+    sessionId: string;
+    userId: string | null;
+    limit: number;
+    binding: SessionBinding;
+    deliveredMessages: DeliveredHistoryMessageState;
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void;
+  }): ProviderSubscription {
+    const sourceKey = buildSessionSourceKey(
+      input.binding.provider,
+      input.binding.providerSessionId,
+      input.binding.rawStoreRef
+    );
+    let source = this.codexHistorySourceStates.get(sourceKey);
+
+    if (!source) {
+      source = {
+        sessionId: input.sessionId,
+        binding: input.binding,
+        subscribers: new Map(),
+        refreshRequestedDuringRun: false
+      };
+      this.codexHistorySourceStates.set(sourceKey, source);
+    }
+
+    const subscriberId = createId();
+    source.subscribers.set(subscriberId, {
+      sessionId: input.sessionId,
+      userId: input.userId,
+      limit: input.limit,
+      deliveredMessages: input.deliveredMessages,
+      onEnvelope: input.onEnvelope
+    });
+    const coordinatorSubscription = this.sessionHistorySourceCoordinator.subscribe({
+      sourceKey,
+      rawStoreRef: input.binding.rawStoreRef
+    });
+    this.sessionHistorySourceCoordinator.markDirty(sourceKey);
+
+    let closed = false;
+    return {
+      close: () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        coordinatorSubscription.close();
+        const current = this.codexHistorySourceStates.get(sourceKey);
+
+        if (!current) {
+          return;
+        }
+
+        current.subscribers.delete(subscriberId);
+
+        if (current.subscribers.size === 0) {
+          this.codexHistorySourceStates.delete(sourceKey);
+          this.taskManager.cancel(
+            HOST_TASK_TYPES.sessionHistoryDeltaRead,
+            buildSessionHistoryTaskKey(sourceKey, "delta")
+          );
+        }
+        this.streamingDeltaSuppressionDebugState.delete(input.sessionId);
+      }
+    };
+  }
+
+  private requestCodexHistorySourceRefresh(sourceKey: string): void {
+    const source = this.codexHistorySourceStates.get(sourceKey);
+
+    if (!source || source.subscribers.size === 0) {
+      return;
+    }
+
+    const activeSubscribers = [...source.subscribers.values()].filter(
+      (subscriber) => !this.shouldSuppressStreamingSessionDelta(subscriber.sessionId, subscriber.userId)
+    );
+
+    if (activeSubscribers.length === 0) {
+      return;
+    }
+
+    const taskKey = buildSessionHistoryTaskKey(sourceKey, "delta");
+    const currentTask = this.taskManager.peek(HOST_TASK_TYPES.sessionHistoryDeltaRead, taskKey);
+
+    if (currentTask?.status === "queued" || currentTask?.status === "running") {
+      source.refreshRequestedDuringRun = true;
+      return;
+    }
+
+    source.refreshRequestedDuringRun = false;
+    const startedAt = Date.now();
+    const handle = this.enqueueCodexHistoryReadTask({
+      sessionId: source.sessionId,
+      provider: source.binding.provider,
+      providerSessionId: source.binding.providerSessionId,
+      rawStoreRef: source.binding.rawStoreRef,
+      cursor: null,
+      limit: Math.max(...activeSubscribers.map((subscriber) => subscriber.limit)),
+      direction: "backward",
+      readMode: "delta"
+    });
+
+    if (handle.deduped) {
+      source.refreshRequestedDuringRun = true;
+      return;
+    }
+
+    void handle.promise
+      .then(async (result) => {
+        if (result.readMode !== "delta") {
+          throw new Error("session history helper 返回了错误的增量类型");
+        }
+
+        const delta = result.delta;
+        const page: HistoryPage = {
+          messages: delta.messages,
+          cursor: delta.cursor,
+          nextCursor: null,
+          total: delta.total
+        };
+        const current = this.codexHistorySourceStates.get(sourceKey);
+
+        if (!current) {
+          return;
+        }
+
+        for (const subscriber of current.subscribers.values()) {
+          if (this.shouldSuppressStreamingSessionDelta(subscriber.sessionId, subscriber.userId)) {
+            continue;
+          }
+
+          await this.publishHistoryEnvelope(
+            subscriber.sessionId,
+            current.binding,
+            page,
+            subscriber.deliveredMessages,
+            subscriber.onEnvelope,
+            "session.delta"
+          );
+        }
+
+        this.sessionHistorySourceCoordinator.markClean(sourceKey);
+        logPerformance(
+          "session.history.source_refresh",
+          Date.now() - startedAt,
+          {
+            sourceKey,
+            readMode: delta.mode,
+            bytesRead: delta.bytesRead,
+            recordsParsed: delta.recordsParsed,
+            tailWindowBytes: delta.tailWindowBytes,
+            subscriberCount: current.subscribers.size,
+            messageCount: delta.messages.length
+          },
+          { thresholdMs: 200 }
+        );
+      })
+      .catch((error) => {
+        this.markSessionError(source.sessionId, "SUBSCRIBE_FAILED", error);
+      })
+      .finally(() => {
+        const current = this.codexHistorySourceStates.get(sourceKey);
+
+        if (current?.refreshRequestedDuringRun) {
+          current.refreshRequestedDuringRun = false;
+          this.sessionHistorySourceCoordinator.markDirty(sourceKey);
+        }
+      });
+  }
+
+  private async enqueueCodexHistoryRead(input: Omit<SessionHistoryReadTaskInput, "rootDir" | "config"> & {
+    sessionId: string;
+  }): Promise<SessionHistoryReadInRuntimeResult> {
+    return await this.enqueueCodexHistoryReadTask(input).promise;
+  }
+
+  private enqueueCodexHistoryReadTask(input: Omit<SessionHistoryReadTaskInput, "rootDir" | "config"> & {
+    sessionId: string;
+  }): TaskHandle<SessionHistoryReadInRuntimeResult> {
+    const rootDir = this.resolveSessionHistoryTaskRootDir(input.sessionId, input.rawStoreRef);
+    const sourceKey = buildSessionSourceKey(
+      input.provider,
+      input.providerSessionId,
+      input.rawStoreRef
+    );
+    return this.taskManager.enqueue<SessionHistoryReadTaskInput, SessionHistoryReadInRuntimeResult>(
+      HOST_TASK_TYPES.sessionHistoryDeltaRead,
+      {
+        key: buildSessionHistoryTaskKey(
+          sourceKey,
+          input.readMode,
+          input.cursor,
+          input.direction,
+          input.limit
+        ),
+        source: `session_history.${input.readMode}_read`,
+        input: {
+          rootDir,
+          config: this.providerSessionDiscoveryConfig,
+          provider: input.provider,
+          providerSessionId: input.providerSessionId,
+          rawStoreRef: input.rawStoreRef,
+          cursor: input.cursor,
+          limit: input.limit,
+          direction: input.direction,
+          readMode: input.readMode
+        }
+      }
+    );
+  }
+
+  private resolveSessionHistoryTaskRootDir(sessionId: string, rawStoreRef: string): string {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const workspacePath = binding
+      ? this.workspaceRepository.findById(binding.workspaceId)?.path.trim()
+      : "";
+
+    return workspacePath || dirname(rawStoreRef);
   }
 
   private shouldTreatMissingGeminiRuntimeHistoryAsEmpty(
@@ -3874,6 +4239,21 @@ export class SessionHistoryService {
     envelopeType: SessionHistoryEnvelope["type"],
     isClosed: () => boolean = () => false
   ): Promise<string | null> {
+    const initialBinding = this.getBindingOrThrow(sessionId);
+
+    if (initialBinding.provider === "codex") {
+      return await this.pullCodexSessionHistoryDelta(
+        sessionId,
+        cursor,
+        limit,
+        initialBinding,
+        deliveredMessages,
+        onEnvelope,
+        envelopeType,
+        isClosed
+      );
+    }
+
     let currentCursor = cursor;
 
     while (!isClosed()) {
@@ -3921,6 +4301,67 @@ export class SessionHistoryService {
     }
 
     return currentCursor;
+  }
+
+  private async pullCodexSessionHistoryDelta(
+    sessionId: string,
+    cursor: string | null,
+    limit: number,
+    binding: SessionBinding,
+    deliveredMessages: DeliveredHistoryMessageState,
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
+    envelopeType: SessionHistoryEnvelope["type"],
+    isClosed: () => boolean
+  ): Promise<string | null> {
+    if (isClosed()) {
+      return cursor;
+    }
+
+    const startedAt = Date.now();
+    const delta = await this.readCodexHistoryDeltaInHelper(sessionId, binding, limit);
+
+    if (isClosed()) {
+      return cursor;
+    }
+
+    const page: HistoryPage = {
+      messages: delta.messages,
+      cursor: delta.cursor,
+      nextCursor: null,
+      total: delta.total
+    };
+    const mergeStartedAt = Date.now();
+    await this.publishHistoryEnvelope(
+      sessionId,
+      binding,
+      page,
+      deliveredMessages,
+      onEnvelope,
+      envelopeType
+    );
+    logPerformance(
+      "session.history.delta.helper",
+      Date.now() - startedAt,
+      {
+        sessionId,
+        sourceKey: buildSessionSourceKey(
+          binding.provider,
+          binding.providerSessionId,
+          binding.rawStoreRef
+        ),
+        readMode: delta.mode,
+        bytesRead: delta.bytesRead,
+        recordsParsed: delta.recordsParsed,
+        tailWindowBytes: delta.tailWindowBytes,
+        hostMergeMs: Date.now() - mergeStartedAt,
+        messageCount: delta.messages.length
+      },
+      {
+        thresholdMs: 200
+      }
+    );
+
+    return page.cursor;
   }
 
   private async pullRecentSessionHistory(
@@ -6701,6 +7142,20 @@ function buildSessionSourceKey(
   }
 
   return `${provider}:session:${providerSessionId}`;
+}
+
+function buildSessionHistoryTaskKey(
+  sourceKey: string,
+  readMode: "page" | "delta",
+  cursor: string | null = null,
+  direction: HistoryDirection = "forward",
+  limit = 0
+): string {
+  if (readMode === "delta") {
+    return `${sourceKey}::delta`;
+  }
+
+  return `${sourceKey}::page:${direction}:${cursor ?? "initial"}:${limit}`;
 }
 
 function inferSessionSourceKind(rawStoreRef: string): SessionSourceKind {

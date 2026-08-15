@@ -9,6 +9,7 @@ export const HOST_TASK_TYPES = {
   harnessSidecarHealth: "harness.sidecar.health",
   harnessSessionReconcile: "harness.session.reconcile",
   sessionCodexTitleGenerate: "session.codex_title_generate",
+  sessionHistoryDeltaRead: "session.history_delta_read",
   sessionCleanupScan: "session_cleanup.scan",
   sessionCleanupBackup: "session_cleanup.backup",
   sessionCleanupRestore: "session_cleanup.restore",

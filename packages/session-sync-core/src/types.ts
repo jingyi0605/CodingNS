@@ -250,6 +250,25 @@ export interface HistoryPage {
   total: number;
 }
 
+export type SessionHistoryDeltaMode =
+  | "unchanged"
+  | "seed"
+  | "append"
+  | "tail_reconcile"
+  | "reset_required";
+
+/**
+ * 文件型 provider 的增量历史读取结果。
+ *
+ * messages 只包含本次新增或发生内容变化的消息；它不是完整 transcript。
+ */
+export interface SessionHistoryDeltaReadResult extends HistoryPage {
+  mode: SessionHistoryDeltaMode;
+  bytesRead: number;
+  recordsParsed: number;
+  tailWindowBytes: number;
+}
+
 export interface ResumeSessionResult {
   provider: ProviderId;
   providerSessionId: string;
@@ -329,6 +348,13 @@ export interface ProviderAdapter {
     limit: number,
     direction?: HistoryDirection
   ): Promise<HistoryPage>;
+  readSessionHistoryDelta?(
+    providerSessionId: string,
+    rawStoreRef: string,
+    cursor: string | null,
+    limit: number,
+    direction?: HistoryDirection
+  ): Promise<SessionHistoryDeltaReadResult>;
   subscribeSession(
     providerSessionId: string,
     rawStoreRef: string,

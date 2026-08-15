@@ -26,6 +26,12 @@ export interface RawJsonLine {
   data: Record<string, unknown>;
 }
 
+export interface JsonLinesReadResult {
+  records: RawJsonLine[];
+  lineCount: number;
+  endsWithNewline: boolean;
+}
+
 export function normalizeWorkspacePath(value: string): string {
   const trimmed = value.trim();
 
@@ -89,6 +95,41 @@ export function walkJsonlFiles(rootDir: string): string[] {
 export function readJsonLines(filePath: string): RawJsonLine[] {
   const content = readFileSync(filePath, "utf8");
   return parseJsonLines(filePath, content.split(/\r?\n/));
+}
+
+/**
+ * 读取完整 JSONL 时同时保留续读所需的物理行信息。
+ *
+ * 这只用于首次建立或异常重建缓存；普通追加路径不会调用它。
+ */
+export function readJsonLinesWithMetadata(filePath: string): JsonLinesReadResult {
+  const content = readFileSync(filePath, "utf8");
+  const endsWithNewline = content.endsWith("\n");
+  const lines = content.split(/\r?\n/);
+  const lineCount =
+    content.length === 0
+      ? 0
+      : lines.length - (endsWithNewline ? 1 : 0);
+
+  return {
+    records: parseJsonLines(filePath, lines),
+    lineCount,
+    endsWithNewline
+  };
+}
+
+/**
+ * 解析已经按行边界切好的增量 JSONL 文本。
+ *
+ * firstLineNumber 必须由调用方维护，保证 rawRef 和稳定 messageId 不会因为
+ * 增量读取而漂移。
+ */
+export function parseJsonLinesFromText(
+  filePath: string,
+  content: string,
+  firstLineNumber: number
+): RawJsonLine[] {
+  return parseJsonLines(filePath, content.split(/\r?\n/), firstLineNumber);
 }
 
 export function readFirstNonEmptyLine(filePath: string, maxBytes = 256 * 1024): string | null {
