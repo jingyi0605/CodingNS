@@ -129,6 +129,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
   const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
   const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
+  const sessionStats = useSessionRuntimeStore(store, (state) => state.sessionStats);
   const permissionStatus = useSessionRuntimeStore(store, (state) => state.permissionStatus);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
@@ -593,6 +594,7 @@ export function useLiveSessionController(input: UseLiveSessionControllerInput) {
     permissionRequests,
     queuedMessages,
     contextUsage,
+    sessionStats,
     permissionStatus,
     historyState,
     runtimeErrorCode,

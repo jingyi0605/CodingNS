@@ -25,6 +25,7 @@ import {
   type ProviderAdapter,
   type ProviderSessionActivityObservation,
   type ProviderSessionDiscovery,
+  type ProviderSessionStats,
   type ProviderSubscription,
   type SendMessageResult
 } from "@codingns/session-sync-core";
@@ -1470,6 +1471,20 @@ export class SessionHistoryService {
 
     try {
       return await this.sessionSyncService.readContextUsage(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef
+      );
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
+  }
+
+  async getSessionStats(sessionId: string): Promise<ProviderSessionStats | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+
+    try {
+      return await this.sessionSyncService.readSessionStats(
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef

@@ -32,6 +32,9 @@ import type {
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
   ProviderId,
+  ProviderSessionStatValueDto,
+  ProviderSessionStatMetricDto,
+  ProviderSessionStatsDto,
   SessionRuntimePermissionStatusDto,
   SessionProviderConfigMode
 } from "../api/conversation-api";
@@ -123,6 +126,7 @@ interface ComposerPanelProps {
   hasActiveRun?: boolean | null;
   canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
+  sessionStats?: ProviderSessionStatsDto | null;
   permissionStatus?: SessionRuntimePermissionStatusDto | null;
   taskProvider?: ProviderId | null;
   taskMessages?: SessionMessageViewModel[];
@@ -577,6 +581,7 @@ export function ComposerPanel({
   hasActiveRun = null,
   canInterrupt = null,
   contextUsage = null,
+  sessionStats = null,
   taskProvider = null,
   taskMessages = [],
   hasPendingQueuedMessages = false,
@@ -2827,6 +2832,10 @@ export function ComposerPanel({
               ) : null}
 
               <ContextUsageRing contextUsage={contextUsage} />
+              <SessionStatsTrigger
+                sessionStats={sessionStats}
+                isMobile={platform.isMobile || platform.isNativeMobile}
+              />
               <SessionTaskProgressButton
                 provider={taskProvider}
                 messages={taskMessages}
@@ -3151,6 +3160,418 @@ function ForkDropIcon() {
       <path d="M12 19v2" />
     </svg>
   );
+}
+
+type SessionStatsDisplayMetric = ProviderSessionStatMetricDto | "cacheHitRate";
+
+interface SessionStatsGroup {
+  key: "tokens" | "activity" | "duration" | "cost";
+  title: string;
+  items: Array<{
+    metric: SessionStatsDisplayMetric;
+    label: string;
+    value: NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]>;
+    derived?: boolean;
+  }>;
+}
+
+interface SessionStatsSummaryItem {
+  key: "turns" | "inputTokens" | "outputTokens" | "cacheHitRate";
+  text: string;
+}
+
+function SessionStatsTrigger({
+  sessionStats,
+  isMobile
+}: {
+  sessionStats: ProviderSessionStatsDto | null;
+  isMobile: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
+  const tooltipId = useId();
+  const groups = useMemo(() => buildSessionStatsGroups(sessionStats), [sessionStats]);
+  const summaryItems = useMemo(() => buildSessionStatsSummary(sessionStats), [sessionStats]);
+
+  const updateTooltipStyle = useCallback(() => {
+    const trigger = triggerRef.current;
+
+    if (!trigger || typeof window === "undefined") {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const edgePadding = 12;
+    const gap = 10;
+    const width = Math.min(336, Math.max(252, viewportWidth - edgePadding * 2));
+    const left = Math.min(
+      Math.max(edgePadding, rect.left + rect.width / 2 - width / 2),
+      Math.max(edgePadding, viewportWidth - width - edgePadding)
+    );
+    const spaceAbove = rect.top - edgePadding;
+    const shouldPlaceAbove = spaceAbove >= 180 || spaceAbove >= viewportHeight - rect.bottom - edgePadding;
+
+    setTooltipStyle({
+      position: "fixed",
+      left,
+      width,
+      maxWidth: viewportWidth - edgePadding * 2,
+      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
+      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+
+      if (!triggerRef.current?.contains(target) && !tooltipRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updateTooltipStyle);
+    window.addEventListener("scroll", updateTooltipStyle, true);
+    updateTooltipStyle();
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updateTooltipStyle);
+      window.removeEventListener("scroll", updateTooltipStyle, true);
+    };
+  }, [open, updateTooltipStyle]);
+
+  if (groups.length === 0 && summaryItems.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <div className={`composer-session-stats-control${isMobile ? " is-mobile" : ""}`}>
+        {summaryItems.length > 0 ? (
+          <div
+            className="composer-session-stats-summary"
+          >
+            {summaryItems.map((item, index) => (
+              <span className="composer-session-stats-summary-item" key={item.key}>
+                {index > 0 ? <span className="composer-session-stats-summary-divider" aria-hidden="true">|</span> : null}
+                <span>{item.text}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <button
+          ref={triggerRef}
+          type="button"
+          className="composer-session-stats-trigger"
+          aria-label={t("conversation.sessionStatsTitle")}
+          aria-expanded={open}
+          aria-describedby={open ? tooltipId : undefined}
+          title={t("conversation.sessionStatsMore")}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <span className="composer-session-stats-icon composer-session-stats-mobile-icon" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="composer-session-stats-more-icon" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </button>
+      </div>
+
+      {open && tooltipStyle && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={tooltipRef}
+              id={tooltipId}
+              className="composer-context-tooltip composer-session-stats-tooltip"
+              style={tooltipStyle}
+              role="tooltip"
+            >
+              <div className="composer-context-tooltip-title">
+                {t("conversation.sessionStatsTitle")}
+              </div>
+              <div className="composer-session-stats-groups">
+                {groups.map((group) => (
+                  <section className="composer-session-stats-group" key={group.key}>
+                    <div className="composer-session-stats-group-title">{group.title}</div>
+                    {group.items.map((item) => (
+                      <div className="composer-session-stats-row" key={item.metric}>
+                        <div className="composer-session-stats-row-value">
+                          <span>{item.label}</span>
+                          <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
+                        </div>
+                        <div className="composer-session-stats-row-meta">
+                          {item.derived
+                            ? t("conversation.sessionStatsDerivedCacheHitRate")
+                            : `${formatSessionStatsSource(item.value.source)} · ${formatSessionStatsSemantic(item.value.semantic)} · ${formatSessionStatsWatermark(item.value.watermark)}`}
+                        </div>
+                      </div>
+                    ))}
+                  </section>
+                ))}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
+function buildSessionStatsGroups(sessionStats: ProviderSessionStatsDto | null): SessionStatsGroup[] {
+  const definitions: Array<{
+    key: SessionStatsGroup["key"];
+    title: string;
+    metrics: Array<{ metric: ProviderSessionStatMetricDto; label: string }>;
+  }> = [
+    {
+      key: "tokens",
+      title: t("conversation.sessionStatsGroupTokens"),
+      metrics: [
+        { metric: "inputTokens", label: t("conversation.sessionStatsInputTokens") },
+        { metric: "outputTokens", label: t("conversation.sessionStatsOutputTokens") },
+        { metric: "reasoningTokens", label: t("conversation.sessionStatsReasoningTokens") },
+        { metric: "cacheReadTokens", label: t("conversation.sessionStatsCacheReadTokens") },
+        { metric: "cacheWriteTokens", label: t("conversation.sessionStatsCacheWriteTokens") },
+        { metric: "toolTokens", label: t("conversation.sessionStatsToolTokens") },
+        { metric: "totalTokens", label: t("conversation.sessionStatsTotalTokens") }
+      ]
+    },
+    {
+      key: "activity",
+      title: t("conversation.sessionStatsGroupActivity"),
+      metrics: [
+        { metric: "turns", label: t("conversation.sessionStatsTurns") },
+        { metric: "steps", label: t("conversation.sessionStatsSteps") }
+      ]
+    },
+    {
+      key: "duration",
+      title: t("conversation.sessionStatsGroupDuration"),
+      metrics: [
+        { metric: "llmMs", label: t("conversation.sessionStatsLlmDuration") },
+        { metric: "toolMs", label: t("conversation.sessionStatsToolDuration") },
+        { metric: "ttftMs", label: t("conversation.sessionStatsTtft") },
+        { metric: "ttftSteps", label: t("conversation.sessionStatsTtftSteps") },
+        { metric: "decodeMs", label: t("conversation.sessionStatsDecodeDuration") },
+        { metric: "decodeTokens", label: t("conversation.sessionStatsDecodeTokens") }
+      ]
+    },
+    {
+      key: "cost",
+      title: t("conversation.sessionStatsGroupCost"),
+      metrics: [{ metric: "costUsd", label: t("conversation.sessionStatsCost") }]
+    }
+  ];
+
+  const groups: SessionStatsGroup[] = definitions.flatMap((definition) => {
+    const items = definition.metrics.flatMap((item) => {
+      const value = sessionStats?.metrics[item.metric];
+
+      if (!value || !Number.isFinite(value.value) || value.value < 0) {
+        return [];
+      }
+
+      return [{ ...item, value }];
+    });
+
+    return items.length > 0 ? [{ key: definition.key, title: definition.title, items }] : [];
+  });
+
+  const cacheHitRate = buildCacheHitRateValue(sessionStats);
+
+  if (cacheHitRate) {
+    const tokenGroup = groups.find((group) => group.key === "tokens");
+
+    if (tokenGroup) {
+      tokenGroup.items.push({
+        metric: "cacheHitRate",
+        label: t("conversation.sessionStatsCacheHitRate"),
+        value: cacheHitRate,
+        derived: true
+      });
+    }
+  }
+
+  return groups;
+}
+
+function buildSessionStatsSummary(sessionStats: ProviderSessionStatsDto | null): SessionStatsSummaryItem[] {
+  const summary: SessionStatsSummaryItem[] = [];
+  const turns = sessionStats?.metrics.turns;
+  const inputTokens = sessionStats?.metrics.inputTokens;
+  const outputTokens = sessionStats?.metrics.outputTokens;
+  const cacheHitRate = buildCacheHitRateValue(sessionStats);
+
+  if (isSessionStatValueAvailable(turns)) {
+    summary.push({
+      key: "turns",
+      text: t("conversation.sessionStatsSummaryTurns", { value: formatTokenCount(turns.value) })
+    });
+  }
+
+  if (isSessionStatValueAvailable(inputTokens)) {
+    summary.push({
+      key: "inputTokens",
+      text: t("conversation.sessionStatsSummaryInputTokens", {
+        value: formatCompactTokenCount(inputTokens.value)
+      })
+    });
+  }
+
+  if (isSessionStatValueAvailable(outputTokens)) {
+    summary.push({
+      key: "outputTokens",
+      text: t("conversation.sessionStatsSummaryOutputTokens", {
+        value: formatCompactTokenCount(outputTokens.value)
+      })
+    });
+  }
+
+  if (cacheHitRate) {
+    summary.push({
+      key: "cacheHitRate",
+      text: t("conversation.sessionStatsSummaryCacheHitRate", {
+        value: formatSessionStatValue("cacheHitRate", cacheHitRate.value)
+      })
+    });
+  }
+
+  return summary;
+}
+
+function buildCacheHitRateValue(
+  sessionStats: ProviderSessionStatsDto | null
+): NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]> | null {
+  const inputTokens = sessionStats?.metrics.inputTokens;
+  const cacheReadTokens = sessionStats?.metrics.cacheReadTokens;
+
+  if (!isSessionStatValueAvailable(inputTokens) || !isSessionStatValueAvailable(cacheReadTokens)) {
+    return null;
+  }
+
+  const totalInputTokens = inputTokens.value + cacheReadTokens.value;
+
+  if (totalInputTokens <= 0) {
+    return null;
+  }
+
+  return {
+    value: cacheReadTokens.value / totalInputTokens * 100,
+    source: cacheReadTokens.source,
+    semantic: cacheReadTokens.semantic,
+    watermark: cacheReadTokens.watermark
+  };
+}
+
+function isSessionStatValueAvailable(
+  value: NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]> | undefined
+): value is NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]> {
+  if (!value) {
+    return false;
+  }
+
+  return Number.isFinite(value.value) && value.value >= 0;
+}
+
+function formatSessionStatValue(metric: SessionStatsDisplayMetric, value: number): string {
+  if (metric === "cacheHitRate") {
+    return `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+  }
+
+  if (metric === "costUsd") {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 4
+    }).format(value);
+  }
+
+  if (metric.endsWith("Ms")) {
+    return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)} ${t("conversation.sessionStatsSeconds")}`;
+  }
+
+  return formatTokenCount(value);
+}
+
+function formatCompactTokenCount(value: number): string {
+  const formatted = new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(value);
+
+  return `${formatted} ${t("conversation.sessionStatsTokenUnit")}`;
+}
+
+function formatSessionStatsSource(value: ProviderSessionStatValueDto["source"]): string {
+  switch (value) {
+    case "provider-projection":
+      return t("conversation.sessionStatsSourceProjection");
+    case "provider-session-store":
+      return t("conversation.sessionStatsSourceSessionStore");
+    case "provider-history-log":
+      return t("conversation.sessionStatsSourceHistoryLog");
+  }
+
+  return "";
+}
+
+function formatSessionStatsSemantic(value: ProviderSessionStatValueDto["semantic"]): string {
+  switch (value) {
+    case "cumulative":
+      return t("conversation.sessionStatsSemanticCumulative");
+    case "sum-of-final-events":
+      return t("conversation.sessionStatsSemanticFinalEvents");
+    case "latest-snapshot":
+      return t("conversation.sessionStatsSemanticLatestSnapshot");
+  }
+
+  return "";
+}
+
+function formatSessionStatsWatermark(
+  watermark: NonNullable<ProviderSessionStatsDto["metrics"][ProviderSessionStatMetricDto]>["watermark"]
+): string {
+  if (watermark.kind === "source-sequence") {
+    return t("conversation.sessionStatsWatermarkSequence").replace("{value}", watermark.value);
+  }
+
+  const date = new Date(watermark.value);
+  const formatted = Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(date)
+    : watermark.value;
+  const label = watermark.kind === "source-timestamp"
+    ? t("conversation.sessionStatsWatermarkSourceTime")
+    : t("conversation.sessionStatsWatermarkCapturedAt");
+  return label.replace("{value}", formatted);
 }
 
 function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | null }) {

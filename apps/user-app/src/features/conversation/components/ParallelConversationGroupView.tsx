@@ -823,6 +823,7 @@ function ParallelConversationMemberPane({
     permissionRequests,
     queuedMessages,
     contextUsage,
+    sessionStats,
     historyState,
     runtimeInterruptSource,
     loadingOlderMessages,
@@ -1563,6 +1564,7 @@ function ParallelConversationMemberPane({
           onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
           hasActiveRun={composerHasActiveRun}
           contextUsage={contextUsage}
+          sessionStats={sessionStats}
           taskProvider={(session ?? entry.session).provider}
           taskMessages={messages}
           hasPendingQueuedMessages={hasPendingQueuedMessages}

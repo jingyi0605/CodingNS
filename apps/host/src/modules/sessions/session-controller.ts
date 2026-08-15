@@ -898,6 +898,7 @@ function createMissingSessionRuntimeSnapshot(sessionId: string): SessionRuntimeS
     updatedAt: timestamp,
     watchdogTriggeredAt: null,
     contextUsage: null,
+    sessionStats: null,
     permissionStatus: null
   };
 }

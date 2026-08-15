@@ -19,6 +19,7 @@ import {
   ProviderRuntimeService,
   type ProviderRuntimeAdapter,
   type ProviderRuntimeRunRequest,
+  type ProviderSessionStats,
   type ProviderSubscription,
   resolveCodexPermissionResolution,
   type RuntimeEvent,
@@ -202,6 +203,7 @@ export interface SessionRuntimeStatusView {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageSnapshot | null;
+  sessionStats?: ProviderSessionStats | null;
   permissionStatus: SessionRuntimePermissionStatusView | null;
 }
 
@@ -1081,6 +1083,10 @@ export class SessionLiveRuntimeService {
     this.maybeDispatchQueuedMessages(session);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId, userId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
+    // 允许旧的轻量测试替身和外部集成尚未实现新方法；统计永远不能阻断 runtime。
+    const sessionStats = (
+      await this.sessionHistoryService.getSessionStats?.(sessionId).catch(() => null)
+    ) ?? null;
     const requestedPermissionMode = this.resolveRequestedPermissionMode(sessionId);
     const permissionStatus = buildSessionRuntimePermissionStatus({
       provider: session.provider,
@@ -1123,6 +1129,7 @@ export class SessionLiveRuntimeService {
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
         contextUsage,
+        sessionStats,
         permissionStatus
       };
     }
@@ -1147,6 +1154,7 @@ export class SessionLiveRuntimeService {
         updatedAt: resolution.updatedAt,
         watchdogTriggeredAt: resolution.watchdogTriggeredAt,
         contextUsage,
+        sessionStats,
         permissionStatus
       };
     }
@@ -1181,6 +1189,7 @@ export class SessionLiveRuntimeService {
       updatedAt: resolution.updatedAt,
       watchdogTriggeredAt: resolution.watchdogTriggeredAt,
       contextUsage,
+      sessionStats,
       permissionStatus
     };
   }

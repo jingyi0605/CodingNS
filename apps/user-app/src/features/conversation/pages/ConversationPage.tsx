@@ -507,6 +507,7 @@ function LiveConversationPage({
     permissionRequests,
     queuedMessages,
     contextUsage,
+    sessionStats,
     permissionStatus,
     historyState,
     runtimeInterruptSource,
@@ -1086,6 +1087,7 @@ function LiveConversationPage({
                 portalContainer={!showInlineHeader ? composerPortalTarget : null}
                 hasActiveRun={composerHasActiveRun}
                 contextUsage={contextUsage}
+                sessionStats={sessionStats}
                 permissionStatus={permissionStatus}
                 taskProvider={(session ?? navigationSession)?.provider ?? null}
                 taskMessages={messages}

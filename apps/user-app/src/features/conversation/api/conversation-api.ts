@@ -1525,6 +1525,7 @@ export interface SessionRuntimeDto {
   updatedAt: string;
   watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageDto | null;
+  sessionStats?: ProviderSessionStatsDto | null;
   permissionStatus: SessionRuntimePermissionStatusDto | null;
 }
 
@@ -1565,6 +1566,40 @@ export interface ContextUsageDto {
   modelId: string | null;
   capturedAt: string | null;
   isEstimated: boolean;
+}
+
+export type ProviderSessionStatMetricDto =
+  | "inputTokens"
+  | "outputTokens"
+  | "reasoningTokens"
+  | "cacheReadTokens"
+  | "cacheWriteTokens"
+  | "toolTokens"
+  | "totalTokens"
+  | "turns"
+  | "steps"
+  | "llmMs"
+  | "toolMs"
+  | "ttftMs"
+  | "ttftSteps"
+  | "decodeMs"
+  | "decodeTokens"
+  | "costUsd";
+
+export interface ProviderSessionStatsDto {
+  provider: ProviderId;
+  capturedAt: string;
+  metrics: Partial<Record<ProviderSessionStatMetricDto, ProviderSessionStatValueDto>>;
+}
+
+export interface ProviderSessionStatValueDto {
+  value: number;
+  source: "provider-projection" | "provider-session-store" | "provider-history-log";
+  semantic: "cumulative" | "sum-of-final-events" | "latest-snapshot";
+  watermark: {
+    kind: "source-sequence" | "source-timestamp" | "captured-at";
+    value: string;
+  };
 }
 
 export interface SessionPermissionRequestListDto {

@@ -5,6 +5,7 @@ import type {
   HistoryMessageDto,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
+  ProviderSessionStatsDto,
   SessionPermissionRequestDto,
   SessionRuntimePermissionStatusDto,
   SessionQueueItemDto,
@@ -43,6 +44,7 @@ export interface SessionRuntimeState {
   runtimeHasActiveRun: boolean | null;
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
+  sessionStats: ProviderSessionStatsDto | null;
   permissionStatus: SessionRuntimePermissionStatusDto | null;
   messages: SessionMessageViewModel[];
   timelineItems: ConversationTimelineSourceItem[];
@@ -79,6 +81,7 @@ export function createInitialRuntimeState(
       | "runtimeHasActiveRun"
       | "runtimeCanInterrupt"
       | "contextUsage"
+      | "sessionStats"
       | "permissionStatus"
       | "messages"
       | "timelineItems"
@@ -98,6 +101,7 @@ export function createInitialRuntimeState(
     runtimeHasActiveRun: seed?.runtimeHasActiveRun ?? null,
     runtimeCanInterrupt: seed?.runtimeCanInterrupt ?? null,
     contextUsage: seed?.contextUsage ?? null,
+    sessionStats: seed?.sessionStats ?? null,
     permissionStatus: seed?.permissionStatus ?? null,
     messages: seed?.messages ?? [],
     timelineItems: seed?.timelineItems ?? [],

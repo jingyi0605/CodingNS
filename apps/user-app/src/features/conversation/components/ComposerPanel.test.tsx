@@ -894,6 +894,106 @@ describe("ComposerPanel", () => {
     expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
   });
 
+  it("只显示 Provider 真实提供的会话统计字段，并保留明确的零值", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "opencode",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 0,
+              source: "provider-session-store",
+              semantic: "cumulative",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            steps: {
+              value: 3,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "21" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const trigger = screen.getByLabelText(t("conversation.sessionStatsTitle"));
+    fireEvent.click(trigger);
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsInputTokens"));
+    expect(tooltip).toHaveTextContent("0");
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsSteps"));
+    expect(tooltip).toHaveTextContent("3");
+    expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
+    expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsCost"));
+  });
+
+  it("桌面摘要显示核心指标和缓存命中率，详情只由点击开关", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "deepseek-harness",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            turns: {
+              value: 4,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            },
+            inputTokens: {
+              value: 800,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            },
+            outputTokens: {
+              value: 300,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            },
+            cacheReadTokens: {
+              value: 200,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const summary = container.querySelector(".composer-session-stats-summary");
+    expect(summary).not.toBeNull();
+    expect(summary).toHaveTextContent(t("conversation.sessionStatsSummaryTurns", { value: "4" }));
+    expect(summary).toHaveTextContent(t("conversation.sessionStatsInputTokens"));
+    expect(summary).toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
+    expect(summary).toHaveTextContent(t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" }));
+
+    const trigger = screen.getByLabelText(t("conversation.sessionStatsTitle"));
+    fireEvent.mouseEnter(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(t("conversation.sessionStatsCacheHitRate"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("20%");
+
+    fireEvent.mouseLeave(trigger);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
   it("有任务记录时会在上下文占用按钮右侧显示任务按钮", () => {
     const { container } = render(
       <ComposerPanel

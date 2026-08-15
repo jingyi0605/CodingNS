@@ -48,6 +48,7 @@ import {
   type SessionRuntimePermissionStatusDto,
   type SessionSummaryDto,
   type SessionRuntimeDto,
+  type ProviderSessionStatsDto,
   type SessionRunningState,
   type SessionProviderConfigMode
 } from "../api/conversation-api";
@@ -104,6 +105,7 @@ interface SessionRuntimeSnapshot {
   runtimeHasActiveRun: boolean | null;
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
+  sessionStats: ProviderSessionStatsDto | null;
   permissionStatus: SessionRuntimePermissionStatusDto | null;
   messages: SessionMessageViewModel[];
   timelineItems: ConversationTimelineSourceItem[];
@@ -257,6 +259,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
+      sessionStats: cachedSnapshot?.sessionStats ?? null,
       permissionStatus: cachedSnapshot?.permissionStatus ?? null,
       messages: seededTimeline.messages,
       timelineItems: buildConversationTimelineStateItems(
@@ -374,6 +377,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
+      sessionStats: cachedSnapshot?.sessionStats ?? null,
       permissionStatus: cachedSnapshot?.permissionStatus ?? null,
       messages: reloadedTimeline.messages,
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
@@ -924,6 +928,7 @@ export class SessionRuntimeStore {
       Object.prototype.hasOwnProperty.call(nextInput, "session")
       || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
       || Object.prototype.hasOwnProperty.call(nextInput, "contextUsage")
+      || Object.prototype.hasOwnProperty.call(nextInput, "sessionStats")
       || Object.prototype.hasOwnProperty.call(nextInput, "messages")
       || Object.prototype.hasOwnProperty.call(nextInput, "timelineItems")
       || Object.prototype.hasOwnProperty.call(nextInput, "permissionRequests")
@@ -1477,6 +1482,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
         runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
+        sessionStats: runtime.sessionStats ?? null,
         permissionStatus: runtime.permissionStatus,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
@@ -1613,6 +1619,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: resolvedRuntimeHasActiveRun,
         runtimeCanInterrupt: resolvedRuntimeCanInterrupt,
         contextUsage: runtime.contextUsage,
+        sessionStats: runtime.sessionStats ?? null,
         permissionStatus: runtime.permissionStatus,
         ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
@@ -1621,7 +1628,8 @@ export class SessionRuntimeStore {
       logPerfDebug("session_runtime.snapshot.end", {
         sessionId: this.sessionId,
         reason,
-        hasContextUsage: runtime.contextUsage !== null
+        hasContextUsage: runtime.contextUsage !== null,
+        hasSessionStats: runtime.sessionStats !== null && runtime.sessionStats !== undefined
       });
     } catch (error) {
       logPerfDebug("session_runtime.snapshot.error", {
@@ -1903,6 +1911,7 @@ export class SessionRuntimeStore {
       runtimeHasActiveRun: this.state.runtimeHasActiveRun,
       runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage,
+      sessionStats: this.state.sessionStats,
       permissionStatus: this.state.permissionStatus,
       messages: buildSnapshotMessages(this.authoritativeMessages),
       timelineItems: buildConversationTimelineStateItems(

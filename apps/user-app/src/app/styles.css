@@ -8099,6 +8099,202 @@ textarea:focus-visible {
   color: var(--text-secondary);
 }
 
+.composer-session-stats-control {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-session-stats-summary {
+  display: none;
+  min-width: 0;
+  max-width: min(58vw, 640px);
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border: 1px solid var(--conversation-chip-border);
+  border-radius: 999px;
+  background: var(--conversation-chip-bg);
+  box-shadow: var(--conversation-chip-shadow);
+  color: var(--conversation-chip-text);
+}
+
+.composer-session-stats-summary-item {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+
+.composer-session-stats-summary-item > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-session-stats-summary-divider {
+  color: var(--conversation-chip-muted-text);
+  font-weight: 500;
+}
+
+.composer-session-stats-trigger {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.composer-session-stats-trigger:hover,
+.composer-session-stats-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+  color: var(--accent);
+  outline: none;
+}
+
+.composer-session-stats-icon {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: end;
+  justify-content: center;
+  gap: 2px;
+}
+
+.composer-session-stats-icon > span {
+  width: 3px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.composer-session-stats-icon > span:nth-child(1) {
+  height: 5px;
+}
+
+.composer-session-stats-icon > span:nth-child(2) {
+  height: 9px;
+}
+
+.composer-session-stats-icon > span:nth-child(3) {
+  height: 12px;
+}
+
+.composer-session-stats-more-icon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 14px;
+  height: 14px;
+}
+
+.composer-session-stats-more-icon > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.composer-session-stats-tooltip {
+  max-height: min(54vh, 440px);
+  overflow-y: auto;
+}
+
+.composer-session-stats-groups {
+  margin-top: 8px;
+}
+
+.composer-session-stats-group + .composer-session-stats-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
+.composer-session-stats-group-title {
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--text-tertiary);
+}
+
+.composer-session-stats-row {
+  padding: 5px 0;
+}
+
+.composer-session-stats-row + .composer-session-stats-row {
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 56%, transparent);
+}
+
+.composer-session-stats-row-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.composer-session-stats-row-value strong {
+  color: var(--text-primary);
+  font-weight: 700;
+  text-align: right;
+}
+
+.composer-session-stats-row-meta {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+
+@media (min-width: 721px) {
+  .composer-session-stats-summary {
+    display: inline-flex;
+  }
+
+  .composer-session-stats-mobile-icon {
+    display: none;
+  }
+
+  .composer-session-stats-more-icon {
+    display: inline-flex;
+  }
+}
+
+.composer-session-stats-control.is-mobile .composer-session-stats-summary {
+  display: none;
+}
+
+.composer-session-stats-control.is-mobile .composer-session-stats-mobile-icon {
+  display: inline-flex;
+}
+
+.composer-session-stats-control.is-mobile .composer-session-stats-more-icon {
+  display: none;
+}
+
 /* Send Button */
 .composer-send {
   width: 44px;
