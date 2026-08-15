@@ -891,7 +891,47 @@ describe("ComposerPanel", () => {
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip?.textContent).toContain(t("conversation.contextUsageTitle"));
     expect(tooltip?.textContent).toContain("32%");
-    expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
+    expect(tooltip?.textContent).toContain(
+      t("conversation.contextUsageUsedTokens", { count: "64,000" })
+    );
+    expect(tooltip?.textContent).toContain(
+      t("conversation.contextUsageLimitTokens", { count: "200,000" })
+    );
+  });
+
+  it("上下文没有原生缓存桶时仍显示占用，但不渲染来源或估算标签", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        contextUsage={{
+          provider: "deepseek-harness",
+          promptTokens: 9818,
+          contextWindow: 1_000_000,
+          usageRatio: 0.009818,
+          source: "provider-runtime",
+          contextWindowSource: "provider-runtime",
+          modelId: null,
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          isEstimated: true
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const ring = container.querySelector(".composer-context-ring");
+    expect(ring).toHaveAttribute("aria-label", `${t("conversation.contextUsageTitle")} 1%`);
+
+    fireEvent.click(ring!);
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(
+      t("conversation.contextUsageUsedTokens", { count: "9,818" })
+    );
+    expect(tooltip).toHaveTextContent(
+      t("conversation.contextUsageLimitTokens", { count: "1,000,000" })
+    );
+    expect(tooltip.querySelector(".composer-context-usage-details")).toBeNull();
   });
 
   it("将会话统计详情合并到上下文占用圆环，并移除独立统计按钮", () => {
@@ -926,6 +966,24 @@ describe("ComposerPanel", () => {
               source: "provider-history-log",
               semantic: "latest-snapshot",
               watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            turns: {
+              value: 5,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            llmMs: {
+              value: 1_900,
+              source: "provider-history-log",
+              semantic: "latest-snapshot",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            },
+            cacheHitRate: {
+              value: 93.7,
+              source: "derived-provider-metrics",
+              semantic: "derived-ratio",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
             }
           }
         }}
@@ -935,12 +993,15 @@ describe("ComposerPanel", () => {
     );
 
     const ring = container.querySelector(".composer-context-ring");
+    const cacheRing = container.querySelector(".composer-cache-hit-ring");
     const statsControl = container.querySelector(".composer-session-stats-control");
     const summary = container.querySelector(".composer-session-stats-summary");
 
     expect(container.querySelector(".composer-session-stats-trigger")).toBeNull();
     expect(statsControl?.firstElementChild).toBe(ring);
-    expect(ring?.nextElementSibling).toBe(summary);
+    expect(ring?.nextElementSibling).toBe(cacheRing);
+    expect(cacheRing?.nextElementSibling).toBe(summary);
+    expect(ring?.contains(cacheRing)).toBe(false);
     fireEvent.click(ring!);
 
     const tooltip = screen.getByRole("tooltip");
@@ -948,7 +1009,70 @@ describe("ComposerPanel", () => {
     expect(tooltip).toHaveTextContent(t("conversation.sessionStatsTitle"));
     expect(tooltip).toHaveTextContent(t("conversation.sessionStatsInputTokens"));
     expect(tooltip).toHaveTextContent(t("conversation.sessionStatsOutputTokens"));
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsTurns"));
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsLlmDuration"));
+    expect(screen.getByRole("progressbar", {
+      name: `${t("conversation.contextUsageTitle")} 32%`
+    })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", {
+      name: t("conversation.sessionStatsSummaryCacheHitRate", { value: "93.7%" })
+    })).toBeInTheDocument();
+    expect(tooltip).toHaveTextContent("40");
+    expect(tooltip).toHaveTextContent("80");
+    expect(tooltip).toHaveTextContent("90");
+    expect(tooltip.querySelector(".composer-session-stats-provenance")).toBeNull();
+    expect(tooltip.querySelector(".composer-session-stats-group-title")).toBeNull();
+    expect(tooltip.querySelectorAll(".composer-session-stats-row")).toHaveLength(4);
     expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent("tok");
+  });
+
+  it("会话统计弹层会在上方可用空间内向上展开", async () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "deepseek-harness",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            inputTokens: {
+              value: 800,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            },
+            outputTokens: {
+              value: 300,
+              source: "provider-projection",
+              semantic: "cumulative",
+              watermark: { kind: "source-sequence", value: "12" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const trigger = container.querySelector(".composer-context-ring");
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+    vi.spyOn(trigger!, "getBoundingClientRect").mockReturnValue({
+      x: 200,
+      y: 700,
+      top: 700,
+      right: 228,
+      bottom: 728,
+      left: 200,
+      width: 28,
+      height: 28,
+      toJSON: () => ({})
+    } as DOMRect);
+
+    fireEvent.click(trigger!);
+
+    const tooltip = await screen.findByRole("tooltip");
+    await waitFor(() => {
+      expect(tooltip).toHaveStyle({ bottom: "210px", maxHeight: "678px" });
+    });
   });
 
   it("只显示 Provider 真实提供的会话统计字段，并保留明确的零值", () => {
@@ -990,7 +1114,7 @@ describe("ComposerPanel", () => {
     expect(tooltip).not.toHaveTextContent(t("conversation.sessionStatsCost"));
   });
 
-  it("桌面摘要只显示核心指标，缓存命中率由双圆环和详情显示", () => {
+  it("桌面摘要只显示核心指标，缓存命中率由独立圆环和详情显示", () => {
     const { container } = render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -1049,20 +1173,29 @@ describe("ComposerPanel", () => {
     expect(summary).not.toHaveTextContent(t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" }));
     expect(summary).not.toHaveTextContent("tok");
 
-    const trigger = container.querySelector(".composer-context-ring");
-    expect(trigger).toHaveClass("has-cache-hit-rate", "is-cache-low");
-    expect(trigger).toHaveAttribute("aria-label", `${t("conversation.sessionStatsTitle")}，${t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" })}`);
-    fireEvent.mouseEnter(trigger);
+    const contextTrigger = container.querySelector(".composer-context-ring");
+    const cacheTrigger = container.querySelector(".composer-cache-hit-ring");
+    expect(contextTrigger).toHaveAttribute("aria-label", t("conversation.sessionStatsTitle"));
+    expect(cacheTrigger).toHaveClass("is-cache-critical");
+    expect(cacheTrigger).toHaveAttribute(
+      "aria-label",
+      t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" })
+    );
+    fireEvent.mouseEnter(cacheTrigger!);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    fireEvent.click(trigger!);
-    expect(screen.getByRole("tooltip")).toHaveTextContent(t("conversation.sessionStatsCacheHitRate"));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("20%");
+    fireEvent.click(cacheTrigger!);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(t("conversation.sessionStatsCacheHitRate"));
+    expect(tooltip).toHaveTextContent("20%");
+    expect(tooltip.querySelector(".composer-cache-hit-rate-pointer")).toHaveStyle({ left: "20%" });
+    expect(contextTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(cacheTrigger).toHaveAttribute("aria-expanded", "true");
 
-    fireEvent.mouseLeave(trigger!);
+    fireEvent.mouseLeave(cacheTrigger!);
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
-    fireEvent.click(trigger!);
+    fireEvent.click(cacheTrigger!);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
@@ -1102,13 +1235,12 @@ describe("ComposerPanel", () => {
     expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent(
       t("conversation.sessionStatsSummaryCacheHitRate", { value: "80%" })
     );
-    expect(container.querySelector(".composer-context-ring")).toHaveClass(
-      "has-cache-hit-rate",
-      "is-cache-medium"
-    );
+    expect(container.querySelector(".composer-cache-hit-ring")).toHaveClass("is-cache-medium");
   });
 
   it.each([
+    [39.9, "is-cache-critical"],
+    [40, "is-cache-low"],
     [79.9, "is-cache-low"],
     [80, "is-cache-medium"],
     [89.9, "is-cache-medium"],
@@ -1140,9 +1272,9 @@ describe("ComposerPanel", () => {
       />
     );
 
-    const ring = container.querySelector(".composer-context-ring");
+    const ring = container.querySelector(".composer-cache-hit-ring");
 
-    expect(ring).toHaveClass("has-cache-hit-rate", expectedClassName);
+    expect(ring).toHaveClass(expectedClassName);
   });
 
   it("Provider 未给出核验后的缓存命中率时保持隐藏", () => {
@@ -1175,7 +1307,7 @@ describe("ComposerPanel", () => {
     expect(container.querySelector(".composer-session-stats-summary")).not.toHaveTextContent(
       t("conversation.sessionStatsSummaryCacheHitRate", { value: "20%" })
     );
-    expect(container.querySelector(".composer-context-ring")).not.toHaveClass("has-cache-hit-rate");
+    expect(container.querySelector(".composer-cache-hit-ring")).toBeNull();
   });
 
   it("有任务记录时会在上下文占用按钮右侧显示任务按钮", () => {
