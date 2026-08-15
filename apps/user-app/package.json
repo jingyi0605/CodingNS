@@ -19,6 +19,7 @@
     "test:changed": "vitest --changed"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.9",
     "@tauri-apps/api": "^2.10.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",

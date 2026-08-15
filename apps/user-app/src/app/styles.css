@@ -3890,14 +3890,36 @@ body[data-code-terminal-dock-resizing="true"] .code-workbench-terminal-resizer::
 }
 
 .message-list {
+  --message-timeline-virtual-row-gap: 0px;
   flex: 1;
   min-height: 0;
+  position: relative;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+}
+
+.message-list-virtual-content {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.message-list-virtual-row {
+  box-sizing: border-box;
+  min-width: 0;
+  padding-bottom: var(--message-timeline-virtual-row-gap);
+}
+
+.message-list-virtual-loading {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
 }
 
 .conversation-scroll-to-bottom-button {
@@ -16043,6 +16065,7 @@ textarea:focus-visible {
 }
 
 .message-list {
+  --message-timeline-virtual-row-gap: 6px;
   gap: 6px;
   padding: 8px 4px 4px;
 }

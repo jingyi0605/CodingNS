@@ -14,6 +14,7 @@ import {
   type WheelEvent as ReactWheelEvent,
   type ReactNode
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -314,6 +315,9 @@ const SCROLL_STATE_PERSIST_DELAY_MS = 120;
 const OLDER_HISTORY_TOUCH_DRAG_THRESHOLD_PX = 18;
 const MANUAL_RESTORE_INTERVAL_MS = 50;
 const MANUAL_RESTORE_DURATION_MS = 3500;
+const MESSAGE_TIMELINE_VIRTUAL_ESTIMATED_ITEM_HEIGHT = 180;
+const MESSAGE_TIMELINE_VIRTUAL_OVERSCAN = 8;
+const MESSAGE_TIMELINE_LOADING_OLDER_HEIGHT = 44;
 const MarkdownLinkContext = createContext(false);
 
 type TimelineRenderItem =
@@ -342,6 +346,32 @@ type TimelineRenderItem =
       key: string;
       notice: Extract<ConversationTimelineSourceItem, { type: "runtime_notice" }>["notice"];
     };
+
+function useStableMessageActionStates(
+  actionStateByMessageId: Map<string, MessageActionState>
+): Map<string, MessageActionState> {
+  const previousRef = useRef(new Map<string, MessageActionState>());
+
+  return useMemo(() => {
+    const next = new Map<string, MessageActionState>();
+
+    for (const [messageId, actionState] of actionStateByMessageId) {
+      const previous = previousRef.current.get(messageId);
+
+      next.set(
+        messageId,
+        previous
+        && previous.canCopy === actionState.canCopy
+        && previous.canFork === actionState.canFork
+          ? previous
+          : actionState
+      );
+    }
+
+    previousRef.current = next;
+    return next;
+  }, [actionStateByMessageId]);
+}
 
 function normalizeMessagePathSeparators(value: string): string {
   return value.replace(/\\/g, "/");
@@ -6132,7 +6162,23 @@ export function MessageTimeline({
   const visibleMessages = timelineViewModel.visibleMessages;
   const renderItems = timelineViewModel.renderItems;
   const leadingSystemPromptMessageIds = timelineViewModel.leadingSystemPromptMessageIds;
-  const actionStateByMessageId = timelineViewModel.actionStateByMessageId;
+  const actionStateByMessageId = useStableMessageActionStates(
+    timelineViewModel.actionStateByMessageId
+  );
+  const shouldVirtualizeTimeline =
+    typeof window !== "undefined" && typeof ResizeObserver !== "undefined";
+  const timelineVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: renderItems.length,
+    getScrollElement: () => listRef.current,
+    getItemKey: (index) => renderItems[index]?.key ?? index,
+    estimateSize: () => MESSAGE_TIMELINE_VIRTUAL_ESTIMATED_ITEM_HEIGHT,
+    overscan: MESSAGE_TIMELINE_VIRTUAL_OVERSCAN,
+    paddingStart: loadingOlderMessages ? MESSAGE_TIMELINE_LOADING_OLDER_HEIGHT : 0,
+    enabled: shouldVirtualizeTimeline,
+    directDomUpdates: shouldVirtualizeTimeline,
+    directDomUpdatesMode: "transform",
+    useFlushSync: false
+  });
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
 
   useEffect(() => {
@@ -6311,7 +6357,7 @@ export function MessageTimeline({
     }
 
     const listRect = list.getBoundingClientRect();
-    const messageElements = Array.from(list.children).filter(
+    const messageElements = Array.from(list.querySelectorAll(".message-item")).filter(
       (element): element is HTMLElement =>
         element instanceof HTMLElement && element.classList.contains("message-item")
     );
@@ -6991,6 +7037,60 @@ export function MessageTimeline({
     touchStartYRef.current = null;
   }
 
+  function renderTimelineItem(item: TimelineRenderItem) {
+    if (item.type === "tool_group") {
+      return (
+        <article key={item.key} className="message-item tool-message-row">
+          <MemoizedToolCallItem
+            group={item.group}
+            sessionId={sessionId}
+            workspaceId={workspaceId}
+            workspacePath={workspacePath}
+            onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+            permissionRequests={permissionRequests}
+            replyingPermissionRequestId={replyingPermissionRequestId}
+          />
+        </article>
+      );
+    }
+
+    if (item.type === "runtime_thinking") {
+      return renderRuntimeThinkingItem(item);
+    }
+
+    if (item.type === "runtime_notice") {
+      return renderRuntimeNoticeItem(item);
+    }
+
+    if (item.type === "session_error") {
+      return renderSessionErrorItem(item);
+    }
+
+    return (
+      <MemoizedMessageItem
+        key={item.key}
+        message={item.message}
+        provider={provider}
+        foldedPromptKind={
+          leadingSystemPromptMessageIds.has(item.message.id)
+            ? "system_prompt"
+            : null
+        }
+        actionState={
+          actionStateByMessageId.get(item.message.id)
+          ?? (item.message.role === "user"
+            ? DEFAULT_USER_MESSAGE_ACTION_STATE
+            : DEFAULT_MESSAGE_ACTION_STATE)
+        }
+        onRetry={onRetryMessage}
+        onForkMessage={onForkMessage}
+        interruptedSource={interruptedSource}
+        assistantAvatar={assistantAvatar}
+        onSubmitStructuredQuestion={onSubmitStructuredQuestion}
+      />
+    );
+  }
+
   return (
     <section className="message-timeline">
       {historyState === "loading" && (
@@ -7012,60 +7112,57 @@ export function MessageTimeline({
       >
         {showTimelineSkeleton ? <TimelineSkeleton /> : null}
 
-        {loadingOlderMessages ? (
-          <div className="timeline-status timeline-status-inline">
-            <span className="status-text">{t("conversation.historyLoadingOlder")}</span>
-          </div>
-        ) : null}
-
         {renderItems.length === 0 && historyState === "ready" && (
           <div className="timeline-empty">
             <p className="status-text">{t("conversation.timelineEmpty")}</p>
           </div>
         )}
 
-        {renderItems.map((item) =>
-          item.type === "tool_group" ? (
-            <article key={item.key} className="message-item tool-message-row">
-              <MemoizedToolCallItem
-                group={item.group}
-                sessionId={sessionId}
-                workspaceId={workspaceId}
-                workspacePath={workspacePath}
-                onSubmitStructuredQuestion={onSubmitStructuredQuestion}
-                permissionRequests={permissionRequests}
-                replyingPermissionRequestId={replyingPermissionRequestId}
-              />
-            </article>
-          ) : item.type === "runtime_thinking" ? (
-            renderRuntimeThinkingItem(item)
-          ) : item.type === "runtime_notice" ? (
-            renderRuntimeNoticeItem(item)
-          ) : item.type === "session_error" ? (
-            renderSessionErrorItem(item)
-          ) : (
-            <MemoizedMessageItem
-              key={item.key}
-              message={item.message}
-              provider={provider}
-              foldedPromptKind={
-                leadingSystemPromptMessageIds.has(item.message.id)
-                  ? "system_prompt"
-                  : null
+        {shouldVirtualizeTimeline ? (
+          <div
+            ref={timelineVirtualizer.containerRef}
+            className="message-list-virtual-content"
+            data-timeline-virtualized="true"
+          >
+            {loadingOlderMessages ? (
+              <div className="timeline-status timeline-status-inline message-list-virtual-loading">
+                <span className="status-text">{t("conversation.historyLoadingOlder")}</span>
+              </div>
+            ) : null}
+            {timelineVirtualizer.getVirtualItems().map((virtualItem) => {
+              const item = renderItems[virtualItem.index];
+
+              if (!item) {
+                return null;
               }
-              actionState={
-                actionStateByMessageId.get(item.message.id)
-                ?? (item.message.role === "user"
-                  ? DEFAULT_USER_MESSAGE_ACTION_STATE
-                  : DEFAULT_MESSAGE_ACTION_STATE)
-              }
-              onRetry={onRetryMessage}
-              onForkMessage={onForkMessage}
-              interruptedSource={interruptedSource}
-              assistantAvatar={assistantAvatar}
-              onSubmitStructuredQuestion={onSubmitStructuredQuestion}
-            />
-          )
+
+              return (
+                <div
+                  key={virtualItem.key}
+                  ref={timelineVirtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  className="message-list-virtual-row"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%"
+                  }}
+                >
+                  {renderTimelineItem(item)}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <>
+            {loadingOlderMessages ? (
+              <div className="timeline-status timeline-status-inline">
+                <span className="status-text">{t("conversation.historyLoadingOlder")}</span>
+              </div>
+            ) : null}
+            {renderItems.map(renderTimelineItem)}
+          </>
         )}
       </div>
       {showScrollToBottomButton ? (
