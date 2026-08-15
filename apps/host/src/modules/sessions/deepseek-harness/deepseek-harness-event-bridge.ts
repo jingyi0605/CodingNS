@@ -2,6 +2,8 @@ import {
   createDeepSeekHarnessStreamMessageMapper,
   getHarnessEntrySequence,
   isHarnessAssistantChunk,
+  parseHarnessTurnEndActivity,
+  type DeepSeekHarnessTurnEndActivity,
   type DeepSeekHarnessStreamMessageMapper,
   type NormalizedMessage
 } from "@codingns/session-sync-core";
@@ -14,6 +16,14 @@ import { parseHarnessDownlink, type HarnessServerRequest } from "./deepseek-harn
 export type DeepSeekHarnessBridgeEvent =
   | { type: "message"; sessionId: string; message: NormalizedMessage; sequence: number; rpcId: string }
   | { type: "status"; sessionId: string; running: boolean; rpcId: string }
+  | {
+      type: "terminal";
+      sessionId: string;
+      runningState: DeepSeekHarnessTurnEndActivity["runningState"];
+      detail: string | null;
+      errorCode: string | null;
+      rpcId: string;
+    }
   | { type: "approval"; sessionId: string; rpcId: string; payload: unknown }
   | { type: "question"; sessionId: string; rpcId: string; payload: unknown }
   | { type: "queue"; sessionId: string; rpcId: string; payload: unknown }
@@ -56,6 +66,7 @@ export class DeepSeekHarnessEventBridge {
     const set = this.listeners.get(sessionId) ?? new Set();
     set.add(listener);
     this.listeners.set(sessionId, set);
+    this.cursors.set(sessionId, this.cursors.get(sessionId) ?? -1);
     try {
       await this.start();
     } catch (error) {
@@ -68,6 +79,7 @@ export class DeepSeekHarnessEventBridge {
         set.delete(listener);
         if (set.size !== 0) return;
         this.listeners.delete(sessionId);
+        this.cursors.delete(sessionId);
         this.clearSessionStreamState(sessionId);
       }
     };
@@ -104,11 +116,7 @@ export class DeepSeekHarnessEventBridge {
     const onClose = () => {
       if (this.disposed) return;
       this.started = false;
-      const task = this.options.taskManager.enqueue(
-        HOST_TASK_TYPES.harnessSessionReconcile,
-        { key: "deepseek-harness", input: {}, source: "harness-event-bridge" }
-      );
-      void task.promise.catch(() => undefined);
+      this.requestReconcile("harness-event-bridge.closed");
     };
     const muxClose = await this.options.client.subscribe("/api/events.mux", (envelope) => this.handleEnvelope(envelope), undefined, onClose);
     try {
@@ -149,6 +157,10 @@ export class DeepSeekHarnessEventBridge {
     }
     if (payload.type === "host/session-status" && sessionId) {
       this.emit(sessionId, { type: "status", sessionId, running: payload.running === true, rpcId: envelope.rpcId });
+      if (payload.running !== true) {
+        // host status 只说明运行已停；真正的成功、失败或中断原因必须从 turn/end 读取。
+        this.requestReconcile("harness-event-bridge.status");
+      }
       return;
     }
     if (sessionId && typeof payload.type === "string" && ["approval/requested", "approval/resolved"].includes(payload.type)) {
@@ -169,6 +181,7 @@ export class DeepSeekHarnessEventBridge {
     if (sequence <= (this.cursors.get(sessionId) ?? -1)) return;
     this.cursors.set(sessionId, sequence);
 
+    const terminal = parseHarnessTurnEndActivity(entry, fallbackSequence);
     const messages = this.getStreamMapper(sessionId).map(entry, sequence);
     if (isHarnessAssistantChunk(entry)) {
       this.queueStreamingMessages(sessionId, messages, rpcId);
@@ -179,6 +192,25 @@ export class DeepSeekHarnessEventBridge {
     for (const message of messages) {
       this.emit(sessionId, { type: "message", sessionId, message, sequence: message.sequence, rpcId });
     }
+
+    if (terminal) {
+      this.emit(sessionId, {
+        type: "terminal",
+        sessionId,
+        runningState: terminal.runningState,
+        detail: terminal.detail,
+        errorCode: terminal.errorCode,
+        rpcId
+      });
+    }
+  }
+
+  private requestReconcile(source: string): void {
+    const task = this.options.taskManager.enqueue(
+      HOST_TASK_TYPES.harnessSessionReconcile,
+      { key: "deepseek-harness", input: {}, source }
+    );
+    void task.promise.catch(() => undefined);
   }
 
   private getStreamMapper(sessionId: string): DeepSeekHarnessStreamMessageMapper {

@@ -15,6 +15,17 @@ export interface DeepSeekHarnessApiClientOptions {
   requestTimeoutMs?: number;
 }
 
+export interface DeepSeekHarnessWorkspaceView {
+  workspaceId: string;
+  path: string;
+  title?: string;
+  sessionIds?: string[];
+}
+
+export type DeepSeekHarnessSessionCreateTarget =
+  | { workspaceId: string }
+  | { cwd: string };
+
 export class DeepSeekHarnessRpcError extends Error {
   readonly code: string;
   readonly retryable: boolean;
@@ -100,12 +111,21 @@ export class DeepSeekHarnessApiClient {
     return this.call<Record<string, unknown>>("host.describe", {}, signal);
   }
 
-  async createSession(cwd: string, signal?: AbortSignal): Promise<{ sessionId: string }> {
-    return this.call<{ sessionId: string }>("session.create", { cwd }, signal);
+  async createWorkspace(path: string, signal?: AbortSignal): Promise<{ workspace: DeepSeekHarnessWorkspaceView; created: boolean }> {
+    return this.call<{ workspace: DeepSeekHarnessWorkspaceView; created: boolean }>("workspace.create", { path }, signal);
+  }
+
+  async createSession(target: DeepSeekHarnessSessionCreateTarget | string, signal?: AbortSignal): Promise<{ sessionId: string }> {
+    const payload = typeof target === "string" ? { cwd: target } : target;
+    return this.call<{ sessionId: string }>("session.create", payload, signal);
   }
 
   async listSessions(signal?: AbortSignal): Promise<{ items: Array<Record<string, unknown>> }> {
     return this.call<{ items: Array<Record<string, unknown>> }>("session.list", {}, signal);
+  }
+
+  async listWorkspaces(signal?: AbortSignal): Promise<{ items: Array<Record<string, unknown>>; archivedSessionIds?: string[] }> {
+    return this.call<{ items: Array<Record<string, unknown>>; archivedSessionIds?: string[] }>("workspace.list", {}, signal);
   }
 
   async readHistory(sessionId: string, beforeSeq?: number, maxMessages = 100, signal?: AbortSignal): Promise<{ events: Array<Record<string, unknown>>; hasMore?: boolean }> {
@@ -130,6 +150,10 @@ export class DeepSeekHarnessApiClient {
 
   async rename(sessionId: string, title: string, signal?: AbortSignal): Promise<{ title: string }> {
     return this.call<{ title: string }>("session.rename", { sessionId, title }, signal);
+  }
+
+  async archiveSession(sessionId: string, signal?: AbortSignal): Promise<{ archivedSessionIds: string[] }> {
+    return this.call<{ archivedSessionIds: string[] }>("workspace.archiveSession", { sessionId }, signal);
   }
 
   async models(sessionId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {

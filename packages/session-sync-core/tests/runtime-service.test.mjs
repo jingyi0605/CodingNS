@@ -279,3 +279,73 @@ test("ProviderRuntimeService 在 launch.completed 后不会再接收迟到消息
     await service.dispose();
   }
 });
+
+test("ProviderRuntimeService 在释放 active run 前会投递已排队的完成事件", async () => {
+  let emitRunning = null;
+  let resolveCompleted;
+  let releaseListener;
+  let notifyRunningListenerStarted;
+  const completed = new Promise((resolve) => {
+    resolveCompleted = resolve;
+  });
+  const runningListenerStarted = new Promise((resolve) => {
+    notifyRunningListenerStarted = resolve;
+  });
+  const listenerGate = new Promise((resolve) => {
+    releaseListener = resolve;
+  });
+  const observed = [];
+
+  const adapter = {
+    providerId: "codex",
+    async startSession(_request, sink) {
+      emitRunning = () => sink.emit({
+        type: "status",
+        status: "running",
+        detail: "run started"
+      });
+
+      return {
+        providerSessionId: "thread-1",
+        rawStoreRef: "codex://thread-1",
+        completed
+      };
+    },
+    async continueSession() {
+      throw new Error("not used");
+    }
+  };
+
+  const service = new ProviderRuntimeService([adapter]);
+
+  try {
+    const handle = await service.startSession(createRunRequest());
+    const subscription = service.subscribe("session-1", async (event) => {
+      if (event.status === "running") {
+        notifyRunningListenerStarted();
+        await listenerGate;
+        observed.push(event.type);
+        return;
+      }
+
+      if (event.type === "complete") {
+        observed.push(event.type);
+      }
+    });
+
+    await emitRunning?.();
+    await runningListenerStarted;
+    resolveCompleted();
+    await completed;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseListener();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(observed, ["status", "complete"]);
+    assert.equal(service.getSnapshot("session-1"), null);
+    subscription.close();
+    assert.equal(handle.getSnapshot().runningState, "completed");
+  } finally {
+    await service.dispose();
+  }
+});

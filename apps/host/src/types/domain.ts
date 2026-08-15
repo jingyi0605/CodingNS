@@ -1111,7 +1111,8 @@ export type PreferenceProviderId =
   | "codex"
   | "opencode"
   | "gemini"
-  | "kimi";
+  | "kimi"
+  | "deepseek-harness";
 export type UserPreferenceLanguage = "zh-CN" | "en-US";
 export type UserPreferenceTheme = "light" | "dark" | "sky-blue" | "eye-green";
 export type UserPreferencePermissionMode = "default" | "acceptEdits" | "bypassPermissions";

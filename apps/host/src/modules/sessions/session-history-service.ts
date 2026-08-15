@@ -1187,6 +1187,16 @@ export class SessionHistoryService {
         this.capabilityService.getProviderCapabilities(provider)
       );
 
+      if (baseCapabilities.provider === "deepseek-harness") {
+        const discoveredCapabilities = await this.capabilityService.getSessionCapabilities(
+          baseCapabilities.provider,
+          ""
+        );
+        return this.applyProviderEnabledState(
+          this.applyProviderCliAvailability(discoveredCapabilities)
+        );
+      }
+
       if (baseCapabilities.provider === "opencode" && workspacePath) {
         const refreshed = await this.enrichProviderCapabilities(baseCapabilities, workspacePath);
         const cacheKey = buildProviderCapabilityCacheKey(baseCapabilities.provider, workspacePath);
@@ -1234,6 +1244,10 @@ export class SessionHistoryService {
               });
               return this.applyProviderEnabledState(refreshed);
             });
+        }
+
+        if (normalizedCapabilities.provider === "deepseek-harness") {
+          return this.applyProviderEnabledState(normalizedCapabilities);
         }
 
         this.scheduleProviderCapabilityRefresh(normalizedCapabilities, workspacePath);
@@ -2196,6 +2210,11 @@ export class SessionHistoryService {
         });
       }
     } catch (error) {
+      if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor, error)) {
+        this.clearDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor);
+        return { close() {} };
+      }
+
       this.markSessionError(sessionId, "SUBSCRIBE_FAILED", error);
       throw mapSessionProviderError(error);
     }
@@ -2223,6 +2242,13 @@ export class SessionHistoryService {
           currentCursor = nextCursor;
         })
         .catch((error) => {
+          if (this.shouldSuppressDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor, error)) {
+            closed = true;
+            clearInterval(timer);
+            this.clearDeepSeekHarnessSubscriptionFailure(sessionId, currentCursor);
+            return;
+          }
+
           this.markSessionError(sessionId, "SUBSCRIBE_FAILED", error);
         })
         .finally(() => {
@@ -2463,7 +2489,7 @@ export class SessionHistoryService {
     // 删除子Agent的 JSONL 文件
     for (const subagent of subagentRows) {
       try {
-        await this.providerSessionDeleteCli.deleteSession({
+        await this.deleteProviderSession({
           provider: subagent.provider,
           providerSessionId: subagent.provider_session_id,
           rawStoreRef: subagent.raw_store_ref
@@ -2476,7 +2502,7 @@ export class SessionHistoryService {
     }
 
     try {
-      await this.providerSessionDeleteCli.deleteSession({
+      await this.deleteProviderSession({
         provider: binding.provider,
         providerSessionId: binding.providerSessionId,
         rawStoreRef: binding.rawStoreRef
@@ -2518,6 +2544,30 @@ export class SessionHistoryService {
 
     deleteTransaction(sessionId);
     this.removeWorkspaceSessionRelation(sessionId);
+  }
+
+  private async deleteProviderSession(input: {
+    provider: string;
+    providerSessionId: string;
+    rawStoreRef: string;
+  }): Promise<void> {
+    if (input.provider === "deepseek-harness") {
+      try {
+        await this.sessionSyncService.deleteSession(
+          input.provider,
+          input.providerSessionId,
+          input.rawStoreRef
+        );
+        return;
+      } catch (error) {
+        // 测试或旧宿主未注册 Harness 适配器时，仍允许 CLI 直接清理 JSONL 目录。
+        if (!(error instanceof Error) || error.message !== "PROVIDER_NOT_SUPPORTED") {
+          throw error;
+        }
+      }
+    }
+
+    await this.providerSessionDeleteCli.deleteSession(input);
   }
 
   async renameSessionTitle(
@@ -5668,7 +5718,14 @@ export class SessionHistoryService {
     const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
     const timestamp = nowIso();
     const liveObservation = this.resolveLiveActivityObservation(sessionId);
-    const inspection = liveObservation
+    const providerActivityObservation = liveObservation
+      ? null
+      : await this.sessionSyncService.readSessionActivity(
+          binding.provider,
+          binding.providerSessionId,
+          binding.rawStoreRef
+        ).catch(() => null);
+    const inspection = liveObservation || providerActivityObservation
       ? null
       : binding.provider === "gemini"
         ? await this.inspectGeminiHistoryActivity(sessionId, binding)
@@ -5688,12 +5745,18 @@ export class SessionHistoryService {
 
     const resolution = liveObservation
       ? this.sessionActivityAuthorityService.observe(liveObservation)
-      : this.sessionActivityAuthorityService.observe(
-          buildInspectionActivityObservation(sessionId, inspection as ReturnType<typeof inspectSessionActivity>, timestamp)
-        );
+      : providerActivityObservation
+        ? this.sessionActivityAuthorityService.observe(
+            buildProviderActivityObservation(sessionId, providerActivityObservation, timestamp)
+          )
+        : this.sessionActivityAuthorityService.observe(
+            buildInspectionActivityObservation(sessionId, inspection as ReturnType<typeof inspectSessionActivity>, timestamp)
+          );
     const resolvedLastEventAt =
       liveObservation
         ? resolution.lastObservedAt ?? current?.lastEventAt ?? null
+        : providerActivityObservation
+          ? resolution.lastObservedAt ?? providerActivityObservation.observedAt ?? current?.lastEventAt ?? null
         : inspection && hasInspectionEvidence(inspection)
           ? resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null
           : current?.lastEventAt ?? null;
@@ -5709,7 +5772,11 @@ export class SessionHistoryService {
       lastEventAt: resolvedLastEventAt,
       completedAt:
         isTerminalResolvedRunningState(resolution.runningState)
-          ? resolution.terminalAt ?? inspection?.completedAtCandidate ?? current?.completedAt ?? null
+          ? resolution.terminalAt
+            ?? providerActivityObservation?.observedAt
+            ?? inspection?.completedAtCandidate
+            ?? current?.completedAt
+            ?? null
           : null,
       lastSeenAt: current?.lastSeenAt ?? null,
       updatedAt: timestamp
@@ -5720,12 +5787,20 @@ export class SessionHistoryService {
     const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     const shouldClearRuntimeFailure =
       current?.runningState === "failed" && resolution.runningState !== "failed";
+    const shouldClearSuccessfulProviderReadError =
+      providerActivityObservation !== null
+      && resolution.runningState !== "failed"
+      && isSuccessfulProviderReadError(currentSnapshot?.lastErrorCode ?? null);
+    const shouldMarkProviderReadIdle =
+      providerActivityObservation !== null && resolution.runningState !== "failed";
+    const shouldClearSnapshotError =
+      shouldClearRuntimeFailure || shouldClearSuccessfulProviderReadError;
     this.sessionStatusSnapshotRepository.upsert({
       sessionId,
       syncStatus:
         resolution.runningState === "failed"
           ? "error"
-          : shouldClearRuntimeFailure
+          : shouldMarkProviderReadIdle || shouldClearSnapshotError
             ? "idle"
             : currentSnapshot?.syncStatus ?? "idle",
       syncCursor: currentSnapshot?.syncCursor ?? null,
@@ -5739,13 +5814,13 @@ export class SessionHistoryService {
       lastErrorCode:
         resolution.runningState === "failed"
           ? resolution.errorCode
-          : shouldClearRuntimeFailure
+          : shouldClearSnapshotError
             ? null
             : currentSnapshot?.lastErrorCode ?? null,
       lastErrorDetail:
         resolution.runningState === "failed"
           ? resolution.detail
-          : shouldClearRuntimeFailure
+          : shouldClearSnapshotError
             ? null
             : currentSnapshot?.lastErrorDetail ?? null,
       resumedAt: currentSnapshot?.resumedAt ?? null,
@@ -5903,6 +5978,46 @@ export class SessionHistoryService {
       updatedAt: nowIso()
     });
   }
+
+  private shouldSuppressDeepSeekHarnessSubscriptionFailure(
+    sessionId: string,
+    cursor: string | null,
+    error: unknown
+  ): boolean {
+    if (cursor === null || !isProviderNotSupportedError(error)) {
+      return false;
+    }
+
+    const resolvedSessionId = this.resolveCanonicalSessionId(sessionId);
+    const binding = this.sessionBindingRepository.findBySessionId(resolvedSessionId);
+
+    if (!binding || binding.provider !== "deepseek-harness" || !binding.userId) {
+      return false;
+    }
+
+    const state = this.sessionStateRepository.findBySessionAndUser(resolvedSessionId, binding.userId);
+
+    return state?.activitySource === "runtime" && (
+      state.runningState === "starting"
+      || state.runningState === "running"
+      || state.runningState === "completed"
+      || state.runningState === "interrupted"
+    );
+  }
+
+  private clearDeepSeekHarnessSubscriptionFailure(sessionId: string, cursor: string | null): void {
+    const resolvedSessionId = this.resolveCanonicalSessionId(sessionId);
+    const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
+
+    this.upsertSnapshot(resolvedSessionId, {
+      syncStatus: "idle",
+      syncCursor: current?.syncCursor ?? cursor,
+      lastSyncAt: current?.lastSyncAt ?? null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: current?.resumedAt ?? null
+    });
+  }
 }
 
 function filterProjectedIsolatedWorkspaceSessionTree(
@@ -6043,6 +6158,24 @@ function buildInspectionActivityObservation(
     interruptSource: null,
     errorCode: inspection.errorCode,
     observedAt: inspection.completedAtCandidate ?? inspection.lastEventAt ?? observedAt
+  };
+}
+
+function buildProviderActivityObservation(
+  sessionId: string,
+  observation: ProviderSessionActivityObservation,
+  fallbackObservedAt: string
+): SessionActivityObservation {
+  return {
+    sessionId,
+    runId: observation.runId ?? null,
+    runningState: observation.runningState,
+    source: "authoritative_provider_event",
+    confidence: observation.confidence,
+    detail: observation.detail ?? null,
+    interruptSource: observation.runningState === "interrupted" ? "runtime" : null,
+    errorCode: observation.errorCode ?? null,
+    observedAt: observation.observedAt ?? fallbackObservedAt
   };
 }
 
@@ -7222,14 +7355,26 @@ function isGeminiChatNotFoundError(error: unknown): boolean {
 }
 
 function clearSuccessfulProviderReadErrorCode(errorCode: string | null): string | null {
-  return errorCode === "PROVIDER_READ_FAILED" ? null : errorCode;
+  return isSuccessfulProviderReadError(errorCode) ? null : errorCode;
 }
 
 function clearSuccessfulProviderReadErrorDetail(
   errorCode: string | null,
   errorDetail: string | null
 ): string | null {
-  return errorCode === "PROVIDER_READ_FAILED" ? null : errorDetail;
+  return isSuccessfulProviderReadError(errorCode) ? null : errorDetail;
+}
+
+function isSuccessfulProviderReadError(errorCode: string | null): boolean {
+  return errorCode === "PROVIDER_READ_FAILED" || errorCode === "SUBSCRIBE_FAILED";
+}
+
+function isProviderNotSupportedError(error: unknown): boolean {
+  return (
+    error instanceof AppError
+    ? error.errorCode === "PROVIDER_NOT_SUPPORTED"
+    : error instanceof Error && error.message === "PROVIDER_NOT_SUPPORTED"
+  );
 }
 
 function shouldShortCircuitMissingSyntheticCodexHistory(

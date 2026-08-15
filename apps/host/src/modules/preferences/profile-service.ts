@@ -22,13 +22,14 @@ const SUPPORTED_PERMISSION_MODES: UserPreferencePermissionMode[] = [
   "acceptEdits",
   "bypassPermissions"
 ];
-const SUPPORTED_REASONING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+const SUPPORTED_REASONING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const PROVIDER_IDS: PreferenceProviderId[] = [
   "claude-code",
   "codex",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "deepseek-harness"
 ];
 
 const DEFAULT_LANGUAGE: UserPreferenceLanguage = "zh-CN";
@@ -201,7 +202,7 @@ function normalizeProvidersPatch(input: unknown): PreferenceProvidersPatch | und
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "providers 只允许 claude-code、codex、opencode、gemini、kimi",
+        detail: "providers 只允许 claude-code、codex、opencode、gemini、kimi、deepseek-harness",
         field: "providers"
       });
     }
@@ -478,7 +479,7 @@ function normalizeProviderReasoningLevel(
   if (!SUPPORTED_REASONING_LEVELS.has(normalized)) {
     throw invalidField(
       `providers.${providerId}.defaultReasoningLevel`,
-      `providers.${providerId}.defaultReasoningLevel 只允许为 minimal、low、medium、high、xhigh、max 或 ultra`
+      `providers.${providerId}.defaultReasoningLevel 只允许为 off、minimal、low、medium、high、xhigh、max 或 ultra`
     );
   }
 

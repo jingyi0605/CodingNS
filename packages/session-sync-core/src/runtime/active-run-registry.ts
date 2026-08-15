@@ -145,6 +145,16 @@ export class ActiveRunRegistry {
     }
   }
 
+  async flushListeners(sessionId: string): Promise<void> {
+    const listeners = this.sessionListeners.get(sessionId);
+
+    if (!listeners || listeners.size === 0) {
+      return;
+    }
+
+    await Promise.all([...listeners].map((listener) => listener.queue));
+  }
+
   private buildHandle(record: ActiveRunRecord): ActiveRunHandle {
     return {
       sessionId: record.sessionId,

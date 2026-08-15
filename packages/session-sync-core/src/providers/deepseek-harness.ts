@@ -10,7 +10,9 @@ import type {
   ProviderAdapter,
   ProviderArchiveUpdateResult,
   ProviderCapabilities,
+  ProviderModelOption,
   ProviderRealtimeEvent,
+  ProviderSessionActivityObservation,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -18,7 +20,8 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
-import { ensureText, extractTextBlocks, messageIdFromStableKey, nextTimestamp, sliceHistory } from "./utils.js";
+import { deleteDeepSeekHarnessSessionFiles } from "./deepseek-harness-session-store.js";
+import { ensureText, extractTextBlocks, messageIdFromStableKey, nextTimestamp } from "./utils.js";
 
 export interface DeepSeekHarnessEnvelope {
   rpcId: string;
@@ -34,10 +37,21 @@ export interface DeepSeekHarnessTransport {
 export interface DeepSeekHarnessProviderOptions {
   transport: DeepSeekHarnessTransport;
   harnessVersion?: string;
+  dshHomeDir?: string;
 }
 
 export interface DeepSeekHarnessStreamMessageMapper {
   map(input: unknown, fallbackSequence: number): NormalizedMessage[];
+}
+
+/** DSH turn/end 是会话结束状态的唯一权威来源，不能用 host 的 running=false 替代。 */
+export interface DeepSeekHarnessTurnEndActivity {
+  sequence: number;
+  runningState: "completed" | "interrupted" | "failed";
+  observedAt: string;
+  detail: string | null;
+  errorCode: string | null;
+  runId: string | null;
 }
 
 type HarnessAssistantPartKind = "thinking" | "text";
@@ -71,22 +85,101 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
 
   async detectSessions(workspacePath: string, _options?: DetectSessionsOptions): Promise<ProviderSessionSummary[]> {
     const response = await this.options.transport.call<{ items?: unknown[] }>("session.list", {});
-    return (response.items ?? []).map((item) => normalizeSummary(item, workspacePath, this.options.harnessVersion)).filter((item): item is ProviderSessionSummary => item !== null).filter((item) => normalizePath(item.workspacePath) === normalizePath(workspacePath));
+    const archivedSessionIds = await this.readArchivedSessionIds();
+    return (response.items ?? [])
+      .map((item) => normalizeSummary(item, workspacePath, this.options.harnessVersion))
+      .filter((item): item is ProviderSessionSummary => item !== null)
+      .filter((item) => !archivedSessionIds.has(item.providerSessionId))
+      .filter((item) => normalizePath(item.workspacePath) === normalizePath(workspacePath));
+  }
+
+  async readSessionActivity(
+    providerSessionId: string,
+    _rawStoreRef: string
+  ): Promise<ProviderSessionActivityObservation | null> {
+    const response = await this.options.transport.call<{ items?: unknown[] }>("session.list", {});
+    const session = (response.items ?? [])
+      .map((item) => asRecord(item))
+      .find((item) => ensureText(item.sessionId ?? item.id).trim() === providerSessionId.trim());
+
+    if (!session) {
+      return null;
+    }
+
+    const observedAt = normalizeOptionalTimestamp(session.updatedAt ?? session.createdAt);
+
+    if (session.running === true) {
+      return {
+        runningState: "running",
+        confidence: "authoritative",
+        observedAt,
+        detail: null,
+        errorCode: null,
+        runId: null
+      };
+    }
+
+    const history = await this.options.transport.call<{ events?: unknown[] }>("session.history", {
+      sessionId: providerSessionId,
+      maxMessages: 100
+    });
+
+    return resolveHarnessHistoryActivity(history.events ?? [], observedAt) ?? {
+      runningState: "idle",
+      confidence: "authoritative",
+      observedAt,
+      detail: null,
+      errorCode: null,
+      runId: null
+    };
   }
 
   async readSessionHistory(providerSessionId: string, rawStoreRef: string, cursor: string | null, limit: number, direction: HistoryDirection = "forward"): Promise<HistoryPage> {
-    const beforeSeq = direction === "backward" && cursor ? decodeHarnessCursor(cursor) : undefined;
+    const cursorSequence = cursor ? decodeHarnessCursor(cursor) : null;
+    const safeLimit = Math.max(1, Math.min(limit, 100));
+    const beforeSeq = direction === "backward" ? cursorSequence ?? undefined : undefined;
     const response = await this.options.transport.call<{ events?: unknown[]; hasMore?: boolean }>("session.history", {
       sessionId: providerSessionId,
       ...(beforeSeq === undefined ? {} : { beforeSeq }),
-      maxMessages: Math.max(1, Math.min(limit, 100))
+      maxMessages: safeLimit
     });
-    const messages = (response.events ?? []).flatMap((entry, index) => mapHarnessEntries(providerSessionId, rawStoreRef, entry, index));
-    return sliceHistory(messages, cursor, limit, direction);
+    const entries = (response.events ?? [])
+      .map((entry, index) => ({ input: entry, sequence: getHarnessEntrySequence(entry, index) }))
+      .sort((left, right) => left.sequence - right.sequence);
+    const messages = entries.flatMap((entry) =>
+      mapHarnessEntries(providerSessionId, rawStoreRef, entry.input, entry.sequence)
+    );
+    const latestSequence = entries.at(-1)?.sequence ?? cursorSequence;
+
+    if (direction === "forward") {
+      const messagesAfterCursor = cursorSequence === null
+        ? messages
+        : messages.filter((message) => message.sequence > cursorSequence);
+
+      return {
+        messages: messagesAfterCursor,
+        cursor: latestSequence === null ? cursor : encodeHarnessCursor(latestSequence),
+        nextCursor: null,
+        total: messagesAfterCursor.length
+      };
+    }
+
+    const pageMessages = messages.length > safeLimit ? messages.slice(-safeLimit) : messages;
+    const oldestSequence = pageMessages[0]?.sequence ?? entries[0]?.sequence ?? null;
+    const hasOlderMessages = response.hasMore === true || messages.length > pageMessages.length;
+
+    return {
+      messages: pageMessages,
+      cursor: latestSequence === null ? cursor : encodeHarnessCursor(latestSequence),
+      nextCursor: hasOlderMessages && oldestSequence !== null
+        ? encodeHarnessCursor(oldestSequence)
+        : null,
+      total: messages.length
+    };
   }
 
   subscribeSession(providerSessionId: string, rawStoreRef: string, cursor: string | null, _limit: number, onEvent: (event: ProviderRealtimeEvent) => Promise<void> | void): ProviderSubscription {
-    let lastSeq = cursor ? decodeHarnessCursor(cursor) : -1;
+    let lastSeq = cursor ? decodeHarnessCursor(cursor) ?? -1 : -1;
     const streamMapper = createDeepSeekHarnessStreamMessageMapper(providerSessionId, rawStoreRef);
     return this.options.transport.subscribe("mux", (envelope) => {
       const payload = asRecord(envelope.payload);
@@ -108,7 +201,10 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
   }
 
   async startSession(workspacePath: string, options: StartSessionOptions): Promise<StartSessionResult> {
-    const created = await this.options.transport.call<{ sessionId: string }>("session.create", { cwd: workspacePath });
+    const workspace = await this.options.transport.call<{ workspace?: { workspaceId?: string } }>("workspace.create", { path: workspacePath });
+    const workspaceId = String(workspace.workspace?.workspaceId ?? "").trim();
+    if (!workspaceId) throw new Error("HARNESS_WORKSPACE_ID_MISSING");
+    const created = await this.options.transport.call<{ sessionId: string }>("session.create", { workspaceId });
     const sessionId = String(created.sessionId);
     if (options.initialPrompt?.trim()) await this.options.transport.call("session.prompt", { sessionId, content: [{ type: "text", text: options.initialPrompt.trim() }], mode: "queue" });
     return {
@@ -169,6 +265,24 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     return response.title?.trim() || title.trim();
   }
 
+  async deleteSession(providerSessionId: string, _rawStoreRef: string): Promise<void> {
+    const response = await this.options.transport.call<{ items?: unknown[] }>("session.list", {});
+    const record = (response.items ?? [])
+      .map((item) => asRecord(item))
+      .find((item) => ensureText(item.sessionId ?? item.id).trim() === providerSessionId.trim());
+    const cwd = ensureText(record?.cwd).trim() || null;
+
+    if (record) {
+      await this.callIgnoringMissingSession("session.cancel", { sessionId: providerSessionId });
+      await this.callIgnoringMissingSession("workspace.archiveSession", { sessionId: providerSessionId });
+    }
+
+    deleteDeepSeekHarnessSessionFiles(providerSessionId, {
+      cwd,
+      dshHomeDir: this.options.dshHomeDir
+    });
+  }
+
   async updateSessionArchiveState(_providerSessionId: string, _rawStoreRef: string, _isArchived: boolean): Promise<ProviderArchiveUpdateResult> {
     throw new Error("HARNESS_CAPABILITY_UNSUPPORTED");
   }
@@ -177,8 +291,41 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     return harnessCapabilities();
   }
 
-  async getSessionCapabilities(): Promise<ProviderCapabilities> {
-    return harnessCapabilities();
+  async getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities> {
+    try {
+      const response = await this.options.transport.call<unknown>(
+        providerSessionId ? "session.models" : "llm.models",
+        providerSessionId ? { sessionId: providerSessionId } : {}
+      );
+      return harnessCapabilities(parseHarnessModelOptions(response));
+    } catch {
+      // 模型目录不可用时仍保留会话的基本能力，避免只因下拉列表失败而阻断对话。
+      return harnessCapabilities();
+    }
+  }
+
+  private async readArchivedSessionIds(): Promise<Set<string>> {
+    try {
+      const response = await this.options.transport.call<{ archivedSessionIds?: unknown[] }>("workspace.list", {});
+      return new Set(
+        (response.archivedSessionIds ?? [])
+          .map((value) => ensureText(value).trim())
+          .filter(Boolean)
+      );
+    } catch {
+      // 旧 Harness 没有 workspace.list 时不阻断已有的会话发现链路。
+      return new Set();
+    }
+  }
+
+  private async callIgnoringMissingSession(method: string, payload: unknown): Promise<void> {
+    try {
+      await this.options.transport.call(method, payload);
+    } catch (error) {
+      if (!isHarnessMissingSessionError(error)) {
+        throw error;
+      }
+    }
   }
 }
 
@@ -198,7 +345,7 @@ export function mapHarnessEntries(providerSessionId: string, rawStoreRef: string
   if (entry.type === "assistant/message") {
     const parts = extractHarnessAssistantMessageParts(entry.data.message ?? entry.data.content);
 
-    if (parts.length > 0) {
+    if (hasHarnessAssistantMessageBlocks(entry.data)) {
       const track = resolveHarnessAssistantTrack(entry.data, entry.sequence);
       return parts.map((part) => createHarnessAssistantPartMessage({
         providerSessionId,
@@ -251,6 +398,50 @@ export function isHarnessAssistantChunk(input: unknown): boolean {
   return readHarnessEntry(input, 0).type === "assistant/chunk";
 }
 
+export function parseHarnessTurnEndActivity(
+  input: unknown,
+  fallbackSequence: number
+): DeepSeekHarnessTurnEndActivity | null {
+  const entry = readHarnessEntry(input, fallbackSequence);
+
+  if (entry.type !== "turn/end") {
+    return null;
+  }
+
+  const reasonInput = entry.data.reason;
+  const reason = asRecord(reasonInput);
+  const kind = ensureText(
+    typeof reasonInput === "string" ? reasonInput : reason.kind
+  ).trim().toLowerCase();
+  const runningState = mapHarnessTurnEndReason(kind);
+
+  if (!runningState) {
+    return null;
+  }
+
+  const reasonError = asRecord(reason.error);
+  const detail = extractTextBlocks(
+    reason.message
+    ?? reason.detail
+    ?? reasonError.message
+    ?? entry.data.error
+    ?? entry.data.message
+    ?? ""
+  ).trim() || null;
+  const errorCode = runningState === "failed"
+    ? ensureText(reason.code ?? reasonError.code ?? entry.data.errorCode).trim() || "HARNESS_TURN_FAILED"
+    : null;
+
+  return {
+    sequence: entry.sequence,
+    runningState,
+    observedAt: entry.timestamp,
+    detail: runningState === "failed" ? detail ?? "Harness turn failed" : detail,
+    errorCode,
+    runId: ensureText(entry.data.turn).trim() || null
+  };
+}
+
 function mapHarnessSingleEntry(providerSessionId: string, rawStoreRef: string, entry: HarnessEntry): NormalizedMessage | null {
   const { event, type, sequence, data, timestamp } = entry;
   const stable = `${providerSessionId}:${sequence}:${type}`;
@@ -260,16 +451,127 @@ function mapHarnessSingleEntry(providerSessionId: string, rawStoreRef: string, e
     return { messageId: messageIdFromStableKey(stable), provider: "deepseek-harness", providerSessionId, role: "tool", kind: "tool_call", content: extractTextBlocks(data.input ?? data.arguments ?? ""), toolCall: { callId, name: ensureText(data.name ?? data.toolName), input: extractTextBlocks(data.input ?? data.arguments ?? ""), output: null, error: null, status: "running" }, timestamp, sequence, rawRef: `${rawStoreRef}#seq=${sequence}` };
   }
   if (type === "tool/result") {
-    const callId = ensureText(data.callId ?? data.id ?? `${sequence}`);
-    const error = data.error ? extractTextBlocks(data.error) : null;
-    return { messageId: messageIdFromStableKey(stable), provider: "deepseek-harness", providerSessionId, role: "tool", kind: "tool_result", content: extractTextBlocks(data.output ?? data.result ?? data.error ?? ""), toolCall: { callId, name: ensureText(data.name ?? data.toolName), input: "", output: error ? null : extractTextBlocks(data.output ?? data.result ?? ""), error, status: error ? "failed" : "completed" }, timestamp, sequence, rawRef: `${rawStoreRef}#seq=${sequence}` };
+    const result = extractHarnessToolResult(data, sequence);
+    return { messageId: messageIdFromStableKey(stable), provider: "deepseek-harness", providerSessionId, role: "tool", kind: "tool_result", content: result.content, toolCall: { callId: result.callId, name: result.name, input: "", output: result.error ? null : result.content, error: result.error, status: result.failed ? "failed" : "completed" }, timestamp, sequence, rawRef: `${rawStoreRef}#seq=${sequence}` };
   }
-  const role = type.startsWith("user/") ? "user" : type.startsWith("assistant/") ? "assistant" : "system";
+  const role = isHarnessSystemContextMessage(type, data)
+    ? "system"
+    : type.startsWith("user/") ? "user" : type.startsWith("assistant/") ? "assistant" : "system";
   const kind = type === "assistant/thinking" ? "thinking" : "text";
   const content = extractTextBlocks(data.text ?? data.content ?? data.message ?? event.text ?? "");
   // Harness 会推送没有正文的 assistant 状态事件；它们不是可显示的对话消息。
   if (!content && (role === "system" || (role === "assistant" && kind === "text"))) return null;
   return { messageId: messageIdFromStableKey(stable), provider: "deepseek-harness", providerSessionId, role, kind, content, toolCall: null, timestamp, sequence, rawRef: `${rawStoreRef}#seq=${sequence}` };
+}
+
+function resolveHarnessHistoryActivity(
+  entries: unknown[],
+  fallbackObservedAt: string | null
+): ProviderSessionActivityObservation | null {
+  let latest: DeepSeekHarnessTurnEndActivity | null = null;
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const terminal = parseHarnessTurnEndActivity(entries[index], index);
+
+    if (!terminal || (latest && terminal.sequence < latest.sequence)) {
+      continue;
+    }
+
+    latest = terminal;
+  }
+
+  if (!latest) {
+    return null;
+  }
+
+  return {
+    runningState: latest.runningState,
+    confidence: "authoritative",
+    observedAt: latest.observedAt || fallbackObservedAt,
+    detail: latest.detail,
+    errorCode: latest.errorCode,
+    runId: latest.runId
+  };
+}
+
+function mapHarnessTurnEndReason(
+  kind: string
+): DeepSeekHarnessTurnEndActivity["runningState"] | null {
+  if (kind === "completed" || kind === "complete" || kind === "success") {
+    return "completed";
+  }
+
+  if (kind === "failed" || kind === "failure" || kind === "error") {
+    return "failed";
+  }
+
+  if (
+    kind === "interrupted"
+    || kind === "interrupt"
+    || kind === "aborted"
+    || kind === "cancelled"
+    || kind === "canceled"
+    || kind === "blocked"
+    || kind === "max-tokens"
+    || kind === "max_tokens"
+  ) {
+    return "interrupted";
+  }
+
+  return null;
+}
+
+function hasHarnessAssistantMessageBlocks(data: Record<string, unknown>): boolean {
+  const message = asRecord(data.message);
+  return Array.isArray(message.content) || Array.isArray(data.content);
+}
+
+function isHarnessSystemContextMessage(type: string, data: Record<string, unknown>): boolean {
+  if (type !== "user/message") {
+    return false;
+  }
+
+  const source = asRecord(data.source);
+  const kind = ensureText(source.kind).trim();
+
+  if (kind === "agent-instructions") {
+    return true;
+  }
+
+  return kind === "plugin"
+    && ensureText(source.plugin).trim() === "@deepseek-ai/dsh-system-prompt"
+    && ensureText(source.form).trim() === "snapshot";
+}
+
+function extractHarnessToolResult(data: Record<string, unknown>, sequence: number): {
+  callId: string;
+  name: string;
+  content: string;
+  error: string | null;
+  failed: boolean;
+} {
+  const message = asRecord(data.message);
+  const source = asRecord(message.source);
+  const resultBlock = (Array.isArray(message.content) ? message.content : [])
+    .map((block) => asRecord(block))
+    .find((block) => ensureText(block.type).trim() === "tool-result") ?? {};
+  const content = extractTextBlocks(
+    resultBlock.content ?? data.output ?? data.result ?? data.error ?? ""
+  );
+  const failed = resultBlock.isError === true || data.isError === true || data.error != null;
+  const error = failed
+    ? extractTextBlocks(data.error ?? resultBlock.error ?? content).trim() || null
+    : null;
+
+  return {
+    callId: ensureText(
+      data.callId ?? data.id ?? source.callId ?? resultBlock.toolCallId ?? `${sequence}`
+    ),
+    name: ensureText(data.name ?? data.toolName ?? source.toolName),
+    content,
+    error,
+    failed
+  };
 }
 
 function mapHarnessAssistantChunk(
@@ -467,14 +769,131 @@ function normalizeSummary(input: unknown, workspacePath: string, version = "0.1.
   const record = asRecord(input);
   const providerSessionId = ensureText(record.sessionId ?? record.id).trim();
   if (!providerSessionId) return null;
-  return { provider: "deepseek-harness", providerSessionId, title: ensureText(record.title).trim() || `DeepSeek Harness ${providerSessionId.slice(0, 8)}`, workspacePath: ensureText(record.cwd).trim() || workspacePath, rawStoreRef: buildRawStoreRef(version, providerSessionId), isArchived: false, lastMessageAt: normalizeTimestamp(record.updatedAt ?? record.createdAt), messageCount: typeof record.messageCount === "number" ? record.messageCount : 0 };
+  return { provider: "deepseek-harness", providerSessionId, title: ensureText(record.title).trim() || `DeepSeek Harness ${providerSessionId.slice(0, 8)}`, workspacePath: ensureText(record.cwd).trim() || workspacePath, rawStoreRef: buildRawStoreRef(version, providerSessionId), isArchived: record.isArchived === true || record.archived === true, lastMessageAt: normalizeTimestamp(record.updatedAt ?? record.createdAt), messageCount: typeof record.messageCount === "number" ? record.messageCount : 0 };
+}
+
+function isHarnessMissingSessionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /session[- ]?not[- ]?found|unknown session|no such session/i.test(message);
 }
 
 function buildRawStoreRef(version: string | undefined, sessionId: string): string { return `harness://${version ?? "0.1.0-rc.5"}/${sessionId}`; }
-function harnessCapabilities(): ProviderCapabilities { return { provider: "deepseek-harness", canStartSession: true, canResumeSession: false, canSendMessage: true, inRunInputMode: "queued_guidance", supportsSubagents: true, supportsInterrupt: true, supportsStructuredToolCalls: true, supportsTokenUsage: false, supportsAttachments: true, supportsPermissionPrompt: true, supportsCheckpoint: false, supportsSessionDiff: false, supportsSessionFork: true, supportsSessionDelete: false, supportsSessionShare: false, supportsAsyncPrompt: true, supportsNativeAgents: true, limitations: ["Harness 仍是 Developer Preview，版本必须锁定。", "断线恢复先读取 history，不依赖 events.mux 的 since。", "首版不支持删除、Diff、Share 和独立 resume。"] }; }
-function createAcceptedMessage(providerSessionId: string, content: string, timestamp: string): NormalizedMessage { return { messageId: randomUUID(), provider: "deepseek-harness", providerSessionId, role: "user", kind: "text", content, toolCall: null, timestamp, sequence: -1, rawRef: `harness://${providerSessionId}/accepted` }; }
+function harnessCapabilities(modelOptions?: ProviderModelOption[]): ProviderCapabilities {
+  return {
+    provider: "deepseek-harness",
+    canStartSession: true,
+    canResumeSession: false,
+    canSendMessage: true,
+    inRunInputMode: "queued_guidance",
+    supportsSubagents: true,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: false,
+    supportsAttachments: true,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    supportsSessionDiff: false,
+    supportsSessionFork: true,
+    supportsSessionDelete: true,
+    supportsSessionShare: false,
+    supportsAsyncPrompt: true,
+    supportsNativeAgents: true,
+    ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
+    limitations: [
+      "Harness 仍是 Developer Preview，版本必须锁定。",
+      "断线恢复先读取 history，不依赖 events.mux 的 since。",
+      "删除会话会归档当前 sidecar 中的会话并清理 JSONL 历史目录；不支持 Diff、Share 和独立 resume。"
+    ]
+  };
+}
+
+/** 将 DSH 的 provider/model 二元组编码为运行时 selectModel 可直接消费的稳定模型 ID。 */
+function parseHarnessModelOptions(input: unknown): ProviderModelOption[] {
+  const options = new Map<string, ProviderModelOption>();
+  const groups = asRecord(input).groups;
+
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+
+  for (const groupInput of groups) {
+    const group = asRecord(groupInput);
+    const provider = ensureText(group.id).trim();
+    const models = group.models;
+
+    if (!provider || !Array.isArray(models)) {
+      continue;
+    }
+
+    for (const modelInput of models) {
+      const model = asRecord(modelInput);
+      const modelId = ensureText(model.id).trim();
+
+      if (!modelId) {
+        continue;
+      }
+
+      const reasoning = asRecord(model.reasoning);
+      const supportedReasoningEfforts = Array.isArray(reasoning.efforts)
+        ? Array.from(new Set(
+          reasoning.efforts
+            .map((effort) => ensureText(asRecord(effort).id).trim())
+            .filter(Boolean)
+        ))
+        : [];
+      const defaultReasoningEffort = ensureText(reasoning.defaultEffort).trim();
+      const id = `${provider}:${modelId}`;
+
+      if (!options.has(id)) {
+        options.set(id, {
+          id,
+          name: ensureText(model.name).trim() || modelId,
+          ...(supportedReasoningEfforts.length > 0 ? { supportedReasoningEfforts } : {}),
+          ...(defaultReasoningEffort ? { defaultReasoningEffort } : {})
+        });
+      }
+    }
+  }
+
+  return [...options.values()];
+}
+function createAcceptedMessage(providerSessionId: string, content: string, timestamp: string): NormalizedMessage { const messageId = randomUUID(); return { messageId, provider: "deepseek-harness", providerSessionId, role: "user", kind: "text", content, toolCall: null, timestamp, sequence: Number.MAX_SAFE_INTEGER, rawRef: `synthetic://deepseek-harness/${providerSessionId}/${messageId}` }; }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function normalizePath(value: string): string { return value.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase(); }
+function normalizeOptionalTimestamp(value: unknown): string | null {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) {
+    return null;
+  }
+
+  const timestamp = new Date(
+    typeof value === "number" && value < 1e12 ? value * 1000 : value
+  );
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null;
+}
 function normalizeTimestamp(value: unknown): string { if (typeof value === "number") return new Date(value < 1e12 ? value * 1000 : value).toISOString(); if (typeof value === "string" && value.trim()) return new Date(value).toISOString(); return nextTimestamp(); }
 function encodeHarnessCursor(sequence: number): string { return Buffer.from(JSON.stringify({ sequence }), "utf8").toString("base64url"); }
-function decodeHarnessCursor(cursor: string): number { try { const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { sequence?: number }; return typeof parsed.sequence === "number" ? parsed.sequence : -1; } catch { throw new Error("CURSOR_INVALID"); } }
+function decodeHarnessCursor(cursor: string): number | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      sequence?: unknown;
+      index?: unknown;
+    };
+
+    if (typeof parsed.sequence === "number" && Number.isInteger(parsed.sequence) && parsed.sequence >= 0) {
+      return parsed.sequence;
+    }
+
+    // 旧版本把通用 { index } cursor 写进了 Harness 会话；重读最新页以迁移该游标，不能把 index 当 seq 传给 DSH。
+    if (typeof parsed.index === "number") {
+      return null;
+    }
+
+    throw new Error("CURSOR_INVALID");
+  } catch (error) {
+    if (error instanceof Error && error.message === "CURSOR_INVALID") {
+      throw error;
+    }
+
+    throw new Error("CURSOR_INVALID");
+  }
+}

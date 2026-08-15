@@ -37,7 +37,10 @@ export class DeepSeekHarnessRuntimeAdapter implements ProviderRuntimeAdapter {
     const { client } = await this.getRuntime();
     let providerSessionId = request.providerSessionId;
     if (!providerSessionId) {
-      const created = await client.createSession(request.workspacePath);
+      const workspace = await client.createWorkspace(request.workspacePath);
+      const workspaceId = workspace.workspace.workspaceId?.trim();
+      if (!workspaceId) throw new Error("HARNESS_WORKSPACE_ID_MISSING");
+      const created = await client.createSession({ workspaceId });
       providerSessionId = created.sessionId;
       sink.updateSessionBinding({ providerSessionId, rawStoreRef: `harness://${providerSessionId}` });
       await sink.emit({ type: "session_created", status: "starting", providerSessionId, rawStoreRef: `harness://${providerSessionId}`, detail: "Harness 会话已创建" });
@@ -70,8 +73,30 @@ export class DeepSeekHarnessRuntimeAdapter implements ProviderRuntimeAdapter {
       if (event.type === "message" && event.message) {
         void sink.emit({ type: "message", message: event.message, providerSessionId, rawStoreRef, rawEventRef: event.message.rawRef });
       } else if (event.type === "status") {
-        void sink.emit({ type: "status", status: event.running ? "running" : "completed", providerSessionId, rawStoreRef, detail: event.running ? "Harness 正在运行" : "Harness 已完成" });
-        if (!event.running && promptStarted) settle();
+        if (event.running) {
+          void sink.emit({ type: "status", status: "running", providerSessionId, rawStoreRef, detail: "Harness 正在运行" });
+        }
+      } else if (event.type === "terminal") {
+        const terminalEvent = event.runningState === "completed"
+          ? { type: "complete" as const, status: "completed" as const, detail: event.detail }
+          : event.runningState === "interrupted"
+            ? {
+                type: "interrupted" as const,
+                status: "interrupted" as const,
+                detail: event.detail,
+                interruptSource: "runtime" as const
+              }
+            : {
+                type: "error" as const,
+                status: "failed" as const,
+                detail: event.detail ?? "Harness turn failed",
+                errorCode: event.errorCode ?? "HARNESS_TURN_FAILED"
+              };
+        void sink.emit({ ...terminalEvent, providerSessionId, rawStoreRef })
+          .catch(() => undefined)
+          .finally(() => {
+            if (promptStarted) settle();
+          });
       } else if (event.type === "error") {
         void sink.emit({ type: "error", status: "failed", errorCode: "HARNESS_RUNTIME_ERROR", detail: event.detail, providerSessionId, rawStoreRef });
         settle();

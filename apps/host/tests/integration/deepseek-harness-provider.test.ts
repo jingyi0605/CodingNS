@@ -1,6 +1,9 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ProviderRuntimeEventSink, ProviderRuntimeRunRequest } from "@codingns/session-sync-core";
+import { DeepSeekHarnessAdapter, type ProviderRuntimeEventSink, type ProviderRuntimeRunRequest } from "@codingns/session-sync-core";
 
 import { DeepSeekHarnessApiClient, DeepSeekHarnessRpcError } from "../../src/modules/sessions/deepseek-harness/deepseek-harness-api-client.js";
 import { DeepSeekHarnessSessionBindingStore } from "../../src/modules/sessions/deepseek-harness/deepseek-harness-session-binding-store.js";
@@ -41,8 +44,20 @@ describe("DeepSeek Harness Web API", () => {
   it("支持创建、历史、取消和下行 mux/host 夹具", async () => {
     fake = await createDeepSeekHarnessFakeServer();
     const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
-    const created = await client.createSession("C:\\workspace");
+    const workspace = await client.createWorkspace("C:\\workspace");
+    expect(workspace).toMatchObject({ workspace: { workspaceId: "workspace-1", path: "C:\\workspace" }, created: true });
+    const created = await client.createSession({ workspaceId: workspace.workspace.workspaceId });
     expect(created.sessionId).toBe("harness-1");
+    await expect(client.models(created.sessionId)).resolves.toEqual(
+      expect.objectContaining({
+        groups: expect.arrayContaining([
+          expect.objectContaining({
+            id: "deepseek-official",
+            models: expect.arrayContaining([expect.objectContaining({ id: "deepseek-v4-flash" })])
+          })
+        ])
+      })
+    );
     await expect(client.readHistory(created.sessionId)).resolves.toMatchObject({ events: [] });
     await expect(client.cancel(created.sessionId)).resolves.toEqual({ accepted: true });
     const mux: unknown[] = [];
@@ -56,6 +71,25 @@ describe("DeepSeek Harness Web API", () => {
     closeHost();
     expect(mux).toHaveLength(1);
     expect(host).toHaveLength(1);
+  });
+
+  it("删除会话会清理 JSONL 目录，并让 sidecar 不再发现已归档会话", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const workspace = await client.createWorkspace("C:\\workspace");
+    const created = await client.createSession({ workspaceId: workspace.workspace.workspaceId });
+    const dshHomeDir = mkdtempSync(join(tmpdir(), "codingns-dsh-delete-"));
+    const sessionDir = join(dshHomeDir, "sessions", "--C-workspace--", created.sessionId);
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "session.jsonl"), "fixture");
+    const adapter = new DeepSeekHarnessAdapter({ transport: client, dshHomeDir, harnessVersion: "0.1.0-rc.5" });
+
+    await expect(adapter.deleteSession(created.sessionId, "harness://0.1.0-rc.5/harness-1")).resolves.toBeUndefined();
+    expect(existsSync(sessionDir)).toBe(false);
+    expect(fake.archivedSessionIds.has(created.sessionId)).toBe(true);
+    await expect(adapter.detectSessions("C:\\workspace")).resolves.toEqual([]);
+
+    rmSync(dshHomeDir, { recursive: true, force: true });
   });
 
   it("不允许越过用户和 workspace 绑定边界", async () => {
@@ -107,6 +141,110 @@ describe("DeepSeek Harness Web API", () => {
     await bridge.close();
 
     expect(seen).toEqual([{ sequence: 2, content: "正常回复" }]);
+  });
+
+  it("按真实 DSH 工具事件只发出一组配对的写入调用和结果", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const bridge = new DeepSeekHarnessEventBridge({ taskManager: createTaskManager(), client });
+    const seen: Array<{
+      kind: string;
+      callId: string;
+      name: string;
+      content: string;
+      output: string | null;
+      status: string;
+    }> = [];
+    const watcher = await bridge.watch("harness-tools", (event) => {
+      if (event.type !== "message" || event.message.kind === "text") {
+        return;
+      }
+
+      seen.push({
+        kind: event.message.kind,
+        callId: event.message.toolCall?.callId ?? "",
+        name: event.message.toolCall?.name ?? "",
+        content: event.message.content,
+        output: event.message.toolCall?.output ?? null,
+        status: event.message.toolCall?.status ?? ""
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-tools",
+      event: {
+        type: "assistant/message",
+        seq: 1,
+        data: {
+          turn: 2,
+          step: 3,
+          message: {
+            content: [{
+              type: "tool-call",
+              id: "call-write-1",
+              name: "write",
+              arguments: '{"file_path":"data/小说.md","content":"正文"}'
+            }]
+          }
+        }
+      }
+    });
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-tools",
+      event: {
+        type: "tool/call",
+        seq: 2,
+        data: {
+          callId: "call-write-1",
+          name: "write",
+          arguments: '{"file_path":"data/小说.md","content":"正文"}'
+        }
+      }
+    });
+    fake.emitMux({
+      type: "session/event",
+      sessionId: "harness-tools",
+      event: {
+        type: "tool/result",
+        seq: 3,
+        data: {
+          message: {
+            source: { kind: "tool", callId: "call-write-1" },
+            content: [{
+              type: "tool-result",
+              toolCallId: "call-write-1",
+              content: [{ type: "text", text: "Created file" }],
+              isError: false
+            }]
+          }
+        }
+      }
+    });
+    await waitForMessageCount(seen, 2);
+    watcher.close();
+    await bridge.close();
+
+    expect(seen).toEqual([
+      {
+        kind: "tool_call",
+        callId: "call-write-1",
+        name: "write",
+        content: '{"file_path":"data/小说.md","content":"正文"}',
+        output: null,
+        status: "running"
+      },
+      {
+        kind: "tool_result",
+        callId: "call-write-1",
+        name: "",
+        content: "Created file",
+        output: "Created file",
+        status: "completed"
+      }
+    ]);
   });
 
   it("流式累积思考和正文，并用最终消息覆盖同一消息身份", async () => {
@@ -171,8 +309,8 @@ describe("DeepSeek Harness Web API", () => {
       options: {
         content: "对话测试",
         clientRequestId: null,
-        model: null,
-        reasoningLevel: null,
+        model: "deepseek-official:deepseek-v4-pro",
+        reasoningLevel: "off",
         permissionMode: "ask",
         providerPrompt: null,
         attachments: []
@@ -180,13 +318,81 @@ describe("DeepSeek Harness Web API", () => {
     };
     fake.setPromptHandler((sessionId) => {
       fake?.emitMux({ type: "session/event", sessionId, event: { type: "assistant/message", seq: 1, data: { text: "模型已完成" } } });
+      fake?.emitMux({ type: "session/event", sessionId, event: { type: "turn/end", seq: 2, data: { turn: 1, reason: { kind: "completed" } } } });
       fake?.emitHost({ type: "host/session-status", sessionId, running: false });
     });
 
     const launch = await adapter.startSession(request, sink);
     await expect(launch.completed).resolves.toBeUndefined();
+    expect(fake.calls.slice(0, 2)).toEqual([
+      { method: "workspace.create", payload: { path: "C:\\workspace" } },
+      { method: "session.create", payload: { workspaceId: "workspace-1" } }
+    ]);
+    expect(fake.calls).toContainEqual({
+      method: "session.selectModel",
+      payload: {
+        sessionId: "harness-1",
+        provider: "deepseek-official",
+        model: "deepseek-v4-pro",
+        reasoningEffort: "off"
+      }
+    });
     expect(events).toContainEqual(expect.objectContaining({ type: "message", message: expect.objectContaining({ content: "模型已完成" }) }));
-    expect(events).toContainEqual(expect.objectContaining({ type: "status", status: "completed" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "complete", status: "completed" }));
+  });
+
+  it("不会把 Harness 的 running=false 误判为成功", async () => {
+    fake = await createDeepSeekHarnessFakeServer();
+    const client = new DeepSeekHarnessApiClient({ baseUrl: fake.baseUrl });
+    const adapter = new DeepSeekHarnessRuntimeAdapter(async () => client, createTaskManager());
+    const events: Array<Parameters<ProviderRuntimeEventSink["emit"]>[0]> = [];
+    const sink: ProviderRuntimeEventSink = {
+      emit: async (event) => { events.push(event); },
+      updateSessionBinding: vi.fn()
+    };
+    const request: ProviderRuntimeRunRequest = {
+      sessionId: "codingns-failed",
+      workspaceId: "workspace-1",
+      workspacePath: "C:\\workspace",
+      provider: "deepseek-harness",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "触发失败终态",
+        clientRequestId: null,
+        model: "deepseek-official:deepseek-v4-pro",
+        reasoningLevel: "off",
+        permissionMode: "ask",
+        providerPrompt: null,
+        attachments: []
+      }
+    };
+    fake.setPromptHandler((sessionId) => {
+      fake?.emitMux({
+        type: "session/event",
+        sessionId,
+        event: {
+          type: "turn/end",
+          seq: 1,
+          data: { turn: 1, reason: { kind: "failed", code: "MODEL_FAILED", message: "模型执行失败" } }
+        }
+      });
+      fake?.emitHost({ type: "host/session-status", sessionId, running: false });
+    });
+
+    const launch = await adapter.startSession(request, sink);
+    await expect(launch.completed).resolves.toBeUndefined();
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "error",
+      status: "failed",
+      errorCode: "MODEL_FAILED",
+      detail: "模型执行失败"
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "status",
+      status: "completed"
+    }));
   });
 });
 

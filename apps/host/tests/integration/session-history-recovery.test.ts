@@ -3,11 +3,15 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DeepSeekHarnessAdapter, type ProviderAdapter } from "@codingns/session-sync-core";
+
 import { resolveHostConfig } from "../../src/config/env.js";
 import { SessionActivityAuthorityService } from "../../src/modules/sessions/session-activity-authority-service.js";
 import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 import { SessionMessageAttachmentService } from "../../src/modules/sessions/session-message-attachment-service.js";
+import { createTaskManager } from "../../src/modules/tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../../src/modules/tasks/task-types.js";
 import { SessionBindingRepository } from "../../src/storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../../src/storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../../src/storage/repositories/session-index-repository.js";
@@ -22,7 +26,10 @@ import { destroyFixture, createEmptyFixture, type EmptyFixture } from "../helper
 const activeFixtures: EmptyFixture[] = [];
 const activeClosers: Array<() => Promise<void> | void> = [];
 
-function createHarness() {
+function createHarness(options: {
+  additionalAdapters?: ProviderAdapter[];
+  discoveryResult?: { sessions: []; isComplete: true };
+} = {}) {
   const fixture = createEmptyFixture();
   const database = createDatabaseClient(":memory:");
   const config = resolveHostConfig({
@@ -43,6 +50,20 @@ function createHarness() {
     new SessionMessageAttachmentRepository(database.db),
     config
   );
+  const taskManager = createTaskManager(null, {
+    helper_process: {
+      execute: async (definition, input, context) => {
+        if (
+          definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan
+          && options.discoveryResult
+        ) {
+          return options.discoveryResult;
+        }
+
+        return await definition.run(input, context);
+      }
+    }
+  });
   const service = new SessionHistoryService(
     database.db,
     workspaceRepository,
@@ -54,22 +75,15 @@ function createHarness() {
     sessionStatusSnapshotRepository,
     config,
     new SessionActivityAuthorityService(),
-    sessionMessageOriginRepository
+    sessionMessageOriginRepository,
+    null,
+    { additionalAdapters: options.additionalAdapters ?? [] },
+    taskManager
   );
 
   activeFixtures.push(fixture);
   activeClosers.push(() => database.close());
 
-  workspaceRepository.create({
-    id: "workspace-1",
-    name: "Fixture Workspace",
-    path: fixture.workspaceDir,
-    repoRoot: fixture.workspaceDir,
-    favorite: false,
-    createdAt: "2026-04-16T08:00:00.000Z",
-    updatedAt: "2026-04-16T08:00:00.000Z",
-    removedAt: null
-  });
   database.db
     .prepare(
       `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
@@ -83,6 +97,17 @@ function createHarness() {
       "2026-04-16T08:00:00.000Z",
       "2026-04-16T08:00:00.000Z"
     );
+  workspaceRepository.create({
+    id: "workspace-1",
+    ownerUserId: "user-1",
+    name: "Fixture Workspace",
+    path: fixture.workspaceDir,
+    repoRoot: fixture.workspaceDir,
+    favorite: false,
+    createdAt: "2026-04-16T08:00:00.000Z",
+    updatedAt: "2026-04-16T08:00:00.000Z",
+    removedAt: null
+  });
 
   return {
     fixture,
@@ -95,6 +120,50 @@ function createHarness() {
     sessionStatusSnapshotRepository,
     sessionMessageOriginRepository
   };
+}
+
+function createDeepSeekHarnessActivityAdapter(input: {
+  reasonKind: "completed" | "failed" | "interrupted";
+  detail?: string;
+}): DeepSeekHarnessAdapter {
+  return new DeepSeekHarnessAdapter({
+    transport: {
+      call: async <T,>(method: string): Promise<T> => {
+        if (method === "session.list") {
+          return {
+            items: [{
+              sessionId: "harness-1",
+              cwd: "/tmp/workspace-1",
+              running: false,
+              updatedAt: "2026-08-15T02:22:31.000Z"
+            }]
+          } as T;
+        }
+
+        if (method === "session.history") {
+          return {
+            events: [{
+              event: {
+                type: "turn/end",
+                seq: 12,
+                time: "2026-08-15T02:22:33.000Z",
+                data: {
+                  turn: 5,
+                  reason: {
+                    kind: input.reasonKind,
+                    ...(input.detail ? { message: input.detail } : {})
+                  }
+                }
+              }
+            }]
+          } as T;
+        }
+
+        return { accepted: true } as T;
+      },
+      subscribe: () => ({ close() {} })
+    }
+  });
 }
 
 afterEach(async () => {
@@ -113,6 +182,171 @@ afterEach(async () => {
 });
 
 describe("SessionHistoryService 恢复缺失索引", () => {
+  it("刷新 DeepSeek Harness 历史会写回真实终态，并清除旧订阅错误", async () => {
+    const cases = [
+      { reasonKind: "completed" as const, expectedState: "completed", detail: undefined },
+      { reasonKind: "failed" as const, expectedState: "failed", detail: "模型执行失败" },
+      { reasonKind: "interrupted" as const, expectedState: "interrupted", detail: undefined }
+    ];
+
+    for (const testCase of cases) {
+      const {
+        service,
+        sessionBindingRepository,
+        sessionIndexRepository,
+        sessionStateRepository,
+        sessionStatusSnapshotRepository
+      } = createHarness({
+        additionalAdapters: [createDeepSeekHarnessActivityAdapter(testCase)]
+      });
+      const sessionId = `session-harness-${testCase.reasonKind}`;
+
+      sessionBindingRepository.upsert({
+        sessionId,
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        provider: "deepseek-harness",
+        providerSessionId: "harness-1",
+        rawStoreRef: "harness://harness-1",
+        providerConfigMode: "global-default",
+        providerPresetId: null,
+        runtimeHomeDir: null,
+        createdAt: "2026-08-15T02:20:00.000Z",
+        updatedAt: "2026-08-15T02:20:00.000Z"
+      });
+      sessionIndexRepository.upsert({
+        sessionId,
+        workspaceId: "workspace-1",
+        provider: "deepseek-harness",
+        title: "Harness 历史会话",
+        messageCount: 2,
+        isArchived: false,
+        lastMessageAt: "2026-08-15T02:22:31.000Z",
+        createdAt: "2026-08-15T02:20:00.000Z",
+        updatedAt: "2026-08-15T02:22:31.000Z"
+      });
+      sessionStateRepository.upsert({
+        sessionId,
+        userId: "user-1",
+        runningState: "idle",
+        activitySource: "none",
+        favorite: false,
+        lastEventAt: null,
+        completedAt: null,
+        lastSeenAt: null,
+        updatedAt: "2026-08-15T02:22:31.000Z"
+      });
+      sessionStatusSnapshotRepository.upsert({
+        sessionId,
+        syncStatus: "error",
+        syncCursor: null,
+        lastSyncAt: "2026-08-15T02:22:31.000Z",
+        lastErrorCode: "SUBSCRIBE_FAILED",
+        lastErrorDetail: "PROVIDER_NOT_SUPPORTED",
+        resumedAt: null,
+        updatedAt: "2026-08-15T02:22:31.000Z"
+      });
+
+      const session = await service.refreshRuntimeFallbackSession(sessionId, "user-1");
+      const state = sessionStateRepository.findBySessionAndUser(sessionId, "user-1");
+      const snapshot = sessionStatusSnapshotRepository.findBySessionId(sessionId);
+
+      expect(session).toMatchObject({
+        runningState: testCase.expectedState,
+        activitySource: "runtime",
+        completedAt: "2026-08-15T02:22:33.000Z"
+      });
+      expect(state).toMatchObject({
+        runningState: testCase.expectedState,
+        activitySource: "runtime",
+        completedAt: "2026-08-15T02:22:33.000Z"
+      });
+
+      if (testCase.expectedState === "failed") {
+        expect(snapshot).toMatchObject({
+          syncStatus: "error",
+          lastErrorCode: "HARNESS_TURN_FAILED",
+          lastErrorDetail: "模型执行失败"
+        });
+      } else {
+        expect(snapshot).toMatchObject({
+          syncStatus: "idle",
+          lastErrorCode: null,
+          lastErrorDetail: null
+        });
+      }
+    }
+  });
+
+  it("完成的 DeepSeek Harness 会话不会被后续不支持的历史订阅改写为失败", async () => {
+    const {
+      service,
+      sessionBindingRepository,
+      sessionIndexRepository,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository
+    } = createHarness();
+    const sessionId = "session-harness-completed-subscribe";
+    const cursor = "eyJzZXF1ZW5jZSI6MTJ9";
+
+    sessionBindingRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      provider: "deepseek-harness",
+      providerSessionId: "harness-1",
+      rawStoreRef: "harness://harness-1",
+      providerConfigMode: "global-default",
+      providerPresetId: null,
+      runtimeHomeDir: null,
+      createdAt: "2026-08-15T04:08:00.000Z",
+      updatedAt: "2026-08-15T04:08:00.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "deepseek-harness",
+      title: "Harness 完成会话",
+      messageCount: 4,
+      isArchived: false,
+      lastMessageAt: "2026-08-15T04:08:15.000Z",
+      createdAt: "2026-08-15T04:08:00.000Z",
+      updatedAt: "2026-08-15T04:08:15.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      runningState: "completed",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-08-15T04:08:15.000Z",
+      completedAt: "2026-08-15T04:08:15.000Z",
+      lastSeenAt: null,
+      updatedAt: "2026-08-15T04:08:15.000Z"
+    });
+    sessionStatusSnapshotRepository.upsert({
+      sessionId,
+      syncStatus: "idle",
+      syncCursor: cursor,
+      lastSyncAt: "2026-08-15T04:08:15.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-08-15T04:08:15.000Z"
+    });
+
+    const subscription = await service.subscribeSession(sessionId, cursor, 20, vi.fn(), "user-1");
+    const snapshot = sessionStatusSnapshotRepository.findBySessionId(sessionId);
+
+    expect(snapshot).toMatchObject({
+      syncStatus: "idle",
+      syncCursor: cursor,
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    subscription.close();
+  });
+
   it("读取 Claude 历史时会修复被 0 字节占位文件挡住的真实 transcript", async () => {
     const {
       fixture,
@@ -161,6 +395,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId,
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "claude-code",
       providerSessionId,
@@ -203,6 +438,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-missing-index",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "pending://codex/session-missing-index",
@@ -251,6 +487,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-1",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "provider-session-1",
@@ -306,6 +543,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-1",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "provider-session-1",
@@ -362,12 +600,15 @@ describe("SessionHistoryService 恢复缺失索引", () => {
   });
 
   it("discoverWorkspaceSessions 不会删除刚创建且尚未回填真实路径的 Codex synthetic session", async () => {
-    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness({
+      discoveryResult: { sessions: [], isComplete: true }
+    });
     const recentTimestamp = new Date().toISOString();
     const syntheticRawStoreRef = `${process.cwd()}/.tmp/runtime/codex/recent-missing.stream`;
 
     sessionBindingRepository.upsert({
       sessionId: "session-recent-synthetic",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "provider-session-recent",
@@ -390,16 +631,6 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       updatedAt: recentTimestamp
     });
 
-    Object.defineProperty(service, "providerDiscoveryHelperClient", {
-      value: {
-        discoverWorkspaceSessions: vi.fn(async () => ({
-          sessions: [],
-          isComplete: true
-        }))
-      },
-      configurable: true
-    });
-
     const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
       force: true,
       refreshStateMode: "deferred"
@@ -412,12 +643,15 @@ describe("SessionHistoryService 恢复缺失索引", () => {
   });
 
   it("discoverWorkspaceSessions 仍会清理超出宽限期的失效 Codex synthetic session", async () => {
-    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness();
+    const { service, sessionBindingRepository, sessionIndexRepository } = createHarness({
+      discoveryResult: { sessions: [], isComplete: true }
+    });
     const staleTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const syntheticRawStoreRef = `${process.cwd()}/.tmp/runtime/codex/stale-missing.stream`;
 
     sessionBindingRepository.upsert({
       sessionId: "session-stale-synthetic",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "provider-session-stale",
@@ -440,16 +674,6 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       updatedAt: staleTimestamp
     });
 
-    Object.defineProperty(service, "providerDiscoveryHelperClient", {
-      value: {
-        discoverWorkspaceSessions: vi.fn(async () => ({
-          sessions: [],
-          isComplete: true
-        }))
-      },
-      configurable: true
-    });
-
     const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
       force: true,
       refreshStateMode: "deferred"
@@ -467,7 +691,9 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       service,
       sessionBindingRepository,
       sessionIndexRepository
-    } = createHarness();
+    } = createHarness({
+      discoveryResult: { sessions: [], isComplete: true }
+    });
     const staleTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const archivedSessionDir = `${fixture.codexHomeDir}/archived_sessions`;
     const rolloutFilePath = `${archivedSessionDir}/rollout-2026-04-11T09-11-20.543Z-test.jsonl`;
@@ -491,6 +717,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-stale-hidden-butler",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "rollout-2026-04-11T09-11-20.543Z-test",
@@ -516,6 +743,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       .prepare(
         `INSERT INTO butler_projects (
            id,
+           user_id,
            workspace_id,
            name,
            repo_root,
@@ -530,10 +758,11 @@ describe("SessionHistoryService 恢复缺失索引", () => {
            created_at,
            updated_at,
            archived_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         "butler-project-1",
+        "user-1",
         "workspace-1",
         "Fixture Workspace",
         fixture.workspaceDir,
@@ -553,6 +782,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
       .prepare(
         `INSERT INTO butler_sessions (
            id,
+           user_id,
            project_id,
            session_id,
            role,
@@ -562,10 +792,11 @@ describe("SessionHistoryService 恢复缺失索引", () => {
            last_checkpoint_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         "butler-session-1",
+        "user-1",
         "butler-project-1",
         "session-stale-hidden-butler",
         "adhoc",
@@ -576,16 +807,6 @@ describe("SessionHistoryService 恢复缺失索引", () => {
         staleTimestamp,
         staleTimestamp
       );
-
-    Object.defineProperty(service, "providerDiscoveryHelperClient", {
-      value: {
-        discoverWorkspaceSessions: vi.fn(async () => ({
-          sessions: [],
-          isComplete: true
-        }))
-      },
-      configurable: true
-    });
 
     const sessions = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
       force: true,
@@ -608,6 +829,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-title-sync",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "claude-code",
       providerSessionId: "provider-session-title-sync",
@@ -676,6 +898,7 @@ describe("SessionHistoryService 恢复缺失索引", () => {
 
     sessionBindingRepository.upsert({
       sessionId: "session-title-manual",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "opencode",
       providerSessionId: "provider-session-title-manual",

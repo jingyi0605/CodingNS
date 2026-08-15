@@ -62,6 +62,10 @@ const DEFAULT_PROFILE_RESPONSE = {
     kimi: {
       defaultModel: null,
       defaultReasoningLevel: null
+    },
+    "deepseek-harness": {
+      defaultModel: null,
+      defaultReasoningLevel: null
     }
   },
   updatedAt: null
@@ -211,6 +215,10 @@ describe("偏好 profile 接口", () => {
           },
           codex: {
             defaultReasoningLevel: "xhigh"
+          },
+          "deepseek-harness": {
+            defaultModel: "deepseek-official:deepseek-v4-pro",
+            defaultReasoningLevel: "off"
           }
         }
       }
@@ -228,6 +236,10 @@ describe("偏好 profile 接口", () => {
         codex: {
           defaultModel: null,
           defaultReasoningLevel: "xhigh"
+        },
+        "deepseek-harness": {
+          defaultModel: "deepseek-official:deepseek-v4-pro",
+          defaultReasoningLevel: "off"
         }
       },
       updatedAt: expect.any(String)
@@ -263,6 +275,10 @@ describe("偏好 profile 接口", () => {
         codex: {
           defaultModel: null,
           defaultReasoningLevel: "xhigh"
+        },
+        "deepseek-harness": {
+          defaultModel: "deepseek-official:deepseek-v4-pro",
+          defaultReasoningLevel: "off"
         }
       },
       updatedAt: expect.any(String)

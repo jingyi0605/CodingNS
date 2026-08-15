@@ -177,6 +177,7 @@ export class ProviderRuntimeService {
             });
           }
 
+          await this.registry.flushListeners(request.sessionId);
           await handle.dispose();
           this.handles.delete(request.sessionId);
         })
@@ -193,6 +194,7 @@ export class ProviderRuntimeService {
             status: "failed",
             detail: error instanceof Error ? error.message : "provider runtime failed"
           });
+          await this.registry.flushListeners(request.sessionId);
           await handle.dispose();
           this.handles.delete(request.sessionId);
         });
@@ -204,6 +206,7 @@ export class ProviderRuntimeService {
         status: "failed",
         detail: error instanceof Error ? error.message : "provider runtime failed"
       });
+      await this.registry.flushListeners(request.sessionId);
       await handle.dispose();
       this.handles.delete(request.sessionId);
       throw error;

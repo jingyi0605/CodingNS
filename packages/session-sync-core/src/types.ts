@@ -243,6 +243,15 @@ export interface ProviderAdapter {
     totalMessageCount: number,
     limit: number
   ): Promise<HistoryPage | null>;
+  /**
+   * 读取 provider 对单个会话的权威活动状态。
+   *
+   * 不是所有 provider 都有独立的状态接口；缺省时上层继续使用现有运行时或本地日志推断。
+   */
+  readSessionActivity?(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ProviderSessionActivityObservation | null>;
   readSessionHistory(
     providerSessionId: string,
     rawStoreRef: string,

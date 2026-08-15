@@ -52,7 +52,7 @@ export class DeepSeekHarnessSidecarManager {
   constructor(options: DeepSeekHarnessSidecarManagerOptions) {
     this.options = {
       requestTimeoutMs: 5_000,
-      startupTimeoutMs: 15_000,
+      startupTimeoutMs: 45_000,
       expectedVersion: "0.1.0-rc.5",
       ...options
     };
@@ -62,7 +62,7 @@ export class DeepSeekHarnessSidecarManager {
       concurrency: 1,
       timeoutMs: this.options.startupTimeoutMs,
       retryPolicy: { maxAttempts: 1 },
-      run: async () => this.startOwnedSidecar()
+      run: async (_input, context) => this.startOwnedSidecar(context.signal)
     });
   }
 
@@ -106,7 +106,7 @@ export class DeepSeekHarnessSidecarManager {
     this.state = { ...this.state, status: "stopped", pid: null, baseUrl: null };
   }
 
-  private async startOwnedSidecar(): Promise<{ baseUrl: string; instanceId: string; harnessVersion: string | null }> {
+  private async startOwnedSidecar(signal?: AbortSignal): Promise<{ baseUrl: string; instanceId: string; harnessVersion: string | null }> {
     if (this.state.status === "ready" && this.state.baseUrl) {
       return { baseUrl: this.state.baseUrl, instanceId: this.state.instanceId, harnessVersion: this.state.harnessVersion };
     }
@@ -138,17 +138,24 @@ export class DeepSeekHarnessSidecarManager {
     });
     this.child = child;
     this.state = { ...this.state, pid: child.pid ?? null, baseUrl, startedAt: new Date().toISOString() };
+    // sidecar 的日志不属于 Host 业务数据，必须持续消费，避免子进程因管道写满而卡死。
+    child.stdout?.resume();
+    child.stderr?.resume();
 
-    const exitPromise = once(child, "exit").then(() => {
-      if (this.child === child && this.state.status !== "stopping") {
-        this.state = { ...this.state, status: "failed", pid: null, baseUrl: null, lastError: "HARNESS_SIDECAR_EXITED" };
-        this.child = null;
-      }
+    const exitPromise = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", () => {
+        if (this.child === child && this.state.status !== "stopping") {
+          this.state = { ...this.state, status: "failed", pid: null, baseUrl: null, lastError: "HARNESS_SIDECAR_EXITED" };
+          this.child = null;
+        }
+        resolve();
+      });
     });
 
     try {
       const client = new DeepSeekHarnessApiClient({ baseUrl, requestTimeoutMs: this.options.requestTimeoutMs, fetchImpl: this.options.fetchImpl });
-      const description = await waitForReady(client, this.options.startupTimeoutMs, exitPromise);
+      const description = await waitForReady(client, this.options.startupTimeoutMs, exitPromise, signal);
       const harnessVersion = commandVersion ?? readVersion(description);
       if (harnessVersion !== this.options.expectedVersion) throw new Error("HARNESS_VERSION_UNSUPPORTED");
       this.state = { ...this.state, status: "ready", harnessVersion };
@@ -161,14 +168,23 @@ export class DeepSeekHarnessSidecarManager {
   }
 }
 
-async function waitForReady(client: DeepSeekHarnessApiClient, timeoutMs: number, exitPromise: Promise<unknown>): Promise<Record<string, unknown>> {
+async function waitForReady(client: DeepSeekHarnessApiClient, timeoutMs: number, exitPromise: Promise<unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("HARNESS_SIDECAR_START_ABORTED");
     try {
-      return await client.describe();
+      return await client.describe(signal);
     } catch {
-      const exited = await Promise.race([delay(150).then(() => false), exitPromise.then(() => true)]);
-      if (exited) throw new Error("HARNESS_SIDECAR_EXITED");
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("HARNESS_SIDECAR_START_ABORTED");
+      const outcome = await Promise.race([
+        delay(150).then(() => ({ kind: "waiting" as const })),
+        exitPromise.then(
+          () => ({ kind: "exited" as const }),
+          (error) => ({ kind: "error" as const, error })
+        )
+      ]);
+      if (outcome.kind === "error") throw outcome.error;
+      if (outcome.kind === "exited") throw new Error("HARNESS_SIDECAR_EXITED");
     }
   }
   throw new Error("HARNESS_SIDECAR_START_FAILED");
