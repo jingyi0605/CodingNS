@@ -16,6 +16,7 @@
 4. Codex、Claude Code、Gemini 根据各自日志格式去重折叠，避免流式更新、重写记录和最终记录重复计数。
 5. 前端按可用指标分组显示；不存在的字段完全隐藏，绝不把未知值显示成 `0`。
 6. Kimi 在获得稳定 usage 协议或持久化字段前继续不提供统计。
+7. 缓存命中率只在 Provider 已确认输入与缓存桶的关系后生成；页面不得用一条通用公式猜分母。
 
 ## 3. 非目标
 
@@ -31,6 +32,7 @@
 1. WHEN Provider 返回一个统计指标 THEN System SHALL 同时返回 `value`、`source`、`semantic`、`watermark`。
 2. WHEN Provider 无法确认某指标 THEN System SHALL 省略该指标，不得使用 `0`、`null` 数值或估算值代替。
 3. `ProviderSessionStats` SHALL 独立于 `ContextUsageSnapshot`，两个类型、读取接口和前端状态不得复用。
+4. WHEN System 输出 `cacheHitRate` THEN 它 SHALL 标明为基于已核验原生统计推导的比例，并继承其原始数据水位。
 
 ### 4.2 Provider 行为
 
@@ -40,15 +42,21 @@
 4. Claude Code 与 Legna SHALL 以稳定消息标识折叠 progress 和最终 assistant usage。
 5. Gemini SHALL 以消息标识 last-wins 折叠被重写的 token 记录。
 6. Kimi SHALL 返回 `null`。
+7. Harness、OpenCode、Claude Code 和 Legna SHALL 将未缓存输入、缓存读取和缓存写入作为互不重叠的输入桶；Codex 和 Gemini SHALL 将缓存读取视为总输入的子集。Codex 出现未定义关系的正缓存写入时 SHALL 省略缓存命中率。
 
 ### 4.3 页面显示
 
 1. WHEN 统计存在 THEN 页面 SHALL 仅显示具有至少一个可用字段的分组。
 2. WHEN 一个字段不存在 THEN 页面 SHALL 隐藏该字段及其标签。
 3. WHEN 整个 Provider 未提供统计 THEN 页面 SHALL 不新增“0 token”“0 成本”或不可用占位卡片。
-4. 在桌面端，页面 SHALL 默认平铺显示轮数、输入 token、输出 token 和可计算的缓存命中率；其余字段通过省略按钮查看。
+4. 在桌面端，页面 SHALL 默认平铺显示轮数、输入 token 和输出 token；缓存命中率不得再占用摘要文字，其余字段通过上下文占用圆环的点击详情查看。
 5. 在移动端，页面 SHALL 默认只显示一个统计入口图标，不挤压输入区的横向空间。
 6. 统计详情 SHALL 只通过点击入口打开或关闭，鼠标离开入口不得自动关闭。
+7. WHEN `cacheHitRate` 缺失 THEN 页面 SHALL 隐藏缓存命中率，即使输入和缓存读取字段同时存在。
+8. 会话统计详情 SHALL 合并到上下文占用圆环的弹层，页面不得再渲染独立的会话统计详情按钮。
+9. 桌面摘要中的输入和输出 SHALL 使用紧凑数字，不得附加 `tok` 单位。
+10. WHEN `cacheHitRate` 存在 THEN 上下文占用圆环 SHALL 在内侧显示缓存命中率圆环；小于 80% 为黄色，80% 至小于 90% 为浅绿色，90% 及以上为深绿色。
+11. 上下文占用圆环 SHALL 位于桌面统计摘要左侧；当 `cacheHitRate` 缺失时不得渲染空的第二圈或伪造的 0%。
 
 ## 5. 兼容性与成功定义
 

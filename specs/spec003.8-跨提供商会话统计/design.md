@@ -17,14 +17,22 @@
 `packages/session-sync-core` 定义以下独立类型：
 
 ```ts
-type ProviderSessionStatSource = "provider-projection" | "provider-session-store" | "provider-history-log";
-type ProviderSessionStatSemantic = "cumulative" | "sum-of-final-events" | "latest-snapshot";
+type ProviderSessionStatSource =
+  | "provider-projection"
+  | "provider-session-store"
+  | "provider-history-log"
+  | "derived-provider-metrics";
+type ProviderSessionStatSemantic =
+  | "cumulative"
+  | "sum-of-final-events"
+  | "latest-snapshot"
+  | "derived-ratio";
 
 interface ProviderSessionStatValue {
   value: number;
   source: ProviderSessionStatSource;
   semantic: ProviderSessionStatSemantic;
-  watermark: string;
+  watermark: ProviderSessionStatWatermark;
 }
 
 interface ProviderSessionStats {
@@ -33,7 +41,7 @@ interface ProviderSessionStats {
 }
 ```
 
-`ProviderSessionStatMetric` 是固定枚举，覆盖 tokens、成本、轮次、步骤及耗时。`metrics` 保持稀疏：字段不可信或未出现时不写入。
+`ProviderSessionStatMetric` 是固定枚举，覆盖 tokens、成本、轮次、步骤及耗时。`cacheHitRate` 是唯一允许由 CodingNS 推导的指标：它的来源标为 `derived-provider-metrics`、语义标为 `derived-ratio`，且只从同一 Provider 已核验的原生 token 桶计算。`metrics` 保持稀疏：字段不可信或未出现时不写入。
 
 每个字段的含义如下：
 
@@ -41,6 +49,7 @@ interface ProviderSessionStats {
 | --- | --- | --- |
 | Token | `inputTokens`、`outputTokens`、`reasoningTokens` | Provider 给出的会话累计值或去重后最终消息之和 |
 | Token | `cacheReadTokens`、`cacheWriteTokens` | Provider 明确区分的缓存 token |
+| Token | `cacheHitRate` | Provider 确认分母后的缓存读取比例；不是前端猜出的统一公式 |
 | Token | `toolTokens` | Provider 明确归属到工具的 token |
 | 运行 | `turns`、`steps` | Provider 投影或原生 session 定义的轮次、步骤 |
 | 耗时 | `llmMs`、`toolMs`、`ttftMs`、`decodeMs` | Provider 提供的累计耗时；不从消息时间戳猜测 |
@@ -65,14 +74,14 @@ ProviderAdapter.readSessionStats
 
 ## 4. Provider 读取规则
 
-| Provider | 原始数据 | 算法 | 字段语义 |
+| Provider | 原始数据 | 算法 | 缓存命中率 |
 | --- | --- | --- | --- |
-| Harness | `session/projection` 或 history 尾页 projection | 直接转发最新 projection | `cumulative`，`provider-projection` |
-| OpenCode | 原生 session SQLite 累计列 | 直接读取单行 | `cumulative`，`provider-session-store` |
-| Codex | JSONL `token_count.total_token_usage` | 使用每个累计快照的最大值，不累加相同/递增快照 | `latest-snapshot`，`provider-history-log` |
-| Claude Code / Legna | assistant progress、最终 assistant usage | 按稳定消息 ID last-wins 后求和 | `sum-of-final-events`，`provider-history-log` |
-| Gemini | Gemini 消息 `tokens` | 按消息 ID last-wins 后求和 | `sum-of-final-events`，`provider-history-log` |
-| Kimi | 无稳定 usage 协议 | 返回 `null` | 无 |
+| Harness | `session/projection` 或 history 尾页 projection | 直接转发最新 projection | `cacheRead / (uncachedInput + cacheRead + cacheWrite)`；三个桶缺任一项就隐藏 |
+| OpenCode | 原生 session SQLite 累计列 | 直接读取单行 | `cacheRead / (input + cacheRead + cacheWrite)`；原生 session 表使用独立桶 |
+| Codex | JSONL `token_count.total_token_usage` | 使用最新累计快照，不累加相同/递增快照 | `cachedInput / input`；`cachedInput` 是 `input` 子集，出现正 `cache_write_tokens` 时隐藏 |
+| Claude Code / Legna | assistant progress、最终 assistant usage | 按稳定消息 ID last-wins 后求和 | `cacheRead / (input + cacheWrite + cacheRead)` |
+| Gemini | Gemini 消息 `tokens` | 按消息 ID last-wins 后求和 | `cached / input`；Gemini 的 prompt token 总数包含 cached content |
+| Kimi | 无稳定 usage 协议 | 返回 `null` | 不显示 |
 
 Codex 的 total usage 仅输出其当前 fixture 已确认的字段。没有字段时不补算。
 
@@ -80,13 +89,13 @@ Codex 的 total usage 仅输出其当前 fixture 已确认的字段。没有字�
 
 `SessionRuntimeDto` 与 runtime store 增加 `sessionStats: ProviderSessionStatsDto | null`。页面只将该值透传给 Composer。统计入口沿用 Composer 的紧凑信息区，但只有存在至少一个可展示字段时才渲染触发器和弹层。
 
-展示按以下顺序分组：Token、运行、耗时、成本。分组内只迭代实际存在的 metrics；格式化时接受 `number`，从不为未知字段创建默认值。Token 分组在同时拿到输入和缓存读取量且总量大于 0 时，额外显示由 `cacheReadTokens / (inputTokens + cacheReadTokens)` 得出的缓存命中率；缺任一分量就隐藏该比例。
+展示按以下顺序分组：Token、运行、耗时、成本。分组内只迭代实际存在的 metrics；格式化时接受 `number`，从不为未知字段创建默认值。Token 分组只显示 Provider 已生成的 `cacheHitRate`，不根据 `inputTokens`、`cacheReadTokens` 或 `cacheWriteTokens` 在前端重算；缺少该指标就隐藏比例。
 
-桌面端默认把轮数、输入 token、输出 token 和缓存命中率放在输入区的横向摘要中，其余统计由省略按钮打开。移动端只保留一个统计入口图标。详情弹层只响应点击、再次点击和 Escape/外部点击，不响应鼠标离开。
+桌面端默认把轮数、输入和输出放在输入区的横向摘要中，紧凑数字不再附加 `tok`。上下文占用圆环位于摘要左侧，是上下文与会话统计共用的唯一详情入口：点击后弹层先显示上下文占用，再显示会话统计；鼠标离开不关闭。缓存命中率不写入摘要文字；仅当 Provider 给出 `cacheHitRate` 时，圆环内侧增加第二圈，低于 80% 为黄色，80% 至低于 90% 为浅绿色，90% 及以上为深绿色。没有该字段时内圈完全隐藏，不能用空圈或 0% 代替。移动端隐藏横向摘要，但仍通过同一个圆环打开统计；没有上下文占用而有统计时，圆环显示统计图标，不能让详情入口消失。
 
 ## 6. 测试策略
 
-- core：Harness projection、OpenCode 原生累计、Codex 递增快照、Claude progress/最终重复、Gemini 重写消息、Kimi 空值。
+- core：Harness projection、OpenCode 原生累计、Codex 递增快照、Claude/Legna progress/最终重复、Gemini 重写消息、Kimi 空值，以及每种缓存率分母。
 - Host：runtime 成功透传，统计读取异常不影响 runtime 响应。
 - user-app：只有存在 metrics 才显示入口；缺 token、成本或耗时不渲染该行；`0` 只有 Provider 明确返回 `0` 时才能显示。
 - 运行 `pnpm test:related -- <改动文件>` 和 `pnpm check:sqlite-runtime`。
@@ -96,3 +105,4 @@ Codex 的 total usage 仅输出其当前 fixture 已确认的字段。没有字�
 - 不更改现有 `contextUsage` 字段、其上下文环或 API 语义。
 - 不改变 Provider 发送、订阅、历史同步或数据库 schema。
 - 新字段允许为 `null`，旧 Host 或旧 Provider 不提供数据时前端自然隐藏，保证向后兼容。
+- 缓存率从前端通用推算改为 Provider 端显式生成；未确认的字段组合只会少显示一项，不会把错误比例暴露给用户。
