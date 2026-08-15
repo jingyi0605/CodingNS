@@ -6,9 +6,10 @@ export type PreferenceProviderId =
   | "codex"
   | "opencode"
   | "gemini"
-  | "kimi";
+  | "kimi"
+  | "deepseek-harness";
 export type PreferenceThemeId = "light" | "dark" | "sky-blue" | "eye-green";
-export type PreferenceReasoningLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type PreferenceReasoningLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type DebugPortPoolRole = "frontend" | "backend" | "worker" | "mock" | "custom";
 
 export interface DebugPortPoolRange {

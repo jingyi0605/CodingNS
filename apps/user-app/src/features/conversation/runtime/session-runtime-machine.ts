@@ -583,6 +583,12 @@ export function compareViewMessageOrder(
     return codexRawRefTimelineOrder;
   }
 
+  const deepSeekHarnessSyntheticOrder = compareDeepSeekHarnessSyntheticTimelineOrder(left, right);
+
+  if (deepSeekHarnessSyntheticOrder !== null && deepSeekHarnessSyntheticOrder !== 0) {
+    return deepSeekHarnessSyntheticOrder;
+  }
+
   if (left.sequence !== right.sequence) {
     return left.sequence - right.sequence;
   }
@@ -618,6 +624,26 @@ export function compareViewMessageOrder(
   }
 
   return left.id.localeCompare(right.id);
+}
+
+function compareDeepSeekHarnessSyntheticTimelineOrder(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): number | null {
+  const leftSynthetic = left.rawRef.startsWith("synthetic://deepseek-harness/");
+  const rightSynthetic = right.rawRef.startsWith("synthetic://deepseek-harness/");
+
+  if (leftSynthetic === rightSynthetic) {
+    return null;
+  }
+
+  const timestampOrder = left.timestamp.localeCompare(right.timestamp);
+
+  if (timestampOrder !== 0) {
+    return timestampOrder;
+  }
+
+  return leftSynthetic ? 1 : -1;
 }
 
 function compareCodexRawRefTimelineOrder(leftRawRef: string, rightRawRef: string): number | null {

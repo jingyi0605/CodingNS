@@ -1464,6 +1464,41 @@ describe("session runtime machine", () => {
     ]);
   });
 
+  it("DeepSeek Harness 的临时 user 消息会按时间留在已有会话尾部", () => {
+    const previousReply = toViewMessage(
+      "session-1",
+      createHistoryMessage({
+        messageId: "dsh-reply-1",
+        provider: "deepseek-harness",
+        providerSessionId: "harness-1",
+        role: "assistant",
+        content: "上一轮回复",
+        timestamp: "2026-08-14T16:00:00.000Z",
+        sequence: 446,
+        rawRef: "harness://harness-1#seq=446"
+      })
+    );
+    const syntheticUser = {
+      ...createSyntheticUserMessage(),
+      id: "dsh-synthetic-user-1",
+      content: "保存到 data 目录",
+      timestamp: "2026-08-14T16:01:00.000Z",
+      sequence: 4,
+      rawRef: "synthetic://deepseek-harness/harness-1/dsh-synthetic-user-1"
+    };
+
+    const merged = mergeAuthoritativeMessages(
+      [previousReply, syntheticUser],
+      "session-1",
+      []
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "dsh-reply-1",
+      "dsh-synthetic-user-1"
+    ]);
+  });
+
   it("会把带内部附件调试块的 codex 首条权威 user 消息与 synthetic 首条消息合并", () => {
     const merged = mergeAuthoritativeMessages(
       [createSyntheticUserMessage()],

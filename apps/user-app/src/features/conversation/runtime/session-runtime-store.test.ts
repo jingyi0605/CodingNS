@@ -862,6 +862,81 @@ describe("SessionRuntimeStore", () => {
     ]);
   });
 
+  it("DeepSeek Harness 排队消息经实时事件回放时，会解除上一轮 assistant 尾钉", () => {
+    const providerSessionId = "harness-1";
+    const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
+      type: "history.merge",
+      source: "realtime_backfill",
+      replaceSnapshotSeed: false,
+      messages: [
+        createHistoryMessage({
+          messageId: "dsh-user-previous-1",
+          provider: "deepseek-harness",
+          providerSessionId,
+          role: "user",
+          content: "你刚刚说了什么",
+          timestamp: "2026-08-15T02:22:16.520Z",
+          sequence: 542,
+          rawRef: `harness://${providerSessionId}#seq=542`
+        })
+      ]
+    });
+
+    const runtimeAssistant = applyTimelineEventToLayers(seeded.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "dsh-assistant-previous-1",
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: "我刚刚是在做自我介绍。",
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-08-15T02:22:19.188Z",
+        sequence: 770,
+        rawRef: `harness://${providerSessionId}/message/turn-4-step-1/part/text-1?part=1`,
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(runtimeAssistant.messages.at(-1)?.id).toBe("dsh-assistant-previous-1");
+
+    const queuedUserReplay = applyTimelineEventToLayers(runtimeAssistant.timeline, "session-1", {
+      type: "runtime.message",
+      source: "session.runtime_message",
+      message: {
+        id: "dsh-user-next-1",
+        sessionId: "session-1",
+        role: "user",
+        kind: "text",
+        content: "列出当前目录的文件",
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        origin: null,
+        originRef: null,
+        timestamp: "2026-08-15T02:22:28.900Z",
+        sequence: 777,
+        rawRef: `harness://${providerSessionId}#seq=777`,
+        deliveryState: "sent",
+        clientRequestId: null
+      }
+    });
+
+    expect(queuedUserReplay.validationIssues).toEqual([]);
+    expect(queuedUserReplay.timeline.activeRuntimeOverlayKeys).toEqual([]);
+    expect(queuedUserReplay.messages.map((item) => item.id)).toEqual([
+      "dsh-user-previous-1",
+      "dsh-assistant-previous-1",
+      "dsh-user-next-1"
+    ]);
+  });
+
   it("旧 tool runtime replay 不会在已有更新 assistant 后重新贴到底部", () => {
     const seeded = applyTimelineEventToLayers(createTimelineLayersState(), "session-1", {
       type: "history.merge",

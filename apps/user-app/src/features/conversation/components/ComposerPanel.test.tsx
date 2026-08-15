@@ -73,6 +73,10 @@ const preferenceStoreMock = vi.hoisted(() => ({
           kimi: {
             defaultModel: null,
             defaultReasoningLevel: null
+          },
+          "deepseek-harness": {
+            defaultModel: null,
+            defaultReasoningLevel: null
           }
         }
       }
@@ -84,7 +88,7 @@ const preferenceStoreMock = vi.hoisted(() => ({
     profile: {
       providers: Record<string, {
         defaultModel: string | null;
-        defaultReasoningLevel: "low" | "medium" | "high" | "xhigh" | null;
+        defaultReasoningLevel: "off" | "low" | "medium" | "high" | "xhigh" | null;
       }>;
     };
   }) => unknown) =>
@@ -110,6 +114,10 @@ const preferenceStoreMock = vi.hoisted(() => ({
           kimi: {
             defaultModel: null,
             defaultReasoningLevel: null
+          },
+          "deepseek-harness": {
+            defaultModel: null,
+            defaultReasoningLevel: null
           }
         }
       }
@@ -121,6 +129,7 @@ const preferenceStoreMock = vi.hoisted(() => ({
     || provider === "opencode"
     || provider === "gemini"
     || provider === "kimi"
+    || provider === "deepseek-harness"
   )
 }));
 const mockListQuickPhrases = vi.fn();
@@ -194,7 +203,7 @@ function createDeferred() {
 function createCapabilities(options?: {
   supportsAttachments?: boolean;
   supportsInterrupt?: boolean;
-  provider?: "codex" | "claude-code" | "opencode";
+  provider?: "codex" | "claude-code" | "opencode" | "deepseek-harness";
   modelOptions?: Array<{
     id: string;
     name: string;
@@ -2160,6 +2169,59 @@ describe("ComposerPanel", () => {
         filePath: "docs/spec.md",
         openViewer: false
       });
+    });
+  });
+
+  it("DeepSeek Harness 可以选择模型和关闭思考，并将强度保存为偏好", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          provider: "deepseek-harness",
+          modelOptions: [
+            {
+              id: "deepseek-official:deepseek-v4-flash",
+              name: "DeepSeek-V4-Flash",
+              supportedReasoningEfforts: ["off", "high", "max"],
+              defaultReasoningEffort: "high"
+            },
+            {
+              id: "deepseek-official:deepseek-v4-pro",
+              name: "DeepSeek-V4-Pro",
+              supportedReasoningEfforts: ["off", "high", "max"],
+              defaultReasoningEffort: "high"
+            }
+          ]
+        })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(t("conversation.modelSelectorLabel"))).toBeInTheDocument();
+      expect(screen.getByLabelText(t("conversation.reasoningSelectorLabel"))).toBeInTheDocument();
+    });
+    chooseOption(t("conversation.modelSelectorLabel"), "DeepSeek-V4-Pro");
+    chooseOption(t("conversation.reasoningSelectorLabel"), t("conversation.reasoningOff"));
+
+    expect(preferenceStoreMock.updatePreferences).toHaveBeenCalledWith({
+      providers: {
+        "deepseek-harness": {
+          defaultReasoningLevel: "off"
+        }
+      }
+    });
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "使用指定模型回答" } });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith("使用指定模型回答", expect.objectContaining({
+        model: "deepseek-official:deepseek-v4-pro",
+        reasoningLevel: "off"
+      }));
     });
   });
 });

@@ -3760,11 +3760,16 @@ export function applyTimelineEventToLayers(
       next = {
         ...current,
         runtimeOverlayMessages: mergeRuntimeOverlayMessages(current.runtimeOverlayMessages, [event.message]),
-        activeRuntimeOverlayKeys: updateActiveRuntimeOverlayKeys(
-          current,
-          current.activeRuntimeOverlayKeys,
-          event.message
-        )
+        // 排队消息会直接从 provider 的实时事件回放，不会经历本地 pending。
+        // 收到这种 user 事件也表示上一轮已经结束，不能让旧 assistant 继续被钉在列表尾部。
+        activeRuntimeOverlayKeys:
+          event.message.role === "user"
+            ? []
+            : updateActiveRuntimeOverlayKeys(
+                current,
+                current.activeRuntimeOverlayKeys,
+                event.message
+              )
       };
       break;
     }

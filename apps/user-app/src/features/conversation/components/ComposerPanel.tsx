@@ -647,6 +647,7 @@ export function ComposerPanel({
   const quickPhraseMutationVersionRef = useRef(0);
   const appliedInitialModelKeyRef = useRef<string | null>(null);
   const userSelectedModelRef = useRef(false);
+  const userSelectedReasoningLevelRef = useRef(false);
   const mentionRequestIdRef = useRef(0);
   const deploymentCapabilitiesRequestIdRef = useRef(0);
   const forkCapabilitiesRequestIdRef = useRef(0);
@@ -914,7 +915,8 @@ export function ComposerPanel({
       provider,
       supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
         (effort): effort is ReasoningLevel =>
-          effort === "minimal"
+          effort === "off"
+          || effort === "minimal"
           || effort === "low"
           || effort === "medium"
           || effort === "high"
@@ -950,6 +952,7 @@ export function ComposerPanel({
   const slashMenuEnabled = shouldShowSlashMenu(capabilities);
   const reasoningLevelCatalog = useMemo(
     () => [
+      { value: "off" as const, label: t("conversation.reasoningOff") },
       { value: "minimal" as const, label: t("conversation.reasoningMinimal") },
       { value: "low" as const, label: t("conversation.reasoningLow") },
       { value: "medium" as const, label: t("conversation.reasoningMedium") },
@@ -1052,7 +1055,8 @@ export function ComposerPanel({
       provider: forkDraft.targetProvider,
       supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
         (effort): effort is ReasoningLevel =>
-          effort === "minimal"
+          effort === "off"
+          || effort === "minimal"
           || effort === "low"
           || effort === "medium"
           || effort === "high"
@@ -1265,6 +1269,7 @@ export function ComposerPanel({
   }, [persistSessionSelection, selectedModel]);
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
+    userSelectedReasoningLevelRef.current = true;
     setReasoningLevel(level);
     if (isPreferenceProviderId(provider)) {
       void updatePreferences({
@@ -1756,6 +1761,13 @@ export function ComposerPanel({
       if (reasoningLevel !== accountPreferredReasoningLevel) {
         setReasoningLevel(accountPreferredReasoningLevel);
       }
+      return;
+    }
+
+    if (
+      userSelectedReasoningLevelRef.current
+      && availableReasoningLevels.some((level) => level.value === reasoningLevel)
+    ) {
       return;
     }
 
@@ -3310,7 +3322,8 @@ function getContextUsageStateClassName(progress: number): string {
 
 function normalizeModelReasoningLevel(value?: string | null): ReasoningLevel | null {
   if (
-    value === "minimal"
+    value === "off"
+    || value === "minimal"
     || value === "low"
     || value === "medium"
     || value === "high"

@@ -45,7 +45,8 @@ const PREFERENCE_PROVIDER_IDS: PreferenceProviderId[] = [
   "codex",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "deepseek-harness"
 ];
 const SHADOW_STORAGE_KEY = "codingns.account.preferences.shadow";
 const LEGACY_CLIENT_CONFIG_KEY = "codingns.client.runtime-config";
@@ -119,6 +120,7 @@ function normalizePermissionMode(value?: string | null): ClientPermissionMode | 
 
 function normalizeReasoningLevel(value?: string | null): PreferenceReasoningLevel | null {
   if (
+    value === "off" ||
     value === "minimal" ||
     value === "low" ||
     value === "medium" ||
@@ -152,6 +154,10 @@ function createDefaultProviders(): AccountPreferenceState["providers"] {
       defaultReasoningLevel: null
     },
     kimi: {
+      defaultModel: null,
+      defaultReasoningLevel: null
+    },
+    "deepseek-harness": {
       defaultModel: null,
       defaultReasoningLevel: null
     }

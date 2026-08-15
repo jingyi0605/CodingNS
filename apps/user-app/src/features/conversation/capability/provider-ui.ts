@@ -14,7 +14,7 @@ import kimiIcon from "../../../assets/provider-icons/kimi.png";
 import openCodeIcon from "../../../assets/provider-icons/opencode.png";
 import deepSeekHarnessIcon from "../../../assets/provider-icons/deepseek-harness.svg";
 
-const REASONING_LEVEL_SET = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+const REASONING_LEVEL_SET = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
 interface ProviderMetadata {
   displayNameKey: string;
@@ -177,14 +177,14 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     defaultModelLabelKey: "conversation.modelUseCliDefault",
     icon: deepSeekHarnessIcon,
     defaultRunInputMode: "queued_guidance",
-    reasoningLevelPersists: false,
-    defaultReasoningLevel: null,
+    reasoningLevelPersists: true,
+    defaultReasoningLevel: "high",
     supportsInterrupt: true,
     supportsAttachments: true,
     supportsPermissionPrompt: true,
     supportsSlashMenuByDefault: false,
-    supportsSessionDeleteByDefault: false,
-    foldRulesMessagesByDefault: false
+    supportsSessionDeleteByDefault: true,
+    foldRulesMessagesByDefault: true
   }
 };
 

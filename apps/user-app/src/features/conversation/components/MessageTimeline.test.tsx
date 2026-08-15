@@ -2150,6 +2150,92 @@ describe("MessageTimeline", () => {
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
   });
 
+  it("会折叠 DeepSeek Harness 注入的规则和运行时上下文", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          {
+            ...createSystemMessage(`<system-reminder>
+Instructions from: AGENTS.md
+<INSTRUCTIONS>
+不要把这行规则直接展示出来
+</INSTRUCTIONS>
+</system-reminder>`, "dsh-rules"),
+            rawRef: "harness://session-1#seq=8"
+          },
+          {
+            ...createSystemMessage(`Current runtime context. This snapshot supersedes earlier runtime-context snapshots.
+
+Current DSH file policy: workspace-write.
+
+Approval policy: ask.`, "dsh-runtime-context"),
+            sequence: 2,
+            rawRef: "harness://session-1#seq=9"
+          }
+        ]}
+        historyState="ready"
+        provider="deepseek-harness"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const expandButtons = screen.getAllByRole("button", { name: new RegExp(t("conversation.rulesMessageExpand")) });
+    expect(expandButtons).toHaveLength(2);
+    expect(screen.queryByText("不要把这行规则直接展示出来")).not.toBeInTheDocument();
+    expect(screen.queryByText("Current DSH file policy: workspace-write.")).not.toBeInTheDocument();
+
+    await userEvent.click(expandButtons[0]!);
+    await userEvent.click(expandButtons[1]!);
+
+    expect(screen.getByText((content) => content.includes("不要把这行规则直接展示出来"))).toBeInTheDocument();
+    expect(screen.getByText("Current DSH file policy: workspace-write.")).toBeInTheDocument();
+  });
+
+  it("会把 DeepSeek Harness 同一 callId 的写入调用和结果渲染成一个编辑项", () => {
+    const writeInput = JSON.stringify({
+      file_path: "/Users/jackson/Code/CodingNS/data/最后的邮差.md",
+      content: "# 最后的邮差\n\n正文"
+    });
+
+    render(
+      <MessageTimeline
+        messages={[
+          createToolMessage({
+            id: "dsh-write-call",
+            callId: "call-write-1",
+            name: "write",
+            kind: "tool_call",
+            content: writeInput,
+            toolInput: writeInput,
+            sequence: 1011,
+            rawRef: "harness://session-1#seq=1011"
+          }),
+          createToolMessage({
+            id: "dsh-write-result",
+            callId: "call-write-1",
+            name: "",
+            kind: "tool_result",
+            content: "Created file",
+            toolInput: "",
+            toolOutput: "Created file",
+            status: "completed",
+            sequence: 1012,
+            rawRef: "harness://session-1#seq=1012"
+          })
+        ]}
+        historyState="ready"
+        provider="deepseek-harness"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
+    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
+    expect(screen.getByText("最后的邮差.md")).toBeInTheDocument();
+    expect(screen.queryByText("tool-call")).not.toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.toolResultEmpty"))).not.toBeInTheDocument();
+  });
+
   it("会把 thinking 消息和正式回复分开渲染", () => {
     render(
       <MessageTimeline

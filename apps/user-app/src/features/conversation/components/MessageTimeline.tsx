@@ -3134,9 +3134,31 @@ function looksLikeRulesMessage(provider: ProviderId | null, content: string) {
 
   const normalized = content.trim();
 
-  return /AGENTS\.md instructions for/i.test(normalized)
+  if (
+    /AGENTS\.md instructions for/i.test(normalized)
+    && /<INSTRUCTIONS>/i.test(normalized)
+    && /<\/INSTRUCTIONS>/i.test(normalized)
+  ) {
+    return true;
+  }
+
+  return provider === "deepseek-harness"
+    && /<system-reminder\b/i.test(normalized)
+    && /(?:AGENTS|CLAUDE)\.md/i.test(normalized)
     && /<INSTRUCTIONS>/i.test(normalized)
     && /<\/INSTRUCTIONS>/i.test(normalized);
+}
+
+function looksLikeHarnessRuntimeContextMessage(provider: ProviderId | null, content: string) {
+  if (provider !== "deepseek-harness") {
+    return false;
+  }
+
+  const normalized = content.trim();
+
+  return normalized.startsWith("Current runtime context. This snapshot supersedes earlier runtime-context snapshots.")
+    && normalized.includes("Current DSH file policy:")
+    && normalized.includes("Approval policy:");
 }
 
 function looksLikeSkillContextMessage(provider: ProviderId | null, content: string) {
@@ -5238,6 +5260,8 @@ function MessageItem({
     foldedPromptKind ??
     (looksLikeRulesMessage(provider, message.content)
       ? "rules"
+      : looksLikeHarnessRuntimeContextMessage(provider, message.content)
+        ? "rules"
       : looksLikeSkillContextMessage(provider, message.content)
         ? "skill_context"
         : null);
