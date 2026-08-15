@@ -4,7 +4,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  type CodexForkTransport
+  DeepSeekHarnessAdapter,
+  type CodexForkTransport,
+  type DeepSeekHarnessTransport,
+  type ProviderAdapter
 } from "@codingns/session-sync-core";
 
 import { resolveHostConfig } from "../../src/config/env.js";
@@ -12,6 +15,8 @@ import { SessionActivityAuthorityService } from "../../src/modules/sessions/sess
 import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 import { SessionMessageAttachmentService } from "../../src/modules/sessions/session-message-attachment-service.js";
+import { createTaskManager, type TaskManager } from "../../src/modules/tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../../src/modules/tasks/task-types.js";
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionBindingRepository } from "../../src/storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../../src/storage/repositories/session-changed-file-repository.js";
@@ -122,7 +127,7 @@ describe("SessionHistoryService forkSession", () => {
       forkMethod: "native_session_fork"
     });
 
-    const accepted = await service.sendMessage(forked.sessionId, "子会话继续说话", null);
+    const accepted = await service.sendMessage(forked.sessionId, "user-1", "子会话继续说话", null);
 
     expect(accepted.sessionId).toBe(forked.sessionId);
     expect(accepted.message.content).toBe("子会话继续说话");
@@ -322,6 +327,7 @@ describe("SessionHistoryService forkSession", () => {
 
     repos.sessionBindingRepository?.upsert({
       sessionId: "child-session",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "child-thread",
@@ -444,6 +450,7 @@ describe("SessionHistoryService forkSession", () => {
 
     repos.sessionBindingRepository?.upsert({
       sessionId: "child-session-late-leak",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "child-thread",
@@ -578,11 +585,140 @@ describe("SessionHistoryService forkSession", () => {
       forkMethod: "reconstructed_message_fork"
     });
 
-    const accepted = await service.sendMessage(forked.sessionId, "在这条新分支里继续展开。", null);
+    const accepted = await service.sendMessage(forked.sessionId, "user-1", "在这条新分支里继续展开。", null);
 
     expect(accepted.sessionId).toBe(forked.sessionId);
     expect(accepted.message.provider).toBe("claude-code");
     expect(accepted.message.content).toBe("在这条新分支里继续展开。");
+  });
+
+  it("Codex 会话可以重建分叉到 DeepSeek Harness，并把历史文本作为初始 prompt", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "先整理当前实现的风险点。"],
+        ["assistant", "已经列出三类风险。"],
+        ["user", "只保留前两条风险。"]
+      ]
+    );
+    const deepSeekHarness = createDeepSeekForkTransport("dsh-child");
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, createUnusedCodexForkTransport, {
+      additionalAdapters: [
+        new DeepSeekHarnessAdapter({
+          transport: deepSeekHarness.transport,
+          harnessVersion: "0.1.0-rc.5",
+          dshHomeDir: path.join(fixture.rootDir, "dsh-home")
+        })
+      ]
+    });
+
+    seedSourceSession(repos, sourceFile, 3);
+    const page = await service.readSessionHistory("source-session", null, 50, "forward", "user-1");
+    const anchorMessageId = page.messages[1]?.messageId;
+
+    expect(anchorMessageId).toBeTruthy();
+
+    const forked = await service.forkSession({
+      sessionId: "source-session",
+      userId: "user-1",
+      sourceType: "message",
+      sourceMessageId: anchorMessageId,
+      strategy: "auto",
+      targetProvider: "deepseek-harness"
+    });
+
+    expect(forked.provider).toBe("deepseek-harness");
+    expect(forked.parentSessionId).toBe("source-session");
+    expect(forked.forkMethod).toBe("reconstructed_message_fork");
+    expect(repos.sessionBindingRepository.findBySessionId(forked.sessionId)).toMatchObject({
+      provider: "deepseek-harness",
+      providerSessionId: "dsh-child"
+    });
+    expect(sessionForkRepository.findBySessionId(forked.sessionId)).toMatchObject({
+      provider: "deepseek-harness",
+      forkSourceMessageId: anchorMessageId,
+      inheritedPrefixMessageCount: 2,
+      providerParentSessionId: "source-thread",
+      forkMethod: "reconstructed_message_fork"
+    });
+
+    const promptCall = deepSeekHarness.calls.find((call) => call.method === "session.prompt");
+    expect(promptCall).toMatchObject({
+      method: "session.prompt",
+      payload: {
+        sessionId: "dsh-child",
+        mode: "queue",
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining("[助手]\n已经列出三类风险。")
+          }
+        ]
+      }
+    });
+    expect((promptCall?.payload as { content: Array<{ text: string }> }).content[0]?.text)
+      .toContain("[用户]\n先整理当前实现的风险点。");
+    expect((promptCall?.payload as { content: Array<{ text: string }> }).content[0]?.text)
+      .not.toContain("只保留前两条风险。");
+  });
+
+  it("DeepSeek Harness 会话级 fork 会保留原生 session.fork 元数据", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const deepSeekHarness = createDeepSeekForkTransport("dsh-child");
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, createUnusedCodexForkTransport, {
+      additionalAdapters: [
+        new DeepSeekHarnessAdapter({
+          transport: deepSeekHarness.transport,
+          harnessVersion: "0.1.0-rc.5",
+          dshHomeDir: path.join(fixture.rootDir, "dsh-home")
+        })
+      ]
+    });
+
+    seedSourceSession(
+      repos,
+      "harness://0.1.0-rc.5/dsh-source",
+      2,
+      { provider: "deepseek-harness", providerSessionId: "dsh-source" }
+    );
+
+    const forked = await service.forkSession({
+      sessionId: "source-session",
+      userId: "user-1",
+      sourceType: "session",
+      strategy: "auto"
+    });
+
+    expect(forked.provider).toBe("deepseek-harness");
+    expect(forked.forkMethod).toBe("native_session_fork");
+    expect(sessionForkRepository.findBySessionId(forked.sessionId)).toMatchObject({
+      provider: "deepseek-harness",
+      providerParentSessionId: "dsh-source",
+      providerSourceMessageId: null,
+      inheritedPrefixMessageCount: 0,
+      forkMethod: "native_session_fork"
+    });
+    expect(deepSeekHarness.calls).toContainEqual({
+      method: "session.fork",
+      payload: { sessionId: "dsh-source" }
+    });
+    expect(deepSeekHarness.calls.find((call) => call.method === "session.fork")?.payload)
+      .not.toHaveProperty("atSeq");
   });
 
   it("Claude 子会话发出首条新消息后会改用子会话标题，discover 刷新也不会再被父标题覆盖", async () => {
@@ -631,6 +767,7 @@ describe("SessionHistoryService forkSession", () => {
 
     repos.sessionBindingRepository.upsert({
       sessionId: "source-session",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "claude-code",
       providerSessionId: "source-thread",
@@ -654,6 +791,7 @@ describe("SessionHistoryService forkSession", () => {
     });
     repos.sessionBindingRepository.upsert({
       sessionId: "child-session",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "claude-code",
       providerSessionId: "child-thread",
@@ -711,7 +849,7 @@ describe("SessionHistoryService forkSession", () => {
       createdAt: "2026-04-10T08:01:00.000Z"
     });
 
-    const accepted = await service.sendMessage("child-session", "子会话第一条消息", null);
+    const accepted = await service.sendMessage("child-session", "user-1", "子会话第一条消息", null);
 
     expect(accepted.message.provider).toBe("claude-code");
     expect(accepted.message.content).toBe("子会话第一条消息");
@@ -926,7 +1064,7 @@ describe("SessionHistoryService forkSession", () => {
       isSubagent: false
     });
 
-    const accepted = await service.sendMessage(forked.sessionId, "帮我继续改写成正式版本", null);
+    const accepted = await service.sendMessage(forked.sessionId, "user-1", "帮我继续改写成正式版本", null);
     const updatedFork = service.getSession(forked.sessionId, "user-1");
 
     expect(accepted.message.content).toBe("帮我继续改写成正式版本");
@@ -954,6 +1092,45 @@ describe("SessionHistoryService forkSession", () => {
         ["user", "子 agent 第一句"]
       ]
     );
+    const taskManager = createTaskManager(null, {
+      helper_process: {
+        execute: async (definition, input, context) => {
+          if (definition.taskType === HOST_TASK_TYPES.workspaceDiscoveryScan) {
+            return {
+              isComplete: true,
+              sessions: [
+                {
+                  provider: "codex",
+                  providerSessionId: "source-thread",
+                  rawStoreRef: sourceFile,
+                  title: "父会话问题",
+                  workspacePath: fixture.workspaceDir,
+                  lastMessageAt: "2026-04-10T08:00:10.000Z",
+                  messageCount: 2,
+                  isArchived: false,
+                  parentProviderSessionId: null
+                },
+                {
+                  provider: "codex",
+                  providerSessionId: "child-thread",
+                  rawStoreRef: childActualFile,
+                  title: "子 agent 第一句",
+                  workspacePath: fixture.workspaceDir,
+                  lastMessageAt: "2026-04-10T08:05:01.000Z",
+                  messageCount: 1,
+                  isArchived: false,
+                  parentProviderSessionId: "source-thread",
+                  isSubagent: true,
+                  subagentLabel: "agent"
+                }
+              ]
+            };
+          }
+
+          return await definition.run(input, context);
+        }
+      }
+    });
     const {
       service,
       repos
@@ -973,11 +1150,12 @@ describe("SessionHistoryService forkSession", () => {
         rawStoreRef: null
       })),
       close: vi.fn()
-    }));
+    }), { taskManager });
 
     seedSourceSession(repos, sourceFile, 2);
     repos.sessionBindingRepository?.upsert({
       sessionId: "child-session",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "child-thread",
@@ -1022,61 +1200,6 @@ describe("SessionHistoryService forkSession", () => {
       lastErrorDetail: null,
       resumedAt: null,
       updatedAt: "2026-04-10T08:05:01.000Z"
-    });
-
-    vi.spyOn(
-      (service as unknown as {
-        sessionSyncService: {
-          discoverWorkspaceSessions: (
-            workspacePath: string,
-            options?: unknown
-          ) => Promise<{
-            sessions: Array<{
-              provider: string;
-              providerSessionId: string;
-              rawStoreRef: string;
-              title: string;
-              workspacePath: string;
-              lastMessageAt: string;
-              messageCount: number;
-              isArchived: boolean;
-              parentProviderSessionId?: string | null;
-              isSubagent?: boolean;
-              subagentLabel?: string | null;
-            }>;
-            isComplete: boolean;
-          }>;
-        };
-      }).sessionSyncService,
-      "discoverWorkspaceSessions"
-    ).mockResolvedValue({
-      isComplete: true,
-      sessions: [
-        {
-          provider: "codex",
-          providerSessionId: "source-thread",
-          rawStoreRef: sourceFile,
-          title: "父会话问题",
-          workspacePath: fixture.workspaceDir,
-          lastMessageAt: "2026-04-10T08:00:10.000Z",
-          messageCount: 2,
-          isArchived: false,
-          parentProviderSessionId: null
-        },
-        {
-          provider: "codex",
-          providerSessionId: "child-thread",
-          rawStoreRef: childActualFile,
-          title: "子 agent 第一句",
-          workspacePath: fixture.workspaceDir,
-          lastMessageAt: "2026-04-10T08:05:01.000Z",
-          messageCount: 1,
-          isArchived: false,
-          parentProviderSessionId: "source-thread",
-          isSubagent: true,
-          subagentLabel: "agent"
-        }
-      ]
     });
 
     const discovered = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
@@ -1140,6 +1263,7 @@ describe("SessionHistoryService forkSession", () => {
     seedSourceSession(repos, sourceFile, 2);
     repos.sessionBindingRepository?.upsert({
       sessionId: "child-session",
+      userId: "user-1",
       workspaceId: "workspace-1",
       provider: "codex",
       providerSessionId: "child-thread",
@@ -1188,6 +1312,7 @@ describe("SessionHistoryService forkSession", () => {
       async () => {
         repos.sessionBindingRepository?.upsert({
           sessionId: "child-session",
+          userId: "user-1",
           workspaceId: "workspace-1",
           provider: "codex",
           providerSessionId: "child-thread",
@@ -1304,14 +1429,16 @@ describe("SessionHistoryService forkSession", () => {
 
 function createSessionHistoryHarness(
   fixture: EmptyFixture,
-  codexForkTransportFactory: () => CodexForkTransport
+  codexForkTransportFactory: () => CodexForkTransport,
+  options: { additionalAdapters?: ProviderAdapter[]; taskManager?: TaskManager } = {}
 ) {
   const config = resolveHostConfig({
     databasePath: ":memory:",
     claudeCodeHomeDir: fixture.claudeHomeDir,
     codexHomeDir: fixture.codexHomeDir,
     geminiHomeDir: fixture.geminiHomeDir,
-    kimiHomeDir: fixture.kimiHomeDir
+    kimiHomeDir: fixture.kimiHomeDir,
+    deepseekHarnessHomeDir: path.join(fixture.rootDir, "dsh-home")
   });
   const database = createDatabaseClient(":memory:");
   activeClosers.push(() => database.close());
@@ -1342,8 +1469,10 @@ function createSessionHistoryHarness(
     null,
     sessionForkRepository,
     {
-      codexForkTransportFactory
-    }
+      codexForkTransportFactory,
+      additionalAdapters: options.additionalAdapters
+    },
+    options.taskManager
   );
 
   database.db
@@ -1361,6 +1490,7 @@ function createSessionHistoryHarness(
     );
   workspaceRepository.create({
     id: "workspace-1",
+    ownerUserId: "user-1",
     name: "Fixture Workspace",
     path: fixture.workspaceDir,
     repoRoot: fixture.workspaceDir,
@@ -1391,13 +1521,20 @@ function seedSourceSession(
     sessionStatusSnapshotRepository?: SessionStatusSnapshotRepository;
   },
   rawStoreRef: string,
-  messageCount: number
+  messageCount: number,
+  options: {
+    provider?: "codex" | "deepseek-harness";
+    providerSessionId?: string;
+  } = {}
 ) {
+  const provider = options.provider ?? "codex";
+  const providerSessionId = options.providerSessionId ?? "source-thread";
   repos.sessionBindingRepository?.upsert({
     sessionId: "source-session",
+    userId: "user-1",
     workspaceId: "workspace-1",
-    provider: "codex",
-    providerSessionId: "source-thread",
+    provider,
+    providerSessionId,
     rawStoreRef,
     providerConfigMode: "global-default",
     providerPresetId: null,
@@ -1408,7 +1545,7 @@ function seedSourceSession(
   repos.sessionIndexRepository?.upsert({
     sessionId: "source-session",
     workspaceId: "workspace-1",
-    provider: "codex",
+    provider,
     title: "源会话",
     messageCount,
     isArchived: false,
@@ -1437,6 +1574,50 @@ function seedSourceSession(
     resumedAt: null,
     updatedAt: "2026-04-10T08:00:10.000Z"
   });
+}
+
+function createUnusedCodexForkTransport(): CodexForkTransport {
+  return {
+    initialize: vi.fn(async () => {}),
+    forkThread: vi.fn(async () => {
+      throw new Error("UNEXPECTED_CODEX_FORK");
+    }),
+    readThread: vi.fn(async () => ({ history: [] })),
+    rollbackThread: vi.fn(async () => {
+      throw new Error("UNEXPECTED_CODEX_ROLLBACK");
+    }),
+    resumeThreadFromHistory: vi.fn(async () => {
+      throw new Error("UNEXPECTED_CODEX_RESUME");
+    }),
+    close: vi.fn()
+  };
+}
+
+function createDeepSeekForkTransport(childSessionId: string): {
+  calls: Array<{ method: string; payload: unknown }>;
+  transport: DeepSeekHarnessTransport;
+} {
+  const calls: Array<{ method: string; payload: unknown }> = [];
+  const transport: DeepSeekHarnessTransport = {
+    call: async <T>(method: string, payload: unknown): Promise<T> => {
+      calls.push({ method, payload });
+
+      const result = method === "workspace.create"
+        ? { workspace: { workspaceId: "dsh-workspace" } }
+        : method === "session.create"
+          ? { sessionId: childSessionId }
+          : method === "session.fork"
+            ? { sessionId: childSessionId }
+            : method === "session.history"
+              ? { events: [] }
+              : { accepted: true };
+
+      return result as T;
+    },
+    subscribe: () => ({ close() {} })
+  };
+
+  return { calls, transport };
 }
 
 function createCodexSessionFile(

@@ -127,6 +127,41 @@ describe("DeepSeekHarnessAdapter", () => {
     });
   });
 
+  it("Fork 元数据按继承的标准消息数计算，不把 Harness seq 当成消息数", async () => {
+    const calls = [];
+    const events = [
+      { event: { type: "user/message", seq: 10, time: Date.now(), data: { text: "问题" } } },
+      { event: { type: "assistant/message", seq: 11, time: Date.now(), data: { text: "回答" } } },
+      { event: { type: "turn/end", seq: 12, time: Date.now(), data: { reason: { kind: "completed" } } } }
+    ];
+    const t = {
+      calls,
+      call: async (method, payload) => {
+        calls.push({ method, payload });
+        if (method === "session.history") return { events, hasMore: false };
+        if (method === "session.fork") return { sessionId: "h2" };
+        return { accepted: true };
+      },
+      subscribe: () => ({ close() {} })
+    };
+    const adapter = new DeepSeekHarnessAdapter({ transport: t, harnessVersion: "0.1.0-rc.5" });
+    const history = await adapter.readSessionHistory("h1", "harness://v/h1", null, 50);
+    const sourceMessageId = history.messages.find((message) => message.content === "回答")?.messageId;
+
+    await expect(adapter.forkSession("h1", "C:/work", {
+      rawStoreRef: "harness://v/h1",
+      sourceType: "message",
+      sourceMessageId
+    })).resolves.toMatchObject({
+      session: { providerSessionId: "h2", messageCount: 2 },
+      inheritedPrefixMessageCount: 2
+    });
+    expect(calls.at(-1)).toEqual({
+      method: "session.fork",
+      payload: { sessionId: "h1", atSeq: 11 }
+    });
+  });
+
   it("消息级 fork 找不到 CodingNS 消息时返回明确错误", async () => {
     const adapter = new DeepSeekHarnessAdapter({ transport: transport(), harnessVersion: "0.1.0-rc.5" });
 

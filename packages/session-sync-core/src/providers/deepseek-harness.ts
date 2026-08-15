@@ -226,9 +226,12 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
     if (options.sourceType === "message" && !options.sourceMessageId) throw new Error("FORK_SOURCE_MESSAGE_ID_REQUIRED");
     if (options.strategy === "reconstruct-only") throw new Error("HARNESS_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED");
 
-    const atSeq = options.sourceType === "message"
-      ? await this.resolveForkSequence(providerSessionId, options.rawStoreRef, options.sourceMessageId!)
-      : undefined;
+    const forkAnchor = options.sourceType === "message"
+      ? await this.resolveForkAnchor(providerSessionId, options.rawStoreRef, options.sourceMessageId!)
+      : null;
+    const atSeq = forkAnchor?.atSeq;
+    const inheritedPrefixMessageCount = forkAnchor?.inheritedPrefixMessageCount
+      ?? await this.resolveSessionForkMessageCount(providerSessionId, options.rawStoreRef);
     const response = await this.options.transport.call<{ sessionId: string }>("session.fork", {
       sessionId: providerSessionId,
       ...(atSeq === undefined ? {} : { atSeq })
@@ -243,43 +246,86 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
         rawStoreRef: buildRawStoreRef(this.options.harnessVersion, sessionId),
         isArchived: false,
         lastMessageAt: nextTimestamp(),
-        messageCount: atSeq ?? 0,
+        messageCount: inheritedPrefixMessageCount,
         parentProviderSessionId: providerSessionId
       },
       forkMethod: "native_session_fork",
       forkSourceType: options.sourceType,
-      inheritedPrefixMessageCount: atSeq ?? 0,
+      inheritedPrefixMessageCount,
       providerSourceMessageId: options.sourceMessageId ?? null
     };
   }
 
-  private async resolveForkSequence(
+  private async resolveForkAnchor(
     providerSessionId: string,
     rawStoreRef: string,
     sourceMessageId: string
-  ): Promise<number> {
-    let cursor: string | null = null;
+  ): Promise<{ atSeq: number; inheritedPrefixMessageCount: number }> {
+    const entries = await this.readForkHistoryEntries(providerSessionId);
+    const sourceMessage = entries
+      .flatMap((entry) => mapHarnessEntries(providerSessionId, rawStoreRef, entry.event, entry.sequence))
+      .find((message) => message.messageId === sourceMessageId);
 
-    while (true) {
-      const page = await this.readSessionHistory(
+    if (!sourceMessage) {
+      throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+    }
+
+    const seedEndSequence = resolveHarnessForkSeedEndSequence(entries, sourceMessage.sequence);
+    return {
+      atSeq: sourceMessage.sequence,
+      inheritedPrefixMessageCount: countHarnessForkMessages(
         providerSessionId,
         rawStoreRef,
-        cursor,
-        100,
-        "backward"
-      );
-      const sourceMessage = page.messages.find((message) => message.messageId === sourceMessageId);
+        entries,
+        seedEndSequence
+      )
+    };
+  }
 
-      if (sourceMessage) {
-        return sourceMessage.sequence;
+  private async resolveSessionForkMessageCount(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<number> {
+    const entries = await this.readForkHistoryEntries(providerSessionId);
+    return countHarnessForkMessages(
+      providerSessionId,
+      rawStoreRef,
+      entries,
+      resolveHarnessForkSeedEndSequence(entries)
+    );
+  }
+
+  private async readForkHistoryEntries(providerSessionId: string): Promise<HarnessEntry[]> {
+    let beforeSeq: number | undefined;
+    const pages: HarnessEntry[][] = [];
+    const seenCursors = new Set<number>();
+
+    while (true) {
+      const response = await this.options.transport.call<{ events?: unknown[]; hasMore?: boolean }>("session.history", {
+        sessionId: providerSessionId,
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        maxMessages: 100
+      });
+      const entries = (response.events ?? [])
+        .map((entry, index) => readHarnessEntry(entry, index))
+        .sort((left, right) => left.sequence - right.sequence);
+
+      if (entries.length === 0) {
+        break;
       }
 
-      if (!page.nextCursor) {
-        throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+      pages.unshift(entries);
+      const oldestSequence = entries[0]?.sequence;
+
+      if (response.hasMore !== true || oldestSequence === undefined || seenCursors.has(oldestSequence)) {
+        break;
       }
 
-      cursor = page.nextCursor;
+      seenCursors.add(oldestSequence);
+      beforeSeq = oldestSequence;
     }
+
+    return pages.flat();
   }
 
   async sendMessage(providerSessionId: string, _rawStoreRef: string, content: string, clientRequestId: string | null, permissionMode?: string | null): Promise<SendMessageResult> {
@@ -768,6 +814,58 @@ function normalizeHarnessTrackPart(value: unknown, fallback: string): string {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "string" && value.trim()) return value.trim().replaceAll(/[^a-zA-Z0-9_-]/g, "_");
   return fallback;
+}
+
+function resolveHarnessForkSeedEndSequence(
+  entries: readonly HarnessEntry[],
+  anchorSequence?: number
+): number {
+  if (entries.length === 0) {
+    return -1;
+  }
+
+  let boundaryIndex = -1;
+
+  if (anchorSequence === undefined) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (entries[index]?.type === "turn/end") {
+        boundaryIndex = index;
+        break;
+      }
+    }
+  } else {
+    boundaryIndex = entries.findIndex(
+      (entry: HarnessEntry) => entry.type === "turn/end" && entry.sequence >= anchorSequence
+    );
+  }
+
+  if (boundaryIndex < 0) {
+    return anchorSequence ?? entries.at(-1)!.sequence;
+  }
+
+  let seedEndIndex = boundaryIndex + 1;
+
+  while (seedEndIndex < entries.length && entries[seedEndIndex]?.type !== "turn/start") {
+    seedEndIndex += 1;
+  }
+
+  return entries[seedEndIndex - 1]?.sequence ?? entries[boundaryIndex]!.sequence;
+}
+
+function countHarnessForkMessages(
+  providerSessionId: string,
+  rawStoreRef: string,
+  entries: readonly HarnessEntry[],
+  seedEndSequence: number
+): number {
+  if (seedEndSequence < 0) {
+    return 0;
+  }
+
+  return entries
+    .filter((entry) => entry.sequence <= seedEndSequence)
+    .flatMap((entry) => mapHarnessEntries(providerSessionId, rawStoreRef, entry.event, entry.sequence))
+    .length;
 }
 
 function readHarnessPartIndex(value: unknown): number | null {
