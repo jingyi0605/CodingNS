@@ -203,7 +203,12 @@ interface PersistedSessionDescriptor {
   pass1Index: SessionIndexRecord;
 }
 
-const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set(["codex", "claude-code", "opencode"]);
+const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set([
+  "codex",
+  "claude-code",
+  "opencode",
+  "deepseek-harness"
+]);
 const FORK_RECONSTRUCTION_PAGE_SIZE = 200;
 const MAX_FORK_DEPTH = 4;
 const SYNTHETIC_CODEX_SESSION_CLEANUP_GRACE_MS = 120_000;

@@ -213,17 +213,20 @@ const FORK_PROVIDER_IDS: ProviderId[] = [
   "claude-code",
   "opencode",
   "gemini",
-  "kimi"
+  "kimi",
+  "deepseek-harness"
 ];
 const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set<ProviderId>([
   "codex",
   "claude-code",
-  "opencode"
+  "opencode",
+  "deepseek-harness"
 ]);
 const NATIVE_FORK_PROVIDERS = new Set<ProviderId>([
   "codex",
   "claude-code",
-  "opencode"
+  "opencode",
+  "deepseek-harness"
 ]);
 const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   position: "absolute",

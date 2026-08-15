@@ -89,6 +89,54 @@ describe("DeepSeekHarnessAdapter", () => {
     ]);
   });
 
+  it("会话级 fork 使用原生 session.fork，不能误传 atSeq", async () => {
+    const t = transport();
+    const adapter = new DeepSeekHarnessAdapter({ transport: t, harnessVersion: "0.1.0-rc.5" });
+
+    await expect(adapter.forkSession("h1", "C:/work", {
+      rawStoreRef: "harness://v/h1",
+      sourceType: "session"
+    })).resolves.toMatchObject({
+      session: { providerSessionId: "h2", parentProviderSessionId: "h1" },
+      forkMethod: "native_session_fork"
+    });
+    expect(t.calls.at(-1)).toEqual({
+      method: "session.fork",
+      payload: { sessionId: "h1" }
+    });
+  });
+
+  it("消息级 fork 会从历史消息 ID 反查 Harness sequence", async () => {
+    const t = transport();
+    const adapter = new DeepSeekHarnessAdapter({ transport: t, harnessVersion: "0.1.0-rc.5" });
+    const history = await adapter.readSessionHistory("h1", "harness://v/h1", null, 50);
+    const sourceMessageId = history.messages.find((message) => message.content === "你好，我在。")?.messageId;
+
+    await expect(adapter.forkSession("h1", "C:/work", {
+      rawStoreRef: "harness://v/h1",
+      sourceType: "message",
+      sourceMessageId
+    })).resolves.toMatchObject({
+      session: { providerSessionId: "h2" },
+      forkMethod: "native_session_fork",
+      forkSourceType: "message"
+    });
+    expect(t.calls.at(-1)).toEqual({
+      method: "session.fork",
+      payload: { sessionId: "h1", atSeq: 2 }
+    });
+  });
+
+  it("消息级 fork 找不到 CodingNS 消息时返回明确错误", async () => {
+    const adapter = new DeepSeekHarnessAdapter({ transport: transport(), harnessVersion: "0.1.0-rc.5" });
+
+    await expect(adapter.forkSession("h1", "C:/work", {
+      rawStoreRef: "harness://v/h1",
+      sourceType: "message",
+      sourceMessageId: "missing-message"
+    })).rejects.toThrow("FORK_SOURCE_MESSAGE_NOT_FOUND");
+  });
+
   it("删除会话时归档 sidecar 会话并清理 zstd JSONL 目录", async () => {
     const t = transport();
     const dshHomeDir = mkdtempSync(join(tmpdir(), "codingns-dsh-delete-"));

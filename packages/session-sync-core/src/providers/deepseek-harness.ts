@@ -224,7 +224,15 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
 
   async forkSession(providerSessionId: string, workspacePath: string, options: ForkSessionOptions): Promise<ForkSessionResult> {
     if (options.sourceType === "message" && !options.sourceMessageId) throw new Error("FORK_SOURCE_MESSAGE_ID_REQUIRED");
-    const response = await this.options.transport.call<{ sessionId: string }>("session.fork", { sessionId: providerSessionId, ...(options.sourceMessageId ? { atSeq: Number(options.sourceMessageId) || undefined } : {}) });
+    if (options.strategy === "reconstruct-only") throw new Error("HARNESS_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED");
+
+    const atSeq = options.sourceType === "message"
+      ? await this.resolveForkSequence(providerSessionId, options.rawStoreRef, options.sourceMessageId!)
+      : undefined;
+    const response = await this.options.transport.call<{ sessionId: string }>("session.fork", {
+      sessionId: providerSessionId,
+      ...(atSeq === undefined ? {} : { atSeq })
+    });
     const sessionId = response.sessionId;
     return {
       session: {
@@ -235,14 +243,43 @@ export class DeepSeekHarnessAdapter implements ProviderAdapter {
         rawStoreRef: buildRawStoreRef(this.options.harnessVersion, sessionId),
         isArchived: false,
         lastMessageAt: nextTimestamp(),
-        messageCount: 0,
+        messageCount: atSeq ?? 0,
         parentProviderSessionId: providerSessionId
       },
       forkMethod: "native_session_fork",
       forkSourceType: options.sourceType,
-      inheritedPrefixMessageCount: 0,
+      inheritedPrefixMessageCount: atSeq ?? 0,
       providerSourceMessageId: options.sourceMessageId ?? null
     };
+  }
+
+  private async resolveForkSequence(
+    providerSessionId: string,
+    rawStoreRef: string,
+    sourceMessageId: string
+  ): Promise<number> {
+    let cursor: string | null = null;
+
+    while (true) {
+      const page = await this.readSessionHistory(
+        providerSessionId,
+        rawStoreRef,
+        cursor,
+        100,
+        "backward"
+      );
+      const sourceMessage = page.messages.find((message) => message.messageId === sourceMessageId);
+
+      if (sourceMessage) {
+        return sourceMessage.sequence;
+      }
+
+      if (!page.nextCursor) {
+        throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+      }
+
+      cursor = page.nextCursor;
+    }
   }
 
   async sendMessage(providerSessionId: string, _rawStoreRef: string, content: string, clientRequestId: string | null, permissionMode?: string | null): Promise<SendMessageResult> {
