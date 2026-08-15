@@ -8567,6 +8567,100 @@ textarea:focus-visible {
   color: #b45309;
 }
 
+.composer-session-stats-row[data-metric="costUsd"] .composer-session-stats-row-value {
+  gap: 5px;
+}
+
+.composer-session-cost-info-button {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.composer-session-cost-info-button:hover:not(:disabled),
+.composer-session-cost-info-button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  outline: none;
+}
+
+.composer-session-cost-info-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.composer-session-cost-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.composer-session-cost-model-list,
+.composer-session-cost-price-list {
+  margin-top: 4px;
+}
+
+.composer-session-cost-model-list .modal-list-item-trailing {
+  color: #b45309;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-session-cost-empty {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.composer-session-cost-conversion {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.composer-session-cost-conversion > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--modal-list-item-border);
+}
+
+.composer-session-cost-conversion span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.composer-session-cost-conversion strong {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-session-cost-rate {
+  margin: 6px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .composer-session-cost-conversion {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (min-width: 721px) {
   .composer-session-stats-summary {
     display: inline-flex;
