@@ -113,6 +113,7 @@ import {
   createProviderCapabilityBlockedError
 } from "../provider/provider-disabled.js";
 import { ProviderRuntimeStateService } from "../provider/provider-runtime-state-service.js";
+import type { ProviderPriceBookService } from "../provider/provider-price-book-service.js";
 import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
 import {
   HOST_TASK_TYPES,
@@ -423,6 +424,7 @@ export class SessionHistoryService {
   private readonly providerDiscoveryHelperClient = getSharedProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable">;
+  private readonly providerPriceBookService: Pick<ProviderPriceBookService, "getPriceBook"> | null;
   private readonly codexSessionTitleGenerator: CodexSessionTitleGenerator;
   private readonly sessionProviderConfigService: Pick<
     SessionProviderConfigService,
@@ -477,7 +479,8 @@ export class SessionHistoryService {
     sessionProviderConfigService: Pick<SessionProviderConfigService, "prepareSessionBinding" | "resolveSessionBinding"> | null = null,
     providerControlRepository: Pick<ProviderControlRepository, "get"> | null = null,
     providerRuntimeStateService: Pick<ProviderRuntimeStateService, "isProviderCliAvailable"> | null = null,
-    claudeModelOptionsService: ClaudeModelOptionsService | null = null
+    claudeModelOptionsService: ClaudeModelOptionsService | null = null,
+    providerPriceBookService: Pick<ProviderPriceBookService, "getPriceBook"> | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
@@ -497,6 +500,7 @@ export class SessionHistoryService {
     this.sessionProviderConfigService = sessionProviderConfigService;
     this.providerRuntimeStateService = providerRuntimeStateService
       ?? new ProviderRuntimeStateService(config);
+    this.providerPriceBookService = providerPriceBookService;
     this.codexSessionTitleGenerator = new CodexSessionTitleGenerator({
       hostDataRootDir: dirname(config.databasePath),
       codexHomeDir: config.codexHomeDir
@@ -1559,6 +1563,9 @@ export class SessionHistoryService {
     const binding = this.getBindingOrThrow(sessionId);
 
     try {
+      const priceBook = binding.priceBookVersion
+        ? this.providerPriceBookService?.getPriceBook(binding.priceBookVersion)
+        : null;
       return await this.sessionSyncService.readSessionStats(
         binding.provider,
         binding.providerSessionId,
@@ -1568,7 +1575,8 @@ export class SessionHistoryService {
               billing: {
                 billingStartedAt: binding.billingStartedAt,
                 pricingProfileId: binding.pricingProfileId,
-                priceBookVersion: binding.priceBookVersion
+                priceBookVersion: binding.priceBookVersion,
+                ...(priceBook ? { priceBook } : {})
               }
             }
           : undefined

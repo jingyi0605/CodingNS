@@ -119,6 +119,7 @@ import { ProviderController } from "../modules/provider/provider-controller.js";
 import { ClaudeModelOptionsService } from "../modules/provider/claude-model-options.js";
 import { CodexModelOptionsService } from "../modules/provider/codex-model-options.js";
 import { disposeSharedProviderDiscoveryHelperClient } from "../modules/provider/provider-discovery-helper-client.js";
+import { ProviderPriceBookService } from "../modules/provider/provider-price-book-service.js";
 import { ProviderRuntimeStateService } from "../modules/provider/provider-runtime-state-service.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
 import { syncBuiltinSkillsOnStartup } from "../modules/skills/builtin-skill-service.js";
@@ -515,6 +516,10 @@ export function createServer(config: HostConfig) {
   let runtimeObservabilityService!: RuntimeObservabilityService;
   const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
   const taskManager = createTaskManager(taskActivityLog, createHostTaskLaneExecutors());
+  const providerPriceBookService = new ProviderPriceBookService(
+    path.join(path.dirname(config.databasePath), "price-book-snapshots"),
+    taskManager
+  );
   const deepSeekHarnessSidecarManager = new DeepSeekHarnessSidecarManager({
     taskManager,
     commandPath: config.deepseekHarnessCliPath,
@@ -856,7 +861,8 @@ export function createServer(config: HostConfig) {
     sessionProviderConfigService,
     repositories.providerControlRepository,
     providerRuntimeStateService,
-    claudeModelOptionsService
+    claudeModelOptionsService,
+    providerPriceBookService
   );
   sessionCleanupService.configureDeleteExecutor((sessionId, userId) =>
     sessionHistoryService.deleteSession(sessionId, userId)
@@ -1030,6 +1036,7 @@ export function createServer(config: HostConfig) {
     (workspaceId, userId, limit) =>
       sessionHistoryService.listWorkspaceDiscoveryDiagnostics(workspaceId, userId, limit)
   );
+  providerPriceBookService.requestRefreshIfStale();
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
     sessionMessageAttachmentService,
@@ -1045,7 +1052,8 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService,
     workspaceSessionRuntimeContextService,
-    deepSeekHarnessRuntimeAdapter
+    deepSeekHarnessRuntimeAdapter,
+    providerPriceBookService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     sessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1074,7 +1082,10 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerRuntimeConfig,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    null,
+    null,
+    providerPriceBookService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
@@ -1092,7 +1103,10 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     sessionProviderConfigService,
     butlerFollowUpRuntimeConfig,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    null,
+    null,
+    providerPriceBookService
   );
   sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
     butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)

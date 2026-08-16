@@ -59,6 +59,7 @@ import {
 } from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { createProviderCapabilityBlockedError } from "../provider/provider-disabled.js";
+import type { ProviderPriceBookService } from "../provider/provider-price-book-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type {
   RuntimeAttachmentDescriptor,
@@ -438,7 +439,11 @@ export class SessionLiveRuntimeService {
       WorkspaceSessionRuntimeContextService,
       "prepareWorkspaceInstructionBundle"
     > | null = null,
-    private readonly deepSeekHarnessRuntimeAdapter: ProviderRuntimeAdapter | null = null
+    private readonly deepSeekHarnessRuntimeAdapter: ProviderRuntimeAdapter | null = null,
+    private readonly providerPriceBookService: Pick<
+      ProviderPriceBookService,
+      "getCurrentPriceBook" | "requestRefreshIfStale"
+    > | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionPermissionRequestService = new SessionPermissionRequestService(
@@ -2759,16 +2764,18 @@ export class SessionLiveRuntimeService {
     },
     selectedModel: string | null = null
   ): void {
+    this.providerPriceBookService?.requestRefreshIfStale("provider_price_book.new_session");
     const snapshot = this.buildBindingSnapshot(sessionId, provider, null, null);
     const timestamp = nowIso();
     const existingBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const currentPriceBook = this.providerPriceBookService?.getCurrentPriceBook();
     const pricingProfileId = this.config.sessionBillingProfileId
-      ?? inferProviderSessionBillingProfile(provider, selectedModel);
+      ?? inferProviderSessionBillingProfile(provider, selectedModel, currentPriceBook);
     const newBillingMetadata = !existingBinding && pricingProfileId
       ? {
           billingStartedAt: timestamp,
           pricingProfileId,
-          priceBookVersion: this.config.sessionBillingPriceBookVersion
+          priceBookVersion: currentPriceBook?.version ?? this.config.sessionBillingPriceBookVersion
         }
       : {};
 
