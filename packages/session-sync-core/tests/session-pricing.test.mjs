@@ -86,6 +86,71 @@ describe("会话费用折叠", () => {
         priceBookVersion: "test"
       }
     });
+    expect(metrics.costUsd.pricing.breakdown).toEqual([{
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0.00014
+    }]);
+    expect(metrics.costUsd.pricing.priceBook).toEqual([{
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      inputUsdPerToken: 1e-6,
+      outputUsdPerToken: 2e-6
+    }]);
+    expect(metrics.costUsd.pricing.exchangeRate).toMatchObject({
+      from: "USD",
+      to: "CNY",
+      rate: 7.2,
+      source: "application-fixed"
+    });
+  });
+
+  it("按会话绑定传入的价格表版本计算，不回退到当前内置价格", () => {
+    const metrics = {};
+
+    addCatalogCostMetric(
+      metrics,
+      [{
+        key: "assistant-1",
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        inputTokens: 100,
+        outputTokens: 20,
+        completed: true,
+        timestamp: "2026-08-16T00:00:01.000Z"
+      }],
+      {
+        billing: {
+          billingStartedAt: "2026-08-16T00:00:00.000Z",
+          pricingProfileId: "direct-api",
+          priceBookVersion: "models.dev-2026-W33",
+          priceBook: {
+            version: "models.dev-2026-W33",
+            source: "models.dev",
+            fetchedAt: "2026-08-15T00:00:00.000Z",
+            entries: [{
+              provider: "codex",
+              model: "gpt-5.3-codex",
+              inputUsdPerToken: 2e-6,
+              outputUsdPerToken: 16e-6
+            }]
+          }
+        }
+      },
+      { kind: "source-timestamp", value: "2026-08-16T00:00:01.000Z" }
+    );
+
+    expect(metrics.costUsd?.value).toBeCloseTo(0.00052, 12);
+    expect(metrics.costUsd?.pricing).toMatchObject({
+      priceBookVersion: "models.dev-2026-W33",
+      priceBookSource: "models.dev",
+      priceBookFetchedAt: "2026-08-15T00:00:00.000Z"
+    });
   });
 
   it("缺少模型价格时隐藏整个会话费用", () => {

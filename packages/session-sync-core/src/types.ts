@@ -185,6 +185,14 @@ export interface ProviderSessionCostExchangeRate {
   source: "application-fixed";
 }
 
+/** 统计读取时固定使用的价格表快照。 */
+export interface ProviderSessionPriceBook {
+  version: string;
+  entries: readonly ProviderSessionCostPrice[];
+  source?: "builtin" | "models.dev";
+  fetchedAt?: string;
+}
+
 export interface ProviderSessionCostProvenance {
   kind: "provider-native" | "catalog-estimate";
   coverage: "complete";
@@ -192,6 +200,8 @@ export interface ProviderSessionCostProvenance {
   priceBookVersion?: string;
   breakdown?: readonly ProviderSessionCostBreakdown[];
   priceBook?: readonly ProviderSessionCostPrice[];
+  priceBookSource?: "builtin" | "models.dev";
+  priceBookFetchedAt?: string;
   exchangeRate?: ProviderSessionCostExchangeRate;
 }
 
@@ -199,6 +209,7 @@ export interface ProviderSessionBillingContext {
   billingStartedAt: string;
   pricingProfileId: string;
   priceBookVersion: string;
+  priceBook?: ProviderSessionPriceBook;
 }
 
 export interface ProviderSessionStatsReadOptions {

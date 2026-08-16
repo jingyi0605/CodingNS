@@ -3,6 +3,7 @@ import type {
   ProviderSessionCostExchangeRate,
   ProviderSessionCostPrice,
   ProviderId,
+  ProviderSessionPriceBook,
   ProviderSessionBillingContext,
   ProviderSessionStatValue,
   ProviderSessionStats,
@@ -26,6 +27,8 @@ export interface ProviderPriceBookEntry {
 export interface ProviderPriceBook {
   version: string;
   entries: readonly ProviderPriceBookEntry[];
+  source?: "builtin" | "models.dev";
+  fetchedAt?: string;
 }
 
 export const DEFAULT_PROVIDER_COST_EXCHANGE_RATE: ProviderSessionCostExchangeRate = {
@@ -42,6 +45,7 @@ export const DEFAULT_PROVIDER_COST_EXCHANGE_RATE: ProviderSessionCostExchangeRat
  */
 export const DEFAULT_PROVIDER_PRICE_BOOK: ProviderPriceBook = {
   version: DEFAULT_PROVIDER_PRICE_BOOK_VERSION,
+  source: "builtin",
   entries: [
     { provider: "claude-code", model: "claude-opus-4-1", inputUsdPerToken: 15e-6, outputUsdPerToken: 75e-6, cacheReadUsdPerToken: 1.5e-6, cacheWriteUsdPerToken: 18.75e-6 },
     { provider: "claude-code", model: "claude-opus-4-5", inputUsdPerToken: 5e-6, outputUsdPerToken: 25e-6, cacheReadUsdPerToken: 0.5e-6, cacheWriteUsdPerToken: 6.25e-6 },
@@ -70,12 +74,13 @@ export const DEFAULT_PROVIDER_PRICE_BOOK: ProviderPriceBook = {
  */
 export function inferProviderSessionBillingProfile(
   provider: ProviderId | string,
-  selectedModel: string | null | undefined
+  selectedModel: string | null | undefined,
+  priceBook: ProviderPriceBook = DEFAULT_PROVIDER_PRICE_BOOK
 ): string | null {
   const normalizedModel = selectedModel?.trim() ?? "";
 
   return normalizedModel
-    && DEFAULT_PROVIDER_PRICE_BOOK.entries.some(
+    && priceBook.entries.some(
       (entry) => entry.provider === provider && getPriceBookModelCandidates(normalizedModel).has(entry.model)
     )
     ? "direct-api"
@@ -116,6 +121,10 @@ export function addProviderNativeCostMetric(
       coverage: "complete",
       priceBookVersion: DEFAULT_PROVIDER_PRICE_BOOK_VERSION,
       priceBook: buildPriceBookSnapshot(DEFAULT_PROVIDER_PRICE_BOOK),
+      priceBookSource: DEFAULT_PROVIDER_PRICE_BOOK.source ?? "builtin",
+      ...(DEFAULT_PROVIDER_PRICE_BOOK.fetchedAt
+        ? { priceBookFetchedAt: DEFAULT_PROVIDER_PRICE_BOOK.fetchedAt }
+        : {}),
       exchangeRate: DEFAULT_PROVIDER_COST_EXCHANGE_RATE
     }
   };
@@ -129,12 +138,15 @@ export function addCatalogCostMetric(
   priceBook: ProviderPriceBook = DEFAULT_PROVIDER_PRICE_BOOK
 ): void {
   const billing = options?.billing;
+  const effectivePriceBook = billing?.priceBook
+    ? toProviderPriceBook(billing.priceBook)
+    : priceBook;
 
   if (!billing || !isDirectPricingProfile(billing.pricingProfileId)) {
     return;
   }
 
-  if (priceBook.version !== billing.priceBookVersion || lines.length === 0) {
+  if (effectivePriceBook.version !== billing.priceBookVersion || lines.length === 0) {
     return;
   }
 
@@ -145,7 +157,7 @@ export function addCatalogCostMetric(
       return;
     }
 
-    const entry = findPriceBookEntry(priceBook, line.provider, line.model);
+    const entry = findPriceBookEntry(effectivePriceBook, line.provider, line.model);
 
     if (!entry) {
       return;
@@ -174,8 +186,12 @@ export function addCatalogCostMetric(
       coverage: "complete",
       pricingProfileId: billing.pricingProfileId,
       priceBookVersion: billing.priceBookVersion,
-      breakdown: buildCostBreakdown(lines, priceBook),
-      priceBook: buildPriceBookSnapshot(priceBook),
+      breakdown: buildCostBreakdown(lines, effectivePriceBook),
+      priceBook: buildPriceBookSnapshot(effectivePriceBook),
+      priceBookSource: effectivePriceBook.source ?? "builtin",
+      ...(effectivePriceBook.fetchedAt
+        ? { priceBookFetchedAt: effectivePriceBook.fetchedAt }
+        : {}),
       exchangeRate: DEFAULT_PROVIDER_COST_EXCHANGE_RATE
     }
   };
@@ -257,6 +273,15 @@ function toCostPrice(entry: ProviderPriceBookEntry): ProviderSessionCostPrice {
 
 function buildPriceBookSnapshot(priceBook: ProviderPriceBook): ProviderSessionCostPrice[] {
   return priceBook.entries.map(toCostPrice);
+}
+
+function toProviderPriceBook(priceBook: ProviderSessionPriceBook): ProviderPriceBook {
+  return {
+    version: priceBook.version,
+    entries: priceBook.entries,
+    source: priceBook.source,
+    fetchedAt: priceBook.fetchedAt
+  };
 }
 
 export function calculateUsageLineCost(
