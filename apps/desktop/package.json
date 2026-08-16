@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "1.0.1-beta.2",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "pnpm exec tauri dev",
