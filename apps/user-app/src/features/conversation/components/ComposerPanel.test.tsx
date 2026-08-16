@@ -1231,6 +1231,68 @@ describe("ComposerPanel", () => {
     expect(tooltip.querySelector('[data-metric="costUsd"] strong')).toHaveTextContent("$0.125");
   });
 
+  it("费用信息按钮会打开模型明细、人民币换算和价格表", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        sessionStats={{
+          provider: "codex",
+          capturedAt: "2026-08-16T00:00:02.000Z",
+          metrics: {
+            costUsd: {
+              value: 0.125,
+              source: "derived-provider-metrics",
+              semantic: "priced-final-events",
+              pricing: {
+                kind: "catalog-estimate",
+                coverage: "complete",
+                pricingProfileId: "direct-api",
+                priceBookVersion: "2026-08-16",
+                breakdown: [{
+                  provider: "codex",
+                  model: "gpt-5.3-codex",
+                  inputTokens: 1000,
+                  outputTokens: 200,
+                  reasoningTokens: 0,
+                  cacheReadTokens: 100,
+                  cacheWriteTokens: 0,
+                  costUsd: 0.125
+                }],
+                priceBook: [{
+                  provider: "codex",
+                  model: "gpt-5.3-codex",
+                  inputUsdPerToken: 1.75e-6,
+                  outputUsdPerToken: 14e-6
+                }],
+                exchangeRate: {
+                  from: "USD",
+                  to: "CNY",
+                  rate: 7.2,
+                  version: "2026-08-16",
+                  source: "application-fixed"
+                }
+              },
+              watermark: { kind: "source-timestamp", value: "2026-08-16T00:00:02.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(container.querySelector(".composer-context-ring")!);
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.sessionStatsCostDetailsAction") }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("gpt-5.3-codex");
+    expect(screen.getByRole("dialog")).toHaveTextContent("¥0.9");
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.sessionStatsCostViewPriceBook") }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(t("conversation.sessionStatsCostPriceBookTitle"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("$1.75");
+  });
+
   it("桌面摘要只显示核心指标，缓存命中率由独立圆环和详情显示", () => {
     const { container } = render(
       <ComposerPanel
@@ -1314,6 +1376,57 @@ describe("ComposerPanel", () => {
 
     fireEvent.click(cacheTrigger!);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("移动端同时显示上下文占用和缓存命中率两个圆环", () => {
+    platformMock.platform = "ios";
+    platformMock.isWeb = false;
+    platformMock.isMobile = true;
+    platformMock.isNativeMobile = true;
+    platformMock.viewportClass = "compact";
+    platformMock.ui.osFamily = "ios";
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        contextUsage={{
+          provider: "codex",
+          promptTokens: 49_000,
+          uncachedInputTokens: 30_000,
+          cachedInputTokens: 19_000,
+          contextWindow: 100_000,
+          usageRatio: 0.49,
+          source: "provider-log",
+          contextWindowSource: "provider-log",
+          modelId: "gpt-5.3-codex",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          isEstimated: false
+        }}
+        sessionStats={{
+          provider: "codex",
+          capturedAt: "2026-08-15T10:00:00.000Z",
+          metrics: {
+            cacheHitRate: {
+              value: 80,
+              source: "derived-provider-metrics",
+              semantic: "derived-ratio",
+              watermark: { kind: "source-timestamp", value: "2026-08-15T10:00:00.000Z" }
+            }
+          }
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const statsControl = container.querySelector(".composer-session-stats-control");
+    const contextRing = container.querySelector(".composer-context-ring");
+    const cacheRing = container.querySelector(".composer-cache-hit-ring");
+
+    expect(statsControl).toHaveClass("is-mobile");
+    expect(contextRing).toBeInTheDocument();
+    expect(cacheRing).toBeInTheDocument();
+    expect(contextRing?.nextElementSibling).toBe(cacheRing);
   });
 
   it("使用 Provider 已核验的缓存命中率，不再把 Codex 缓存读取重复加入分母", () => {

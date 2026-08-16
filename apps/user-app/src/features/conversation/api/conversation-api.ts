@@ -1630,6 +1630,8 @@ export interface ProviderSessionStatValueDto {
       cacheReadUsdPerToken?: number;
       cacheWriteUsdPerToken?: number;
     }>;
+    priceBookSource?: "builtin" | "models.dev";
+    priceBookFetchedAt?: string;
     exchangeRate?: {
       from: "USD";
       to: "CNY";

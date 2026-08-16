@@ -3691,24 +3691,28 @@ function SessionStatsIndicators({
                   <div className="composer-session-stats-grid">
                     {sessionStatsItems.map((item) => (
                       <div className="composer-session-stats-row" data-metric={item.metric} key={item.metric}>
-                      <div className="composer-session-stats-row-value">
+                        <div className="composer-session-stats-row-value">
                           <span>{item.label}</span>
-                          <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
                           {item.metric === "costUsd" ? (
-                            <button
-                              type="button"
-                              className="composer-session-cost-info-button"
-                              aria-label={t("conversation.sessionStatsCostDetailsAction")}
-                              title={t("conversation.sessionStatsCostDetailsAction")}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={() => {
-                                setOpen(false);
-                                setCostDetailsOpen(true);
-                              }}
-                            >
-                              <SessionCostInfoIcon />
-                            </button>
-                          ) : null}
+                            <span className="composer-session-cost-value">
+                              <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
+                              <button
+                                type="button"
+                                className="composer-session-cost-info-button"
+                                aria-label={t("conversation.sessionStatsCostDetailsAction")}
+                                title={t("conversation.sessionStatsCostDetailsAction")}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={() => {
+                                  setOpen(false);
+                                  setCostDetailsOpen(true);
+                                }}
+                              >
+                                <SessionCostInfoIcon />
+                              </button>
+                            </span>
+                          ) : (
+                            <strong>{formatSessionStatValue(item.metric, item.value.value)}</strong>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -3887,20 +3891,35 @@ function SessionCostDetailsBody({
       {showPriceBook ? (
         <ModalSection
           heading={t("conversation.sessionStatsCostPriceBookTitle")}
-          description={t("conversation.sessionStatsCostPriceBookDescription", {
-            version: pricing?.priceBookVersion ?? "--"
-          })}
+          description={formatSessionPriceBookDescription(pricing)}
         >
           {priceBook.length > 0 ? (
-            <ModalList className="composer-session-cost-price-list">
-              {priceBook.map((entry) => (
-                <ModalListItem
-                  key={`${entry.provider}:${entry.model}`}
-                  label={`${getProviderDisplayName(entry.provider)} · ${entry.model}`}
-                  description={formatSessionPriceDescription(entry)}
-                />
-              ))}
-            </ModalList>
+            <div className="composer-session-cost-price-table-wrap" role="region" aria-label={t("conversation.sessionStatsCostPriceBookTitle")}>
+              <table className="composer-session-cost-price-table">
+                <thead>
+                  <tr>
+                    <th scope="col">{t("conversation.sessionStatsCostProviderColumn")}</th>
+                    <th scope="col">{t("conversation.sessionStatsCostModelColumn")}</th>
+                    <th scope="col">{t("conversation.sessionStatsCostInputColumn")}</th>
+                    <th scope="col">{t("conversation.sessionStatsCostOutputColumn")}</th>
+                    <th scope="col">{t("conversation.sessionStatsCostCacheReadColumn")}</th>
+                    <th scope="col">{t("conversation.sessionStatsCostCacheWriteColumn")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {priceBook.map((entry) => (
+                    <tr key={`${entry.provider}:${entry.model}`}>
+                      <td>{getProviderDisplayName(entry.provider)}</td>
+                      <td>{entry.model}</td>
+                      <td>{formatUsdPerMillionTokens(entry.inputUsdPerToken)}</td>
+                      <td>{formatUsdPerMillionTokens(entry.outputUsdPerToken)}</td>
+                      <td>{formatOptionalUsdPerMillionTokens(entry.cacheReadUsdPerToken)}</td>
+                      <td>{formatOptionalUsdPerMillionTokens(entry.cacheWriteUsdPerToken)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <p className="composer-session-cost-empty">
               {t("conversation.sessionStatsCostPriceBookUnavailable")}
@@ -3928,29 +3947,34 @@ function formatSessionCostTokenBreakdown(item: SessionCostBreakdown): string {
   ].filter(Boolean).join(" · ");
 }
 
-function formatSessionPriceDescription(entry: SessionCostPrice): string {
-  const prices = [
-    t("conversation.sessionStatsCostInputPrice", {
-      value: formatUsdAmount(entry.inputUsdPerToken * 1_000_000)
-    }),
-    t("conversation.sessionStatsCostOutputPrice", {
-      value: formatUsdAmount(entry.outputUsdPerToken * 1_000_000)
-    })
-  ];
+function formatUsdPerMillionTokens(value: number): string {
+  return formatUsdAmount(value * 1_000_000);
+}
 
-  if (entry.cacheReadUsdPerToken !== undefined) {
-    prices.push(t("conversation.sessionStatsCostCacheReadPrice", {
-      value: formatUsdAmount(entry.cacheReadUsdPerToken * 1_000_000)
-    }));
+function formatOptionalUsdPerMillionTokens(value: number | undefined): string {
+  return value === undefined ? "--" : formatUsdPerMillionTokens(value);
+}
+
+function formatSessionPriceBookDescription(pricing: SessionCostPricing | undefined): string {
+  const description = t("conversation.sessionStatsCostPriceBookDescription", {
+    version: pricing?.priceBookVersion ?? "--"
+  });
+  const source = pricing?.priceBookSource === "models.dev"
+    ? t("conversation.sessionStatsCostPriceBookSourceModelsDev")
+    : t("conversation.sessionStatsCostPriceBookSourceBuiltin");
+
+  if (!pricing?.priceBookFetchedAt) {
+    return `${description} ${source}`;
   }
 
-  if (entry.cacheWriteUsdPerToken !== undefined) {
-    prices.push(t("conversation.sessionStatsCostCacheWritePrice", {
-      value: formatUsdAmount(entry.cacheWriteUsdPerToken * 1_000_000)
-    }));
-  }
-
-  return prices.join(" · ");
+  const timestamp = new Date(pricing.priceBookFetchedAt);
+  const fetchedAt = Number.isFinite(timestamp.getTime())
+    ? new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }).format(timestamp)
+    : pricing.priceBookFetchedAt;
+  return `${description} ${source} ${t("conversation.sessionStatsCostPriceBookFetchedAt", { value: fetchedAt })}`;
 }
 
 function formatUsdAmount(value: number): string {
@@ -3972,14 +3996,16 @@ function formatCnyAmount(value: number): string {
 function SessionCostInfoIcon() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12" />
       <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.35" />
+      <circle cx="8" cy="5.25" r="0.78" fill="currentColor" />
       <path
-        d="M8 6.05H8.01M7.25 7.65H8V10.15H8.75"
+        d="M8 7.45V10.55"
         fill="none"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
-        strokeWidth="1.35"
+        strokeWidth="1.4"
       />
     </svg>
   );

@@ -8568,34 +8568,61 @@ textarea:focus-visible {
 }
 
 .composer-session-stats-row[data-metric="costUsd"] .composer-session-stats-row-value {
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-session-cost-value {
+  min-width: 0;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
   gap: 5px;
 }
 
 .composer-session-cost-info-button {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-tertiary);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--accent) 68%, var(--text-secondary));
   cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .composer-session-cost-info-button:hover:not(:disabled),
 .composer-session-cost-info-button:focus-visible {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-surface));
+  box-shadow:
+    0 2px 6px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
   outline: none;
+  transform: scale(1.03);
+}
+
+.composer-session-cost-info-button:active:not(:disabled) {
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: translateY(0) scale(0.96);
 }
 
 .composer-session-cost-info-button svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 
 .composer-session-cost-modal-body {
@@ -8604,9 +8631,46 @@ textarea:focus-visible {
   gap: 0;
 }
 
-.composer-session-cost-model-list,
-.composer-session-cost-price-list {
+.composer-session-cost-model-list {
   margin-top: 4px;
+}
+
+.composer-session-cost-price-table-wrap {
+  margin-top: 6px;
+  overflow-x: auto;
+  border-top: 1px solid var(--modal-list-item-border);
+}
+
+.composer-session-cost-price-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-session-cost-price-table th,
+.composer-session-cost-price-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--modal-list-item-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.composer-session-cost-price-table th {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.composer-session-cost-price-table td:nth-child(n + 3),
+.composer-session-cost-price-table th:nth-child(n + 3) {
+  text-align: right;
+}
+
+.composer-session-cost-price-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .composer-session-cost-model-list .modal-list-item-trailing {
@@ -8671,15 +8735,7 @@ textarea:focus-visible {
   display: none;
 }
 
-.composer-session-stats-control.is-mobile .composer-cache-hit-ring {
-  display: none;
-}
-
 @media (max-width: 720px) {
-  .composer-cache-hit-ring {
-    display: none;
-  }
-
   .composer-session-stats-grid {
     grid-template-columns: minmax(0, 1fr);
   }
