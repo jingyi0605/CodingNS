@@ -207,3 +207,23 @@
   - 主要修改：`packages/session-sync-core/src/session-pricing.ts`、`apps/host/src/modules/sessions/session-live-runtime-service.ts` 与对应 Host 测试。
   - 这一步明确不做什么：不回填当前已存在的空收费 binding，不为未命中价格表的模型猜测价格，不新增费用接口或后台任务。
   - 最小验证：session-sync-core 编译通过；Host `session-live-runtime-service` 定向测试覆盖价格表命中和未知模型；`git diff --check` 通过。
+
+## 阶段 13：价格表快照和费用详情表格
+
+- [x] 13.1 把费用详情中的价格表改成可对齐的表格
+  - 状态：COMPLETED
+  - 这一步做什么：在现有费用详情模态框中，把价格表从长文本列表改为语义化表格，按提供商、模型、输入、输出、缓存读取和缓存写入分列显示。
+  - 做完以后能看到什么：点击费用信息按钮后，用户可以横向比较每个模型的单价；移动端表格保持横向滚动，不会挤坏弹窗布局。
+  - 依赖什么：12.5 已透传的价格表快照。
+  - 主要修改：`apps/user-app/src/features/conversation/components/ComposerPanel.tsx`、`apps/user-app/src/features/conversation/api/conversation-api.ts`、`apps/user-app/src/app/styles.css`、中英文 i18n。
+  - 这一步明确不做什么：不在前端重新计算费用，不复制一份价格常量，不改变费用总额。
+  - 最小验证：ComposerPanel 定向测试、user-app TypeScript 检查和 `git diff --check` 通过。
+
+- [x] 13.2 增加按周固定的价格快照同步
+  - 状态：COMPLETED
+  - 这一步做什么：新增 `ProviderPriceBookService`，通过现有 `TaskManager` 低频读取 `models.dev/api.json`，只更新当前支持模型，并把快照保存到 `data/host/price-book-snapshots/`。同一周版本不覆盖，保留最近 104 份快照。
+  - 做完以后能看到什么：Host 启动或创建新会话时会检查快照是否过期；同步成功的新会话绑定新的周版本，旧会话继续读取原版本；网络失败时仍可使用最近快照或内置表。
+  - 依赖什么：12.1 的 `priceBookVersion`、12.2 的同一次费用折叠和后台任务接入规范。
+  - 主要修改：`apps/host/src/modules/provider/provider-price-book-service.ts`、`apps/host/src/modules/tasks/task-types.ts`、`apps/host/src/modules/sessions/session-history-service.ts`、`apps/host/src/modules/sessions/session-live-runtime-service.ts`、`apps/host/src/server/create-server.ts`、`packages/session-sync-core/src/types.ts`、`packages/session-sync-core/src/session-pricing.ts`。
+  - 这一步明确不做什么：不在每次会话统计时联网，不覆盖同周快照，不重算已绑定历史会话，不建立费用账本表。
+  - 最小验证：价格同步服务成功/失败回退测试、core 动态价格版本测试、Host 类型检查、`pnpm check:sqlite-runtime` 和 `git diff --check` 通过。

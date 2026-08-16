@@ -34,6 +34,11 @@ interface ProviderSessionCostProvenance {
   coverage: "complete";
   pricingProfileId?: string;
   priceBookVersion?: string;
+  breakdown?: ProviderSessionCostBreakdown[];
+  priceBook?: ProviderSessionCostPrice[];
+  priceBookSource?: "builtin" | "models.dev";
+  priceBookFetchedAt?: string;
+  exchangeRate?: ProviderSessionCostExchangeRate;
 }
 
 interface ProviderSessionStatValue {
@@ -94,7 +99,7 @@ ProviderAdapter.readSessionStats
 3. 以 `(收费路由, model, token 桶)` 查询本地版本化价格表并计算。
 4. 任何调用无法定价时，整个会话不输出目录 `costUsd`，避免把部分金额伪装成总费用。
 
-价格表由受控更新流程写入应用配置或随版本发布；可使用 `models.dev` 等机器可读目录作为候选输入，但运行时不访问网络。既有 `session_bindings` 为新会话保存 `billingStartedAt`、`pricingProfileId` 和 `priceBookVersion`，不新建账本表。新会话的选中模型命中当前 Provider 的价格表时可自动固定 `direct-api`；模型未命中时不猜测价格。旧会话这些字段为空，因此不会被回填费用。
+价格表由 `ProviderPriceBookService` 负责维护：它用现有 `TaskManager` 低频读取 `models.dev/api.json`，只提取当前支持模型，按周写入 `data/host/price-book-snapshots/<version>.json`。同一周的快照不可覆盖；网络失败时保留最近成功快照，首次无法同步时回退到随代码发布的内置表。会话统计读取只根据 `session_bindings.price_book_version` 读取本地快照，不访问网络。既有 `session_bindings` 为新会话保存 `billingStartedAt`、`pricingProfileId` 和 `priceBookVersion`，不新建费用账本表。新会话的选中模型命中当前快照时可自动固定 `direct-api`；模型未命中时不猜测价格。旧会话继续使用其已绑定版本，不会被新周价格重算。
 
 ## 4. Provider 读取规则
 
@@ -120,10 +125,11 @@ Harness 的上下文占用不从累计 `tokenUsage` 反推。它读取同一份 
 - Harness 的 adapter 在一次 `session.history` 响应中折叠调用；event bridge 在已有 mux/host 事件和断线 history reconcile 中保留并转发原始事件，不另开 sidecar 连接。
 - OpenCode 的原生累计费用不扫 message/part 求和。只有未来按需展示调用明细时，才从同一个 session 水位下的读取结果取明细，默认 runtime payload 不携带全量列表。
 - 每个结果都以原始序号或时间水位去重。重放、刷新、掉线重连和重复 progress 都不得改变已确认调用的金额。
+- 价格同步只在 Host 启动或创建新会话时检查是否过期，并通过 `provider.price_book_refresh` 去重执行；它不是每轮会话统计的网络依赖，也不新建独立费用计算通路。
 
 ## 6. 前端
 
-`SessionRuntimeDto` 与 runtime store 增加 `sessionStats: ProviderSessionStatsDto | null`。页面只将该值透传给 Composer。统计入口沿用 Composer 的紧凑信息区，但只有存在至少一个可展示字段时才渲染触发器和弹层。
+`SessionRuntimeDto` 与 runtime store 增加 `sessionStats: ProviderSessionStatsDto | null`。页面只将该值透传给 Composer。统计入口沿用 Composer 的紧凑信息区，但只有存在至少一个可展示字段时才渲染触发器和弹层。费用明细中的价格表使用语义化表格显示提供商、模型和各 token 桶价格，并同时显示快照来源、版本和抓取时间。
 
 展示按以下固定顺序排列：Token、运行、耗时、成本。所有实际存在的 metrics 收敛为一个有序列表，再铺入同一个连续双列网格；不再渲染“会话活动”“耗时”等内部组标题。格式化时接受 `number`，从不为未知字段创建默认值。Token 相关指标只显示 Provider 已生成的 `cacheHitRate`，不根据 `inputTokens`、`cacheReadTokens` 或 `cacheWriteTokens` 在前端重算；缺少该指标就隐藏比例。
 
@@ -135,6 +141,7 @@ Harness 的上下文占用不从累计 `tokenUsage` 反推。它读取同一份 
 
 - core：保留 Harness projection、OpenCode 原生累计、Codex 递增快照、Claude/Legna progress/最终重复、Gemini 重写消息、Kimi 空值和每种缓存率分母；新增模型切换、重复 usage、缺模型、缺价格、订阅/代理路由、首轮基线、并发 Codex turn、Harness 多 step、价格表版本固定的 fixture。
 - Host：runtime 成功透传，统计读取异常不影响 runtime 响应；断言费用不会触发第二次 `readSessionStats`、新轮询或额外 sidecar 订阅。
+- Host：价格同步服务覆盖成功写入、按周版本固定、历史版本读取、网络失败保留回退值和 `TaskManager` 任务注册；新会话绑定当前快照版本，旧会话读取原绑定版本。
 - user-app：只有存在完整 `costUsd` 才显示费用行；目录估算与原生成本使用现有详情入口；缺 token、成本或耗时不渲染该行，`0` 只有 Provider 明确返回 `0` 时才能显示。
 - 运行 `pnpm test:related -- <改动文件>` 和 `pnpm check:sqlite-runtime`。
 
